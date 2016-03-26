@@ -1,0 +1,10 @@
+[package]
+name = "funzzy"
+version = "0.1.0"
+authors = ["Cristian Oliveira <contato@cristianoliveira.com.br>"]
+
+[dependencies]
+docopt = "0.6"
+rustc-serialize = "0.3"
+notify = "^2.5.0"
+git2 = "*"
