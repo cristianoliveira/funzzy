@@ -37,7 +37,7 @@ pub trait Command {
 /// or None if any command was found.
 ///
 
-pub fn get(args: Args) -> Option<Box<Command+'static>>{
+pub fn execute(args: Args) -> Option<Box<Command+'static>>{
     if args.cmd_init {
         return Some(Box::new(InitCommand));
     }
