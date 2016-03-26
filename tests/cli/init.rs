@@ -12,7 +12,7 @@ fn it_creates_new_config_file() {
     remove_file(file);
 
     let command = InitCommand;
-    command.execute();
+    let _ = command.execute();
 
     assert!(Path::new(file).exists());
 

@@ -1,4 +1,3 @@
-use cli::errors::CliError;
 use cli::Command;
 use std::fs::File;
 use std::io::prelude::*;
@@ -8,7 +7,7 @@ use std::io::prelude::*;
 /// 
 pub struct InitCommand;
 impl Command for InitCommand {
-    fn execute(&self) -> Result<(), CliError>{
+    fn execute(&self) -> Result<(), &str>{
         const DEFAULT_CONTENT: &'static str =
 "## Funzzy events file
  # more details see: http://cristian.github.com/funzzy
@@ -19,10 +18,15 @@ impl Command for InitCommand {
   when: '.'
   do: 'echo \"It works!\"' \0";
 
-        let mut yaml:File = try!(File::create("events.yaml"));
+        let mut yaml:File = match File::create("events.yaml") {
+           Ok(f) => f,
+           Err(err) => panic!("File not created. Cause: {}", err)
+        };
 
-        try!(yaml.write_all(DEFAULT_CONTENT.as_ref()));
-        Ok(())
+        match yaml.write_all(DEFAULT_CONTENT.as_ref()) {
+           Ok(_) => Ok(()),
+           Err(err) => panic!("Cannot write file.")
+        }
     }
 
     fn help(&self) -> &str {

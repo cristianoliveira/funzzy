@@ -14,26 +14,30 @@ use std::error::Error;
 #[derive(Debug)]
 pub enum CliError {
     Io(io::Error),
+    Others(Error),
 }
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             CliError::Io(ref err) => write!(f, "IO error: {}", err),
+            CliError::Others(ref err) => write!(f, "IO error: {}", err),
         }
     }
 }
 
 /// Implement here how display the error
-impl error::Error for CliError {
+impl Error for CliError {
     fn description(&self) -> &str {
         match *self {
             CliError::Io(ref err) => err.description(),
+            CliError::Others(ref err) => err.description(),
         }
     }
 
     fn cause(&self) -> Option<&error::Error> {
          match *self {
              CliError::Io(ref err) => Some(err),
+             CliError::Others(ref err) => Some(err),
          }
     }
 }
@@ -42,5 +46,10 @@ impl error::Error for CliError {
 impl From<io::Error> for CliError {
     fn from(error: io::Error) -> CliError {
        CliError::Io(error)
+    }
+}
+impl From<Error> for CliError {
+    fn from(error: Error) -> CliError {
+       CliError::Others(error)
     }
 }

@@ -1,8 +1,7 @@
-pub mod errors;
 pub mod init;
 pub mod watch;
 
-use cli::errors::CliError;
+use std::error::Error;
 use cli::init::InitCommand;
 use cli::watch::WatchCommand;
 
@@ -33,7 +32,7 @@ impl Args {
 /// Each command from cli should implement this.
 ///
 pub trait Command {
-    fn execute(&self) -> Result<(), CliError>;
+    fn execute(&self) -> Result<(), &str>;
     fn help(&self) -> &str;
 }
 
@@ -47,7 +46,7 @@ pub fn command(args: &Args) -> Option<Box<Command+'static>>{
         return Some(Box::new(InitCommand));
     }
     if args.cmd_watch {
-        return Some(Box::new(WatchCommand));
+        return Some(Box::new(WatchCommand::new()));
     }
     None
 }
