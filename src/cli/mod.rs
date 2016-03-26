@@ -1,13 +1,18 @@
 pub mod errors;
 pub mod init;
+pub mod watch;
 
 use cli::errors::CliError;
 use cli::init::InitCommand;
+use cli::watch::WatchCommand;
 
 #[derive(Debug, RustcDecodable)]
 pub struct Args {
+    // comands
     pub cmd_init: bool,
-    pub arg_folder: Option<String>,
+    pub cmd_watch: bool,
+
+    // options
     pub flag_h: bool,
     pub flag_v: bool,
 }
@@ -16,7 +21,7 @@ impl Args {
     pub fn new() -> Args {
         Args {
             cmd_init: false,
-            arg_folder: None,
+            cmd_watch: false,
             flag_h: false,
             flag_v: false,
         }
@@ -29,6 +34,7 @@ impl Args {
 ///
 pub trait Command {
     fn execute(&self) -> Result<(), CliError>;
+    fn help(&self) -> &str;
 }
 
 /// # function command
@@ -36,12 +42,12 @@ pub trait Command {
 /// Return a command based on [args] passed as param
 /// or None if any command was found.
 ///
-
-pub fn command(args: Args) -> Option<Box<Command+'static>>{
+pub fn command(args: &Args) -> Option<Box<Command+'static>>{
     if args.cmd_init {
         return Some(Box::new(InitCommand));
     }
+    if args.cmd_watch {
+        return Some(Box::new(WatchCommand));
+    }
     None
 }
-
-
