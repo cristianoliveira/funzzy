@@ -2,9 +2,6 @@ extern crate rustc_serialize;
 extern crate docopt;
 
 pub mod cli;
-
-use std::fs::{OpenOptions};
-use std::io::prelude::*;
 use docopt::Docopt;
 
 const USAGE: &'static str = "

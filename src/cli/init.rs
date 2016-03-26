@@ -5,27 +5,23 @@ use std::io::prelude::*;
 
 /// # Creates an funzzy yaml boilerplate.
 /// 
-pub struct InitCommand{
-    folder_path: String,
-}
-impl InitCommand {
-    pub fn new() -> Self {
-        InitCommand{
-            folder_path: String::from(".")
-        }
-    }
-}
+pub struct InitCommand;
 impl Command for InitCommand {
-    fn execute(&self) -> Result<(), >{
-        let mut yaml:File = try!(File::create("events.yaml"));
-        yaml.write_all(format!("
-        ## Funzzy events file
-        # more details see: http://cristian.github.com/funzzy
-        #
-        # list here all the events and the commands that it should execute
+    fn execute(&self) -> Result<(), CliError>{
+        const DEFAULT_CONTENT: &'static str = "
+            ## Funzzy events file
+            # more details see: http://cristian.github.com/funzzy
+            #
+            # list here all the events and the commands that it should execute
 
-        - when: '{}'
-          change: 'echo \"It works!\"'
-        ", self.folder_path).as_ref());
+            - name: run my tests
+              when: '.'
+              do: 'echo \"It works!\"'
+        ";
+
+        let mut yaml:File = try!(File::create("events.yaml"));
+
+        try!(yaml.write_all(DEFAULT_CONTENT.as_ref()));
+        Ok(())
     }
 }

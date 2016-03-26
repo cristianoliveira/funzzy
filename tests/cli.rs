@@ -1,6 +1,6 @@
 extern crate funzzy;
 
-use funzzy::cli::InitCommand;
+use funzzy::cli::init::InitCommand;
 
 #[test]
 fn test() {

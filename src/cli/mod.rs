@@ -39,7 +39,7 @@ pub trait Command {
 
 pub fn get(args: Args) -> Option<Box<Command+'static>>{
     if args.cmd_init {
-        return Some(Box::new(InitCommand::new()));
+        return Some(Box::new(InitCommand));
     }
     None
 }
