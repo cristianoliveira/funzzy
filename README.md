@@ -21,8 +21,11 @@ Example:
 ```
 
 ## Motivation
-Have you ever used anoter watcher? Well I did. The last one was Grunt and It consumes almost 
-all of my computer's resources. Funzzy was made by Rust that is one of the fatests languages.
+Have you ever used another watcher? 
+
+Well I did. The last one was Grunt and It consumes almost all of my computer's resources. 
+Funzzy was made by Rust that is way it consumes almost nothing to run.
+
 
 ## Installing
 Make sure you have installed the follow dependecies:
