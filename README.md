@@ -23,15 +23,15 @@ Example:
 ## Motivation
 Have you ever used another watcher? 
 
-Well I did. The last one was Grunt and It consumes almost all of my computer's resources. 
-Funzzy was made by Rust that is way it consumes almost nothing to run.
+Well, I did. The last one was Grunt and it consumes almost all of my computer's resources.
+Funzzy was made by Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
 Make sure you have installed the follow dependecies:
 - Rust
 ```bash
-make build
+make install
 ```
 
 ## Running
