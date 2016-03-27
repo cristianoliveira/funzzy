@@ -23,12 +23,18 @@ matrix:
   include:
     - os: linux
       env: TARGET=x86_64-unknown-linux-gnu
-      addons:
-        apt:
-          sources:
-            - kubuntu-backports
+
     - os: osx
       env: TARGET=x86_64-apple-darwin
+
+install:
+    - sh ci/install.sh
+
+script:
+    - sh ci/script.sh
+
+before_deploy:
+    - sh ci/before_deploy.sh
 
 deploy:
   provider: releases
