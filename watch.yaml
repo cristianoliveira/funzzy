@@ -1,9 +1,9 @@
 ## Funzzy events file
- # more details see: http://cristian.github.com/funzzy
- #
- # list here all the events and the commands that it should execute
+# more details see: http://cristian.github.com/funzzy
+#
+# list here all the events and the commands that it should execute
 
 - name: run my tests
   when:
     change: '**/src/**'
-    run: ls -a
+    run: cargo test
