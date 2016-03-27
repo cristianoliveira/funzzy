@@ -27,6 +27,11 @@ make build
 ```
 
 ## Running
+Initializing whit boilerplate:
+```bash
+funzzy init
+```
+Then run:
 ```bash
 funzzy watch
 ```
