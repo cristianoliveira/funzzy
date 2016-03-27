@@ -18,6 +18,10 @@ Example:
     change: 'src/static/**'
     run: compass
 
+- name: Starwars
+  when:
+    change: "watch.yaml"
+    run: telnet towel.blinkenlights.nl
 ```
 
 ## Motivation

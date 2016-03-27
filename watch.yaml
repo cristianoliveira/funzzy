@@ -12,3 +12,9 @@
   when:
     change: 'tests/*'
     run: echo "Doing tests"
+
+- name: Starwars
+  when:
+    change: "watch.yaml"
+    run: telnet towel.blinkenlights.nl
+
