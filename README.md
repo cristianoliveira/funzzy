@@ -1,6 +1,6 @@
 # funzzy  [![Build Status](https://travis-ci.org/cristianoliveira/funzzy.svg?branch=master)](https://travis-ci.org/cristianoliveira/funzzy)  [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
 
-The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
+Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
 Configure execution of commands when some file change in different directories using semantic yaml.
 
@@ -37,21 +37,21 @@ Create a lighter watcher to run my tests everytime something in my project chang
   brew install funzzy
   ```
 
-  - Linux
+  - Linux:
   ```bash
   curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
   ```
 
+  - With Cargo
+  ```bash
+  cargo install funzzy
+  ```
+  **Make sure you have `$HOME/.cargo/bin` in your PATH
+  `export $PATH:$HOME/.cargo/bin`
+
 ## Building
 Make sure you have installed the follow dependecies:
 - Rust
-
-### From Crates.io
-```bash
-cargo install funzzy
-```
-**Make sure you have $HOME/.cargo/bin in your PATH
-`export $PATH:$HOME/.cargo/bin`
 
 #### From source
 Clone this repo and do:
@@ -84,7 +84,9 @@ vagrant up
 
 # testing.
 vagrant ssh -c "cd /vagrant && funzzy watch"
-vagrant ssh -c "touch /vagrant/tests/vagrant.tmp"
+
+# Another shell
+vagrant ssh -c "touch /vagrant/.watch.yaml"
 ```
 It will take some time to be prepared.
 
