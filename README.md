@@ -1,7 +1,7 @@
 # funzzy
 The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Run configured commands for different directories using semantic yaml.
+Configure execution of commands when some file change in different directories using semantic yaml.
 
 Example:
 ```yaml
@@ -39,11 +39,11 @@ make install
 ```
 
 ## Running
-Initializing whit boilerplate:
+Initializing with boilerplate:
 ```bash
 funzzy init
 ```
-Then run:
+Change the yaml as you want. Then run:
 ```bash
 funzzy watch
 ```
