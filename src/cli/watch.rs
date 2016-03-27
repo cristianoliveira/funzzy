@@ -102,19 +102,25 @@ impl Watches {
     /// it may return None if there is no item that match.
     ///
     pub fn watch(&self, path: &str) -> Option<ShellCommand>{
-        for w in &self.items {
-            let watched_path = w[0]["when"]["change"].as_str().unwrap();
-            let watched_command = w[0]["when"]["run"].as_str().unwrap();
+        match &self.items[0] {
+            &Yaml::Array(ref items) => {
+                for i in items {
+                    let watched_path = i["when"]["change"].as_str().unwrap();
+                    let watched_command = i["when"]["run"].as_str().unwrap();
 
-            if Pattern::new(&format!("**/{}",watched_path)).unwrap().matches(path){
-                let mut args: Vec<&str>= watched_command.split(' ').collect();
-                let cmd = args.remove(0);
+                    if Pattern::new(&format!("**/{}",watched_path)).unwrap().matches(path){
+                        println!("Running: {}", i["name"].as_str().unwrap());
+                        let mut args: Vec<&str>= watched_command.split(' ').collect();
+                        let cmd = args.remove(0);
 
-                let mut shell = ShellCommand::new(cmd);
-                shell.args(&args);
+                        let mut shell = ShellCommand::new(cmd);
+                        shell.args(&args);
 
-                return Some(shell)
-            }
+                        return Some(shell)
+                    }
+                };
+            },
+            _ => panic!("Yaml format unkown.")
         };
         None
     }
@@ -181,4 +187,30 @@ fn it_creates_shell_command() {
     let mut expected = ShellCommand::new("cargo");
     expected.arg("build");
     assert_eq!(format!("{:?}", expected),  format!("{:?}", result))
+}
+
+#[test]
+fn it_works_with_multiples_itens() {
+    let file_content = "
+- name: my source
+  when:
+    change: 'src/**'
+    run: 'cargo build'
+
+- name: other
+  when:
+    change: 'test/**'
+    run: 'cargo test'
+";
+    let watches = Watches::from(file_content);
+
+    let result = watches.watch("test/test.rs").unwrap();
+    let mut expected = ShellCommand::new("cargo");
+    expected.arg("test");
+    assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
+
+    // let result_src = watches.watch("src/test.rs").unwrap();
+    // let mut expected_src = ShellCommand::new("cargo");
+    // expected_src.arg("build");
+    // assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
 }
