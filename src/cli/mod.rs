@@ -35,7 +35,6 @@ impl Args {
 ///
 pub trait Command {
     fn execute(&self) -> Result<(), &str>;
-    fn help(&self) -> &str;
 }
 
 /// # function command

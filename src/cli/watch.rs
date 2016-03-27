@@ -1,5 +1,4 @@
 extern crate notify;
-extern crate git2;
 extern crate yaml_rust;
 extern crate glob;
 
@@ -65,21 +64,6 @@ impl Command for WatchCommand {
             };
         };
         Ok(())
-    }
-
-
-    fn help(&self) -> &str {
-        " Watch command.
-It starts to watch folders and execute the commands
-that are located in events.yaml.
-
-Example:
-   # yaml file
-   - name: says hello
-     when:
-       change: 'myfile.txt'
-       do: 'echo \"Hello\"'
-"
     }
 }
 

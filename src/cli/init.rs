@@ -40,10 +40,4 @@ impl Command for InitCommand {
            Err(err) => panic!("Cannot write file.")
         }
     }
-
-    fn help(&self) -> &str {
-        " Init comand
-        It creates a funzzy a boilerplate yaml
-        "
-    }
 }

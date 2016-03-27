@@ -7,6 +7,5 @@ authors = ["Cristian Oliveira <contato@cristianoliveira.com.br>"]
 docopt = "0.6"
 rustc-serialize = "0.3"
 notify = "^2.5.0"
-git2 = "*"
 yaml-rust = "*"
 glob="*"
