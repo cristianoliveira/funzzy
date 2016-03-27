@@ -5,7 +5,17 @@ use std::io::prelude::*;
 /// # InitCommand
 /// Creates a funzzy yaml boilerplate.
 /// 
-pub struct InitCommand;
+pub struct InitCommand {
+    pub file_name: &'static str
+}
+impl InitCommand {
+    pub fn new() -> Self {
+        InitCommand {
+            file_name: "watch.yaml"
+        }
+    }
+}
+
 impl Command for InitCommand {
     fn execute(&self) -> Result<(), &str>{
         const DEFAULT_CONTENT: &'static str =
@@ -15,10 +25,12 @@ impl Command for InitCommand {
  # list here all the events and the commands that it should execute
 
 - name: run my tests
-  when: '.'
-  do: 'echo \"It works!\"' \0";
+  when:
+    change: '**/src/**'
+    run: ls -a
+";
 
-        let mut yaml:File = match File::create("events.yaml") {
+        let mut yaml:File = match File::create(self.file_name) {
            Ok(f) => f,
            Err(err) => panic!("File not created. Cause: {}", err)
         };

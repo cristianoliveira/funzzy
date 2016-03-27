@@ -22,13 +22,7 @@ pub struct WatchCommand {
 }
 
 impl WatchCommand {
-    pub fn new() -> Self {
-    let file_content = "
-- name: Demo
-  when:
-    change: '**/src/**'
-    run: ls -a
-";
+    pub fn new(file_content: &str) -> Self {
         WatchCommand {
             watches: Watches::from(file_content)
         }

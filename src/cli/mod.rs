@@ -4,10 +4,12 @@ pub mod watch;
 use std::error::Error;
 use cli::init::InitCommand;
 use cli::watch::WatchCommand;
+use std::io::prelude::*;
+use std::fs::File;
 
 #[derive(Debug, RustcDecodable)]
 pub struct Args {
-    // comands
+    // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
 
@@ -43,10 +45,13 @@ pub trait Command {
 ///
 pub fn command(args: &Args) -> Option<Box<Command+'static>>{
     if args.cmd_init {
-        return Some(Box::new(InitCommand));
+        return Some(Box::new(InitCommand::new()));
     }
     if args.cmd_watch {
-        return Some(Box::new(WatchCommand::new()));
+        let mut file = File::open("watch.yamnl").unwrap();
+        let mut content = String::new();
+        let _ = file.read_to_string(&mut content).unwrap();
+        return Some(Box::new(WatchCommand::new(&content)));
     }
     None
 }

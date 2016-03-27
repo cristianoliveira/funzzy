@@ -11,7 +11,8 @@ fn it_creates_new_config_file() {
     let file = "events.yaml";
     remove_file(file);
 
-    let command = InitCommand;
+    let mut command = InitCommand::new();
+    command.file_name = &file;
     let _ = command.execute();
 
     assert!(Path::new(file).exists());
