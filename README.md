@@ -4,7 +4,6 @@ The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/an
 
 Configure execution of commands when some file change in different directories using semantic yaml.
 
-Example:
 ```yaml
 # .watch.yaml
 # list here all the events and the commands that it should execute
@@ -26,12 +25,22 @@ Example:
 ```
 
 ## Motivation
-Create a light watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
+Create a lighter watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
 Make sure you have installed the follow dependecies:
 - Rust
+
+### From Crates.io
+```bash
+cargo install funzzy
+```
+**Make sure you have $HOME/.cargo/bin in your PATH
+`export $PATH:$HOME/.cargo/bin`
+
+#### From source
+Clone this repo and do:
 ```bash
 make install
 ```
@@ -45,6 +54,20 @@ Change the yaml as you want. Then run:
 ```bash
 funzzy watch
 ```
+
+## Playground 
+**It does not work between vm and host machine**
+
+If you wanna try without installing it in your machine, try the playground vagrant.
+```bash
+cd funzzy
+vagrant up
+
+# testing.
+vagrant ssh -c "cd /vagrant && funzzy watch"
+vagrant ssh -c "touch /vagrant/tests/vagrant.tmp"
+```
+It will take some time to be prepared.
 
 ## Tests
 Running tests:
