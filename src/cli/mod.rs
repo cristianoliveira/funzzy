@@ -12,6 +12,7 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
+    pub arg_command: Vec<String>,
 
     // options
     pub flag_h: bool,
@@ -23,6 +24,7 @@ impl Args {
         Args {
             cmd_init: false,
             cmd_watch: false,
+            arg_command: vec![String::new()],
             flag_h: false,
             flag_v: false,
         }
@@ -50,6 +52,7 @@ pub fn command(args: &Args) -> Option<Box<Command+'static>>{
         let mut file = File::open(watch::FILENAME).unwrap();
         let mut content = String::new();
         let _ = file.read_to_string(&mut content).unwrap();
+
         return Some(Box::new(WatchCommand::new(&content)));
     }
     None

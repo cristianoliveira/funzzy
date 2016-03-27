@@ -78,7 +78,19 @@ struct Watches {
     items: Vec<Yaml>,
 }
 impl Watches {
-    pub fn from(plain_text: &str) -> Self{
+    pub fn from_args(args: Vec<String>) -> Self {
+        let template =
+        format!("
+        - name: from command
+          when:
+            change: '{path}'
+            run: {command}
+        ", path="**", command=args[0]);
+
+        Watches::from(&template)
+    }
+
+    pub fn from(plain_text: &str) -> Self {
         Watches {
             items: YamlLoader::load_from_str(&plain_text).unwrap(),
         }
@@ -127,6 +139,22 @@ fn it_loads_from_yaml_file() {
     assert_eq!(content[0]["when"], watches.items[0]["when"]);
     assert_eq!(content[0]["when"]["change"],
                watches.items[0]["when"]["change"])
+}
+
+#[test]
+fn it_loads_from_args() {
+    let args = vec![String::from("cargo build")];
+    let watches = Watches::from_args(args);
+
+    println!("{:?}", watches.items[0]);
+    assert!(watches.watch("src/main.rs").is_some());
+    assert!(watches.watch("test/main.rs").is_some());
+    assert!(watches.watch(".").is_some());
+
+    let result = watches.watch(".").unwrap();
+    let mut expected = ShellCommand::new("cargo");
+    expected.arg("build");
+    assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
 }
 
 #[test]

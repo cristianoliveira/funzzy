@@ -12,6 +12,7 @@ Funzzy the watcher.
 
 Usage:
   funzzy watch
+  funzzy watch -c <command>
   funzzy init
   funzzy -h
   funzzy -v
