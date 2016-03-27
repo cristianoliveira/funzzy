@@ -48,7 +48,7 @@ pub fn command(args: &Args) -> Option<Box<Command+'static>>{
         return Some(Box::new(InitCommand::new()));
     }
     if args.cmd_watch {
-        let mut file = File::open("watch.yamnl").unwrap();
+        let mut file = File::open("watch.yaml").unwrap();
         let mut content = String::new();
         let _ = file.read_to_string(&mut content).unwrap();
         return Some(Box::new(WatchCommand::new(&content)));
