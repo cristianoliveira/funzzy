@@ -19,6 +19,13 @@ Example:
 
 ```
 
+## Installing
+Make sure you have installed the follow dependecies:
+- Rust
+```bash
+make build
+```
+
 ## Running
 ```bash
 funzzy watch
