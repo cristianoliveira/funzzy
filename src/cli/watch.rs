@@ -24,10 +24,10 @@ pub struct WatchCommand {
 impl WatchCommand {
     pub fn new() -> Self {
     let file_content = "
-- name: my source
+- name: Demo
   when:
     change: '**/src/**'
-    run: 'it works!'
+    run: ls -a
 ";
         WatchCommand {
             watches: Watches::from(file_content)
@@ -58,7 +58,13 @@ impl Command for WatchCommand {
                    println!("path {:?}", path);
 
                    match self.watches.watch(&path) {
-                       Some(cmd) => println!("comand: {:?}", cmd),
+                       Some(mut cmd) => {
+                           println!("comand: {:?}", cmd);
+                           match cmd.status() {
+                               Ok(_) => println!("executed"),
+                               Err(err) => println!("Error {:?}", err),
+                           };
+                       },
                        None => println!("No command for this watch.")
                    }
                },
@@ -109,7 +115,12 @@ impl Watches {
             println!("{:?} {:?}", watched_path, path);
 
             if Pattern::new(watched_path).unwrap().matches(path){
-                return Some(ShellCommand::new(watched_command))
+                let mut args: Vec<&str>= watched_command.split(' ').collect();
+                let cmd = args.remove(0);
+                println!("command {} args: {:?}", cmd, args);
+                let mut shell = ShellCommand::new(cmd);
+                shell.args(&args);
+                return Some(shell)
             }
         };
         None
@@ -138,7 +149,7 @@ fn it_watches_test_path() {
     let file_content = "
 - name: my tests
   when:
-    change: '**/tests/**' 
+    change: '**/tests/**'
     run: 'cargo tests'
 ";
     let watches = Watches::from(file_content);
@@ -153,13 +164,28 @@ fn it_doesnot_watches_test_path() {
     let file_content = "
 - name: my source
   when:
-    change: '*/funzzy/src/**' 
+    change: '**/src/**'
     run: 'cargo build'
 ";
     let watches = Watches::from(file_content);
-    
+
     assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
     assert!(watches.watch("tests/").is_none());
     assert!(watches.watch("tests/test.rs").is_none());
     assert!(watches.watch("tests/folder/other.rs").is_none());
+}
+
+#[test]
+fn it_creates_shell_command() {
+    let file_content = "
+- name: my source
+  when:
+    change: '**/src/**'
+    run: 'cargo build'
+";
+    let watches = Watches::from(file_content);
+    let result = watches.watch("src/test.rs").unwrap();
+    let mut expected = ShellCommand::new("cargo");
+    expected.arg("build");
+    assert_eq!(format!("{:?}", expected),  format!("{:?}", result))
 }
