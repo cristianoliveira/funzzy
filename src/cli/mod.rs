@@ -44,10 +44,10 @@ pub trait Command {
 ///
 pub fn command(args: &Args) -> Option<Box<Command+'static>>{
     if args.cmd_init {
-        return Some(Box::new(InitCommand::new()));
+        return Some(Box::new(InitCommand{ file_name: watch::FILENAME }));
     }
     if args.cmd_watch {
-        let mut file = File::open("watch.yaml").unwrap();
+        let mut file = File::open(watch::FILENAME).unwrap();
         let mut content = String::new();
         let _ = file.read_to_string(&mut content).unwrap();
         return Some(Box::new(WatchCommand::new(&content)));

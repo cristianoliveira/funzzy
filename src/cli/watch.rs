@@ -11,6 +11,9 @@ use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
 
+
+pub const FILENAME: &'static str = ".watch.yaml";
+
 /// # WatchCommand
 ///
 /// Starts watcher to listen the change events configured
