@@ -2,7 +2,7 @@ pub mod init;
 pub mod watch;
 
 use cli::init::InitCommand;
-use cli::watch::WatchCommand;
+use cli::watch::{ Watches, WatchCommand };
 #[warn(unused_imports)]
 use std::io::prelude::*;
 use std::fs::File;
@@ -15,6 +15,7 @@ pub struct Args {
     pub arg_command: Vec<String>,
 
     // options
+    pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
 }
@@ -25,6 +26,7 @@ impl Args {
             cmd_init: false,
             cmd_watch: false,
             arg_command: vec![String::new()],
+            flag_c: false,
             flag_h: false,
             flag_v: false,
         }
@@ -45,15 +47,23 @@ pub trait Command {
 /// or None if any command was found.
 ///
 pub fn command(args: &Args) -> Option<Box<Command+'static>>{
-    if args.cmd_init {
-        return Some(Box::new(InitCommand{ file_name: watch::FILENAME }));
-    }
-    if args.cmd_watch {
-        let mut file = File::open(watch::FILENAME).unwrap();
-        let mut content = String::new();
-        let _ = file.read_to_string(&mut content).unwrap();
+    match *args {
+        Args { cmd_init: true, .. } =>
+            Some(Box::new(InitCommand{ file_name: watch::FILENAME })),
 
-        return Some(Box::new(WatchCommand::new(&content)));
+        Args { cmd_watch: true, flag_c: false, .. } => {
+            let mut file = File::open(watch::FILENAME).unwrap();
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content).unwrap();
+
+            Some(Box::new(WatchCommand::new(Watches::from(&content))))
+        },
+
+        Args { cmd_watch: true, flag_c: true, .. } => {
+            let command_args = args.arg_command.clone();
+            Some(Box::new(WatchCommand::new(Watches::from_args(command_args))))
+        }
+
+        _ => None
     }
-    None
 }

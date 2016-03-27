@@ -24,9 +24,9 @@ pub struct WatchCommand {
 }
 
 impl WatchCommand {
-    pub fn new(file_content: &str) -> Self {
+    pub fn new(watches: Watches) -> Self {
         WatchCommand {
-            watches: Watches::from(file_content)
+            watches: watches
         }
     }
 }
@@ -74,7 +74,7 @@ impl Command for WatchCommand {
 ///
 /// Represent all items in the yaml config loaded.
 ///
-struct Watches {
+pub struct Watches {
     items: Vec<Yaml>,
 }
 impl Watches {
@@ -87,7 +87,9 @@ impl Watches {
             run: {command}
         ", path="**", command=args[0]);
 
-        Watches::from(&template)
+        Watches {
+            items: YamlLoader::load_from_str(&template).unwrap(),
+        }
     }
 
     pub fn from(plain_text: &str) -> Self {
