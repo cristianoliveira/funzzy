@@ -13,7 +13,7 @@ pub struct InitCommand {
 impl InitCommand {
     pub fn new() -> Self {
         InitCommand {
-            file_name: "watch.yaml"
+            file_name: ".watch.yaml"
         }
     }
 }

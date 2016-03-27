@@ -6,7 +6,7 @@ Configure execution of commands when some file change in different directories u
 
 Example:
 ```yaml
-# watch.yaml
+# .watch.yaml
 # list here all the events and the commands that it should execute
 
 - name: run my tests
@@ -21,7 +21,7 @@ Example:
 
 - name: Starwars
   when:
-    change: "watch.yaml"
+    change: ".watch.yaml"
     run: telnet towel.blinkenlights.nl
 ```
 
