@@ -25,10 +25,7 @@ Example:
 ```
 
 ## Motivation
-Have you ever used another watcher? 
-
-Well, I did. The last one was Grunt and it consumes almost all of my computer's resources.
-Funzzy was made with Rust that is why it consumes almost nothing to run.
+Create a light watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
@@ -47,6 +44,21 @@ Change the yaml as you want. Then run:
 ```bash
 funzzy watch
 ```
+
+## Tests
+Running tests:
+```bash
+cargo test
+```
+
+## Contributing
+ - Fork it!
+ - Create your feature branch: `git checkout -b my-new-feature`
+ - Commit your changes: `git commit -am 'Add some feature'`
+ - Push to the branch: `git push origin my-new-feature`
+ - Submit a pull request
+
+**Pull Request should have unit tests**
 
 # Licence
 This project was made under MIT Licence.
