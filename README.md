@@ -1,5 +1,6 @@
 # funzzy
-The configurable watcher.
+The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/antr))
+
 Run configured commands for differents directories using semantic yaml.
 
 Example:
