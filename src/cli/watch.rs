@@ -192,8 +192,8 @@ fn it_works_with_multiples_itens() {
     expected.arg("test");
     assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
 
-    // let result_src = watches.watch("src/test.rs").unwrap();
-    // let mut expected_src = ShellCommand::new("cargo");
-    // expected_src.arg("build");
-    // assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
+    let result_src = watches.watch("src/test.rs").unwrap();
+    let mut expected_src = ShellCommand::new("cargo");
+    expected_src.arg("build");
+    assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
 }
