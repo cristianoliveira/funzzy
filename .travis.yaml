@@ -1,0 +1,2 @@
+nguage: rust
+script: make test
