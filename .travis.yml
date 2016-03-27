@@ -1,2 +1,2 @@
-nguage: rust
-script: make test
+language: rust
+script: make tests
