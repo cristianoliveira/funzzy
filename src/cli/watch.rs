@@ -1,20 +1,20 @@
 extern crate notify;
 extern crate git2;
 extern crate yaml_rust;
+extern crate glob;
 
-use std::env;
-use std::process::Command as SysCommand;
+use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
-use std::sync::{Arc, Mutex};
+use self::glob::Pattern;
+
 use self::notify::{RecommendedWatcher, Watcher};
-use self::yaml_rust::{Yaml, YamlLoader, YamlEmitter};
-use std::thread;
+use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
 
 /// # WatchCommand
 ///
-/// Starts watcher to listen the change envents configured
+/// Starts watcher to listen the change events configured
 /// in watch.yaml
 ///
 pub struct WatchCommand {
@@ -23,8 +23,14 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new() -> Self {
+    let file_content = "
+- name: my source
+  when:
+    change: '**/src/**'
+    run: 'it works!'
+";
         WatchCommand {
-            watches: Watches::from("")
+            watches: Watches::from(file_content)
         }
     }
 }
@@ -46,17 +52,19 @@ impl Command for WatchCommand {
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            match event.path {
+            let watch = match event.path {
                Some(path_buf) => {
                    let path = path_buf.to_str().unwrap();
-                   if self.watches.watch(&path) {
-                       println!("{:?}", path)
+                   println!("path {:?}", path);
+
+                   match self.watches.watch(&path) {
+                       Some(cmd) => println!("comand: {:?}", cmd),
+                       None => println!("No command for this watch.")
                    }
                },
-               None => println!("No path found.")
-            }
+               None => println!("No path event.")
+            };
         };
-
         Ok(())
     }
 
@@ -79,19 +87,79 @@ Example:
 
 /// # Watches
 ///
-/// Represent the yaml config loaded by watch command.
+/// Represent all items in the yaml config loaded.
 ///
 struct Watches {
-    data: Vec<Yaml>,
+    items: Vec<Yaml>,
 }
 impl Watches {
     pub fn from(plain_text: &str) -> Self{
         Watches {
-            data: YamlLoader::load_from_str(&plain_text).unwrap(),
+            items: YamlLoader::load_from_str(&plain_text).unwrap(),
         }
     }
 
-    pub fn watch(&self, path: &str) -> bool {
-        1 == 1
+    /// Returns the first watch found for the given path
+    /// it may return None if there is no item that match.
+    ///
+    pub fn watch(&self, path: &str) -> Option<ShellCommand>{
+        for w in &self.items {
+            let watched_path = w[0]["when"]["change"].as_str().unwrap();
+            let watched_command = w[0]["when"]["run"].as_str().unwrap();
+            println!("{:?} {:?}", watched_path, path);
+
+            if Pattern::new(watched_path).unwrap().matches(path){
+                return Some(ShellCommand::new(watched_command))
+            }
+        };
+        None
     }
+}
+
+
+#[test]
+fn it_loads_from_yaml_file() {
+    let file_content = "
+- name: my tests
+  when:
+    change: tests/*
+    run: cargo tests
+";
+    let content = YamlLoader::load_from_str(&file_content).unwrap();
+    let watches = Watches::from(file_content);
+    assert_eq!(content[0], watches.items[0]);
+    assert_eq!(content[0]["when"], watches.items[0]["when"]);
+    assert_eq!(content[0]["when"]["change"],
+               watches.items[0]["when"]["change"])
+}
+
+#[test]
+fn it_watches_test_path() {
+    let file_content = "
+- name: my tests
+  when:
+    change: '**/tests/**' 
+    run: 'cargo tests'
+";
+    let watches = Watches::from(file_content);
+    assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
+    assert!(watches.watch("tests/tests.rs").is_some());
+    assert!(watches.watch("tests/ruby.rb").is_some());
+    assert!(watches.watch("tests/folder/other.rs").is_some())
+}
+
+#[test]
+fn it_doesnot_watches_test_path() {
+    let file_content = "
+- name: my source
+  when:
+    change: '*/funzzy/src/**' 
+    run: 'cargo build'
+";
+    let watches = Watches::from(file_content);
+    
+    assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
+    assert!(watches.watch("tests/").is_none());
+    assert!(watches.watch("tests/test.rs").is_none());
+    assert!(watches.watch("tests/folder/other.rs").is_none());
 }
