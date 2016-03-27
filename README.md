@@ -29,6 +29,20 @@ Create a lighter watcher to run my tests everytime something in my project chang
 
 
 ## Installing
+
+  - OSX:
+  ```bash
+  brew tap cristianoliveira/tap
+  brew update
+  brew install funzzy
+  ```
+
+  - Linux
+  ```bash
+  curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
+  ```
+
+## Building
 Make sure you have installed the follow dependecies:
 - Rust
 
