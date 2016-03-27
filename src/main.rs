@@ -1,11 +1,9 @@
 extern crate rustc_serialize;
 extern crate docopt;
-extern crate yaml_rust;
 
 mod cli;
 
 use docopt::Docopt;
-use yaml_rust::{YamlLoader, YamlEmitter};
 use cli::Args;
 
 const VERSION: &'static str = env!("CARGO_PKG_VERSION");
@@ -34,7 +32,7 @@ fn main() {
         _ => match cli::command(&args) {
            Some(command) =>
               match command.execute() { 
-                  Ok(()) => println!("Command execute."),
+                  Ok(()) => println!("Command executed."),
                   Err(err) => println!("{}", err)
               },
            None => show(USAGE)

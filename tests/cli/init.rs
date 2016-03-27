@@ -9,7 +9,7 @@ use std::io::prelude::*;
 #[test]
 fn it_creates_new_config_file() {
     let file = "events.yaml";
-    remove_file(file);
+    let _ = remove_file(file);
 
     let mut command = InitCommand::new();
     command.file_name = &file;
@@ -17,5 +17,5 @@ fn it_creates_new_config_file() {
 
     assert!(Path::new(file).exists());
 
-    remove_file(file);
+    let _ = remove_file(file);
 }

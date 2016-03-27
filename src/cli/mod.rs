@@ -1,9 +1,9 @@
 pub mod init;
 pub mod watch;
 
-use std::error::Error;
 use cli::init::InitCommand;
 use cli::watch::WatchCommand;
+#[warn(unused_imports)]
 use std::io::prelude::*;
 use std::fs::File;
 

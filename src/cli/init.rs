@@ -1,6 +1,8 @@
 use cli::Command;
-use std::fs::File;
+
+#[warn(unused_imports)]
 use std::io::prelude::*;
+use std::fs::File;
 
 /// # InitCommand
 /// Creates a funzzy yaml boilerplate.
@@ -37,7 +39,7 @@ impl Command for InitCommand {
 
         match yaml.write_all(DEFAULT_CONTENT.as_ref()) {
            Ok(_) => Ok(()),
-           Err(err) => panic!("Cannot write file.")
+           Err(_) => panic!("Cannot write file.")
         }
     }
 }

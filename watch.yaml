@@ -3,12 +3,12 @@
 #
 # list here all the events and the commands that it should execute
 
-- name: run my tests
+- name: building
   when:
     change: 'src/**'
     run: cargo test
 
-- name: hello
+- name: tests
   when:
     change: 'tests/*'
-    run: echo "Hello!"
+    run: echo "Doing tests"

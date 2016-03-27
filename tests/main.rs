@@ -11,7 +11,7 @@ fn it_returns_some_command() {
 
 #[test]
 fn it_returns_no_command() {
-   let mut args = funzzy::cli::Args::new();
+   let args = funzzy::cli::Args::new();
    assert!(funzzy::cli::command(&args).is_none())
 }
 

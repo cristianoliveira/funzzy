@@ -2,7 +2,6 @@ extern crate notify;
 extern crate yaml_rust;
 extern crate glob;
 
-use std::env;
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
 use self::glob::Pattern;
@@ -46,7 +45,7 @@ impl Command for WatchCommand {
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            let watch = match event.path {
+            match event.path {
                Some(path_buf) => {
                    let path = path_buf.to_str().unwrap();
 
