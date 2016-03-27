@@ -8,4 +8,4 @@ cargo test --target $TARGET
 cargo build --target $TARGET --release
 
 # sanity check the file type
-file target/$TARGET/release/antr
+file target/$TARGET/release/funzzy

@@ -5,7 +5,7 @@ set -ex
 # create a "staging" directory
 mkdir staging
 
-cp target/$TARGET/release/antr staging
+cp target/$TARGET/release/funzzy staging
 
 cd staging
 
