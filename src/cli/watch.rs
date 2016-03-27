@@ -49,17 +49,15 @@ impl Command for WatchCommand {
             let watch = match event.path {
                Some(path_buf) => {
                    let path = path_buf.to_str().unwrap();
-                   println!("path {:?}", path);
 
                    match self.watches.watch(&path) {
                        Some(mut cmd) => {
-                           println!("comand: {:?}", cmd);
                            match cmd.status() {
                                Ok(_) => println!("executed"),
                                Err(err) => println!("Error {:?}", err),
                            };
                        },
-                       None => println!("No command for this watch.")
+                       None => ()
                    }
                },
                None => println!("No path event.")
@@ -106,14 +104,14 @@ impl Watches {
         for w in &self.items {
             let watched_path = w[0]["when"]["change"].as_str().unwrap();
             let watched_command = w[0]["when"]["run"].as_str().unwrap();
-            println!("{:?} {:?}", watched_path, path);
 
             if Pattern::new(watched_path).unwrap().matches(path){
                 let mut args: Vec<&str>= watched_command.split(' ').collect();
                 let cmd = args.remove(0);
-                println!("command {} args: {:?}", cmd, args);
+
                 let mut shell = ShellCommand::new(cmd);
                 shell.args(&args);
+
                 return Some(shell)
             }
         };
