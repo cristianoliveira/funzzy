@@ -9,12 +9,12 @@ Example:
 
 - name: run my tests
   when:
-    change: '**myproject/tests/**'
+    change: 'tests/**'
     run: make test
 
 - name: compile my sass
   when:
-    change: '**myproject/src/static/**'
+    change: 'src/static/**'
     run: compass
 
 ```

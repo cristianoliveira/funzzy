@@ -26,7 +26,7 @@ impl Command for InitCommand {
 
 - name: run my tests
   when:
-    change: '**/src/**'
+    change: 'src/**'
     run: ls -a
 ";
 

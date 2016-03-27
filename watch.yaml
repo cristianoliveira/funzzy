@@ -5,5 +5,5 @@
 
 - name: run my tests
   when:
-    change: '**/src/**'
+    change: 'src/**'
     run: cargo test

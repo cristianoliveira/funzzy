@@ -3,6 +3,7 @@ extern crate git2;
 extern crate yaml_rust;
 extern crate glob;
 
+use std::env;
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
 use self::glob::Pattern;
@@ -105,7 +106,7 @@ impl Watches {
             let watched_path = w[0]["when"]["change"].as_str().unwrap();
             let watched_command = w[0]["when"]["run"].as_str().unwrap();
 
-            if Pattern::new(watched_path).unwrap().matches(path){
+            if Pattern::new(&format!("**/{}",watched_path)).unwrap().matches(path){
                 let mut args: Vec<&str>= watched_command.split(' ').collect();
                 let cmd = args.remove(0);
 
@@ -141,7 +142,7 @@ fn it_watches_test_path() {
     let file_content = "
 - name: my tests
   when:
-    change: '**/tests/**'
+    change: 'tests/**'
     run: 'cargo tests'
 ";
     let watches = Watches::from(file_content);
@@ -156,7 +157,7 @@ fn it_doesnot_watches_test_path() {
     let file_content = "
 - name: my source
   when:
-    change: '**/src/**'
+    change: 'src/**'
     run: 'cargo build'
 ";
     let watches = Watches::from(file_content);
@@ -172,7 +173,7 @@ fn it_creates_shell_command() {
     let file_content = "
 - name: my source
   when:
-    change: '**/src/**'
+    change: 'src/**'
     run: 'cargo build'
 ";
     let watches = Watches::from(file_content);
