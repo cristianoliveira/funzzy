@@ -55,6 +55,11 @@ Change the yaml as you want. Then run:
 funzzy watch
 ```
 
+or with some arbitrary command
+```bash
+funzzy watch -c 'cargo build'
+```
+
 ## Playground 
 **It does not work between vm and host machine**
 
