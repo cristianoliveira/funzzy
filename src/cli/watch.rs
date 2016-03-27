@@ -45,22 +45,22 @@ impl Command for WatchCommand {
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            match event.path {
-               Some(path_buf) => {
-                   let path = path_buf.to_str().unwrap();
-
-                   match self.watches.watch(&path) {
-                       Some(mut cmd) => {
-                           match cmd.status() {
-                               Ok(_) => println!("executed"),
-                               Err(err) => println!("Error {:?}", err),
-                           };
-                       },
-                       None => ()
-                   }
+            let path: &str = match event.path {
+               Some(ref path_buf) => {
+                   path_buf.to_str().unwrap()
                },
-               None => println!("No path event.")
+               None => ""
             };
+
+            match self.watches.watch(&path) {
+                Some(mut cmd) => {
+                    match cmd.status() {
+                        Ok(_) => println!("executed"),
+                        Err(err) => println!("Error {:?}", err),
+                    };
+                },
+                None => ()
+            }
         };
         Ok(())
     }
@@ -88,12 +88,12 @@ impl Watches {
         match &self.items[0] {
             &Yaml::Array(ref items) => {
                 for i in items {
-                    let watched_path = i["when"]["change"].as_str().unwrap();
-                    let watched_command = i["when"]["run"].as_str().unwrap();
+                    let pattern = i["when"]["change"].as_str().unwrap();
+                    let command = i["when"]["run"].as_str().unwrap();
 
-                    if Pattern::new(&format!("**/{}",watched_path)).unwrap().matches(path){
+                    if Pattern::new(&format!("**/{}", pattern)).unwrap().matches(path){
                         println!("Running: {}", i["name"].as_str().unwrap());
-                        let mut args: Vec<&str>= watched_command.split(' ').collect();
+                        let mut args: Vec<&str>= command.split(' ').collect();
                         let cmd = args.remove(0);
 
                         let mut shell = ShellCommand::new(cmd);
