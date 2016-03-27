@@ -2,10 +2,13 @@
 name = "funzzy"
 version = "0.1.0"
 authors = ["Cristian Oliveira <contato@cristianoliveira.com.br>"]
+description = "The configurable watcher inspired by entr."
+license = "MIT"
+repository = "https://github.com/cristianoliveira/funzzy"
 
 [dependencies]
 docopt = "0.6"
 rustc-serialize = "0.3"
 notify = "^2.5.0"
-yaml-rust = "*"
-glob="*"
+yaml-rust = "0.3.2"
+glob="0.2.11"
