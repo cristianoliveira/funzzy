@@ -1,7 +1,7 @@
 # funzzy
-The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/antr))
+The configurable watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Run configured commands for differents directories using semantic yaml.
+Run configured commands for different directories using semantic yaml.
 
 Example:
 ```yaml
@@ -28,7 +28,7 @@ Example:
 Have you ever used another watcher? 
 
 Well, I did. The last one was Grunt and it consumes almost all of my computer's resources.
-Funzzy was made by Rust that is why it consumes almost nothing to run.
+Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
