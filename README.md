@@ -4,7 +4,7 @@ Run configured commands for differents directories using semantic yaml.
 
 Example:
 ```yaml
-# event.yaml
+# watch.yaml
 # list here all the events and the commands that it should execute
 
 - name: run my tests
