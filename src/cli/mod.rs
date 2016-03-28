@@ -52,7 +52,11 @@ pub fn command(args: &Args) -> Option<Box<Command+'static>>{
             Some(Box::new(InitCommand{ file_name: watch::FILENAME })),
 
         Args { cmd_watch: true, flag_c: false, .. } => {
-            let mut file = File::open(watch::FILENAME).unwrap();
+            let mut file = match File::open(watch::FILENAME) {
+                Ok(f) => f,
+                Err(err) => panic!("File {} cannot be open. Cause: {}",
+                                   watch::FILENAME, err)
+            };
             let mut content = String::new();
             let _ = file.read_to_string(&mut content).unwrap();
 

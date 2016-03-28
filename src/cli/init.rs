@@ -4,6 +4,19 @@ use cli::Command;
 use std::io::prelude::*;
 use std::fs::File;
 
+pub const DEFAULT_CONTENT: &'static str =
+"## Funzzy events file
+# more details see: http://cristian.github.com/funzzy
+#
+# list here all the events and the commands that it should execute
+
+- name: run my tests
+  when:
+    change: 'src/**'
+    run: ls -a
+";
+
+
 /// # InitCommand
 /// Creates a funzzy yaml boilerplate.
 /// 
@@ -20,18 +33,6 @@ impl InitCommand {
 
 impl Command for InitCommand {
     fn execute(&self) -> Result<(), &str>{
-        const DEFAULT_CONTENT: &'static str =
-"## Funzzy events file
- # more details see: http://cristian.github.com/funzzy
- #
- # list here all the events and the commands that it should execute
-
-- name: run my tests
-  when:
-    change: 'src/**'
-    run: ls -a
-";
-
         let mut yaml:File = match File::create(self.file_name) {
            Ok(f) => f,
            Err(err) => panic!("File not created. Cause: {}", err)
