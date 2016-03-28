@@ -6,7 +6,7 @@ use std::fs::File;
 
 pub const DEFAULT_CONTENT: &'static str =
 "## Funzzy events file
-# more details see: http://cristian.github.com/funzzy
+# more details see: https://github.com/cristianoliveira/funzzy
 #
 # list here all the events and the commands that it should execute
 
