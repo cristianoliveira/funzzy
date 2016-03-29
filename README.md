@@ -2,7 +2,7 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Configure execution of different commands when some file change using semantic yaml.
+Configure execution of different commands using semantic yaml.
 
 ```yaml
 # .watch.yaml
