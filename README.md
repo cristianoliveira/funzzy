@@ -1,4 +1,4 @@
-# funzzy  [![Build Status](https://travis-ci.org/cristianoliveira/funzzy.svg?branch=master)](https://travis-ci.org/cristianoliveira/funzzy)  [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
+# funzzy  [![Build Status](https://travis-ci.org/cristianoliveira/funzzy.svg?branch=master)](https://travis-ci.org/cristianoliveira/funzzy)  [![Clippy Linting Result](https://clippy.bashy.io/github/cristianoliveira/funzzy/master/badge.svg)](https://clippy.bashy.io/github/cristianoliveira/funzzy/master/log)  [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
@@ -95,6 +95,9 @@ Running tests:
 ```bash
 cargo test
 ```
+
+## Code Style
+We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validate it before commit. 
 
 ## Contributing
  - Fork it!
