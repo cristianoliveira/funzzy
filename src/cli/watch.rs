@@ -14,7 +14,7 @@ use cli::Command;
 
 pub const FILENAME: &'static str = ".watch.yaml";
 
-/// # WatchCommand
+/// # `WatchCommand`
 ///
 /// Starts watcher to listen the change events configured
 /// in watch.yaml
@@ -48,21 +48,17 @@ impl Command for WatchCommand {
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            let path: &str = match event.path {
-               Some(ref path_buf) => {
-                   path_buf.to_str().unwrap()
-               },
-               None => ""
+            let path: &str = if let Some(ref path_buf) = event.path {
+                path_buf.to_str().unwrap()
+            } else {
+                ""
             };
 
-            match self.watches.watch(&path) {
-                Some(mut cmd) => {
-                    match cmd.status() {
-                        Ok(_) => println!("executed"),
-                        Err(err) => println!("Error {:?}", err),
-                    };
-                },
-                None => ()
+            if let Some(mut cmd) = self.watches.watch(&path) {
+                match cmd.status() {
+                    Ok(_) => println!("executed"),
+                    Err(err) => println!("Error {:?}", err),
+                }
             }
         };
         Ok(())
@@ -102,8 +98,8 @@ impl Watches {
     /// it may return None if there is no item that match.
     ///
     pub fn watch(&self, path: &str) -> Option<ShellCommand>{
-        match &self.items[0] {
-            &Yaml::Array(ref items) => {
+        match self.items[0] {
+            Yaml::Array(ref items) => {
                 for i in items {
                     let pattern = i["when"]["change"].as_str().unwrap();
                     let command = i["when"]["run"].as_str().unwrap();
