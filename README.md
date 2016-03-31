@@ -12,6 +12,7 @@ Configure execution of different commands using semantic yaml.
   when:
     change: 'tests/**'
     run: make test
+    ignore: ["tests/integration/**"]
 
 - name: compile my sass
   when:
