@@ -101,10 +101,12 @@ impl Watches {
         match self.items[0] {
             Yaml::Array(ref items) => {
                 for i in items {
-                    let pattern = i["when"]["change"].as_str().unwrap();
+                    if ignores(i["when"]["ignore"].clone(), path) { return None };
+
+                    let change = i["when"]["change"].as_str().unwrap();
                     let command = i["when"]["run"].as_str().unwrap();
 
-                    if Pattern::new(&format!("**/{}", pattern)).unwrap().matches(path){
+                    if pattern_for(change).matches(path) {
                         println!("Running: {}", i["name"].as_str().unwrap());
                         let mut args: Vec<&str>= command.split(' ').collect();
                         let cmd = args.remove(0);
@@ -122,6 +124,25 @@ impl Watches {
     }
 }
 
+fn ignores(item: Yaml, path: &str) -> bool {
+    match item {
+        Yaml::Array(ref ignoreds) => {
+            for i in ignoreds {
+                let ignored = i.as_str().unwrap();
+                if pattern_for(ignored).matches(path) {
+                    return true;
+                }
+            }
+            false
+        },
+        Yaml::String(ref ignored) => { pattern_for(ignored).matches(path) },
+        _ => false
+    }
+}
+
+fn pattern_for(pattern: &str) -> Pattern {
+    Pattern::new(&format!("**/{}", pattern)).unwrap()
+}
 
 #[test]
 fn it_loads_from_yaml_file() {
@@ -225,4 +246,35 @@ fn it_works_with_multiples_itens() {
     let mut expected_src = ShellCommand::new("cargo");
     expected_src.arg("build");
     assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
+}
+
+#[test]
+fn it_ignores_pattern() {
+    let file_content = "
+- name: my source
+  when:
+    change: 'src/**'
+    run: 'cargo build'
+    ignore: 'src/test/**'
+";
+    let watches = Watches::from(file_content);
+    assert!(watches.watch("src/other.rb").is_some());
+    assert!(watches.watch("src/test.txt").is_some());
+    assert!(watches.watch("src/test/other.tmp").is_none())
+}
+
+#[test]
+fn it_ignores_a_list_of_patterns() {
+    let file_content = "
+- name: my source
+  when:
+    change: 'src/**'
+    run: 'cargo build'
+    ignore: ['src/test/**', 'src/tmp/**']
+";
+    let watches = Watches::from(file_content);
+    assert!(watches.watch("src/other.rb").is_some());
+    assert!(watches.watch("src/test.txt").is_some());
+    assert!(watches.watch("src/tmp/test.txt").is_none());
+    assert!(watches.watch("src/test/other.tmp").is_none())
 }
