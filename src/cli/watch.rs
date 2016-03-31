@@ -126,10 +126,9 @@ impl Watches {
 fn ignores(item: Yaml, path: &str) -> bool {
     match item {
         Yaml::Array(ref ignoreds) => {
-            ignoreds.iter()
-                    .any(|i| pattern_for(i.as_str().unwrap()).matches(path))
+            ignoreds.iter().any(|i| ignores(i.clone(), path))
         },
-        Yaml::String(ref ignored) => { pattern_for(ignored).matches(path) },
+        Yaml::String(ref ignore) => { pattern_for(ignore).matches(path) },
         _ => false
     }
 }
