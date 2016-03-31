@@ -30,14 +30,15 @@ fn main() {
     match args {
         Args { flag_v: true, .. } => show(VERSION),
         Args { flag_h: true, .. } => show(USAGE),
-        _ => match cli::command(&args) {
-           Some(command) =>
-              match command.execute() { 
-                  Ok(()) => println!("Command executed."),
-                  Err(err) => println!("{}", err)
-              },
-           None => show(USAGE)
-        }
+        _ => 
+            if let Some(command) = cli::command(&args) {
+                match command.execute() { 
+                    Ok(()) => println!("Command executed."),
+                    Err(err) => println!("{}", err)
+                }
+            } else {
+                show(USAGE)
+            }
     }
 }
 

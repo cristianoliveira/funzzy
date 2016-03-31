@@ -100,9 +100,8 @@ impl Watches {
     pub fn watch(&self, path: &str) -> Option<ShellCommand>{
         match self.items[0] {
             Yaml::Array(ref items) => {
-                for i in items {
-                    if ignores(i["when"]["ignore"].clone(), path) { return None };
-
+                for i in items.iter()
+                              .filter(|i| !ignores(i["when"]["ignore"].clone(), path)){
                     let change = i["when"]["change"].as_str().unwrap();
                     let command = i["when"]["run"].as_str().unwrap();
 
@@ -127,13 +126,8 @@ impl Watches {
 fn ignores(item: Yaml, path: &str) -> bool {
     match item {
         Yaml::Array(ref ignoreds) => {
-            for i in ignoreds {
-                let ignored = i.as_str().unwrap();
-                if pattern_for(ignored).matches(path) {
-                    return true;
-                }
-            }
-            false
+            ignoreds.iter()
+                    .any(|i| pattern_for(i.as_str().unwrap()).matches(path))
         },
         Yaml::String(ref ignored) => { pattern_for(ignored).matches(path) },
         _ => false
