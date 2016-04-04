@@ -3,7 +3,7 @@ mod cli;
 
 #[warn(unused_imports)]
 use std::io::prelude::*;
-use std::fs::{ File, remove_file };
+use std::fs::{ File };
 
 #[test]
 fn it_returns_some_command() {

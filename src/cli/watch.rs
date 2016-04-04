@@ -101,11 +101,10 @@ impl Watches {
         match self.items[0] {
             Yaml::Array(ref items) => {
                 for i in items.iter()
-                              .filter(|i| !ignores(i["when"]["ignore"].clone(), path)){
-                    let change = i["when"]["change"].as_str().unwrap();
+                              .filter(|i| !matches(i["when"]["ignore"].clone(), path)){
                     let command = i["when"]["run"].as_str().unwrap();
 
-                    if pattern_for(change).matches(path) {
+                    if matches(i["when"]["change"].clone(), path) {
                         println!("Running: {}", i["name"].as_str().unwrap());
                         let mut args: Vec<&str>= command.split(' ').collect();
                         let cmd = args.remove(0);
@@ -123,12 +122,12 @@ impl Watches {
     }
 }
 
-fn ignores(item: Yaml, path: &str) -> bool {
+fn matches(item: Yaml, path: &str) -> bool {
     match item {
-        Yaml::Array(ref ignoreds) => {
-            ignoreds.iter().any(|i| ignores(i.clone(), path))
+        Yaml::Array(ref items) => {
+            items.iter().any(|i| matches(i.clone(), path))
         },
-        Yaml::String(ref ignore) => { pattern_for(ignore).matches(path) },
+        Yaml::String(ref item) => { pattern_for(item).matches(path) },
         _ => false
     }
 }
@@ -137,137 +136,148 @@ fn pattern_for(pattern: &str) -> Pattern {
     Pattern::new(&format!("**/{}", pattern)).unwrap()
 }
 
-#[test]
-fn it_loads_from_yaml_file() {
-    let file_content = "
-- name: my tests
-  when:
-    change: tests/*
-    run: cargo tests
-";
-    let content = YamlLoader::load_from_str(&file_content).unwrap();
-    let watches = Watches::from(file_content);
-    assert_eq!(content[0], watches.items[0]);
-    assert_eq!(content[0]["when"], watches.items[0]["when"]);
-    assert_eq!(content[0]["when"]["change"],
-               watches.items[0]["when"]["change"])
-}
+#[cfg(test)]
+mod tests {
+    extern crate notify;
+    extern crate yaml_rust;
+    extern crate glob;
 
-#[test]
-fn it_loads_from_args() {
-    let args = vec![String::from("cargo build")];
-    let watches = Watches::from_args(args);
+    use super::*;
+    use std::process::Command as ShellCommand;
+    use self::yaml_rust::{YamlLoader};
 
-    println!("{:?}", watches.items[0]);
-    assert!(watches.watch("src/main.rs").is_some());
-    assert!(watches.watch("test/main.rs").is_some());
-    assert!(watches.watch(".").is_some());
+    #[test]
+    fn it_loads_from_yaml_file() {
+        let file_content = "
+    - name: my tests
+      when:
+        change: tests/*
+        run: cargo tests
+    ";
+        let content = YamlLoader::load_from_str(&file_content).unwrap();
+        let watches = Watches::from(file_content);
+        assert_eq!(content[0], watches.items[0]);
+        assert_eq!(content[0]["when"], watches.items[0]["when"]);
+        assert_eq!(content[0]["when"]["change"],
+                   watches.items[0]["when"]["change"])
+    }
 
-    let result = watches.watch(".").unwrap();
-    let mut expected = ShellCommand::new("cargo");
-    expected.arg("build");
-    assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
-}
+    #[test]
+    fn it_loads_from_args() {
+        let args = vec![String::from("cargo build")];
+        let watches = Watches::from_args(args);
 
-#[test]
-fn it_watches_test_path() {
-    let file_content = "
-- name: my tests
-  when:
-    change: 'tests/**'
-    run: 'cargo tests'
-";
-    let watches = Watches::from(file_content);
-    assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
-    assert!(watches.watch("tests/tests.rs").is_some());
-    assert!(watches.watch("tests/ruby.rb").is_some());
-    assert!(watches.watch("tests/folder/other.rs").is_some())
-}
+        println!("{:?}", watches.items[0]);
+        assert!(watches.watch("src/main.rs").is_some());
+        assert!(watches.watch("test/main.rs").is_some());
+        assert!(watches.watch(".").is_some());
 
-#[test]
-fn it_doesnot_watches_test_path() {
-    let file_content = "
-- name: my source
-  when:
-    change: 'src/**'
-    run: 'cargo build'
-";
-    let watches = Watches::from(file_content);
+        let result = watches.watch(".").unwrap();
+        let mut expected = ShellCommand::new("cargo");
+        expected.arg("build");
+        assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
+    }
 
-    assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
-    assert!(watches.watch("tests/").is_none());
-    assert!(watches.watch("tests/test.rs").is_none());
-    assert!(watches.watch("tests/folder/other.rs").is_none());
-}
+    #[test]
+    fn it_watches_test_path() {
+        let file_content = "
+    - name: my tests
+      when:
+        change: 'tests/**'
+        run: 'cargo tests'
+    ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
+        assert!(watches.watch("tests/tests.rs").is_some());
+        assert!(watches.watch("tests/ruby.rb").is_some());
+        assert!(watches.watch("tests/folder/other.rs").is_some())
+    }
 
-#[test]
-fn it_creates_shell_command() {
-    let file_content = "
-- name: my source
-  when:
-    change: 'src/**'
-    run: 'cargo build'
-";
-    let watches = Watches::from(file_content);
-    let result = watches.watch("src/test.rs").unwrap();
-    let mut expected = ShellCommand::new("cargo");
-    expected.arg("build");
-    assert_eq!(format!("{:?}", expected),  format!("{:?}", result))
-}
+    #[test]
+    fn it_doesnot_watches_test_path() {
+        let file_content = "
+    - name: my source
+      when:
+        change: 'src/**'
+        run: 'cargo build'
+    ";
+        let watches = Watches::from(file_content);
 
-#[test]
-fn it_works_with_multiples_itens() {
-    let file_content = "
-- name: my source
-  when:
-    change: 'src/**'
-    run: 'cargo build'
+        assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
+        assert!(watches.watch("tests/").is_none());
+        assert!(watches.watch("tests/test.rs").is_none());
+        assert!(watches.watch("tests/folder/other.rs").is_none());
+    }
 
-- name: other
-  when:
-    change: 'test/**'
-    run: 'cargo test'
-";
-    let watches = Watches::from(file_content);
+    #[test]
+    fn it_creates_shell_command() {
+        let file_content = "
+    - name: my source
+      when:
+        change: 'src/**'
+        run: 'cargo build'
+    ";
+        let watches = Watches::from(file_content);
+        let result = watches.watch("src/test.rs").unwrap();
+        let mut expected = ShellCommand::new("cargo");
+        expected.arg("build");
+        assert_eq!(format!("{:?}", expected),  format!("{:?}", result))
+    }
 
-    let result = watches.watch("test/test.rs").unwrap();
-    let mut expected = ShellCommand::new("cargo");
-    expected.arg("test");
-    assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
+    #[test]
+    fn it_works_with_multiples_itens() {
+        let file_content = "
+    - name: my source
+      when:
+        change: 'src/**'
+        run: 'cargo build'
 
-    let result_src = watches.watch("src/test.rs").unwrap();
-    let mut expected_src = ShellCommand::new("cargo");
-    expected_src.arg("build");
-    assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
-}
+    - name: other
+      when:
+        change: 'test/**'
+        run: 'cargo test'
+    ";
+        let watches = Watches::from(file_content);
 
-#[test]
-fn it_ignores_pattern() {
-    let file_content = "
-- name: my source
-  when:
-    change: 'src/**'
-    run: 'cargo build'
-    ignore: 'src/test/**'
-";
-    let watches = Watches::from(file_content);
-    assert!(watches.watch("src/other.rb").is_some());
-    assert!(watches.watch("src/test.txt").is_some());
-    assert!(watches.watch("src/test/other.tmp").is_none())
-}
+        let result = watches.watch("test/test.rs").unwrap();
+        let mut expected = ShellCommand::new("cargo");
+        expected.arg("test");
+        assert_eq!(format!("{:?}", expected),  format!("{:?}", result));
 
-#[test]
-fn it_ignores_a_list_of_patterns() {
-    let file_content = "
-- name: my source
-  when:
-    change: 'src/**'
-    run: 'cargo build'
-    ignore: ['src/test/**', 'src/tmp/**']
-";
-    let watches = Watches::from(file_content);
-    assert!(watches.watch("src/other.rb").is_some());
-    assert!(watches.watch("src/test.txt").is_some());
-    assert!(watches.watch("src/tmp/test.txt").is_none());
-    assert!(watches.watch("src/test/other.tmp").is_none())
+        let result_src = watches.watch("src/test.rs").unwrap();
+        let mut expected_src = ShellCommand::new("cargo");
+        expected_src.arg("build");
+        assert_eq!(format!("{:?}", expected_src),  format!("{:?}", result_src))
+    }
+
+    #[test]
+    fn it_ignores_pattern() {
+        let file_content = "
+    - name: my source
+      when:
+        change: 'src/**'
+        run: 'cargo build'
+        ignore: 'src/test/**'
+    ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("src/other.rb").is_some());
+        assert!(watches.watch("src/test.txt").is_some());
+        assert!(watches.watch("src/test/other.tmp").is_none())
+    }
+
+    #[test]
+    fn it_ignores_a_list_of_patterns() {
+        let file_content = "
+    - name: my source
+      when:
+        change: 'src/**'
+        run: 'cargo build'
+        ignore: ['src/test/**', 'src/tmp/**']
+    ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("src/other.rb").is_some());
+        assert!(watches.watch("src/test.txt").is_some());
+        assert!(watches.watch("src/tmp/test.txt").is_none());
+        assert!(watches.watch("src/test/other.tmp").is_none())
+    }
 }
