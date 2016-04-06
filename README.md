@@ -7,6 +7,7 @@ Configure execution of different commands using semantic yaml.
 ```yaml
 # .watch.yaml
 # list here all the events and the commands that it should execute
+# TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 
 - name: run my tests
   when:
@@ -14,10 +15,10 @@ Configure execution of different commands using semantic yaml.
     run: make test
     ignore: ["tests/integration/**"]
 
-- name: compile my sass
+- name: fast compile sass
   when:
     change: 'src/static/**'
-    run: compass
+    run: compass compile src/static/some.scss
 
 - name: Starwars
   when:
