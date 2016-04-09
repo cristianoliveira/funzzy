@@ -13,16 +13,16 @@ Configure execution of different commands using semantic yaml.
   when:
     change: 'tests/**'
     run: make test
-    ignore: ["tests/integration/**"]
+    ignore: ['tests/integration/**']
 
 - name: fast compile sass
   when:
-    change: 'src/static/**'
+    change: ['src/static/**', 'src/assets/*']
     run: compass compile src/static/some.scss
 
 - name: Starwars
   when:
-    change: ".watch.yaml"
+    change: '.watch.yaml'
     run: telnet towel.blinkenlights.nl
 ```
 
@@ -48,7 +48,7 @@ Create a lighter watcher to run my tests everytime something in my project chang
   ```bash
   cargo install funzzy
   ```
-  **Make sure you have `$HOME/.cargo/bin` in your PATH
+  *Make sure you have `$HOME/.cargo/bin` in your PATH
   `export $PATH:$HOME/.cargo/bin`
 
 ## Building
@@ -112,5 +112,5 @@ Pull Requests are really welcome! Others support also.
 
 **Pull Request should have unit tests**
 
-# Licence
-This project was made under MIT Licence.
+# License
+This project was made under MIT License.
