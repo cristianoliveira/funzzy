@@ -55,6 +55,7 @@ impl Command for WatchCommand {
             };
 
             if let Some(mut cmd) = self.watches.watch(&path) {
+                clear_shell();
                 match cmd.status() {
                     Ok(_) => println!("executed"),
                     Err(err) => println!("Error {:?}", err),
@@ -109,6 +110,7 @@ impl Watches {
                         let mut args: Vec<&str>= command.split(' ').collect();
                         let cmd = args.remove(0);
 
+
                         let mut shell = ShellCommand::new(cmd);
                         shell.args(&args);
 
@@ -120,6 +122,10 @@ impl Watches {
         };
         None
     }
+}
+
+fn clear_shell() {
+    let _ = ShellCommand::new("clear").status();
 }
 
 fn matches(item: Yaml, path: &str) -> bool {
