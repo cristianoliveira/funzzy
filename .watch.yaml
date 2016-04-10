@@ -3,11 +3,6 @@
 #
 # list here all the events and the commands that it should execute
 
-- name: tests
-  when:
-    change: 'src/main.rs'
-    run: cargo run watch -c 'echo $PATH'
-
 - name: building
   when:
     change: 'src/**'
