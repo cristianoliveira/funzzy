@@ -34,12 +34,13 @@ impl Command for InitCommand {
     fn execute(&self) -> Result<(), &str>{
         let mut yaml:File = match File::create(self.file_name) {
            Ok(f) => f,
-           Err(err) => panic!("File not created. Cause: {}", err)
+           Err(err) => panic!("File wasn't created. Cause: {}", err)
         };
 
-        match yaml.write_all(DEFAULT_CONTENT.as_ref()) {
-           Ok(_) => Ok(()),
-           Err(_) => panic!("Cannot write file.")
+        if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
+            panic!("Cannot write. Cause: {}", err)
         }
+
+        Ok(())
     }
 }
