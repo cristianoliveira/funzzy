@@ -1,10 +1,6 @@
 extern crate funzzy;
 mod cli;
 
-#[warn(unused_imports)]
-use std::io::prelude::*;
-use std::fs::{ File };
-
 #[test]
 fn it_returns_some_command() {
    let mut args = funzzy::cli::Args::new();

@@ -4,7 +4,6 @@ use funzzy::cli::Command;
 use funzzy::cli::init::InitCommand;
 use std::fs::remove_file;
 use std::path::Path;
-use std::io::prelude::*;
 
 #[test]
 fn it_creates_new_config_file() {

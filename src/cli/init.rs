@@ -1,7 +1,6 @@
 use cli::Command;
 
-#[warn(unused_imports)]
-use std::io::prelude::*;
+use std::io::Write;
 use std::fs::File;
 
 pub const DEFAULT_CONTENT: &'static str =
