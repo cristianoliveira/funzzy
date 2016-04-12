@@ -9,9 +9,9 @@ fn it_returns_some_command() {
 }
 
 #[test]
-fn it_returns_no_command() {
+fn it_as_default_returns_watch_command() {
    let args = funzzy::cli::Args::new();
-   assert!(funzzy::cli::command(&args).is_none())
+   assert!(funzzy::cli::command(&args).is_some());
 }
 
 #[test]

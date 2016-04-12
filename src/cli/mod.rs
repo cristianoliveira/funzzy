@@ -2,7 +2,7 @@ pub mod init;
 pub mod watch;
 
 use cli::init::InitCommand;
-use cli::watch::{ Watches, WatchCommand };
+use cli::watch::{Watches, WatchCommand};
 #[warn(unused_imports)]
 use std::io::prelude::*;
 use std::fs::File;
@@ -46,28 +46,24 @@ pub trait Command {
 /// Return a command based on [args] passed as param
 /// or None if any command was found.
 ///
-pub fn command(args: &Args) -> Option<Box<Command+'static>>{
+pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
     match *args {
-        Args { cmd_init: true, .. } =>
-            Some(Box::new(InitCommand{ file_name: watch::FILENAME })),
-
-        Args { cmd_watch: true, flag_c: false, .. } => {
-            let mut file = match File::open(watch::FILENAME) {
-                Ok(f) => f,
-                Err(err) => panic!("File {} cannot be open. Cause: {}",
-                                   watch::FILENAME, err)
-            };
-            let mut content = String::new();
-            let _ = file.read_to_string(&mut content).unwrap();
-
-            Some(Box::new(WatchCommand::new(Watches::from(&content))))
-        },
+        Args { cmd_init: true, .. } => Some(Box::new(InitCommand { file_name: watch::FILENAME })),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
             Some(Box::new(WatchCommand::new(Watches::from_args(command_args))))
         }
 
-        _ => None
+        _ => {
+            let mut file = match File::open(watch::FILENAME) {
+                Ok(f) => f,
+                Err(err) => panic!("File {} cannot be open. Cause: {}", watch::FILENAME, err),
+            };
+            let mut content = String::new();
+            let _ = file.read_to_string(&mut content).unwrap();
+
+            Some(Box::new(WatchCommand::new(Watches::from(&content))))
+        }
     }
 }
