@@ -15,6 +15,7 @@ Usage:
   funzzy
   funzzy watch
   funzzy watch -c <command>
+  funzzy watch -s -c <command>
   funzzy init
   funzzy -h
   funzzy -v
@@ -27,8 +28,8 @@ Options:
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-                         .and_then(|dopt| dopt.decode())
-                         .unwrap_or_else(|e| e.exit());
+        .and_then(|dopt| dopt.decode())
+        .unwrap_or_else(|e| e.exit());
 
     match args {
         Args { flag_v: true, .. } => show(VERSION),
