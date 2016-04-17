@@ -105,7 +105,6 @@ impl Watches {
                         let commands = yaml::extract_commands(&i["run"]);
                         return Some(commands);
                     }
-                }
             }
             _ => panic!("Yaml format unkown."),
         };
@@ -140,7 +139,7 @@ mod tests {
         assert_eq!(content[0], watches.items[0]);
         assert_eq!(content[0]["when"], watches.items[0]["when"]);
         assert_eq!(content[0]["when"]["change"],
-                   watches.items[0]["when"]["change"])
+        watches.items[0]["when"]["change"])
     }
 
     #[test]
