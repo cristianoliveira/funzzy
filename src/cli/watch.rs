@@ -10,6 +10,7 @@ use self::notify::{RecommendedWatcher, Watcher};
 use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
+use yaml;
 
 
 pub const FILENAME: &'static str = ".watch.yaml";
@@ -50,10 +51,12 @@ impl Command for WatchCommand {
                 ""
             };
 
-            if let Some(mut cmd) = self.watches.watch(&path) {
+            if let Some(shell_commands) = self.watches.watch(&path) {
                 clear_shell();
-                if let Err(err) = cmd.status() {
-                    println!("Error {:?}", err)
+                for mut cmd in shell_commands {
+                    if let Err(err) = cmd.status() {
+                        println!("Error {:?}", err)
+                    }
                 }
             }
         }
@@ -74,12 +77,11 @@ impl Watches {
         let template = format!("
         - name: from command
           when:
-            \
-                                change: '{path}'
+            change: '{path}'
             run: {command}
         ",
-                               path = "**",
-                               command = args[0]);
+        path = "**",
+        command = args[0]);
 
         Watches { items: YamlLoader::load_from_str(&template).unwrap() }
     }
@@ -91,25 +93,19 @@ impl Watches {
     /// Returns the first watch found for the given path
     /// it may return None if there is no item that match.
     ///
-    pub fn watch(&self, path: &str) -> Option<ShellCommand> {
+    pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
         match self.items[0] {
             Yaml::Array(ref items) => {
                 for i in items.iter()
-                              .filter(|i| !matches(&i["when"]["ignore"], path)) {
+                    .filter(|i| !yaml::matches(&i["when"]["ignore"], path)) {
 
-                    if matches(&i["when"]["change"], path) {
-                        println!("Running: {}", i["name"].as_str().unwrap());
+                        if yaml::matches(&i["when"]["change"], path) {
+                            println!("Running: {}", i["name"].as_str().unwrap());
 
-                        let command = i["when"]["run"].as_str().unwrap();
-                        let mut args: Vec<&str> = command.split(' ').collect();
-                        let cmd = args.remove(0);
-
-                        let mut shell = ShellCommand::new(cmd);
-                        shell.args(&args);
-
-                        return Some(shell);
+                            let commands = yaml::extract_commands(&i["when"]["run"]);
+                            return Some(commands);
+                        }
                     }
-                }
             }
             _ => panic!("Yaml format unkown."),
         };
@@ -119,18 +115,6 @@ impl Watches {
 
 fn clear_shell() {
     let _ = ShellCommand::new("clear").status();
-}
-
-fn matches(item: &Yaml, path: &str) -> bool {
-    match *item {
-        Yaml::Array(ref items) => items.iter().any(|i| matches(&i, path)),
-        Yaml::String(ref item) => pattern_for(item).matches(path),
-        _ => false,
-    }
-}
-
-fn pattern_for(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**/{}", pattern)).unwrap()
 }
 
 #[cfg(test)]
@@ -146,21 +130,21 @@ mod tests {
     #[test]
     fn it_loads_from_yaml_file() {
         let file_content = "
-    - name: my tests
-      when:
-        change: tests/*
-        run: cargo tests
-    ";
+        - name: my tests
+          when:
+            change: tests/*
+            run: cargo tests
+        ";
         let content = YamlLoader::load_from_str(&file_content).unwrap();
         let watches = Watches::from(file_content);
         assert_eq!(content[0], watches.items[0]);
         assert_eq!(content[0]["when"], watches.items[0]["when"]);
         assert_eq!(content[0]["when"]["change"],
-                   watches.items[0]["when"]["change"])
-    }
+        watches.items[0]["when"]["change"])
+        }
 
-    #[test]
-    fn it_loads_from_args() {
+        #[test]
+        fn it_loads_from_args() {
         let args = vec![String::from("cargo build")];
         let watches = Watches::from_args(args);
 
@@ -172,116 +156,135 @@ mod tests {
         let result = watches.watch(".").unwrap();
         let mut expected = ShellCommand::new("cargo");
         expected.arg("build");
-        assert_eq!(format!("{:?}", expected), format!("{:?}", result));
-    }
+        assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result));
+        }
 
-    #[test]
-    fn it_watches_test_path() {
+        #[test]
+        fn it_watches_test_path() {
         let file_content = "
-    - name: my tests
-      when:
-        change: 'tests/**'
-        \
-                            run: 'cargo tests'
-    ";
+        - name: my tests
+          when:
+            change: 'tests/**'
+            \
+            run: 'cargo tests'
+        ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
         assert!(watches.watch("tests/tests.rs").is_some());
         assert!(watches.watch("tests/ruby.rb").is_some());
         assert!(watches.watch("tests/folder/other.rs").is_some())
-    }
+        }
 
-    #[test]
-    fn it_doesnot_watches_test_path() {
+        #[test]
+        fn it_doesnot_watches_test_path() {
         let file_content = "
-    - name: my source
-      when:
-        change: 'src/**'
-        \
-                            run: 'cargo build'
-    ";
+        - name: my source
+          when:
+            change: 'src/**'
+            \
+            run: 'cargo build'
+        ";
         let watches = Watches::from(file_content);
 
         assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
         assert!(watches.watch("tests/").is_none());
         assert!(watches.watch("tests/test.rs").is_none());
         assert!(watches.watch("tests/folder/other.rs").is_none());
-    }
+        }
 
-    #[test]
-    fn it_creates_shell_command() {
+        #[test]
+        fn it_creates_a_list_of_shell_commands() {
         let file_content = "
-    - name: my source
-      when:
-        change: 'src/**'
-        \
-                            run: 'cargo build'
-    ";
+        - name: my source
+          when:
+            change: 'src/**'
+            run: 'cargo build'
+        ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
         let mut expected = ShellCommand::new("cargo");
         expected.arg("build");
-        assert_eq!(format!("{:?}", expected), format!("{:?}", result))
-    }
+        assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result))
+        }
 
-    #[test]
-    fn it_works_with_multiples_itens() {
+        #[test]
+        fn it_works_with_more_than_one_command() {
         let file_content = "
-    - name: my source
-      when:
-        change: 'src/**'
-        \
-                            run: 'cargo build'
+        - name: my source
+          when:
+            change: 'src/**'
+            run: ['cargo build', 'cargo test']
+        ";
+        let watches = Watches::from(file_content);
+        let result = watches.watch("src/test.rs").unwrap();
 
-    - name: other
-      when:
-        change: \
-                            'test/**'
-        run: 'cargo test'
-    ";
+        let mut expected: Vec<ShellCommand> = vec![];
+        let mut cmd = ShellCommand::new("cargo");
+        cmd.arg("build");
+        expected.push(cmd);
+
+        let mut cmd2 = ShellCommand::new("cargo");
+        cmd2.arg("test");
+        expected.push(cmd2);
+
+        assert_eq!(format!("{:?}", expected), format!("{:?}", result))
+        }
+
+        #[test]
+        fn it_works_with_multiples_itens() {
+        let file_content = "
+        - name: my source
+          when:
+            change: 'src/**'
+            run: 'cargo build'
+
+        - name: other
+          when:
+            change: 'test/**'
+            run: 'cargo test'
+        ";
         let watches = Watches::from(file_content);
 
         let result = watches.watch("test/test.rs").unwrap();
         let mut expected = ShellCommand::new("cargo");
         expected.arg("test");
-        assert_eq!(format!("{:?}", expected), format!("{:?}", result));
+        assert_eq!(format!("{:?}", expected), format!("{:?}", result[0]));
 
         let result_src = watches.watch("src/test.rs").unwrap();
         let mut expected_src = ShellCommand::new("cargo");
         expected_src.arg("build");
-        assert_eq!(format!("{:?}", expected_src), format!("{:?}", result_src))
-    }
+        assert_eq!(format!("{:?}", expected_src), format!("{:?}", result_src[0]))
+        }
 
-    #[test]
-    fn it_ignores_pattern() {
+        #[test]
+        fn it_ignores_pattern() {
         let file_content = "
-    - name: my source
-      when:
-        change: 'src/**'
-        \
-                            run: 'cargo build'
-        ignore: 'src/test/**'
-    ";
+        - name: my source
+          when:
+            change: 'src/**'
+            run: 'cargo build'
+            ignore: 'src/test/**'
+        ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/test/other.tmp").is_none())
-    }
+        }
 
-    #[test]
-    fn it_ignores_a_list_of_patterns() {
+        #[test]
+        fn it_ignores_a_list_of_patterns() {
         let file_content = "
-    - name: my source
-      when:
-        change: 'src/**'
-        \
-                            run: 'cargo build'
-        ignore: ['src/test/**', 'src/tmp/**']
-    ";
+        - name: my source
+          when:
+            change: 'src/**'
+            \
+            run: 'cargo build'
+            ignore: ['src/test/**', 'src/tmp/**']
+        ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
         assert!(watches.watch("src/test/other.tmp").is_none())
-    }
-}
+        }
+        }
