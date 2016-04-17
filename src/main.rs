@@ -2,6 +2,7 @@ extern crate rustc_serialize;
 extern crate docopt;
 
 mod cli;
+mod yaml;
 
 use docopt::Docopt;
 use cli::Args;
@@ -21,6 +22,7 @@ Usage:
 Options:
   -h --help         Shows this message.
   -v --version      Shows version.
+  -c                Execute given command for current folder
 ";
 
 fn main() {
