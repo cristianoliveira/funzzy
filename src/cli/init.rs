@@ -10,9 +10,9 @@ pub const DEFAULT_CONTENT: &'static str = "
 # list here all the events and the commands that it should execute
 
 - name: run my tests
+  run:'ls -a'
   when:
     change: 'src/**'
-    run: ls -a
 ";
 
 

@@ -4,19 +4,19 @@
 # list here all the events and the commands that it should execute
 
 - name: building
+  run: cargo test
   when:
     change: 'src/**'
-    run: cargo test
     ignore: '.event.yaml'
 
 - name: tests
+  run: cargo test
   when:
     change: 'tests/**'
-    run: cargo test
     ignore: '.event.yaml'
 
 - name: Starwars
+  run: telnet towel.blinkenlights.nl
   when:
     change: ".watch.yaml"
-    run: telnet towel.blinkenlights.nl
 
