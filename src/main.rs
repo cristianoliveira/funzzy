@@ -15,6 +15,7 @@ Usage:
   funzzy
   funzzy watch
   funzzy watch -c <command>
+  funzzy watch -s -c <command>
   funzzy init
   funzzy -h
   funzzy -v

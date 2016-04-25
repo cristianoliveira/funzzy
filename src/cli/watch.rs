@@ -76,12 +76,12 @@ impl Watches {
     pub fn from_args(args: Vec<String>) -> Self {
         let template = format!("
         - name: from command
+          run: {command}
           when:
             change: '{path}'
-            run: {command}
         ",
-        path = "**",
-        command = args[0]);
+         path = "**",
+         command = args[0]);
 
         Watches { items: YamlLoader::load_from_str(&template).unwrap() }
     }
@@ -97,15 +97,15 @@ impl Watches {
         match self.items[0] {
             Yaml::Array(ref items) => {
                 for i in items.iter()
-                    .filter(|i| !yaml::matches(&i["when"]["ignore"], path)) {
+                              .filter(|i| !yaml::matches(&i["when"]["ignore"], path)) {
 
-                        if yaml::matches(&i["when"]["change"], path) {
-                            println!("Running: {}", i["name"].as_str().unwrap());
+                    if yaml::matches(&i["when"]["change"], path) {
+                        println!("Running: {}", i["name"].as_str().unwrap());
 
-                            let commands = yaml::extract_commands(&i["when"]["run"]);
-                            return Some(commands);
-                        }
+                        let commands = yaml::extract_commands(&i["run"]);
+                        return Some(commands);
                     }
+                }
             }
             _ => panic!("Yaml format unkown."),
         };
@@ -131,20 +131,20 @@ mod tests {
     fn it_loads_from_yaml_file() {
         let file_content = "
         - name: my tests
+          run: cargo tests
           when:
             change: tests/*
-            run: cargo tests
         ";
         let content = YamlLoader::load_from_str(&file_content).unwrap();
         let watches = Watches::from(file_content);
         assert_eq!(content[0], watches.items[0]);
         assert_eq!(content[0]["when"], watches.items[0]["when"]);
         assert_eq!(content[0]["when"]["change"],
-        watches.items[0]["when"]["change"])
-        }
+                   watches.items[0]["when"]["change"])
+    }
 
-        #[test]
-        fn it_loads_from_args() {
+    #[test]
+    fn it_loads_from_args() {
         let args = vec![String::from("cargo build")];
         let watches = Watches::from_args(args);
 
@@ -157,32 +157,30 @@ mod tests {
         let mut expected = ShellCommand::new("cargo");
         expected.arg("build");
         assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result));
-        }
+    }
 
-        #[test]
-        fn it_watches_test_path() {
+    #[test]
+    fn it_watches_test_path() {
         let file_content = "
         - name: my tests
+          run: 'cargo tests'
           when:
             change: 'tests/**'
-            \
-            run: 'cargo tests'
         ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
         assert!(watches.watch("tests/tests.rs").is_some());
         assert!(watches.watch("tests/ruby.rb").is_some());
         assert!(watches.watch("tests/folder/other.rs").is_some())
-        }
+    }
 
-        #[test]
-        fn it_doesnot_watches_test_path() {
+    #[test]
+    fn it_doesnot_watches_test_path() {
         let file_content = "
         - name: my source
+          run: 'cargo build'
           when:
             change: 'src/**'
-            \
-            run: 'cargo build'
         ";
         let watches = Watches::from(file_content);
 
@@ -190,30 +188,30 @@ mod tests {
         assert!(watches.watch("tests/").is_none());
         assert!(watches.watch("tests/test.rs").is_none());
         assert!(watches.watch("tests/folder/other.rs").is_none());
-        }
+    }
 
-        #[test]
-        fn it_creates_a_list_of_shell_commands() {
+    #[test]
+    fn it_creates_a_list_of_shell_commands() {
         let file_content = "
         - name: my source
+          run: 'cargo build'
           when:
             change: 'src/**'
-            run: 'cargo build'
         ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
         let mut expected = ShellCommand::new("cargo");
         expected.arg("build");
         assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result))
-        }
+    }
 
-        #[test]
-        fn it_works_with_more_than_one_command() {
+    #[test]
+    fn it_works_with_more_than_one_command() {
         let file_content = "
         - name: my source
+          run: ['cargo build', 'cargo test']
           when:
             change: 'src/**'
-            run: ['cargo build', 'cargo test']
         ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
@@ -228,20 +226,20 @@ mod tests {
         expected.push(cmd2);
 
         assert_eq!(format!("{:?}", expected), format!("{:?}", result))
-        }
+    }
 
-        #[test]
-        fn it_works_with_multiples_itens() {
+    #[test]
+    fn it_works_with_multiples_itens() {
         let file_content = "
         - name: my source
+          run: 'cargo build'
           when:
             change: 'src/**'
-            run: 'cargo build'
 
         - name: other
+          run: 'cargo test'
           when:
             change: 'test/**'
-            run: 'cargo test'
         ";
         let watches = Watches::from(file_content);
 
@@ -253,32 +251,32 @@ mod tests {
         let result_src = watches.watch("src/test.rs").unwrap();
         let mut expected_src = ShellCommand::new("cargo");
         expected_src.arg("build");
-        assert_eq!(format!("{:?}", expected_src), format!("{:?}", result_src[0]))
-        }
+        assert_eq!(format!("{:?}", expected_src),
+                   format!("{:?}", result_src[0]))
+    }
 
-        #[test]
-        fn it_ignores_pattern() {
+    #[test]
+    fn it_ignores_pattern() {
         let file_content = "
         - name: my source
+          run: 'cargo build'
           when:
             change: 'src/**'
-            run: 'cargo build'
             ignore: 'src/test/**'
         ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/test/other.tmp").is_none())
-        }
+    }
 
-        #[test]
-        fn it_ignores_a_list_of_patterns() {
+    #[test]
+    fn it_ignores_a_list_of_patterns() {
         let file_content = "
         - name: my source
+          run: 'cargo build'
           when:
             change: 'src/**'
-            \
-            run: 'cargo build'
             ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
@@ -286,5 +284,5 @@ mod tests {
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
         assert!(watches.watch("src/test/other.tmp").is_none())
-        }
-        }
+    }
+}
