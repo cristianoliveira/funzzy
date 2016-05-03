@@ -105,8 +105,9 @@ impl Watches {
                         let commands = yaml::extract_commands(&i["run"]);
                         return Some(commands);
                     }
-            }
-            _ => panic!("Yaml format unkown."),
+                 }
+            },
+            _ => panic!("Yaml format unkown.")
         };
         None
     }
