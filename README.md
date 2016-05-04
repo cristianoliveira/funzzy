@@ -10,24 +10,24 @@ Configure execution of different commands using semantic yaml.
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 
 - name: run my tests
+  run: make test
   when:
     change: 'tests/**'
-    run: make test
-    ignore: ['tests/integration/**']
+    ignore: 'tests/integration/**'
 
 - name: fast compile sass
+  run: compass compile src/static/some.scss
   when:
     change: ['src/static/**', 'src/assets/*']
-    run: compass compile src/static/some.scss
 
 - name: Starwars
+  run: telnet towel.blinkenlights.nl
   when:
     change: '.watch.yaml'
-    run: telnet towel.blinkenlights.nl
 ```
 
 ## Motivation
-Create a lighter watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
+Create a lightweight watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
@@ -76,7 +76,7 @@ or with some arbitrary command
 funzzy watch -c 'cargo build'
 ```
 
-## Playground 
+## Playground
 **It does not work between vm and host machine**
 
 If you wanna try without installing it in your machine, try the playground vagrant.
@@ -84,7 +84,7 @@ If you wanna try without installing it in your machine, try the playground vagra
 cd funzzy
 vagrant up
 
-# testing.
+# Testing
 vagrant ssh -c "cd /vagrant && funzzy watch"
 
 # Another shell
@@ -97,6 +97,7 @@ Running tests:
 ```bash
 cargo test
 ```
+or simple `make tests`
 
 ## Code Style
 We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validate it before commit. 
