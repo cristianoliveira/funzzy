@@ -20,19 +20,6 @@ pub struct Args {
     pub flag_v: bool,
 }
 
-impl Args {
-    pub fn new() -> Args {
-        Args {
-            cmd_init: false,
-            cmd_watch: false,
-            arg_command: vec![String::new()],
-            flag_c: false,
-            flag_h: false,
-            flag_v: false,
-        }
-    }
-}
-
 /// # Command interface
 ///
 /// Each command from cli should implement this.

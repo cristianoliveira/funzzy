@@ -4,7 +4,6 @@ extern crate glob;
 
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
-use self::glob::Pattern;
 
 use self::notify::{RecommendedWatcher, Watcher};
 use self::yaml_rust::{Yaml, YamlLoader};

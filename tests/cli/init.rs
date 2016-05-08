@@ -10,7 +10,7 @@ fn it_creates_new_config_file() {
     let file = "events.yaml";
     let _ = remove_file(file);
 
-    let mut command = InitCommand::new();
+    let mut command = InitCommand { file_name: "" };
     command.file_name = &file;
     let _ = command.execute();
 
