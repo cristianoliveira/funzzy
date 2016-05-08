@@ -16,10 +16,17 @@ pub fn matches(item: &Yaml, path: &str) -> bool {
         Yaml::String(ref item) => {
             println!("{:?}", item);
             pattern_for(item).matches(path)
-        }
+        },
         _ => false,
     }
 }
+
+pub fn validate(yaml: &Yaml, key: &str) {
+    if yaml[key].is_badvalue() {
+        panic!("File has a bad format. (Key {} not found)", key);
+    }
+}
+
 
 fn pattern_for(pattern: &str) -> Pattern {
     Pattern::new(&format!("**/{}", pattern)).unwrap()
@@ -71,4 +78,25 @@ fn it_does_not_matches() {
     assert!(!self::matches(&yaml[0][0]["path"], "src/cli/main.rs"));
     assert!(!self::matches(&yaml[0][0]["path"], "src/cli/other/main.rb"));
     assert!(!self::matches(&yaml[0][0]["path"], "src/other/main.rb"))
+}
+
+#[test]
+#[should_panic]
+fn it_is_invalid_key_validation() {
+    let content = "
+    - name: test
+      path: tests/**
+    ";
+    let yaml = YamlLoader::load_from_str(content).unwrap();
+    self::validate(&yaml[0][0], "missing_key");
+}
+
+#[test]
+fn it_is_valid_key_validation() {
+    let content = "
+    - name: test
+      path: tests/**
+    ";
+    let yaml = YamlLoader::load_from_str(content).unwrap();
+    self::validate(&yaml[0][0], "path");
 }
