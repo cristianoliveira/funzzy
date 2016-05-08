@@ -52,7 +52,9 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
 
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
-            Some(Box::new(WatchCommand::new(Watches::from_args(command_args))))
+            let watches = Watches::from_args(command_args);
+            watches.validate();
+            Some(Box::new(WatchCommand::new(watches)))
         }
 
         _ => {
@@ -63,7 +65,9 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
             let mut content = String::new();
             let _ = file.read_to_string(&mut content).unwrap();
 
-            Some(Box::new(WatchCommand::new(Watches::from(&content))))
+            let watches = Watches::from(&content);
+            watches.validate();
+            Some(Box::new(WatchCommand::new(watches)))
         }
     }
 }
