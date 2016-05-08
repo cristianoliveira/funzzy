@@ -1,6 +1,6 @@
 [package]
 name = "funzzy"
-version = "0.2.5"
+version = "0.3.0"
 authors = ["Cristian Oliveira <contato@cristianoliveira.com.br>"]
 description = "The fancy watcher inspired by entr."
 license = "MIT"
@@ -12,3 +12,4 @@ rustc-serialize = "0.3"
 notify = "^2.5.0"
 yaml-rust = "0.3.2"
 glob="0.2.11"
+#clippy = "*"

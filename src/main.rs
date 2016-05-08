@@ -1,3 +1,7 @@
+// #![feature(plugin)]
+// #![plugin(clippy)]
+// #![deny(clippy)]
+
 extern crate rustc_serialize;
 extern crate docopt;
 
@@ -25,6 +29,7 @@ Options:
   -v --version      Shows version.
   -c                Execute given command for current folder
 ";
+
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
