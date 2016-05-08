@@ -22,11 +22,6 @@ pub const DEFAULT_CONTENT: &'static str = "
 pub struct InitCommand {
     pub file_name: &'static str,
 }
-impl InitCommand {
-    pub fn new() -> Self {
-        InitCommand { file_name: "" }
-    }
-}
 
 impl Command for InitCommand {
     fn execute(&self) -> Result<(), &str> {
