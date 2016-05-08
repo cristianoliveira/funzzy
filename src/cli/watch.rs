@@ -90,6 +90,12 @@ impl Watches {
         Watches { items: YamlLoader::load_from_str(&plain_text).unwrap() }
     }
 
+    /// Validate the yaml required properties
+    pub fn validate(&self) {
+        yaml::validate(&self.items[0][0], "run");
+        yaml::validate(&self.items[0][0]["when"], "change")
+    }
+
     /// Returns the first watch found for the given path
     /// it may return None if there is no item that match.
     ///
@@ -99,9 +105,6 @@ impl Watches {
                 for i in items.iter()
                               .filter(|i| !yaml::matches(&i["when"]["ignore"],
                                                          path)) {
-
-                    yaml::validate(&i, "run");
-                    yaml::validate(&i["when"], "change");
 
                     if yaml::matches(&i["when"]["change"], path) {
                         println!("Running: {}", i["name"].as_str().unwrap());
@@ -301,7 +304,7 @@ mod tests {
             ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
-        assert!(watches.watch("src/other.rb").is_some());
+        watches.validate();
     }
 
     #[test]
@@ -314,6 +317,6 @@ mod tests {
             ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
-        assert!(watches.watch("src/other.rb").is_some());
+        watches.validate();
     }
 }
