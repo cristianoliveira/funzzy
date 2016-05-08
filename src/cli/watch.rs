@@ -97,7 +97,11 @@ impl Watches {
         match self.items[0] {
             Yaml::Array(ref items) => {
                 for i in items.iter()
-                              .filter(|i| !yaml::matches(&i["when"]["ignore"], path)) {
+                              .filter(|i| !yaml::matches(&i["when"]["ignore"],
+                                                         path)) {
+
+                    yaml::validate(&i, "run");
+                    yaml::validate(&i["when"], "change");
 
                     if yaml::matches(&i["when"]["change"], path) {
                         println!("Running: {}", i["name"].as_str().unwrap());
@@ -107,7 +111,8 @@ impl Watches {
                     }
                  }
             },
-            _ => panic!("Yaml format unkown.")
+            Yaml::BadValue => panic!("Yaml has a bad format."),
+            _ => panic!("Unespected error/format.")
         };
         None
     }
@@ -284,5 +289,31 @@ mod tests {
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
         assert!(watches.watch("src/test/other.tmp").is_none())
+    }
+
+    #[test]
+    #[should_panic]
+    fn it_validates_the_run_key() {
+        let file_content = "
+        - name: my source
+          when:
+            change: 'src/**'
+            ignore: ['src/test/**', 'src/tmp/**']
+        ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("src/other.rb").is_some());
+    }
+
+    #[test]
+    #[should_panic]
+    fn it_validates_the_when_change_key() {
+        let file_content = "
+        - name: my source
+          run: make test
+          when:
+            ignore: ['src/test/**', 'src/tmp/**']
+        ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("src/other.rb").is_some());
     }
 }
