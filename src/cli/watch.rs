@@ -91,8 +91,12 @@ impl Watches {
 
     /// Validate the yaml required properties
     pub fn validate(&self) {
-        yaml::validate(&self.items[0][0], "run");
-        yaml::validate(&self.items[0][0]["when"], "change")
+        if let Yaml::Array(ref items) = self.items[0] {
+            for item in items {
+                yaml::validate(&item, "run");
+                yaml::validate(&item["when"], "change")
+            }
+        }
     }
 
     /// Returns the first watch found for the given path
@@ -155,7 +159,6 @@ mod tests {
         let args = vec![String::from("cargo build")];
         let watches = Watches::from_args(args);
 
-        println!("{:?}", watches.items[0]);
         assert!(watches.watch("src/main.rs").is_some());
         assert!(watches.watch("test/main.rs").is_some());
         assert!(watches.watch(".").is_some());

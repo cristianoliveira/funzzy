@@ -3,6 +3,7 @@ extern crate glob;
 
 use self::yaml_rust::{Yaml, YamlLoader};
 use std::process::Command as ShellCommand;
+use std::process::exit;
 use self::glob::Pattern;
 
 /// # `matches`
@@ -13,7 +14,6 @@ pub fn matches(item: &Yaml, path: &str) -> bool {
     match *item {
         Yaml::Array(ref items) => items.iter().any(|i| matches(&i, path)),
         Yaml::String(ref item) => {
-            println!("{:?}", item);
             pattern_for(item).matches(path)
         },
         _ => false,
@@ -22,7 +22,8 @@ pub fn matches(item: &Yaml, path: &str) -> bool {
 
 pub fn validate(yaml: &Yaml, key: &str) {
     if yaml[key].is_badvalue() {
-        panic!("File has a bad format. (Key {} not found)", key);
+        println!("File has a bad format. (Key {} not found)", key);
+        exit(0)
     }
 }
 
