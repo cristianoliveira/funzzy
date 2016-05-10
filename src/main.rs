@@ -42,7 +42,7 @@ fn main() {
         _ => {
             if let Some(command) = cli::command(&args) {
                 if let Err(err) = command.execute() {
-                    println!("{}", err)
+                    println!("Error: {}", err)
                 }
             }
         }
