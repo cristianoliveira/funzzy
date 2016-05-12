@@ -21,11 +21,12 @@ pub const FILENAME: &'static str = ".watch.yaml";
 ///
 pub struct WatchCommand {
     watches: Watches,
+    verbose: bool,
 }
 
 impl WatchCommand {
-    pub fn new(watches: Watches) -> Self {
-        WatchCommand { watches: watches }
+    pub fn new(watches: Watches, verbose: bool) -> Self {
+        WatchCommand { watches: watches , verbose: verbose }
     }
 }
 
@@ -51,8 +52,12 @@ impl Command for WatchCommand {
             };
 
             if let Some(shell_commands) = self.watches.watch(&path) {
+
+                if self.verbose { println!("path: {}", path) };
+
                 clear_shell();
                 for mut cmd in shell_commands {
+                    if self.verbose { println!("command: {:?}", cmd) };
                     if let Err(err) = cmd.status() {
                         println!("Error {:?}", err)
                     }
