@@ -9,6 +9,7 @@ fn new_args() -> funzzy::cli::Args {
         flag_c: false,
         flag_h: false,
         flag_v: false,
+        flag_vb: false,
     }
 }
 
