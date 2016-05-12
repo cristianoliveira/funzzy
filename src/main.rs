@@ -18,6 +18,8 @@ fn main() {
         .and_then(|dopt| dopt.decode())
         .unwrap_or_else(|e| e.exit());
 
+    println!("{:?}",args);
+
     match args {
         Args { flag_v: true, .. } => show(VERSION),
         Args { flag_h: true, .. } => show(USAGE),

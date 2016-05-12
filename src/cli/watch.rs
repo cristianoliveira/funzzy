@@ -51,14 +51,13 @@ impl Command for WatchCommand {
                 ""
             };
 
-            if self.verbose { println!("path: {}", path) };
-
             if let Some(shell_commands) = self.watches.watch(&path) {
 
-                if self.verbose { println!("command: {:?}", shell_commands) };
+                if self.verbose { println!("path: {}", path) };
 
                 clear_shell();
                 for mut cmd in shell_commands {
+                    if self.verbose { println!("command: {:?}", cmd) };
                     if let Err(err) = cmd.status() {
                         println!("Error {:?}", err)
                     }

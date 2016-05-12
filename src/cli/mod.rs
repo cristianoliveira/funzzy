@@ -12,16 +12,15 @@ Funzzy the watcher.
 
 Usage:
   funzzy
-  funzzy watch
-  funzzy watch -c <command>
-  funzzy watch -s -c <command>
+  funzzy watch [--verbose]
+  funzzy watch [--verbose | -c | -s] <command>
   funzzy init
   funzzy [options]
 
 Options:
   -h --help         Shows this message.
   -v --version      Shows version.
-  -vb --verbose     Use verbose output.
+  --verbose         Use verbose output.
   -c                Execute given command for current folder
 ";
 
@@ -36,7 +35,7 @@ pub struct Args {
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
-    pub flag_vb: bool,
+    pub flag_verbose: bool,
 }
 
 /// # Command interface
@@ -60,7 +59,7 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
             let command_args = args.arg_command.clone();
             let watches = Watches::from_args(command_args);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches, args.flag_v)))
+            Some(Box::new(WatchCommand::new(watches, args.flag_verbose)))
         }
 
         _ => {
@@ -73,7 +72,7 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
 
             let watches = Watches::from(&content);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches, args.flag_v)))
+            Some(Box::new(WatchCommand::new(watches, args.flag_verbose)))
         }
     }
 }
