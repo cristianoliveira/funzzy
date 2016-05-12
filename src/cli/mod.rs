@@ -7,6 +7,24 @@ use cli::watch::{Watches, WatchCommand};
 use std::io::prelude::*;
 use std::fs::File;
 
+pub const USAGE: &'static str = "
+Funzzy the watcher.
+
+Usage:
+  funzzy
+  funzzy watch
+  funzzy watch -c <command>
+  funzzy watch -s -c <command>
+  funzzy init
+  funzzy [options]
+
+Options:
+  -h --help         Shows this message.
+  -v --version      Shows version.
+  -vb --verbose     Use verbose output.
+  -c                Execute given command for current folder
+";
+
 #[derive(Debug, RustcDecodable)]
 pub struct Args {
     // comand
@@ -18,6 +36,7 @@ pub struct Args {
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
+    pub flag_vb: bool,
 }
 
 /// # Command interface
@@ -41,7 +60,7 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
             let command_args = args.arg_command.clone();
             let watches = Watches::from_args(command_args);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches)))
+            Some(Box::new(WatchCommand::new(watches, args.flag_v)))
         }
 
         _ => {
@@ -54,7 +73,7 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
 
             let watches = Watches::from(&content);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches)))
+            Some(Box::new(WatchCommand::new(watches, args.flag_v)))
         }
     }
 }
