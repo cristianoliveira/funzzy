@@ -12,7 +12,7 @@ use self::glob::Pattern;
 ///
 pub fn matches(item: &Yaml, path: &str) -> bool {
     match *item {
-        Yaml::Array(ref items) => items.iter().any(|i| matches(&i, path)),
+        Yaml::Array(ref items) => items.iter().any(|i| matches(i, path)),
         Yaml::String(ref item) => {
             pattern_for(item).matches(path)
         },
@@ -27,9 +27,8 @@ pub fn validate(yaml: &Yaml, key: &str) {
     }
 }
 
-
 fn pattern_for(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**/{}", pattern)).unwrap()
+    Pattern::new(&format!("**/{}", pattern)).expect("Pattern error.")
 }
 
 /// # `extract_commands`

@@ -50,12 +50,12 @@ impl Command for WatchCommand {
             if running { continue; } else { running = true }
 
             let path: &str = if let Some(ref path_buf) = event.path {
-                path_buf.to_str().unwrap()
+                path_buf.to_str().expect("Error while cast path buffer.")
             } else {
                 ""
             };
 
-            if let Some(shell_commands) = self.watches.watch(&path) {
+            if let Some(shell_commands) = self.watches.watch(path) {
 
                 if self.verbose { println!("path: {}", path) };
 
@@ -103,7 +103,7 @@ impl Watches {
     pub fn validate(&self) {
         if let Yaml::Array(ref items) = self.items[0] {
             for item in items {
-                yaml::validate(&item, "run");
+                yaml::validate(item, "run");
                 yaml::validate(&item["when"], "change")
             }
         }

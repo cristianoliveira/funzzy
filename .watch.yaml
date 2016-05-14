@@ -4,7 +4,7 @@
 # list here all the events and the commands that it should execute
 
 - name: building
-  run: cargo test
+  run: ['cargo test', 'cargo clippy --release --lib -- -Dclippy -Wclippy_pedantic --verbose']
   when:
     change: 'src/**'
     ignore: '.event.yaml'

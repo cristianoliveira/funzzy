@@ -67,8 +67,11 @@ pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
                 Ok(f) => f,
                 Err(err) => panic!("File {} cannot be open. Cause: {}", watch::FILENAME, err),
             };
+
             let mut content = String::new();
-            let _ = file.read_to_string(&mut content).unwrap();
+            if let Err(err) = file.read_to_string(&mut content) {
+                panic!("Error while trying read file. {}",err);
+            }
 
             let watches = Watches::from(&content);
             watches.validate();
