@@ -8,7 +8,7 @@ use self::glob::Pattern;
 
 /// # `matches`
 ///
-/// It check if a given yaml item matches with a given path
+/// It checks if a given yaml item matches with a given path
 ///
 pub fn matches(item: &Yaml, path: &str) -> bool {
     match *item {
@@ -33,7 +33,7 @@ fn pattern_for(pattern: &str) -> Pattern {
 
 /// # `extract_commands`
 ///
-/// It extract one or more shell commands from a given Yaml
+/// It extracts one or more shell commands from a given Yaml
 ///
 pub fn extract_commands(item: &Yaml) -> Vec<ShellCommand> {
     match *item {
@@ -67,7 +67,7 @@ fn it_matches() {
 }
 
 #[test]
-fn it_does_not_matches() {
+fn it_does_not_match() {
     let content = "
     - name: test
       path: tests/**

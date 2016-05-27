@@ -46,10 +46,9 @@ pub trait Command {
     fn execute(&self) -> Result<(), &str>;
 }
 
-/// # function command
+/// # command
 ///
 /// Return a command based on [args] passed as param
-/// or None if any command was found.
 ///
 pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
     match *args {

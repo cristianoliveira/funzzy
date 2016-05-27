@@ -76,7 +76,7 @@ impl Command for WatchCommand {
 
 /// # Watches
 ///
-/// Represent all items in the yaml config loaded.
+/// Represents all items in the yaml config loaded.
 ///
 pub struct Watches {
     items: Vec<Yaml>,
@@ -110,7 +110,6 @@ impl Watches {
     }
 
     /// Returns the first watch found for the given path
-    /// it may return None if there is no item that match.
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
         match self.items[0] {
@@ -195,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn it_doesnot_watches_test_path() {
+    fn it_doesnot_watch_test_path() {
         let file_content = "
         - name: my source
           run: 'cargo build'
@@ -249,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works_with_multiples_itens() {
+    fn it_works_with_multiples_items() {
         let file_content = "
         - name: my source
           run: 'cargo build'
