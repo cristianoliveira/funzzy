@@ -21,7 +21,7 @@ fn it_returns_some_command() {
 }
 
 #[test]
-fn it_as_default_returns_watch_command() {
+fn it_returns_watch_command_by_default() {
    let args = new_args();
    assert!(funzzy::cli::command(&args).is_some());
 }

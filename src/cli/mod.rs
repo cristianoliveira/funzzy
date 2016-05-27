@@ -21,7 +21,7 @@ Options:
   -h --help         Shows this message.
   -v --version      Shows version.
   --verbose         Use verbose output.
-  -c                Execute given command for current folder
+  -c                Execute given command for current folder.
 ";
 
 #[derive(Debug, RustcDecodable)]
@@ -48,7 +48,7 @@ pub trait Command {
 
 /// # command
 ///
-/// Return a command based on [args] passed as param
+/// Returns a command based on [args] passed as param
 ///
 pub fn command(args: &Args) -> Option<Box<Command + 'static>> {
     match *args {

@@ -27,7 +27,8 @@ Configure execution of different commands using semantic yaml.
 ```
 
 ## Motivation
-Create a lightweight watcher to run my tests everytime something in my project change. So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
+Create a lightweight watcher to run my tests everytime something in my project change.
+So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 
 ## Installing
@@ -51,11 +52,10 @@ Create a lightweight watcher to run my tests everytime something in my project c
   *Make sure you have `$HOME/.cargo/bin` in your PATH
   `export $PATH:$HOME/.cargo/bin`
 
-## Building
+#### From source
 Make sure you have installed the follow dependecies:
 - Rust
 
-#### From source
 Clone this repo and do:
 ```bash
 make install

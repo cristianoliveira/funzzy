@@ -17,6 +17,7 @@ pub const DEFAULT_CONTENT: &'static str = "
 
 
 /// # `InitCommand`
+///
 /// Creates a funzzy yaml boilerplate.
 ///
 pub struct InitCommand {
