@@ -4,6 +4,7 @@ extern crate glob;
 
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
+use std::error::Error;
 
 use self::notify::{RecommendedWatcher, Watcher};
 use self::yaml_rust::{Yaml, YamlLoader};
@@ -31,7 +32,7 @@ impl WatchCommand {
 }
 
 impl Command for WatchCommand {
-    fn execute(&self) -> Result<(), &str> {
+    fn execute(&self) -> Result<(), String> {
 
         let mut running = false;
 
@@ -62,8 +63,8 @@ impl Command for WatchCommand {
                 clear_shell();
                 for mut cmd in shell_commands {
                     if self.verbose { println!("command: {:?}", cmd) };
-                    if let Err(err) = cmd.status() {
-                        println!("Error {:?}", err)
+                    if let Err(error) = cmd.status() {
+                        return Err(String::from(error.description()));
                     }
                 }
             }
@@ -96,7 +97,7 @@ impl Watches {
     }
 
     pub fn from(plain_text: &str) -> Self {
-        Watches { items: YamlLoader::load_from_str(&plain_text).unwrap() }
+        Watches { items: YamlLoader::load_from_str(plain_text).unwrap() }
     }
 
     /// Validate the yaml required properties
@@ -155,7 +156,7 @@ mod tests {
           when:
             change: tests/*
         ";
-        let content = YamlLoader::load_from_str(&file_content).unwrap();
+        let content = YamlLoader::load_from_str(file_content).unwrap();
         let watches = Watches::from(file_content);
         assert_eq!(content[0], watches.items[0]);
         assert_eq!(content[0]["when"], watches.items[0]["when"]);

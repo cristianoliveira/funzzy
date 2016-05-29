@@ -43,7 +43,7 @@ pub struct Args {
 /// Each command from cli should implement this.
 ///
 pub trait Command {
-    fn execute(&self) -> Result<(), &str>;
+    fn execute(&self) -> Result<(), String>;
 }
 
 /// # command

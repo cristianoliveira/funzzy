@@ -2,6 +2,7 @@ use cli::Command;
 
 use std::io::Write;
 use std::fs::File;
+use std::error::Error;
 
 pub const DEFAULT_CONTENT: &'static str = "
 ## Funzzy events file
@@ -25,14 +26,14 @@ pub struct InitCommand {
 }
 
 impl Command for InitCommand {
-    fn execute(&self) -> Result<(), &str> {
+    fn execute(&self) -> Result<(), String> {
         let mut yaml: File = match File::create(self.file_name) {
             Ok(f) => f,
             Err(err) => panic!("File wasn't created. Cause: {}", err),
         };
 
         if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
-            panic!("Cannot write. Cause: {}", err)
+            return Err(String::from(err.description()));
         }
 
         Ok(())
