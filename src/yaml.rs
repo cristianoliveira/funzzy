@@ -23,7 +23,7 @@ pub fn matches(item: &Yaml, path: &str) -> bool {
 pub fn validate(yaml: &Yaml, key: &str) {
     if yaml[key].is_badvalue() {
         println!("File has a bad format. (Key {} not found)", key);
-        exit(0)
+        panic!("Panicate due the previou error.")
     }
 }
 
