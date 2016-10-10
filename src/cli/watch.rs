@@ -93,11 +93,11 @@ impl Watches {
          path = "**",
          command = args[0]);
 
-        Watches { items: YamlLoader::load_from_str(&template).unwrap() }
+        Watches::load_from_str(&template)
     }
 
     pub fn from(plain_text: &str) -> Self {
-        Watches { items: YamlLoader::load_from_str(plain_text).unwrap() }
+        Watches::load_from_str(plain_text)
     }
 
     /// Validate the yaml required properties
@@ -131,6 +131,10 @@ impl Watches {
             _ => panic!("Unespected error/format.")
         };
         None
+    }
+
+    fn load_from_str(plain_text: &str) -> Self {
+        Watches { items: YamlLoader::load_from_str(plain_text).expect("Unable to load configuration") }
     }
 }
 
