@@ -3,9 +3,6 @@ pub mod watch;
 
 pub use cli::init::InitCommand;
 pub use cli::watch::{Watches, WatchCommand};
-#[warn(unused_imports)]
-use std::io::prelude::*;
-use std::fs::File;
 
 /// # Command interface
 ///
