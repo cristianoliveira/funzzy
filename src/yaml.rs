@@ -3,7 +3,6 @@ extern crate glob;
 
 use self::yaml_rust::{Yaml, YamlLoader};
 use std::process::Command as ShellCommand;
-use std::process::exit;
 use self::glob::Pattern;
 
 /// # `matches`
