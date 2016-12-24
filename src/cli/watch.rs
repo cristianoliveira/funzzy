@@ -83,7 +83,7 @@ pub struct Watches {
     items: Vec<Yaml>,
 }
 impl Watches {
-    pub fn from_args(args: Vec<String>) -> Self {
+    pub fn from_args(command: String) -> Self {
         let template = format!("
         - name: from command
           run: {command}
@@ -91,7 +91,7 @@ impl Watches {
             change: '{path}'
         ",
          path = "**",
-         command = args[0]);
+         command = command);
 
         Watches::load_from_str(&template)
     }

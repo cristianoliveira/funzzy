@@ -12,7 +12,7 @@ mod yaml;
 use std::io::prelude::*;
 use std::fs::File;
 
-use cli::{Command, InitCommand, Watches, WatchCommand};
+use cli::*;
 
 use docopt::Docopt;
 
@@ -25,9 +25,11 @@ Usage:
   funzzy watch [--verbose]
   funzzy watch [--verbose | -c | -s] <command>
   funzzy init
+  funzzy exec [--verbose] <command> <interval>
   funzzy [options]
 
 Options:
+  exec              Execute command in a given interval (seconds)
   -h --help         Shows this message.
   -v --version      Shows version.
   --verbose         Use verbose output.
@@ -39,7 +41,10 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
-    pub arg_command: Vec<String>,
+    pub cmd_exec: bool,
+
+    pub arg_command: String,
+    pub arg_interval: u64,
 
     // options
     pub flag_c: bool,
@@ -61,6 +66,9 @@ fn main() {
         // Commands
         Args { cmd_init: true, .. } =>
             execute(InitCommand::new(cli::watch::FILENAME)),
+
+        Args { cmd_exec: true, .. } =>
+            execute(ExecCommand::new(args.arg_command, args.arg_interval)),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
