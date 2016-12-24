@@ -1,20 +1,8 @@
-
-extern crate notify;
-extern crate yaml_rust;
-extern crate glob;
-
 use std::{thread, time};
 use std::process::Command as ShellCommand;
 use std::error::Error;
 
-use self::notify::{RecommendedWatcher, Watcher};
-use self::yaml_rust::{Yaml, YamlLoader};
-
 use cli::Command;
-use yaml;
-
-
-pub const FILENAME: &'static str = ".watch.yaml";
 
 /// # `RunCommand`
 ///

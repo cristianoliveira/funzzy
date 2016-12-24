@@ -1,7 +1,7 @@
 extern crate yaml_rust;
 extern crate glob;
 
-use self::yaml_rust::{Yaml, YamlLoader};
+use self::yaml_rust::Yaml;
 use std::process::Command as ShellCommand;
 use self::glob::Pattern;
 
@@ -51,6 +51,8 @@ fn to_command(item: &Yaml) -> ShellCommand {
     shell
 }
 
+#[allow(unused_imports)]
+use self::yaml_rust::YamlLoader;
 #[test]
 fn it_matches() {
     let content = "

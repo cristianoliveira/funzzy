@@ -34,8 +34,6 @@ impl WatchCommand {
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
 
-        let mut running = false;
-
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher = match Watcher::new(tx) {
             Ok(w) => w,
@@ -48,8 +46,6 @@ impl Command for WatchCommand {
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            if running { continue; } else { running = true }
-
             let path: &str = if let Some(ref path_buf) = event.path {
                 path_buf.to_str().expect("Error while cast path buffer.")
             } else {
@@ -68,7 +64,6 @@ impl Command for WatchCommand {
                     }
                 }
             }
-            running = false;
         }
         Ok(())
     }
