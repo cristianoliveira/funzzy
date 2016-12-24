@@ -68,7 +68,8 @@ funzzy init
 ```
 Change the yaml as you want. Then run:
 ```bash
-
+funzzy watch
+```
 or with some arbitrary command
 ```bash
 funzzy watch -c 'cargo build'
