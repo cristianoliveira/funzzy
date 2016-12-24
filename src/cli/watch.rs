@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn it_loads_from_args() {
-        let args = vec![String::from("cargo build")];
+        let args = String::from("cargo build");
         let watches = Watches::from_args(args);
 
         assert!(watches.watch("src/main.rs").is_some());
