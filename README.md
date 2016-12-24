@@ -68,14 +68,16 @@ funzzy init
 ```
 Change the yaml as you want. Then run:
 ```bash
-funzzy watch
-```
 
 or with some arbitrary command
 ```bash
 funzzy watch -c 'cargo build'
 ```
 
+Run some arbitrary command in an interval of seconds
+```bash
+funzzy run 'cargo build' 10
+```
 ## Playground
 **It does not work between vm and host machine**
 
@@ -100,7 +102,7 @@ cargo test
 or simple `make tests`
 
 ## Code Style
-We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validate it before commit. 
+We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validate it before commit.
 
 ## Contributing
  - Fork it!

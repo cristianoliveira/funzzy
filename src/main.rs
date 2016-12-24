@@ -25,11 +25,11 @@ Usage:
   funzzy watch [--verbose]
   funzzy watch [--verbose | -c | -s] <command>
   funzzy init
-  funzzy exec [--verbose] <command> <interval>
+  funzzy run [--verbose] <command> <interval>
   funzzy [options]
 
 Options:
-  exec              Execute command in a given interval (seconds)
+  run               Execute command in a given interval (seconds)
   -h --help         Shows this message.
   -v --version      Shows version.
   --verbose         Use verbose output.
@@ -41,7 +41,7 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
-    pub cmd_exec: bool,
+    pub cmd_run: bool,
 
     pub arg_command: String,
     pub arg_interval: u64,
@@ -67,8 +67,8 @@ fn main() {
         Args { cmd_init: true, .. } =>
             execute(InitCommand::new(cli::watch::FILENAME)),
 
-        Args { cmd_exec: true, .. } =>
-            execute(ExecCommand::new(args.arg_command, args.arg_interval)),
+        Args { cmd_run: true, .. } =>
+            execute(RunCommand::new(args.arg_command, args.arg_interval)),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
