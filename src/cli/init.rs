@@ -22,12 +22,18 @@ pub const DEFAULT_CONTENT: &'static str = "
 /// Creates a funzzy yaml boilerplate.
 ///
 pub struct InitCommand {
-    pub file_name: &'static str,
+    pub file_name: String,
+}
+
+impl InitCommand {
+    pub fn new(file: &str) -> Self {
+        InitCommand { file_name: file.to_string() }
+    }
 }
 
 impl Command for InitCommand {
     fn execute(&self) -> Result<(), String> {
-        let mut yaml: File = match File::create(self.file_name) {
+        let mut yaml: File = match File::create(&self.file_name) {
             Ok(f) => f,
             Err(err) => panic!("File wasn't created. Cause: {}", err),
         };

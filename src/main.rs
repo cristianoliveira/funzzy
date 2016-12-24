@@ -12,7 +12,7 @@ mod yaml;
 use std::io::prelude::*;
 use std::fs::File;
 
-use cli::{InitCommand, Watches, WatchCommand};
+use cli::{Command, InitCommand, Watches, WatchCommand};
 
 use docopt::Docopt;
 
@@ -54,37 +54,20 @@ fn main() {
         .unwrap_or_else(|e| e.exit());
 
     match args {
+        // Metainfo
         Args { flag_v: true, .. } => show(VERSION),
         Args { flag_h: true, .. } => show(USAGE),
-        _ => {
-            if let Some(command) = command(&args) {
-                if let Err(err) = command.execute() {
-                    println!("Error: {}", err)
-                }
-            }
-        }
-    }
-}
 
-fn show(text: &str) -> ! {
-    println!("{}", text);
-    std::process::exit(0)
-}
-
-/// # command
-///
-/// Returns a command based on [args] passed as param
-///
-pub fn command(args: &Args) -> Option<Box<cli::Command + 'static>> {
-    match *args {
+        // Commands
         Args { cmd_init: true, .. } =>
-            Some(Box::new(InitCommand { file_name: cli::watch::FILENAME })),
+            execute(InitCommand::new(cli::watch::FILENAME)),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
             let watches = Watches::from_args(command_args);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches, args.flag_verbose)))
+
+            execute(WatchCommand::new(watches, args.flag_verbose))
         }
 
         _ => {
@@ -102,58 +85,20 @@ pub fn command(args: &Args) -> Option<Box<cli::Command + 'static>> {
 
             let watches = Watches::from(&content);
             watches.validate();
-            Some(Box::new(WatchCommand::new(watches, args.flag_verbose)))
+
+            execute(WatchCommand::new(watches, args.flag_verbose));
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    extern crate notify;
-    extern crate yaml_rust;
-    extern crate glob;
-
-    use super::*;
-
-    fn new_args() -> Args {
-        Args {
-            cmd_init: false,
-            cmd_watch: false,
-            arg_command: vec![String::new()],
-            flag_c: false,
-            flag_h: false,
-            flag_v: false,
-            flag_verbose: false,
-       }
+fn execute<T: Command>(command: T) {
+    if let Err(err) = command.execute() {
+        println!("Error: {}", err);
     }
-
-    #[test]
-    fn it_returns_some_command() {
-       let mut args = new_args();
-       args.cmd_init = true;
-       assert!(command(&args).is_some())
-    }
-
-    #[test]
-    fn it_returns_watch_command_by_default() {
-       let args = new_args();
-       assert!(command(&args).is_some());
-    }
-
-    #[test]
-    fn it_returns_watch_command() {
-       let mut args = new_args();
-       args.cmd_watch = true;
-       assert!(command(&args).is_some())
-    }
-
-    #[test]
-    fn it_returns_watch_command_with_arbitrary_command() {
-       let mut args = new_args();
-       args.cmd_watch = true;
-       args.flag_c = true;
-       args.arg_command = vec![String::from("cargo build")];
-       assert!(command(&args).is_some())
-    }
-
 }
+
+fn show(text: &str) -> ! {
+    println!("{}", text);
+    std::process::exit(0)
+}
+
