@@ -73,8 +73,6 @@ fn main() {
         Args { cmd_watch: true, flag_c: true, .. } => {
             let command_args = args.arg_command.clone();
             let watches = Watches::from_args(command_args);
-            watches.validate();
-
             execute(WatchCommand::new(watches, args.flag_verbose))
         }
 
@@ -92,8 +90,6 @@ fn main() {
             }
 
             let watches = Watches::from(&content);
-            watches.validate();
-
             execute(WatchCommand::new(watches, args.flag_verbose));
         }
     }

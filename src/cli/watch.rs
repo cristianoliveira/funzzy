@@ -95,17 +95,6 @@ impl Watches {
         Watches::load_from_str(plain_text)
     }
 
-    /// Validate the yaml required properties
-    pub fn validate(&self) {
-        // if let Yaml::Array(ref items) = self.items[0] {
-        //     for item in items {
-        //         yaml::validate(item, "run");
-        //         yaml::validate(&item["when"], "change")
-        //     }
-        // }
-
-    }
-
     /// Returns the first watch found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
@@ -268,29 +257,5 @@ mod tests {
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
         assert!(watches.watch("src/test/other.tmp").is_none())
-    }
-
-    #[test]
-    #[should_panic]
-    fn it_validates_the_run_key() {
-        let file_content = "
-        - name: my source
-          change: 'src/**'
-          ignore: ['src/test/**', 'src/tmp/**']
-        ";
-        let watches = Watches::from(file_content);
-        watches.validate();
-    }
-
-    #[test]
-    #[should_panic]
-    fn it_validates_the_when_change_key() {
-        let file_content = "
-        - name: my source
-          run: make test
-          ignore: ['src/test/**', 'src/tmp/**']
-        ";
-        let watches = Watches::from(file_content);
-        watches.validate();
     }
 }
