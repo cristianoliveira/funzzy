@@ -5,6 +5,31 @@ use self::yaml_rust::Yaml;
 use std::process::Command as ShellCommand;
 use self::glob::Pattern;
 
+pub fn extract_strings(yaml: &Yaml) -> Vec<String> {
+    match yaml.clone() {
+        Yaml::Array(ref items) => items.iter()
+            .map(|i| String::from(i.as_str().unwrap()))
+            .collect(),
+        Yaml::String(ref item) => {
+            vec![String::from(item.as_str())]
+        },
+        Yaml::BadValue => vec![],
+        _ => panic!("Unkown format. Please review the yaml")
+    }
+}
+
+pub fn extract_patterns(yaml: &Yaml) -> Vec<String> {
+    match yaml.clone() {
+        Yaml::Array(ref items) => items.iter()
+            .map(|i| String::from(i.as_str().unwrap()))
+            .collect(),
+        Yaml::String(ref item) => {
+            vec![String::from(item.as_str())]
+        },
+        _ => panic!("wrong format")
+    }
+}
+
 /// # `matches`
 ///
 /// It checks if a given yaml item matches with a given path

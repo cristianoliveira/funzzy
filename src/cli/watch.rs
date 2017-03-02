@@ -10,6 +10,7 @@ use self::notify::{RecommendedWatcher, Watcher};
 use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
+use cli::rules;
 use yaml;
 
 
@@ -75,15 +76,14 @@ impl Command for WatchCommand {
 /// Represents all items in the yaml config loaded.
 ///
 pub struct Watches {
-    items: Vec<Yaml>,
+    items: Vec<rules::Rules>,
 }
 impl Watches {
     pub fn from_args(command: String) -> Self {
         let template = format!("
         - name: from command
           run: {command}
-          when:
-            change: '{path}'
+          change: '{path}'
         ",
          path = "**",
          command = command);
@@ -97,39 +97,28 @@ impl Watches {
 
     /// Validate the yaml required properties
     pub fn validate(&self) {
-        if let Yaml::Array(ref items) = self.items[0] {
-            for item in items {
-                yaml::validate(item, "run");
-                yaml::validate(&item["when"], "change")
-            }
-        }
+        // if let Yaml::Array(ref items) = self.items[0] {
+        //     for item in items {
+        //         yaml::validate(item, "run");
+        //         yaml::validate(&item["when"], "change")
+        //     }
+        // }
+
     }
 
     /// Returns the first watch found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
-        match self.items[0] {
-            Yaml::Array(ref items) => {
-                for i in items.iter()
-                              .filter(|i| !yaml::matches(&i["when"]["ignore"],
-                                                         path)) {
-
-                    if yaml::matches(&i["when"]["change"], path) {
-                        println!("Running: {}", i["name"].as_str().unwrap());
-
-                        let commands = yaml::extract_commands(&i["run"]);
-                        return Some(commands);
-                    }
-                 }
-            },
-            Yaml::BadValue => panic!("Yaml has a bad format."),
-            _ => panic!("Unespected error/format.")
+        print!("items {:?}", self.items);
+        for rule in self.items.iter()
+            .filter(|r| !r.ignore(path) && r.watch(path)) {
+            return Some(rule.to_command());
         };
         None
     }
 
     fn load_from_str(plain_text: &str) -> Self {
-        Watches { items: YamlLoader::load_from_str(plain_text).expect("Unable to load configuration") }
+        Watches { items: rules::from_yaml(plain_text) }
     }
 }
 
@@ -146,22 +135,6 @@ mod tests {
     use super::*;
     use std::process::Command as ShellCommand;
     use self::yaml_rust::YamlLoader;
-
-    #[test]
-    fn it_loads_from_yaml_file() {
-        let file_content = "
-        - name: my tests
-          run: cargo tests
-          when:
-            change: tests/*
-        ";
-        let content = YamlLoader::load_from_str(file_content).unwrap();
-        let watches = Watches::from(file_content);
-        assert_eq!(content[0], watches.items[0]);
-        assert_eq!(content[0]["when"], watches.items[0]["when"]);
-        assert_eq!(content[0]["when"]["change"],
-        watches.items[0]["when"]["change"])
-    }
 
     #[test]
     fn it_loads_from_args() {
@@ -183,8 +156,7 @@ mod tests {
         let file_content = "
         - name: my tests
           run: 'cargo tests'
-          when:
-            change: 'tests/**'
+          change: 'tests/**'
         ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
@@ -198,8 +170,7 @@ mod tests {
         let file_content = "
         - name: my source
           run: 'cargo build'
-          when:
-            change: 'src/**'
+          change: 'src/**'
         ";
         let watches = Watches::from(file_content);
 
@@ -214,8 +185,7 @@ mod tests {
         let file_content = "
         - name: my source
           run: 'cargo build'
-          when:
-            change: 'src/**'
+          change: 'src/**'
         ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
@@ -229,8 +199,7 @@ mod tests {
         let file_content = "
         - name: my source
           run: ['cargo build', 'cargo test']
-          when:
-            change: 'src/**'
+          change: 'src/**'
         ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
@@ -252,13 +221,11 @@ mod tests {
         let file_content = "
         - name: my source
           run: 'cargo build'
-          when:
-            change: 'src/**'
+          change: 'src/**'
 
         - name: other
           run: 'cargo test'
-          when:
-            change: 'test/**'
+          change: 'test/**'
         ";
         let watches = Watches::from(file_content);
 
@@ -279,9 +246,8 @@ mod tests {
         let file_content = "
         - name: my source
           run: 'cargo build'
-          when:
-            change: 'src/**'
-            ignore: 'src/test/**'
+          change: 'src/**'
+          ignore: 'src/test/**'
         ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("src/other.rb").is_some());
@@ -294,9 +260,8 @@ mod tests {
         let file_content = "
         - name: my source
           run: 'cargo build'
-          when:
-            change: 'src/**'
-            ignore: ['src/test/**', 'src/tmp/**']
+          change: 'src/**'
+          ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
         assert!(watches.watch("src/other.rb").is_some());
@@ -310,9 +275,8 @@ mod tests {
     fn it_validates_the_run_key() {
         let file_content = "
         - name: my source
-          when:
-            change: 'src/**'
-            ignore: ['src/test/**', 'src/tmp/**']
+          change: 'src/**'
+          ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
         watches.validate();
@@ -324,8 +288,7 @@ mod tests {
         let file_content = "
         - name: my source
           run: make test
-          when:
-            ignore: ['src/test/**', 'src/tmp/**']
+          ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::from(file_content);
         watches.validate();
