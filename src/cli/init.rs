@@ -12,8 +12,7 @@ pub const DEFAULT_CONTENT: &'static str = "
 
 - name: run my test
   run: 'ls -a'
-  when:
-    change: 'src/**'
+  change: 'src/**'
 ";
 
 

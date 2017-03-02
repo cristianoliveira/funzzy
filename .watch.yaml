@@ -5,18 +5,15 @@
 
 - name: building
   run: 'cargo test'
-  when:
-    change: 'src/**'
-    ignore: '**/*~'
+  change: 'src/**'
+  ignore: '**/*~'
 
 - name: tests
   run: cargo test
-  when:
-    change: 'tests/**'
-    ignore: '.event.yaml'
+  change: 'tests/**'
+  ignore: '.event.yaml'
 
 - name: Starwars
   run: telnet towel.blinkenlights.nl
-  when:
-    change: ".watch.yaml"
+  change: ".watch.yaml"
 

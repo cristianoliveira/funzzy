@@ -11,19 +11,16 @@ Configure execution of different commands using semantic yaml.
 
 - name: run my tests
   run: make test
-  when:
-    change: 'tests/**'
-    ignore: 'tests/integration/**'
+  change: 'tests/**'
+  ignore: 'tests/integration/**'
 
 - name: fast compile sass
   run: compass compile src/static/some.scss
-  when:
-    change: ['src/static/**', 'src/assets/*']
+  change: ['src/static/**', 'src/assets/*']
 
 - name: Starwars
   run: telnet towel.blinkenlights.nl
-  when:
-    change: '.watch.yaml'
+  change: '.watch.yaml'
 ```
 
 ## Motivation
