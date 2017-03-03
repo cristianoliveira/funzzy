@@ -1,5 +1,4 @@
 extern crate notify;
-extern crate yaml_rust;
 extern crate glob;
 
 use std::process::Command as ShellCommand;
@@ -7,12 +6,9 @@ use std::sync::mpsc::channel;
 use std::error::Error;
 
 use self::notify::{RecommendedWatcher, Watcher};
-use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
 use rules;
-use yaml;
-
 
 pub const FILENAME: &'static str = ".watch.yaml";
 
@@ -123,7 +119,6 @@ mod tests {
 
     use super::*;
     use std::process::Command as ShellCommand;
-    use self::yaml_rust::YamlLoader;
 
     #[test]
     fn it_loads_from_args() {
