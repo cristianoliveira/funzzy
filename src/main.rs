@@ -7,6 +7,7 @@ extern crate docopt;
 
 mod cli;
 mod yaml;
+mod rules;
 
 #[warn(unused_imports)]
 use std::io::prelude::*;

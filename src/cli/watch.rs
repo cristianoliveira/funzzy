@@ -10,7 +10,7 @@ use self::notify::{RecommendedWatcher, Watcher};
 use self::yaml_rust::{Yaml, YamlLoader};
 
 use cli::Command;
-use cli::rules;
+use rules;
 use yaml;
 
 
