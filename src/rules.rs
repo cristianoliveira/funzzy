@@ -26,10 +26,6 @@ impl Rules {
         }
     }
 
-    pub fn is_invalid(&self) -> bool {
-        self.commands.is_empty() || self.watch_patterns.is_empty()
-    }
-
     pub fn watch(&self, path: &str) -> bool {
         self.watch_patterns.iter()
             .any(|watch| pattern(watch).matches(path))

@@ -69,10 +69,10 @@ impl Command for WatchCommand {
 
 /// # Watches
 ///
-/// Represents all items in the yaml config loaded.
+/// Represents all rules in the yaml config loaded.
 ///
 pub struct Watches {
-    items: Vec<rules::Rules>,
+    rules: Vec<rules::Rules>,
 }
 impl Watches {
     pub fn from_args(command: String) -> Self {
@@ -91,19 +91,19 @@ impl Watches {
         Watches::load_from_str(plain_text)
     }
 
-    /// Returns the first watch found for the given path
+    fn load_from_str(plain_text: &str) -> Self {
+        Watches { rules: rules::from_yaml(plain_text) }
+    }
+
+    /// Returns the first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
-        print!("items {:?}", self.items);
-        for rule in self.items.iter()
+        print!("rules {:?}", self.rules);
+        for rule in self.rules.iter()
             .filter(|r| !r.ignore(path) && r.watch(path)) {
             return Some(rule.to_command());
         };
         None
-    }
-
-    fn load_from_str(plain_text: &str) -> Self {
-        Watches { items: rules::from_yaml(plain_text) }
     }
 }
 
