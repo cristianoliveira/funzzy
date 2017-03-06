@@ -22,14 +22,11 @@ impl RunCommand {
 impl Command for RunCommand {
     fn execute(&self) -> Result<(), String> {
         let mut command_line: Vec<&str> = self.command.split_whitespace().collect();
-        println!("{:?}", command_line);
         let mut command = ShellCommand::new(command_line.remove(0));
         command.args(&command_line);
 
         loop {
-            println!("{:?}", command);
             if let Err(error) = command.status() {
-                println!("{}", error);
                 return Err(String::from(error.description()));
             }
             let wait = time::Duration::from_secs(self.interval);

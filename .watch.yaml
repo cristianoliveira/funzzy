@@ -16,4 +16,3 @@
 - name: Starwars
   run: telnet towel.blinkenlights.nl
   change: ".watch.yaml"
-
