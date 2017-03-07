@@ -15,6 +15,13 @@ pub struct Rules {
     ignore_patterns: Vec<String>,
 }
 impl Rules {
+    pub fn new(commands: Vec<String>, watches: Vec<String>, ignores: Vec<String>) -> Self {
+        Rules {
+            commands: commands,
+            watch_patterns: watches,
+            ignore_patterns: ignores
+        }
+    }
     pub fn from(yaml: &Yaml) -> Self {
         yaml::validate(yaml, "run");
         yaml::validate(yaml, "change");
@@ -51,6 +58,13 @@ pub fn from_yaml(file_content: &str) -> Vec<Rules> {
                                        .collect(),
         _ => panic!("You must have at last one item in the yaml.")
     }
+}
+
+pub fn from_string(patterns: String, command: String) -> Vec<Rules> {
+    let watches = patterns.lines()
+                        .map(|line| format!("**/{}", &line[2..]))
+                        .collect();
+    vec![Rules::new(vec![command], watches, vec![])]
 }
 
 fn pattern(pattern: &str) -> Pattern {

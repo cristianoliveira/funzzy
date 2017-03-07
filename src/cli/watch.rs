@@ -71,6 +71,7 @@ impl Command for WatchCommand {
 ///
 /// Represents all rules in the yaml config loaded.
 ///
+#[derive(Debug)]
 pub struct Watches {
     rules: Vec<rules::Rules>,
 }
@@ -91,14 +92,19 @@ impl Watches {
         Watches::load_from_str(plain_text)
     }
 
+    pub fn new(rules: Vec<rules::Rules>) -> Self {
+        Watches { rules: rules }
+    }
+
     fn load_from_str(plain_text: &str) -> Self {
         Watches { rules: rules::from_yaml(plain_text) }
     }
 
+
     /// Returns the first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
-        print!("rules {:?}", self.rules);
+        println!("rules {:?} path {:?}", self.rules, path);
         for rule in self.rules.iter()
             .filter(|r| !r.ignore(path) && r.watch(path)) {
             return Some(rule.to_command());
@@ -148,6 +154,18 @@ mod tests {
         assert!(watches.watch("tests/ruby.rb").is_some());
         assert!(watches.watch("tests/folder/other.rs").is_some())
     }
+
+    #[test]
+    fn it_watches_specific_path() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: './tests/foo/bar.rs'
+        ";
+        let watches = Watches::from(file_content);
+        assert!(watches.watch("./tests/foo/bar.rs").is_some())
+    }
+
 
     #[test]
     fn it_doesnot_watch_test_path() {

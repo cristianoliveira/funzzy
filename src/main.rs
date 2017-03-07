@@ -11,6 +11,7 @@ mod rules;
 
 #[warn(unused_imports)]
 use std::io::prelude::*;
+use std::io::{self};
 use std::fs::File;
 
 use cli::*;
@@ -23,6 +24,7 @@ Funzzy the watcher.
 
 Usage:
   funzzy
+  funzzy <command>
   funzzy watch [--verbose]
   funzzy watch [--verbose | -c | -s] <command>
   funzzy init
@@ -72,25 +74,22 @@ fn main() {
             execute(RunCommand::new(args.arg_command, args.arg_interval)),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
-            let command_args = args.arg_command.clone();
-            let watches = Watches::from_args(command_args);
+            let watches = match from_stdin() {
+                Some(content) =>
+                    Watches::new(rules::from_string(content, args.arg_command)),
+                None =>
+                    Watches::from_args(args.arg_command)
+            };
             execute(WatchCommand::new(watches, args.flag_verbose))
-        }
+        },
 
         _ => {
-            let mut file = match File::open(cli::watch::FILENAME) {
-                Ok(f) => f,
-                Err(err) =>
-                    panic!("File {} cannot be open. Cause: {}",
-                           cli::watch::FILENAME, err),
+            let watches = match from_stdin() {
+                Some(content) =>
+                    Watches::new(rules::from_string(content, args.arg_command)),
+                None =>
+                    Watches::from(&from_file())
             };
-
-            let mut content = String::new();
-            if let Err(err) = file.read_to_string(&mut content) {
-                panic!("Error while trying read file. {}",err);
-            }
-
-            let watches = Watches::from(&content);
             execute(WatchCommand::new(watches, args.flag_verbose));
         }
     }
@@ -100,6 +99,32 @@ fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
         println!("Error: {}", err);
     }
+}
+
+fn from_stdin() -> Option<String> {
+    let mut buffer = String::new();
+    let mut stdin = io::stdin();
+
+    match stdin.read_to_string(&mut buffer) {
+        Ok(bytes) => if bytes > 0 { Some(buffer) } else { None },
+        Err(err) => panic!("Error while reading stdin {}", err)
+    }
+}
+
+fn from_file() -> String {
+    let mut file = match File::open(cli::watch::FILENAME) {
+        Ok(f) => f,
+        Err(err) =>
+            panic!("File {} cannot be open. Cause: {}",
+                   cli::watch::FILENAME, err),
+    };
+
+    let mut content = String::new();
+    if let Err(err) = file.read_to_string(&mut content) {
+        panic!("Error while trying read file. {}",err);
+    }
+
+    content
 }
 
 fn show(text: &str) -> ! {
