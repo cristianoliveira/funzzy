@@ -67,9 +67,10 @@ Change the yaml as you want. Then run:
 ```bash
 funzzy watch
 ```
-or with some arbitrary command
+
+Run with some arbitrary command and stdin
 ```bash
-funzzy watch -c 'cargo build'
+find . -R '**.rs' | funzzy 'cargo build'
 ```
 
 Run some arbitrary command in an interval of seconds
