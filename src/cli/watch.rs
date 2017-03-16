@@ -24,6 +24,7 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool) -> Self {
+        if verbose { println!("watches {:?}", watches); }
         WatchCommand { watches: watches , verbose: verbose }
     }
 }
@@ -104,7 +105,6 @@ impl Watches {
     /// Returns the first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
-        println!("rules {:?} path {:?}", self.rules, path);
         for rule in self.rules.iter()
             .filter(|r| !r.ignore(path) && r.watch(path)) {
             return Some(rule.to_command());
