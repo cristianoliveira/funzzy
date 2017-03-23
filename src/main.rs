@@ -74,22 +74,22 @@ fn main() {
             execute(RunCommand::new(args.arg_command, args.arg_interval)),
 
         Args { cmd_watch: true, flag_c: true, .. } => {
-            let watches = match from_stdin() {
-                Some(content) =>
-                    Watches::new(rules::from_string(content, args.arg_command)),
-                None =>
-                    Watches::from_args(args.arg_command)
-            };
+            let watches = Watches::from_args(args.arg_command);
             execute(WatchCommand::new(watches, args.flag_verbose))
         },
 
-        _ => {
-            let watches = match from_stdin() {
-                Some(content) =>
-                    Watches::new(rules::from_string(content, args.arg_command)),
-                None =>
-                    Watches::from(&from_file())
+        Args { ref arg_command,.. } if !arg_command.is_empty() => {
+            match from_stdin() {
+                Some(content) => {
+                   let watches = Watches::new(rules::from_string(content, arg_command));
+                   execute(WatchCommand::new(watches, args.flag_verbose));
+                },
+                None => show("Nothing to run")
             };
+        },
+
+        _ => {
+            let watches = Watches::from(&from_file());
             execute(WatchCommand::new(watches, args.flag_verbose));
         }
     }
@@ -114,9 +114,9 @@ fn from_stdin() -> Option<String> {
 fn from_file() -> String {
     let mut file = match File::open(cli::watch::DEFAULT_FILENAME) {
         Ok(f) => f,
-        Err(err) =>
-            panic!("File {} cannot be open. Cause: {}",
-                   cli::watch::DEFAULT_FILENAME, err),
+        Err(err) => show(format!("File {} cannot be opened. Cause: {}",
+                         cli::watch::DEFAULT_FILENAME,
+                         err).as_str()),
     };
 
     let mut content = String::new();

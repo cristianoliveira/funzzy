@@ -60,11 +60,11 @@ pub fn from_yaml(file_content: &str) -> Vec<Rules> {
     }
 }
 
-pub fn from_string(patterns: String, command: String) -> Vec<Rules> {
+pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
     let watches = patterns.lines()
                         .map(|line| format!("**/{}", &line[2..]))
                         .collect();
-    vec![Rules::new(vec![command], watches, vec![])]
+    vec![Rules::new(vec![command.clone()], watches, vec![])]
 }
 
 fn pattern(pattern: &str) -> Pattern {
