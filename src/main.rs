@@ -68,7 +68,7 @@ fn main() {
 
         // Commands
         Args { cmd_init: true, .. } =>
-            execute(InitCommand::new(cli::watch::FILENAME)),
+            execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
         Args { cmd_run: true, .. } =>
             execute(RunCommand::new(args.arg_command, args.arg_interval)),
@@ -112,11 +112,11 @@ fn from_stdin() -> Option<String> {
 }
 
 fn from_file() -> String {
-    let mut file = match File::open(cli::watch::FILENAME) {
+    let mut file = match File::open(cli::watch::DEFAULT_FILENAME) {
         Ok(f) => f,
         Err(err) =>
             panic!("File {} cannot be open. Cause: {}",
-                   cli::watch::FILENAME, err),
+                   cli::watch::DEFAULT_FILENAME, err),
     };
 
     let mut content = String::new();

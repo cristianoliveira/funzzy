@@ -10,7 +10,7 @@ use self::notify::{RecommendedWatcher, Watcher};
 use cli::Command;
 use rules;
 
-pub const FILENAME: &'static str = ".watch.yaml";
+pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
 
 /// # `WatchCommand`
 ///
