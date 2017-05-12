@@ -24,10 +24,10 @@ Funzzy the watcher.
 
 Usage:
   funzzy
+  funzzy init
   funzzy <command>
   funzzy watch [--verbose]
   funzzy watch [--verbose | -c | -s] <command>
-  funzzy init
   funzzy run [--verbose] <command> <interval>
   funzzy [options]
 
@@ -60,6 +60,8 @@ fn main() {
     let args: Args = Docopt::new(USAGE)
         .and_then(|dopt| dopt.decode())
         .unwrap_or_else(|e| e.exit());
+
+    println!("{:?}", args);
 
     match args {
         // Metainfo
