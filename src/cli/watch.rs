@@ -3,12 +3,12 @@ extern crate glob;
 
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
-use std::error::Error;
 
 use self::notify::{RecommendedWatcher, Watcher};
 
 use cli::Command;
 use rules;
+use cmd;
 
 pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
 
@@ -55,11 +55,9 @@ impl Command for WatchCommand {
                 if self.verbose { println!("path: {}", path) };
 
                 clear_shell();
-                for mut cmd in shell_commands {
-                    if self.verbose { println!("command: {:?}", cmd) };
-                    if let Err(error) = cmd.status() {
-                        return Err(String::from(error.description()));
-                    }
+                for command in shell_commands {
+                    if self.verbose { println!("command: {:?}", command) };
+                    try!(cmd::execute(command))
                 }
             }
         }
@@ -104,10 +102,10 @@ impl Watches {
 
     /// Returns the first rule found for the given path
     ///
-    pub fn watch(&self, path: &str) -> Option<Vec<ShellCommand>> {
+    pub fn watch(&self, path: &str) -> Option<Vec<String>> {
         for rule in self.rules.iter()
             .filter(|r| !r.ignore(path) && r.watch(path)) {
-            return Some(rule.to_command());
+            return Some(rule.commands());
         };
         None
     }
@@ -124,7 +122,6 @@ mod tests {
     extern crate glob;
 
     use super::*;
-    use std::process::Command as ShellCommand;
 
     #[test]
     fn it_loads_from_args() {
@@ -136,9 +133,7 @@ mod tests {
         assert!(watches.watch(".").is_some());
 
         let result = watches.watch(".").unwrap();
-        let mut expected = ShellCommand::new("cargo");
-        expected.arg("build");
-        assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result));
+        assert_eq!(vec!["cargo build"], result);
     }
 
     #[test]
@@ -191,9 +186,7 @@ mod tests {
         ";
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
-        let mut expected = ShellCommand::new("cargo");
-        expected.arg("build");
-        assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result))
+        assert_eq!(vec!["cargo build"], result)
     }
 
     #[test]
@@ -206,16 +199,7 @@ mod tests {
         let watches = Watches::from(file_content);
         let result = watches.watch("src/test.rs").unwrap();
 
-        let mut expected: Vec<ShellCommand> = vec![];
-        let mut cmd = ShellCommand::new("cargo");
-        cmd.arg("build");
-        expected.push(cmd);
-
-        let mut cmd2 = ShellCommand::new("cargo");
-        cmd2.arg("test");
-        expected.push(cmd2);
-
-        assert_eq!(format!("{:?}", expected), format!("{:?}", result))
+        assert_eq!(vec!["cargo build", "cargo test"], result)
     }
 
     #[test]
@@ -232,15 +216,10 @@ mod tests {
         let watches = Watches::from(file_content);
 
         let result = watches.watch("test/test.rs").unwrap();
-        let mut expected = ShellCommand::new("cargo");
-        expected.arg("test");
-        assert_eq!(format!("{:?}", expected), format!("{:?}", result[0]));
+        assert_eq!(vec!["cargo test"], result);
 
         let result_src = watches.watch("src/test.rs").unwrap();
-        let mut expected_src = ShellCommand::new("cargo");
-        expected_src.arg("build");
-        assert_eq!(format!("{:?}", expected_src),
-                   format!("{:?}", result_src[0]))
+        assert_eq!(vec!["cargo build"], result_src);
     }
 
     #[test]

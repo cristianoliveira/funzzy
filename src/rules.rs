@@ -6,7 +6,6 @@ use yaml;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
 use self::glob::Pattern;
-use std::process::Command as ShellCommand;
 
 #[derive(Debug)]
 pub struct Rules {
@@ -43,10 +42,8 @@ impl Rules {
             .any(|ignore| pattern(ignore).matches(path)) || false
     }
 
-    pub fn to_command(&self) -> Vec<ShellCommand> {
-        self.commands.iter()
-            .map(|c| command_from_string(c))
-            .collect()
+    pub fn commands(&self) -> Vec<String> {
+        self.commands.clone()
     }
 }
 
@@ -71,23 +68,12 @@ fn pattern(pattern: &str) -> Pattern {
     Pattern::new(&format!("**/{}", pattern)).expect("Pattern error.")
 }
 
-fn command_from_string(command: &String) -> ShellCommand {
-    let mut args: Vec<&str> = command.split(' ').collect();
-    let cmd = args.remove(0);
-
-    let mut shell = ShellCommand::new(cmd);
-    shell.args(&args);
-    shell
-}
-
 #[cfg(test)]
 mod tests {
     extern crate yaml_rust;
 
     use super::Rules;
     use self::yaml_rust::YamlLoader;
-    use std::process::Command as ShellCommand;
-
 
     #[test]
     fn it_is_watching_path_tests() {
@@ -159,10 +145,8 @@ mod tests {
         let content = YamlLoader::load_from_str(file_content).unwrap();
         let rule = Rules::from(&content[0][0]);
 
-        let result = rule.to_command();
-        let mut expected = ShellCommand::new("cargo");
-        expected.arg("tests");
-        assert_eq!(format!("{:?}", vec![expected]), format!("{:?}", result));
+        let result = rule.commands();
+        assert_eq!(vec!["cargo tests"], result);
     }
 
     #[test]

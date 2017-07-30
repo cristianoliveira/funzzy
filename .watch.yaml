@@ -1,18 +1,9 @@
+
 ## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
 # list here all the events and the commands that it should execute
 
-- name: building
-  run: 'cargo test'
+- name: run my test
+  run: 'make tests'
   change: 'src/**'
-  ignore: '**/*~'
-
-- name: tests
-  run: cargo test
-  change: 'tests/**'
-  ignore: '.event.yaml'
-
-- name: Starwars
-  run: telnet towel.blinkenlights.nl
-  change: ".watch.yaml"
