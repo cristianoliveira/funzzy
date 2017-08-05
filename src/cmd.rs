@@ -1,5 +1,6 @@
 use std::process::Command;
 use std::error::Error;
+use std::process::*;
 
 fn command_parser(command: String) -> Vec<Command> {
     let mut commands = vec![];

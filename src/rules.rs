@@ -59,6 +59,7 @@ pub fn from_yaml(file_content: &str) -> Vec<Rules> {
 
 pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
     let watches = patterns.lines()
+                        .filter(|line| line.len() > 1)
                         .map(|line| format!("**/{}", &line[2..]))
                         .collect();
     vec![Rules::new(vec![command.clone()], watches, vec![])]
@@ -73,6 +74,7 @@ mod tests {
     extern crate yaml_rust;
 
     use super::Rules;
+    use super::from_string;
     use self::yaml_rust::YamlLoader;
 
     #[test]
@@ -171,5 +173,15 @@ mod tests {
         ";
         let content = YamlLoader::load_from_str(file_content).unwrap();
         Rules::from(&content[0][0]);
+    }
+
+    #[test]
+    fn it_filters_empty_or_one_character_path() {
+        let content = "./foo\n./bar\n.\n./baz\n";
+        let rules = from_string(String::from(content), &String::from("cargo test"));
+        assert!(rules[0].watch("foo"));
+        assert!(rules[0].watch("bar"));
+        assert!(rules[0].watch("baz"));
+        assert!(!rules[0].watch("."));
     }
 }
