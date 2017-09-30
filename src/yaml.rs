@@ -1,5 +1,4 @@
 extern crate yaml_rust;
-extern crate glob;
 
 use self::yaml_rust::Yaml;
 
