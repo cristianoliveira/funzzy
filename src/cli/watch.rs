@@ -1,5 +1,4 @@
 extern crate notify;
-extern crate glob;
 
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
