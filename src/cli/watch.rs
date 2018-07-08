@@ -57,22 +57,6 @@ impl Command for WatchCommand {
                     }
                 }
             }
-            // let path: &str = if let Some(ref path_buf) = event.paths {
-            //     path_buf.to_str().expect("Error while cast path buffer.")
-            // } else {
-            //     ""
-            // };
-
-            // if let Some(shell_commands) = self.watches.watch(path) {
-
-            //     if self.verbose { println!("path: {}", path) };
-
-            //     clear_shell();
-            //     for command in shell_commands {
-            //         if self.verbose { println!("command: {:?}", command) };
-            //         try!(cmd::execute(command))
-            //     }
-            // }
         }
         Ok(())
     }
