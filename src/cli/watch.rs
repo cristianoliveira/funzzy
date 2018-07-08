@@ -3,7 +3,8 @@ extern crate notify;
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
 
-use self::notify::{RecommendedWatcher, Watcher};
+use self::notify::{DebouncedEvent, RecommendedWatcher, Watcher, RecursiveMode};
+use std::time::Duration;
 
 use cli::Command;
 use rules;
@@ -32,33 +33,46 @@ impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
 
         let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = match Watcher::new(tx) {
+        let mut watcher: RecommendedWatcher = match Watcher::new(tx, Duration::from_secs(2)) {
             Ok(w) => w,
             Err(err) => panic!("Error while trying watch. Cause: {:?}", err),
         };
 
-        if let Err(err) = watcher.watch(".") {
+        if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
             panic!("Unable to watch current directory. Cause: {:?}", err)
         }
 
         println!("Watching.");
         while let Ok(event) = rx.recv() {
-            let path: &str = if let Some(ref path_buf) = event.path {
-                path_buf.to_str().expect("Error while cast path buffer.")
-            } else {
-                ""
-            };
+            if let DebouncedEvent::Create(path) = event {
+                let path_str  = path.into_os_string().into_string().unwrap();
+                if let Some(shell_commands) = self.watches.watch(&*path_str) {
 
-            if let Some(shell_commands) = self.watches.watch(path) {
+                    if self.verbose { println!("path: {}", path_str) };
 
-                if self.verbose { println!("path: {}", path) };
-
-                clear_shell();
-                for command in shell_commands {
-                    if self.verbose { println!("command: {:?}", command) };
-                    try!(cmd::execute(command))
+                    clear_shell();
+                    for command in shell_commands {
+                        if self.verbose { println!("command: {:?}", command) };
+                        try!(cmd::execute(command))
+                    }
                 }
             }
+            // let path: &str = if let Some(ref path_buf) = event.paths {
+            //     path_buf.to_str().expect("Error while cast path buffer.")
+            // } else {
+            //     ""
+            // };
+
+            // if let Some(shell_commands) = self.watches.watch(path) {
+
+            //     if self.verbose { println!("path: {}", path) };
+
+            //     clear_shell();
+            //     for command in shell_commands {
+            //         if self.verbose { println!("command: {:?}", command) };
+            //         try!(cmd::execute(command))
+            //     }
+            // }
         }
         Ok(())
     }
