@@ -2,7 +2,8 @@
 // #![plugin(clippy)]
 // #![deny(clippy)]
 
-extern crate rustc_serialize;
+#[macro_use]
+extern crate serde_derive;
 extern crate docopt;
 
 mod cli;
@@ -40,7 +41,7 @@ Options:
   -c                Execute given command for current folder.
 ";
 
-#[derive(Debug, RustcDecodable)]
+#[derive(Debug, Deserialize)]
 pub struct Args {
     // comand
     pub cmd_init: bool,
@@ -59,7 +60,7 @@ pub struct Args {
 
 fn main() {
     let args: Args = Docopt::new(USAGE)
-        .and_then(|dopt| dopt.decode())
+        .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
     match args {

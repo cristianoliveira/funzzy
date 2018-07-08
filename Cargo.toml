@@ -7,8 +7,9 @@ license = "MIT"
 repository = "https://github.com/cristianoliveira/funzzy"
 
 [dependencies]
-docopt = "0.6"
-rustc-serialize = "0.3"
+docopt = "1"
+serde = "1.0" # if you're using `derive(Deserialize)`
+serde_derive = "1.0" # if you're using `derive(Deserialize)`
 notify = "^2.5.0"
 yaml-rust = "0.3.2"
 glob="0.2.11"
