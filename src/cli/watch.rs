@@ -61,7 +61,6 @@ impl Command for WatchCommand {
             if let DebouncedEvent::Create(path) = event {
                 let path_str  = path.into_os_string().into_string().unwrap();
                 if let Some(shell_commands) = self.watches.watch(&*path_str) {
-
                     if self.verbose { println!("path: {}", path_str) };
 
                     self.run(shell_commands)?
@@ -109,11 +108,11 @@ impl Watches {
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<String>> {
-        for rule in self.rules.iter()
-            .filter(|r| !r.ignore(path) && r.watch(path)) {
-            return Some(rule.commands());
-        };
-        None
+        self.rules.iter()
+            .filter(|r| !r.ignore(path) && r.watch(path))
+            .map(|r| r.commands())
+            .collect::<Vec<Vec<String>>>()
+            .pop()
     }
 
     /// Returns the commands for the rules that should run on init
