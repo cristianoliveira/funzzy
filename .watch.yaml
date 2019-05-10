@@ -7,3 +7,4 @@
 - name: run my test
   run: 'make tests'
   change: 'src/**'
+  run_on_init: true

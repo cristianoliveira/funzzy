@@ -21,6 +21,11 @@ Configure execution of different commands using semantic yaml.
 - name: Starwars
   run: telnet towel.blinkenlights.nl
   change: '.watch.yaml'
+
+- name: say hello
+  run: say hello
+  change: '.watch.yaml'
+  run_on_init: true
 ```
 
 ## Motivation
