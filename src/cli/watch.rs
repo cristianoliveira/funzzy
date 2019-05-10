@@ -27,6 +27,15 @@ impl WatchCommand {
         if verbose { println!("watches {:?}", watches); }
         WatchCommand { watches: watches , verbose: verbose }
     }
+
+    fn run(&self, commands: Vec<String>) -> Result<(), String> {
+        clear_shell();
+        for command in commands {
+            if self.verbose { println!("command: {:?}", command) };
+            try!(cmd::execute(command))
+        }
+        Ok(())
+    }
 }
 
 impl Command for WatchCommand {
@@ -44,11 +53,7 @@ impl Command for WatchCommand {
         if let Some(shell_commands) = self.watches.run_on_init() {
             println!("Running on init commands.");
 
-            clear_shell();
-            for command in shell_commands {
-                if self.verbose { println!("command: {:?}", command) };
-                try!(cmd::execute(command))
-            }
+            self.run(shell_commands)?
         }
 
         println!("Watching.");
@@ -59,11 +64,7 @@ impl Command for WatchCommand {
 
                     if self.verbose { println!("path: {}", path_str) };
 
-                    clear_shell();
-                    for command in shell_commands {
-                        if self.verbose { println!("command: {:?}", command) };
-                        try!(cmd::execute(command))
-                    }
+                    self.run(shell_commands)?
                 }
             }
         }
