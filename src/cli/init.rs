@@ -1,8 +1,8 @@
 use cli::Command;
 
-use std::io::Write;
-use std::fs::File;
 use std::error::Error;
+use std::fs::File;
+use std::io::Write;
 
 pub const DEFAULT_CONTENT: &'static str = "
 ## Funzzy events file
@@ -15,7 +15,6 @@ pub const DEFAULT_CONTENT: &'static str = "
   change: 'src/**'
 ";
 
-
 /// # `InitCommand`
 ///
 /// Creates a funzzy yaml boilerplate.
@@ -26,7 +25,9 @@ pub struct InitCommand {
 
 impl InitCommand {
     pub fn new(file: &str) -> Self {
-        InitCommand { file_name: file.to_string() }
+        InitCommand {
+            file_name: file.to_string(),
+        }
     }
 }
 

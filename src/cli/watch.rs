@@ -3,12 +3,12 @@ extern crate notify;
 use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
 
-use self::notify::{DebouncedEvent, RecommendedWatcher, Watcher, RecursiveMode};
+use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use std::time::Duration;
 
 use cli::Command;
-use rules;
 use cmd;
+use rules;
 
 pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
 
@@ -24,14 +24,21 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool) -> Self {
-        if verbose { println!("watches {:?}", watches); }
-        WatchCommand { watches: watches , verbose: verbose }
+        if verbose {
+            println!("watches {:?}", watches);
+        }
+        WatchCommand {
+            watches: watches,
+            verbose: verbose,
+        }
     }
 
     fn run(&self, commands: Vec<String>) -> Result<(), String> {
         clear_shell();
         for command in commands {
-            if self.verbose { println!("command: {:?}", command) };
+            if self.verbose {
+                println!("command: {:?}", command)
+            };
             try!(cmd::execute(command))
         }
         Ok(())
@@ -59,9 +66,11 @@ impl Command for WatchCommand {
         println!("Watching.");
         while let Ok(event) = rx.recv() {
             if let DebouncedEvent::Create(path) = event {
-                let path_str  = path.into_os_string().into_string().unwrap();
+                let path_str = path.into_os_string().into_string().unwrap();
                 if let Some(shell_commands) = self.watches.watch(&*path_str) {
-                    if self.verbose { println!("path: {}", path_str) };
+                    if self.verbose {
+                        println!("path: {}", path_str)
+                    };
 
                     self.run(shell_commands)?
                 }
@@ -70,7 +79,6 @@ impl Command for WatchCommand {
         Ok(())
     }
 }
-
 
 /// # Watches
 ///
@@ -82,13 +90,15 @@ pub struct Watches {
 }
 impl Watches {
     pub fn from_args(command: String) -> Self {
-        let template = format!("
+        let template = format!(
+            "
         - name: from command
           run: {command}
           change: '{path}'
         ",
-         path = "**",
-         command = command);
+            path = "**",
+            command = command
+        );
 
         Watches::load_from_str(&template)
     }
@@ -102,13 +112,16 @@ impl Watches {
     }
 
     fn load_from_str(plain_text: &str) -> Self {
-        Watches { rules: rules::from_yaml(plain_text) }
+        Watches {
+            rules: rules::from_yaml(plain_text),
+        }
     }
 
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<String>> {
-        self.rules.iter()
+        self.rules
+            .iter()
             .filter(|r| !r.ignore(path) && r.watch(path))
             .map(|r| r.commands())
             .collect::<Vec<Vec<String>>>()
@@ -118,13 +131,17 @@ impl Watches {
     /// Returns the commands for the rules that should run on init
     ///
     pub fn run_on_init(&self) -> Option<Vec<String>> {
-        match self.rules.iter()
+        match self
+            .rules
+            .iter()
             .filter(|r| r.run_on_init())
             .flat_map(|r| r.commands())
-            .collect::<Vec<String>>().as_slice() {
-                [] => None,
-                v => Some(v.to_vec()),
-            }
+            .collect::<Vec<String>>()
+            .as_slice()
+        {
+            [] => None,
+            v => Some(v.to_vec()),
+        }
     }
 }
 
@@ -134,9 +151,9 @@ fn clear_shell() {
 
 #[cfg(test)]
 mod tests {
+    extern crate glob;
     extern crate notify;
     extern crate yaml_rust;
-    extern crate glob;
 
     use super::*;
 
@@ -161,7 +178,9 @@ mod tests {
           change: 'tests/**'
         ";
         let watches = Watches::from(file_content);
-        assert!(watches.watch("/Users/crosa/others/funzzy/tests/test.rs").is_some());
+        assert!(watches
+            .watch("/Users/crosa/others/funzzy/tests/test.rs")
+            .is_some());
         assert!(watches.watch("tests/tests.rs").is_some());
         assert!(watches.watch("tests/ruby.rb").is_some());
         assert!(watches.watch("tests/folder/other.rs").is_some())
@@ -178,7 +197,6 @@ mod tests {
         assert!(watches.watch("./tests/foo/bar.rs").is_some())
     }
 
-
     #[test]
     fn it_doesnot_watch_test_path() {
         let file_content = "
@@ -188,7 +206,9 @@ mod tests {
         ";
         let watches = Watches::from(file_content);
 
-        assert!(watches.watch("/Users/crosa/others/funzzy/events.yaml").is_none());
+        assert!(watches
+            .watch("/Users/crosa/others/funzzy/events.yaml")
+            .is_none());
         assert!(watches.watch("tests/").is_none());
         assert!(watches.watch("tests/test.rs").is_none());
         assert!(watches.watch("tests/folder/other.rs").is_none());

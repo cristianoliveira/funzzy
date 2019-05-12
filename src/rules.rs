@@ -1,11 +1,11 @@
-extern crate yaml_rust;
 extern crate glob;
+extern crate yaml_rust;
 
 use yaml;
 
+use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
-use self::glob::Pattern;
 
 #[derive(Debug)]
 pub struct Rules {
@@ -16,7 +16,12 @@ pub struct Rules {
 }
 
 impl Rules {
-    pub fn new(commands: Vec<String>, watches: Vec<String>, ignores: Vec<String>, run_on_init: bool) -> Self {
+    pub fn new(
+        commands: Vec<String>,
+        watches: Vec<String>,
+        ignores: Vec<String>,
+        run_on_init: bool,
+    ) -> Self {
         Rules {
             commands: commands,
             watch_patterns: watches,
@@ -38,13 +43,16 @@ impl Rules {
     }
 
     pub fn watch(&self, path: &str) -> bool {
-        self.watch_patterns.iter()
+        self.watch_patterns
+            .iter()
             .any(|watch| pattern(watch).matches(path))
     }
 
     pub fn ignore(&self, path: &str) -> bool {
-        self.ignore_patterns.iter()
-            .any(|ignore| pattern(ignore).matches(path)) || false
+        self.ignore_patterns
+            .iter()
+            .any(|ignore| pattern(ignore).matches(path))
+            || false
     }
 
     pub fn commands(&self) -> Vec<String> {
@@ -59,18 +67,17 @@ impl Rules {
 pub fn from_yaml(file_content: &str) -> Vec<Rules> {
     let items = YamlLoader::load_from_str(file_content).unwrap();
     match items[0] {
-        Yaml::Array(ref items) => items.iter()
-                                       .map(|rule| Rules::from(rule))
-                                       .collect(),
-        _ => panic!("You must have at last one item in the yaml.")
+        Yaml::Array(ref items) => items.iter().map(|rule| Rules::from(rule)).collect(),
+        _ => panic!("You must have at last one item in the yaml."),
     }
 }
 
 pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
-    let watches = patterns.lines()
-                        .filter(|line| line.len() > 1)
-                        .map(|line| format!("**/{}", &line[2..]))
-                        .collect();
+    let watches = patterns
+        .lines()
+        .filter(|line| line.len() > 1)
+        .map(|line| format!("**/{}", &line[2..]))
+        .collect();
     vec![Rules::new(vec![command.clone()], watches, vec![], false)]
 }
 
@@ -82,9 +89,9 @@ fn pattern(pattern: &str) -> Pattern {
 mod tests {
     extern crate yaml_rust;
 
-    use super::Rules;
-    use super::from_string;
     use self::yaml_rust::YamlLoader;
+    use super::from_string;
+    use super::Rules;
 
     #[test]
     fn it_is_watching_path_tests() {

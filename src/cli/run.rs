@@ -1,6 +1,6 @@
-use std::{thread, time};
-use std::process::Command as ShellCommand;
 use std::error::Error;
+use std::process::Command as ShellCommand;
+use std::{thread, time};
 
 use cli::Command;
 
@@ -15,7 +15,10 @@ pub struct RunCommand {
 
 impl RunCommand {
     pub fn new(command: String, interval: u64) -> Self {
-        RunCommand { command: command, interval: interval }
+        RunCommand {
+            command: command,
+            interval: interval,
+        }
     }
 }
 

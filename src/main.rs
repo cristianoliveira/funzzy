@@ -7,14 +7,14 @@ extern crate serde_derive;
 extern crate docopt;
 
 mod cli;
-mod yaml;
-mod rules;
 mod cmd;
+mod rules;
+mod yaml;
 
+use std::fs::File;
+use std::io;
 #[warn(unused_imports)]
 use std::io::prelude::*;
-use std::io::{self};
-use std::fs::File;
 
 use cli::*;
 
@@ -69,26 +69,30 @@ fn main() {
         Args { flag_h: true, .. } => show(USAGE),
 
         // Commands
-        Args { cmd_init: true, .. } =>
-            execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
+        Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        Args { cmd_run: true, .. } =>
-            execute(RunCommand::new(args.arg_command, args.arg_interval)),
+        Args { cmd_run: true, .. } => execute(RunCommand::new(args.arg_command, args.arg_interval)),
 
-        Args { cmd_watch: true, flag_c: true, .. } => {
+        Args {
+            cmd_watch: true,
+            flag_c: true,
+            ..
+        } => {
             let watches = Watches::from_args(args.arg_command);
             execute(WatchCommand::new(watches, args.flag_verbose))
-        },
+        }
 
-        Args { ref arg_command,.. } if !arg_command.is_empty() => {
+        Args {
+            ref arg_command, ..
+        } if !arg_command.is_empty() => {
             match from_stdin() {
                 Some(content) => {
-                   let watches = Watches::new(rules::from_string(content, arg_command));
-                   execute(WatchCommand::new(watches, args.flag_verbose));
-                },
-                None => show("Nothing to run")
+                    let watches = Watches::new(rules::from_string(content, arg_command));
+                    execute(WatchCommand::new(watches, args.flag_verbose));
+                }
+                None => show("Nothing to run"),
             };
-        },
+        }
 
         _ => {
             let watches = Watches::from(&from_file(cli::watch::DEFAULT_FILENAME));
@@ -109,22 +113,33 @@ fn from_stdin() -> Option<String> {
     let mut handle = stdin.lock();
 
     match handle.read_to_string(&mut buffer) {
-        Ok(bytes) => if bytes > 0 { Some(buffer) } else { None },
-        Err(err) => panic!("Error while reading stdin {}", err)
+        Ok(bytes) => {
+            if bytes > 0 {
+                Some(buffer)
+            } else {
+                None
+            }
+        }
+        Err(err) => panic!("Error while reading stdin {}", err),
     }
 }
 
 fn from_file(filename: &str) -> String {
     let mut file = match File::open(filename) {
         Ok(f) => f,
-        Err(err) => show(format!("File {} cannot be opened. Cause: {}",
-                         cli::watch::DEFAULT_FILENAME,
-                         err).as_str()),
+        Err(err) => show(
+            format!(
+                "File {} cannot be opened. Cause: {}",
+                cli::watch::DEFAULT_FILENAME,
+                err
+            )
+            .as_str(),
+        ),
     };
 
     let mut content = String::new();
     if let Err(err) = file.read_to_string(&mut content) {
-        panic!("Error while trying read file. {}",err);
+        panic!("Error while trying read file. {}", err);
     }
 
     content
@@ -134,4 +149,3 @@ fn show(text: &str) -> ! {
     println!("{}", text);
     std::process::exit(0)
 }
-
