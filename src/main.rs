@@ -83,7 +83,6 @@ fn main() {
         Args { ref arg_command,.. } if !arg_command.is_empty() => {
             match from_stdin() {
                 Some(content) => {
-                   println!("stdin {:?}", content);
                    let watches = Watches::new(rules::from_string(content, arg_command));
                    execute(WatchCommand::new(watches, args.flag_verbose));
                 },
