@@ -4,14 +4,13 @@ use self::yaml_rust::Yaml;
 
 pub fn extract_strings(yaml: &Yaml) -> Vec<String> {
     match yaml.clone() {
-        Yaml::Array(ref items) => items.iter()
+        Yaml::Array(ref items) => items
+            .iter()
             .map(|i| String::from(i.as_str().unwrap()))
             .collect(),
-        Yaml::String(ref item) => {
-            vec![String::from(item.as_str())]
-        },
+        Yaml::String(ref item) => vec![String::from(item.as_str())],
         Yaml::BadValue => vec![],
-        _ => panic!("Unkown format. Please review the yaml")
+        _ => panic!("Unkown format. Please review the yaml"),
     }
 }
 
@@ -19,9 +18,7 @@ pub fn extract_strings(yaml: &Yaml) -> Vec<String> {
 ///
 pub fn extract_bool(yaml: &Yaml) -> bool {
     match yaml.clone() {
-        Yaml::Boolean(item) => {
-            item
-        },
+        Yaml::Boolean(item) => item,
         _ => false,
     }
 }

@@ -1,5 +1,5 @@
-use std::process::Command;
 use std::error::Error;
+use std::process::Command;
 
 fn command_parser(command: String) -> Vec<Command> {
     let mut commands = vec![];
@@ -13,7 +13,7 @@ fn command_parser(command: String) -> Vec<Command> {
             "&&" => {
                 commands.push(command);
                 command = Command::new(tokens.remove(0));
-            },
+            }
             _ => {
                 command.arg(token);
             }
@@ -34,14 +34,14 @@ pub fn execute(command_line: String) -> Result<(), String> {
         }
     }
 
-    return Ok(())
+    return Ok(());
 }
 
 #[test]
 fn it_executes_a_command() {
     let result = match execute(String::from("echo 'foo'")) {
         Ok(_) => true,
-        Err(msg) => panic!(msg)
+        Err(msg) => panic!(msg),
     };
 
     assert!(result)

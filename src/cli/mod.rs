@@ -1,10 +1,10 @@
 pub mod init;
-pub mod watch;
 pub mod run;
+pub mod watch;
 
-pub use cli::init::InitCommand;
-pub use cli::watch::{Watches, WatchCommand};
 pub use self::run::RunCommand;
+pub use cli::init::InitCommand;
+pub use cli::watch::{WatchCommand, Watches};
 
 /// # Command interface
 ///
