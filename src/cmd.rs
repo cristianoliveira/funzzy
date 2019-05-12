@@ -26,7 +26,6 @@ fn command_parser(command: String) -> Vec<Command> {
 }
 
 pub fn execute(command_line: String) -> Result<(), String> {
-
     let commands = command_parser(command_line);
 
     for mut cmd in commands {

@@ -27,11 +27,19 @@ impl WatchCommand {
         if verbose { println!("watches {:?}", watches); }
         WatchCommand { watches: watches , verbose: verbose }
     }
+
+    fn run(&self, commands: Vec<String>) -> Result<(), String> {
+        clear_shell();
+        for command in commands {
+            if self.verbose { println!("command: {:?}", command) };
+            try!(cmd::execute(command))
+        }
+        Ok(())
+    }
 }
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
-
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher = match Watcher::new(tx, Duration::from_secs(2)) {
             Ok(w) => w,
@@ -42,19 +50,20 @@ impl Command for WatchCommand {
             panic!("Unable to watch current directory. Cause: {:?}", err)
         }
 
+        if let Some(shell_commands) = self.watches.run_on_init() {
+            println!("Running on init commands.");
+
+            self.run(shell_commands)?
+        }
+
         println!("Watching.");
         while let Ok(event) = rx.recv() {
             if let DebouncedEvent::Create(path) = event {
                 let path_str  = path.into_os_string().into_string().unwrap();
                 if let Some(shell_commands) = self.watches.watch(&*path_str) {
-
                     if self.verbose { println!("path: {}", path_str) };
 
-                    clear_shell();
-                    for command in shell_commands {
-                        if self.verbose { println!("command: {:?}", command) };
-                        try!(cmd::execute(command))
-                    }
+                    self.run(shell_commands)?
                 }
             }
         }
@@ -96,15 +105,26 @@ impl Watches {
         Watches { rules: rules::from_yaml(plain_text) }
     }
 
-
-    /// Returns the first rule found for the given path
+    /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<String>> {
-        for rule in self.rules.iter()
-            .filter(|r| !r.ignore(path) && r.watch(path)) {
-            return Some(rule.commands());
-        };
-        None
+        self.rules.iter()
+            .filter(|r| !r.ignore(path) && r.watch(path))
+            .map(|r| r.commands())
+            .collect::<Vec<Vec<String>>>()
+            .pop()
+    }
+
+    /// Returns the commands for the rules that should run on init
+    ///
+    pub fn run_on_init(&self) -> Option<Vec<String>> {
+        match self.rules.iter()
+            .filter(|r| r.run_on_init())
+            .flat_map(|r| r.commands())
+            .collect::<Vec<String>>().as_slice() {
+                [] => None,
+                v => Some(v.to_vec()),
+            }
     }
 }
 
@@ -246,5 +266,34 @@ mod tests {
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
         assert!(watches.watch("src/test/other.tmp").is_none())
+    }
+
+    #[test]
+    fn it_returns_on_init_rules() {
+        let file_content = "
+            - name: my source
+              run: 'cargo build'
+              change: 'src/**'
+              run_on_init: true
+
+            - name: my source
+              run: ['cat foo', 'cat bar']
+              change: 'src/**'
+              run_on_init: true
+
+            - name: other
+              run: 'cargo test'
+              change: 'test/**'
+            ";
+        let watches = Watches::from(file_content);
+
+        assert_eq!(
+            watches.run_on_init().unwrap(),
+            vec![
+                "cargo build".to_string(),
+                "cat foo".to_string(),
+                "cat bar".to_string(),
+            ]
+        );
     }
 }

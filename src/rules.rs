@@ -12,15 +12,19 @@ pub struct Rules {
     commands: Vec<String>,
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
+    run_on_init: bool,
 }
+
 impl Rules {
-    pub fn new(commands: Vec<String>, watches: Vec<String>, ignores: Vec<String>) -> Self {
+    pub fn new(commands: Vec<String>, watches: Vec<String>, ignores: Vec<String>, run_on_init: bool) -> Self {
         Rules {
             commands: commands,
             watch_patterns: watches,
-            ignore_patterns: ignores
+            ignore_patterns: ignores,
+            run_on_init: run_on_init,
         }
     }
+
     pub fn from(yaml: &Yaml) -> Self {
         yaml::validate(yaml, "run");
         yaml::validate(yaml, "change");
@@ -28,7 +32,8 @@ impl Rules {
         Rules {
             commands: yaml::extract_strings(&yaml["run"]),
             watch_patterns: yaml::extract_strings(&yaml["change"]),
-            ignore_patterns: yaml::extract_strings(&yaml["ignore"])
+            ignore_patterns: yaml::extract_strings(&yaml["ignore"]),
+            run_on_init: yaml::extract_bool(&yaml["run_on_init"]),
         }
     }
 
@@ -44,6 +49,10 @@ impl Rules {
 
     pub fn commands(&self) -> Vec<String> {
         self.commands.clone()
+    }
+
+    pub fn run_on_init(&self) -> bool {
+        self.run_on_init
     }
 }
 
@@ -62,7 +71,7 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
                         .filter(|line| line.len() > 1)
                         .map(|line| format!("**/{}", &line[2..]))
                         .collect();
-    vec![Rules::new(vec![command.clone()], watches, vec![])]
+    vec![Rules::new(vec![command.clone()], watches, vec![], false)]
 }
 
 fn pattern(pattern: &str) -> Pattern {
@@ -103,6 +112,50 @@ mod tests {
         let rule = Rules::from(&content[0][0]);
 
         assert_eq!(false, rule.watch("tests/foo.rs"));
+    }
+
+    #[test]
+    fn it_accepts_run_on_init() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: 'foo/**'
+          run_on_init: true
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = Rules::from(&content[0][0]);
+
+        assert!(rule.run_on_init());
+    }
+
+    #[test]
+    fn it_accepts_false_for_run_on_init() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: 'foo/**'
+          run_on_init: false
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = Rules::from(&content[0][0]);
+
+        assert!(!rule.run_on_init());
+    }
+
+    #[test]
+    fn it_defaults_run_on_init_to_false() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: 'foo/**'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = Rules::from(&content[0][0]);
+
+        assert!(!rule.run_on_init());
     }
 
     #[test]
