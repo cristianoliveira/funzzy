@@ -28,16 +28,16 @@ Usage:
   funzzy
   funzzy init
   funzzy <command>
-  funzzy watch [--verbose]
-  funzzy watch [--verbose | -c | -s] <command>
-  funzzy run [--verbose] <command> <interval>
+  funzzy watch [-V]
+  funzzy watch [-V | -c | -s] <command>
+  funzzy run [-V] <command> <interval>
   funzzy [options]
 
 Options:
   run               Execute command in a given interval (seconds)
   -h --help         Shows this message.
   -v --version      Shows version.
-  --verbose         Use verbose output.
+  -V                Use verbose output.
   -c                Execute given command for current folder.
 ";
 
@@ -55,7 +55,7 @@ pub struct Args {
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
-    pub flag_verbose: bool,
+    pub flag_V: bool,
 }
 
 fn main() {
@@ -79,7 +79,7 @@ fn main() {
             ..
         } => {
             let watches = Watches::from_args(args.arg_command);
-            execute(WatchCommand::new(watches, args.flag_verbose))
+            execute(WatchCommand::new(watches, args.flag_V))
         }
 
         Args {
@@ -88,7 +88,7 @@ fn main() {
             match from_stdin() {
                 Some(content) => {
                     let watches = Watches::new(rules::from_string(content, arg_command));
-                    execute(WatchCommand::new(watches, args.flag_verbose));
+                    execute(WatchCommand::new(watches, args.flag_V));
                 }
                 None => show("Nothing to run"),
             };
@@ -96,7 +96,7 @@ fn main() {
 
         _ => {
             let watches = Watches::from(&from_file(cli::watch::DEFAULT_FILENAME));
-            execute(WatchCommand::new(watches, args.flag_verbose));
+            execute(WatchCommand::new(watches, args.flag_V));
         }
     }
 }
