@@ -1,8 +1,8 @@
 [package]
 name = "funzzy"
-version = "0.3.3"
-authors = ["Cristian Oliveira <contato@cristianoliveira.com.br>"]
-description = "The fancy watcher inspired by entr."
+version = "0.4.0"
+authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
+description = "Yet another fancy watcher inspired by entr."
 license = "MIT"
 repository = "https://github.com/cristianoliveira/funzzy"
 

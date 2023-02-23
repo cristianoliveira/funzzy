@@ -1,10 +1,9 @@
-
 ## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
 # list here all the events and the commands that it should execute
 
 - name: run my test
-  run: 'make tests'
-  change: 'src/**'
+  run: "make tests"
+  change: "src/**"
   run_on_init: true
