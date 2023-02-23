@@ -7,7 +7,7 @@ tests: ## Execute all the tests
 	@cargo test
 
 .PHONY: build
-build: test ## Execute all the tests and build funzzy binary
+build: tests ## Execute all the tests and build funzzy binary
 	@cargo test
 
 .PHONY: install
