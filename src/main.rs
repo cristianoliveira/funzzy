@@ -41,6 +41,7 @@ Options:
   -c                Execute given command for current folder.
 ";
 
+#[allow(non_snake_case)]
 #[derive(Debug, Deserialize)]
 pub struct Args {
     // comand
