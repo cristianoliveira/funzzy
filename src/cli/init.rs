@@ -1,6 +1,5 @@
 use cli::Command;
 
-use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 
@@ -39,7 +38,7 @@ impl Command for InitCommand {
         };
 
         if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
-            return Err(String::from(err.description()));
+            return Err(String::from(err.to_string()));
         }
 
         Ok(())

@@ -39,7 +39,7 @@ impl WatchCommand {
             if self.verbose {
                 println!("command: {:?}", command)
             };
-            try!(cmd::execute(command))
+            cmd::execute(command)?
         }
         Ok(())
     }

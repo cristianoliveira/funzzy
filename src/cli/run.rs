@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::process::Command as ShellCommand;
 use std::{thread, time};
 
@@ -30,7 +29,7 @@ impl Command for RunCommand {
 
         loop {
             if let Err(error) = command.status() {
-                return Err(String::from(error.description()));
+                return Err(String::from(error.to_string()));
             }
             let wait = time::Duration::from_secs(self.interval);
             thread::sleep(wait)

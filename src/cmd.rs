@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::process::Command;
 
 fn command_parser(command: String) -> Vec<Command> {
@@ -30,7 +29,7 @@ pub fn execute(command_line: String) -> Result<(), String> {
 
     for mut cmd in commands {
         if let Err(error) = cmd.status() {
-            return Err(String::from(error.description()));
+            return Err(String::from(error.to_string()));
         }
     }
 

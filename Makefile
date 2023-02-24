@@ -13,3 +13,14 @@ build: tests ## Execute all the tests and build funzzy binary
 .PHONY: install
 install: build ## Install funzzy on your machine
 	cp target/release/funzzy /usr/local/bin/
+
+.PHONY: lint
+lint:
+	cargo clippy
+
+.PHONY: lint
+lint:
+	cargo clippy
+
+.PHONY: linter
+linter: lint
