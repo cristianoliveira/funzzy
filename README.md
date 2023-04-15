@@ -1,4 +1,4 @@
-# funzzy  [![Build Status](https://travis-ci.org/cristianoliveira/funzzy.svg?branch=master)](https://travis-ci.org/cristianoliveira/funzzy) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
+# funzzy  [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/rust.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/rust.yml)(https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
