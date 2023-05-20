@@ -34,11 +34,12 @@ Usage:
   funzzy [options]
 
 Options:
-  run               Execute command in a given interval (seconds)
-  -h --help         Shows this message.
-  -v --version      Shows version.
-  -V                Use verbose output.
-  -c                Execute given command for current folder.
+  run                  Execute command in a given interval (seconds)
+  --config=<cfgfile>   Use given config file.
+  -h --help            Shows this message.
+  -v --version         Shows version.
+  -V                   Use verbose output.
+  -c                   Execute given command for current folder.
 ";
 
 #[allow(non_snake_case)]
@@ -53,6 +54,7 @@ pub struct Args {
     pub arg_interval: u64,
 
     // options
+    pub flag_config: String,
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
@@ -93,6 +95,11 @@ fn main() {
                 }
                 None => show("Nothing to run"),
             };
+        }
+
+        Args { ref flag_config, .. } if !flag_config.is_empty() => {
+            let watches = Watches::from(&from_file(&args.flag_config));
+            execute(WatchCommand::new(watches, args.flag_V));
         }
 
         _ => {
