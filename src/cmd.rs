@@ -1,25 +1,31 @@
-use std::process::Command;
+use std::process::{ Command, Stdio };
 
 fn command_parser(command: String) -> Vec<Command> {
     let mut commands = vec![];
     let mut tokens: Vec<&str> = command.split(' ').collect();
 
     let init = tokens.remove(0);
-    let mut command = Command::new(init);
+    commands.push(Command::new(init));
     while tokens.len() > 0 {
         let token = tokens.remove(0);
         match token.clone() {
-            "&&" => {
-                commands.push(command);
-                command = Command::new(tokens.remove(0));
+            "|" | "||" | "&" | "&&" => {
+                let mut child = commands.remove(commands.len() - 1);
+                child.stdout(Stdio::piped());
+
+                let cmdname = tokens.remove(0);
+                let mut cmd = Command::new(cmdname);
+                let result = child.spawn().unwrap().stdout.unwrap();
+                cmd.stdin(Stdio::from(result));
+                commands.push(cmd);
             }
             _ => {
-                command.arg(token);
+                let mut cmd = commands.remove(commands.len() - 1);
+                cmd.arg(token.replace("'", "").replace("\"", ""));
+                commands.push(cmd);
             }
         }
     }
-
-    commands.push(command);
 
     commands
 }
@@ -67,17 +73,34 @@ fn it_creates_commands_with_more_than_one_arg() {
 }
 
 #[test]
-fn it_accept_nested_commands() {
+fn it_accept_nested_commands_and_return_the_latest() {
     let result = command_parser(String::from("cargo build --verbose && cargo test"));
-
-    let mut cmd1 = Command::new("cargo");
-    cmd1.arg("build");
-    cmd1.arg("--verbose");
 
     let mut cmd2 = Command::new("cargo");
     cmd2.arg("test");
 
-    let commands = vec![cmd1, cmd2];
+    let commands = vec![cmd2];
 
     assert_eq!(format!("{:?}", commands), format!("{:?}", result))
 }
+
+
+#[test]
+fn it_allows_piping_outputs() {
+    let mut commands = command_parser(
+        String::from("echo 'foo' | sed 's/foo/bar/g'")
+    );
+
+    let mut child = commands.remove(0);
+
+    let output = child.stdout(Stdio::piped())
+        .spawn()
+        .expect("Failed to start sed process")
+        .wait_with_output()
+        .expect("Failed to wait on sed");
+
+    let result = output.stdout.as_slice();
+
+    assert_eq!("bar\n", String::from_utf8_lossy(result));
+}
+
