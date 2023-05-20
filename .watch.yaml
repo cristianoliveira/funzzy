@@ -11,3 +11,7 @@
 - name: run my build
   run: "make build"
   change: "src/**"
+
+- name: run my lint
+  run: "make lint"
+  change: "src/**"

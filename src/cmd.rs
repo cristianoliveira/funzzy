@@ -25,6 +25,7 @@ fn command_parser(command: String) -> Vec<Command> {
 }
 
 pub fn execute(command_line: String) -> Result<(), String> {
+    println!(" ----- funzzy running: {} -------", command_line);
     let commands = command_parser(command_line);
 
     for mut cmd in commands {
