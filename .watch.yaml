@@ -7,3 +7,7 @@
   run: "make tests"
   change: "src/**"
   run_on_init: true
+
+- name: run my build
+  run: "make build"
+  change: "src/**"
