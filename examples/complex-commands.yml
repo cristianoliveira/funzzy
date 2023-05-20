@@ -1,0 +1,4 @@
+- name: run my test
+  run: "echo 'foo bar baz' | sed 's/foo/bar/g'"
+  change: "**"
+  run_on_init: true

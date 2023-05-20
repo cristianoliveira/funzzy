@@ -1,33 +1,61 @@
 use std::process::{ Command, Stdio };
 
 fn command_parser(command: String) -> Vec<Command> {
-    let mut commands = vec![];
-    let mut tokens: Vec<&str> = command.split(' ').collect();
+    let formatted = command.replace("'", " ' ").replace("\"", " \" ");
+    let mut tokens: Vec<&str> = formatted.split(' ').collect();
 
     let init = tokens.remove(0);
-    commands.push(Command::new(init));
+    let mut current_cmd = Command::new(init);
     while tokens.len() > 0 {
         let token = tokens.remove(0);
         match token.clone() {
             "|" | "||" | "&" | "&&" => {
-                let mut child = commands.remove(commands.len() - 1);
-                child.stdout(Stdio::piped());
+                current_cmd.stdout(Stdio::piped());
 
                 let cmdname = tokens.remove(0);
                 let mut cmd = Command::new(cmdname);
-                let result = child.spawn().unwrap().stdout.unwrap();
+                let result = current_cmd.spawn().unwrap().stdout.unwrap();
                 cmd.stdin(Stdio::from(result));
-                commands.push(cmd);
+                current_cmd = cmd;
             }
-            _ => {
-                let mut cmd = commands.remove(commands.len() - 1);
-                cmd.arg(token.replace("'", "").replace("\"", ""));
-                commands.push(cmd);
+
+            "\"" => {
+                let mut string_arg = String::new();
+                while tokens.len() > 0 {
+                    let token = tokens.remove(0);
+                    if token == "\"" {
+                        string_arg.pop();
+                        current_cmd.arg(string_arg);
+                        break;
+                    }
+                    string_arg.push_str(token);
+                    string_arg.push_str(" ");
+                }
             }
+
+            "'" => {
+                let mut string_arg = String::new();
+                while tokens.len() > 0 {
+                    let token = tokens.remove(0);
+                    if token == "'" {
+                        string_arg.pop();
+                        current_cmd.arg(string_arg);
+                        break;
+                    }
+                    string_arg.push_str(token);
+                    string_arg.push_str(" ");
+                }
+            }
+
+            arg if arg.len() > 0 => {
+                current_cmd.arg(arg);
+            }
+
+            _ => {}
         }
     }
 
-    commands
+    vec![current_cmd]
 }
 
 pub fn execute(command_line: String) -> Result<(), String> {
@@ -104,3 +132,14 @@ fn it_allows_piping_outputs() {
     assert_eq!("bar\n", String::from_utf8_lossy(result));
 }
 
+#[test]
+fn it_accept_strings_as_arguments() {
+    let result = command_parser(String::from("echo 'foo bar baz'"));
+
+    let mut cmd2 = Command::new("echo");
+    cmd2.arg("foo bar baz");
+
+    let commands = vec![cmd2];
+
+    assert_eq!(format!("{:?}", commands), format!("{:?}", result))
+}
