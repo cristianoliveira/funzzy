@@ -1,0 +1,12 @@
+- name: run my test
+  run: "echo 'tests'"
+  change: "**"
+  run_on_init: true
+
+- name: run my build
+  run: "echo 'build'"
+  change: "**"
+
+- name: run my lint
+  run: "echo 'lint'"
+  change: "**"
