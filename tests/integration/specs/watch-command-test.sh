@@ -2,10 +2,10 @@
 source "$HELPERS"
 
 # skip if on CI
-if [ -n "$CI" ]; then
-  echo "skipping test, only run on CI"
-  exit 0
-fi
+# if [ -n "$CI" ]; then
+#   echo "Skipping test on CI because of permissions"
+#   exit 0
+# fi
 
 test "it watches the configured rules"
 
