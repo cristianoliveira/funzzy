@@ -16,5 +16,10 @@ for spec in $TEST_DIR/specs/*; do
   echo "----------------------------"
 done
 
+if [ -f $TEST_DIR/workdir/output.txt ]; then
+  echo "output:"
+  cat $TEST_DIR/workdir/output.txt
+fi
+
 echo "All integration tests passed"
 exit 0

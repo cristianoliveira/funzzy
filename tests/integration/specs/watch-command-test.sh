@@ -20,6 +20,8 @@ ex workdir/test.txt <<EOEX
   :x
 EOEX
 
+cat workdir/test.txt
+
 wait_for_file "workdir/output.txt"
 assert_file_contains "workdir/output.txt" "echo test1"
 
