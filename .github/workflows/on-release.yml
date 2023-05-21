@@ -31,7 +31,6 @@ jobs:
           asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
-          body: "Release ${{ env.RELEASE_TAG }}"
 
   build_release_linux:
     env:
@@ -60,7 +59,6 @@ jobs:
           asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
-          body: "Release ${{ env.RELEASE_TAG }}"
 
   publish_crates:
     runs-on: ubuntu-latest
