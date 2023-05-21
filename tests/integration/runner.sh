@@ -1,15 +1,18 @@
 set -e
 
-ls -la ./tests/integration/
+ls -la tests/integration/
+echo "$HOME"
+echo "$PWD"
 
-export HELPERS="$(pwd)/tests/integration/functions.sh"
+export TEST_DIR="tests/integration"
+export HELPERS="./functions.sh"
 
 cargo build --release
 
 cp target/release/funzzy tests/integration/funzzy
 cd tests/integration
 
-PATH=$PATH:./tests/integration
+PATH=$PATH:tests/integration
 
 for spec in specs/*; do
   echo "Running $spec"
