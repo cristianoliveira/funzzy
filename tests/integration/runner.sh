@@ -1,12 +1,13 @@
-
 set -e
+
+ls -la ./tests/integration/
+
+export HELPERS="$(pwd)/tests/integration/functions.sh"
 
 cargo build --release
 
 cp target/release/funzzy tests/integration/funzzy
 cd tests/integration
-
-export HELPERS="./tests/integration/functions.sh"
 
 PATH=$PATH:./tests/integration
 
