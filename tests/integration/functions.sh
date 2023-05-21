@@ -20,18 +20,18 @@ function assert_equal() {
 }
 
 function assert_file_contains() {
-  local passed=0
+  local success=0
   for i in {1..10}
   do
     if grep -q "$2" "$1"; then
-      passed=1
+      success=1
       break
     fi
     echo "Attempt $i..."
-    sleep 1
+    sleep 5
   done
 
-  if [ $passed -eq 0 ]; then
+  if [ $success -eq 0 ]; then
     echo "ERROR: file $1 does not contain $2"
     echo "file content:"
     echo "$(cat $1)"
@@ -49,7 +49,7 @@ function wait_for_file() {
       break
     fi
     echo "Waiting for $1..."
-    sleep 1
+    sleep 5
   done
 
   if [ $file_exists -eq 0 ]; then
