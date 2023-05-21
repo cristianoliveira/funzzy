@@ -96,25 +96,6 @@ Run some arbitrary command in an interval of seconds
 funzzy run 'cargo build' 10
 ```
 
-## Playground
-
-**It does not work between vm and host machine**
-
-If you wanna try without installing it in your machine, try the playground vagrant.
-
-```bash
-cd funzzy
-vagrant up
-
-# Testing
-vagrant ssh -c "cd /vagrant && funzzy watch"
-
-# Another shell
-vagrant ssh -c "touch /vagrant/.watch.yaml"
-```
-
-It will take some time to be prepared.
-
 ## Tests
 
 Running tests:
