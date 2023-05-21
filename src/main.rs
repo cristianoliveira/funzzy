@@ -36,6 +36,7 @@ Usage:
 Options:
   run                  Execute command in a given interval (seconds)
   --config=<cfgfile>   Use given config file.
+  --target=<task>      Execute only the given task target.
   -h --help            Shows this message.
   -v --version         Shows version.
   -V                   Use verbose output.
@@ -55,6 +56,8 @@ pub struct Args {
 
     // options
     pub flag_config: String,
+    pub flag_target: String,
+
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
@@ -99,12 +102,24 @@ fn main() {
 
         Args { ref flag_config, .. } if !flag_config.is_empty() => {
             let watches = Watches::from(&from_file(&args.flag_config));
-            execute(WatchCommand::new(watches, args.flag_V));
+            if !args.flag_target.is_empty() {
+                execute(WatchCommand::new(
+                        watches.filter(|r| *r.name == args.flag_target),
+                            args.flag_V));
+            } else {
+                execute(WatchCommand::new(watches, args.flag_V));
+            }
         }
 
         _ => {
             let watches = Watches::from(&from_file(cli::watch::DEFAULT_FILENAME));
-            execute(WatchCommand::new(watches, args.flag_V));
+            if !args.flag_target.is_empty() {
+                execute(WatchCommand::new(
+                        watches.filter(|r| r.name.contains(&args.flag_target)),
+                            args.flag_V));
+            } else {
+                execute(WatchCommand::new(watches, args.flag_V));
+            }
         }
     }
 }

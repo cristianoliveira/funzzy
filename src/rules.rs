@@ -7,8 +7,10 @@ use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rules {
+    pub name: String,
+
     commands: Vec<String>,
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
@@ -17,12 +19,14 @@ pub struct Rules {
 
 impl Rules {
     pub fn new(
+        name: String,
         commands: Vec<String>,
         watches: Vec<String>,
         ignores: Vec<String>,
         run_on_init: bool,
     ) -> Self {
         Rules {
+            name: name,
             commands: commands,
             watch_patterns: watches,
             ignore_patterns: ignores,
@@ -35,6 +39,7 @@ impl Rules {
         yaml::validate(yaml, "change");
 
         Rules {
+            name: yaml::extract_strings(&yaml["name"])[0].clone(),
             commands: yaml::extract_strings(&yaml["run"]),
             watch_patterns: yaml::extract_strings(&yaml["change"]),
             ignore_patterns: yaml::extract_strings(&yaml["ignore"]),
@@ -78,7 +83,7 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
         .filter(|line| line.len() > 1)
         .map(|line| format!("**/{}", &line[2..]))
         .collect();
-    vec![Rules::new(vec![command.clone()], watches, vec![], false)]
+    vec![Rules::new("unnamed".to_owned(),vec![command.clone()], watches, vec![], false)]
 }
 
 fn pattern(pattern: &str) -> Pattern {
