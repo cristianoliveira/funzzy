@@ -34,17 +34,18 @@ impl WatchCommand {
     }
 
     fn run(&self, commands: &Vec<String>) -> Result<(), String> {
-        clear_shell();
         for command in commands {
             if self.verbose {
                 println!("command: {:?}", command)
             };
+            println!(" ----- funzzy running: {} -------", command);
             cmd::execute(String::from(command))?
         }
         Ok(())
     }
 
     fn run_rules(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
+        clear_shell();
         let results = rules.iter().map(|rule_cmds| {
             self.run(&rule_cmds)
         }).find(|r| {
@@ -79,7 +80,7 @@ impl Command for WatchCommand {
             self.run_rules(rules)?
         }
 
-        println!("Watching.");
+        println!("Watching...");
         while let Ok(event) = rx.recv() {
             if let DebouncedEvent::Create(path) = event {
                 let path_str = path.into_os_string().into_string().unwrap();
