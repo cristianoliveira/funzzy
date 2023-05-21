@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 ls
 ls -ls $PWD
-source "$PWD/tests/integration/functions.sh"
+source "functions.sh"
+source "$TEST_DIR/functions.sh"
 
 test "complex commands"
 

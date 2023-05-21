@@ -6,6 +6,7 @@ echo "$PWD"
 ls -la "$PWD/tests/integration/"
 
 export TEST_DIR="$PWD/tests/integration"
+echo "$TEST_DIR"
 export HELPERS="./functions.sh"
 
 cargo build --release
