@@ -12,7 +12,7 @@ build: tests ## Execute all the tests and build funzzy binary
 
 .PHONY: integration
 integration:
-	@sh tests/integration/runner.sh
+	@bash tests/integration/runner.sh
 
 .PHONY: install
 install: build ## Install funzzy on your machine
