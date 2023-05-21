@@ -15,7 +15,8 @@ echo '
 ' > workdir/.watch.yaml
 
 touch workdir/test.txt
-funzzy --config ./workdir/.watch.yaml > workdir/output.txt &
+touch workdir/output.txt
+funzzy --config ./workdir/.watch.yaml >> workdir/output.txt &
 FUNZZY_PID=$!
 
 echo "test" >> workdir/test.txt
