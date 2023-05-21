@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$HELPERS"
-test "init command"
+test "it allows creating a new configuration file"
 
 rm -f .watch.yaml
 

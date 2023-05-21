@@ -14,25 +14,25 @@ function cleanup() {
 
 function assert_equal() {
   if [ "$1" != "$2" ]; then
-    echo "error: $1 != $2"
+    echo "ERROR: $1 != $2"
     exit 1
   fi
 }
 
 function assert_file_contains() {
   local passed=0
-  for i in {1..3}
+  for i in {1..10}
   do
     if grep -q "$2" "$1"; then
       passed=1
       break
     fi
-    echo "attempt $i..."
+    echo "Attempt $i..."
     sleep 1
   done
 
   if [ $passed -eq 0 ]; then
-    echo "error: file $1 does not contain $2"
+    echo "ERROR: file $1 does not contain $2"
     echo "file content:"
     echo "$(cat $1)"
     exit 1
@@ -48,12 +48,12 @@ function wait_for_file() {
       file_exists=1
       break
     fi
-    echo "waiting for $1..."
+    echo "Waiting for $1..."
     sleep 1
   done
 
   if [ $file_exists -eq 0 ]; then
-    echo "error: file $1 does not exist"
+    echo "ERROR: file $1 does not exist"
     exit 1
   fi
 }

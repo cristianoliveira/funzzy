@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 source "$HELPERS"
-test "run on init"
+test "it allows configuring commands to run on init"
 
 echo '
 - name: run complex command

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "simple watch"
+test "it watches the configured rules"
 
 echo '
 - name: run simple command
   run: echo 'test1'
   change: "workdir/**"
-  run_on_init: true
 ' > workdir/.watch.yaml
 
 touch workdir/test.txt
