@@ -15,6 +15,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+
       - name: Build
         run: cargo build --verbose
 
@@ -22,4 +23,4 @@ jobs:
         run: cargo test --verbose
 
       - name: Run integration tests
-        run: make integrations
+        run: make integration
