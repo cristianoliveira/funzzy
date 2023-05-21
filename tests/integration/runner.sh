@@ -1,17 +1,9 @@
+#!/usr/bin/env bash
+
 set -e
 
-ls -la tests/integration/
-echo "$HOME"
-echo "$PWD"
-ls -la "$PWD/tests/integration/"
-
 export TEST_DIR="$PWD/tests/integration"
-echo "$TEST_DIR"
 export HELPERS="$TEST_DIR/functions.sh"
-
-echo "AAAAAAAAAAAAAAAAAAAAAAAA"
-cat "$HELPERS"
-
 cargo build --release
 
 cp target/release/funzzy $TEST_DIR/funzzy
@@ -25,4 +17,4 @@ for spec in $TEST_DIR/specs/*; do
 done
 
 echo "All integration tests passed"
-exit 0
+exit 1
