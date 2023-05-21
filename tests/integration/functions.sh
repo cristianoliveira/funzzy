@@ -23,7 +23,7 @@ function assert_file_contains() {
   local passed=0
   for i in {1..3}
   do
-    if grep -q "$1" "$2"; then
+    if grep -q "$2" "$1"; then
       passed=1
       break
     fi
@@ -32,9 +32,9 @@ function assert_file_contains() {
   done
 
   if [ $passed -eq 0 ]; then
-    echo "error: file $2 does not contain $1"
+    echo "error: file $1 does not contain $2"
     echo "file content:"
-    echo "$(cat $2)"
+    echo "$(cat $1)"
     exit 1
   fi
 }

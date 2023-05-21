@@ -14,6 +14,6 @@ funzzy --config workdir/.oninit.yaml > workdir/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "workdir/output.txt"
-assert_file_contains "blabla foobar" "workdir/output.txt"
+assert_file_contains "workdir/output.txt" "blabla foobar"
 
 cleanup

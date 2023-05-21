@@ -12,7 +12,7 @@ echo '
 funzzy --config workdir/.oninit.yaml > workdir/output.txt &
 FUNZZY_PID=$!
 
-wait_for_file workdir/output.txt
-assert_file_contains "runnnig command on init" workdir/output.txt
+wait_for_file "workdir/output.txt"
+assert_file_contains "workdir/output.txt" "runnnig command on init"
 
 cleanup

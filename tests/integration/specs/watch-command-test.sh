@@ -21,7 +21,7 @@ ex workdir/test.txt <<EOEX
   :x
 EOEX
 
-wait_for_file workdir/output.txt
-assert_file_contains "echo test1" workdir/output.txt
+wait_for_file "workdir/output.txt"
+assert_file_contains "workdir/output.txt" "echo test1"
 
 cleanup
