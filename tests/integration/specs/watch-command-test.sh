@@ -28,6 +28,8 @@ EOEX
 cat workdir/test.txt
 
 wait_for_file "workdir/output.txt"
+cat workdir/output.txt
 assert_file_contains "workdir/output.txt" "echo test1"
+cat workdir/output.txt
 
 cleanup
