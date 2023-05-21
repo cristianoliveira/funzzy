@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "it accespts multiple commands configurations"
+test "it accepts multiple commands configurations"
 
 echo '
 - name: run first command
