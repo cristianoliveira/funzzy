@@ -20,7 +20,7 @@ PATH=$PATH:tests/integration
 
 for spec in $TEST_DIR/specs/*; do
   echo "Running $spec"
-  sh "$spec" && echo "result: passed" || exit 1
+  bash "$spec" && echo "result: passed" || exit 1
   echo "----------------------------"
 done
 

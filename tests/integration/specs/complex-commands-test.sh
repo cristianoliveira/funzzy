@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 ls
 ls -ls $PWD
+echo "$HELPERS"
 cat $HELPERS
 source "$HELPERS"
 
