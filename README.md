@@ -2,7 +2,7 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Configure execution of different commands using semantic yaml.
+Configure execution of different commands using semantic YAML.
 
 ```yaml
 # .watch.yaml
@@ -30,7 +30,7 @@ Configure execution of different commands using semantic yaml.
 
 ## Motivation
 
-Create a lightweight watcher to run my tests everytime something in my project change.
+Create a lightweight watcher to run my tests every time something in my project change.
 So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
 
 ## Installing
@@ -60,7 +60,7 @@ cargo install funzzy
 
 #### From source
 
-Make sure you have installed the follow dependecies:
+Make sure you have installed the follow dependencies:
 
 - Rust
 
@@ -78,7 +78,7 @@ Initializing with boilerplate:
 funzzy init
 ```
 
-Change the yaml as you want. Then run:
+Change the YAML as you want. Then run:
 
 ```bash
 funzzy watch
@@ -108,7 +108,7 @@ or simple `make tests`
 
 ## Code Style
 
-We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validate it before commit.
+We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validated it before commit.
 
 ## Contributing
 
