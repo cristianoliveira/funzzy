@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-if [ -z "$CI" ]; then
+# skip if on CI
+if [ -n "$CI" ]; then
   echo "skipping test, only run on CI"
-  return;
+  exit 0
 fi
 
 test "it watches the configured rules"
@@ -12,11 +13,11 @@ echo '
 - name: run simple command
   run: echo 'test1'
   change: "workdir/**"
-' > workdir/.watch.yaml
+' > workdir/.onwatch.yaml
 
 touch workdir/test.txt
 touch workdir/output.txt
-funzzy --config ./workdir/.watch.yaml >> workdir/output.txt &
+funzzy --config workdir/.onwatch.yaml >> workdir/output.txt &
 FUNZZY_PID=$!
 
 echo "test" >> workdir/test.txt
