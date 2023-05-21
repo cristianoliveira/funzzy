@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 ls
 ls -ls $PWD
-source "functions.sh"
 source "$TEST_DIR/functions.sh"
 
 test "complex commands"
