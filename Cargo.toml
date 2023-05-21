@@ -1,6 +1,6 @@
 [package]
 name = "funzzy"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "Yet another fancy watcher inspired by entr."
 license = "MIT"
