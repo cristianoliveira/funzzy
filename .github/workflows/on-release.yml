@@ -27,7 +27,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
+          file: target/release/funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
@@ -56,7 +56,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
+          file: target/release/funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           tag: ${{ github.ref }}
           overwrite: true

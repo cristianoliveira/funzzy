@@ -17,7 +17,5 @@ ARTIFACT="funzzy-${RELEASE_TAG:?"Missing release tag"}-${TARGET}.tar.gz"
 
 tar czf "../$ARTIFACT" *
 
-cp "../$ARTIFACT" ../../artifacts/
-
 # sanity check the file type
 file funzzy
