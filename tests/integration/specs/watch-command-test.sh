@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
+if [ -z "$CI" ]; then
+  echo "skipping test, only run on CI"
+  return;
+fi
+
 test "it watches the configured rules"
 
 echo '
