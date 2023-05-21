@@ -17,7 +17,7 @@ echo '
 
 touch workdir/test.txt
 touch workdir/output.txt
-funzzy --config workdir/.onwatch.yaml >> workdir/output.txt &
+sudo funzzy --config workdir/.onwatch.yaml >> workdir/output.txt &
 FUNZZY_PID=$!
 
 echo "test" >> workdir/test.txt
