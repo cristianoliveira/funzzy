@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "complex commands"
+test "it accepts complex commands with piping"
 
 echo '
 - name: run complex command
