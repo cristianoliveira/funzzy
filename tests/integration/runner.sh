@@ -17,4 +17,4 @@ for spec in $TEST_DIR/specs/*; do
 done
 
 echo "All integration tests passed"
-exit 1
+exit 0
