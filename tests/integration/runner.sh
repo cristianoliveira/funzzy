@@ -9,6 +9,9 @@ export TEST_DIR="$PWD/tests/integration"
 echo "$TEST_DIR"
 export HELPERS="$TEST_DIR/functions.sh"
 
+echo "AAAAAAAAAAAAAAAAAAAAAAAA"
+cat "$HELPERS"
+
 cargo build --release
 
 cp target/release/funzzy $TEST_DIR/funzzy

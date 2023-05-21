@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 ls
 ls -ls $PWD
-source "$TEST_DIR/functions.sh"
+cat $HELPERS
+source "$HELPERS"
 
 test "complex commands"
 
