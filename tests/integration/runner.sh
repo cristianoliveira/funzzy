@@ -3,8 +3,9 @@ set -e
 ls -la tests/integration/
 echo "$HOME"
 echo "$PWD"
+ls -la "$PWD/tests/integration/"
 
-export TEST_DIR="tests/integration"
+export TEST_DIR="$PWD/tests/integration"
 export HELPERS="./functions.sh"
 
 cargo build --release

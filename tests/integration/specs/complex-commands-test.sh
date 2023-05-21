@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-source "$HELPERS"
+ls
+ls -ls $PWD
+source "$PWD/tests/integration/functions.sh"
 
 test "complex commands"
 
