@@ -4,6 +4,6 @@
 # list here all the events and the commands that it should execute
 
 - name: run my test
-  run: "sh runner.sh"
+  run: "bash runner.sh"
   change: "specs/**"
   run_on_init: true

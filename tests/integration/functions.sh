@@ -7,7 +7,7 @@ function test() {
 }
 
 function cleanup() {
-  rm -rf "$TEST_DIR/workdir"
+  rm -rf workdir
   echo "kill funzzy $FUNZZY_PID"
   kill "$FUNZZY_PID"
 }
