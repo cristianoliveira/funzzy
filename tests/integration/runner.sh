@@ -5,7 +5,12 @@ set -e
 export TEST_DIR="$PWD/tests/integration"
 export HELPERS="$TEST_DIR/functions.sh"
 export WORKDIR="$TEST_DIR/workdir"
-cargo build --release
+
+# funzzy binary is not present build
+if [ ! -f $PWD/target/release/funzzy ]; then
+  echo "Building funzzy"
+  cargo build --release
+fi
 
 cp target/release/funzzy $TEST_DIR/funzzy
 
