@@ -2,17 +2,17 @@
 source "$HELPERS"
 test "it allows configuring commands to run on init"
 
-echo '
+echo "
 - name: run complex command
-  run: "echo 'runnnig command on init'"
-  change: "workdir/**"
+  run: \"echo 'runnnig command on init'\"
+  change: \"$WORKDIR/**\"
   run_on_init: true
-' > workdir/.oninit.yaml
+" > $WORKDIR/.oninit.yaml
 
-funzzy --config workdir/.oninit.yaml > workdir/output.txt &
+funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
-wait_for_file "workdir/output.txt"
-assert_file_contains "workdir/output.txt" "runnnig command on init"
+wait_for_file "$WORKDIR/output.txt"
+assert_file_contains "$WORKDIR/output.txt" "runnnig command on init"
 
 cleanup

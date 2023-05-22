@@ -3,17 +3,17 @@ source "$HELPERS"
 
 test "it accepts complex commands with piping"
 
-echo '
+echo "
 - name: run complex command
-  run: "echo 'runnning command' | sed  s/command/foobar/g | sed  s/runnning/blabla/g"
-  change: "workdir/**"
+  run: \"echo 'runnning command' | sed  s/command/foobar/g | sed  s/runnning/blabla/g\"
+  change: \"$WORKDIR/**\"
   run_on_init: true
-' > workdir/.oninit.yaml
+" > $WORKDIR/.oninit.yaml
 
-funzzy --config workdir/.oninit.yaml > workdir/output.txt &
+funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
-wait_for_file "workdir/output.txt"
-assert_file_contains "workdir/output.txt" "blabla foobar"
+wait_for_file "$WORKDIR/output.txt"
+assert_file_contains "$WORKDIR/output.txt" "blabla foobar"
 
 cleanup

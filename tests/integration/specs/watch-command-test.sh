@@ -1,37 +1,23 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-# skip if on CI
-# if [ -n "$CI" ]; then
-#   echo "Skipping test on CI because of permissions"
-#   exit 0
-# fi
-
 test "it watches the configured rules"
 
-echo '
+echo "
 - name: run simple command
   run: echo 'test1'
-  change: "workdir/**"
-' > workdir/.onwatch.yaml
+  change: \"$WORKDIR/**\"
+" > $WORKDIR/.onwatch.yaml
 
-touch workdir/test.txt
-touch workdir/output.txt
-sudo funzzy --config workdir/.onwatch.yaml >> workdir/output.txt &
+touch $WORKDIR/test.txt
+touch $WORKDIR/output.txt
+# $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
+$TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml >> $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
-echo "test" >> workdir/test.txt
-# Run vim in ex mode
-ex workdir/test.txt <<EOEX
-  :%s/test/foo/g
-  :x
-EOEX
-
-cat workdir/test.txt
-
-wait_for_file "workdir/output.txt"
-cat workdir/output.txt
-assert_file_contains "workdir/output.txt" "echo test1"
-cat workdir/output.txt
+echo "test" >> $WORKDIR/test.txt
+wait_for_file "$WORKDIR/output.txt"
+sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
+assert_file_contains "$WORKDIR/output.txt" "echo 'test1'"
 
 cleanup

@@ -3,11 +3,11 @@
 
 function test() {
   echo "test: $1"
-  mkdir workdir
+  mkdir "$TEST_DIR/workdir"
 }
 
 function cleanup() {
-  rm -rf workdir
+  rm -rf "$TEST_DIR/workdir"
   echo "kill funzzy $FUNZZY_PID"
   kill "$FUNZZY_PID"
 }

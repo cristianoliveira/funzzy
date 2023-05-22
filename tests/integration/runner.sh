@@ -4,6 +4,7 @@ set -e
 
 export TEST_DIR="$PWD/tests/integration"
 export HELPERS="$TEST_DIR/functions.sh"
+export WORKDIR="$TEST_DIR/workdir"
 cargo build --release
 
 cp target/release/funzzy $TEST_DIR/funzzy
