@@ -1,4 +1,4 @@
-# funzzy [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/rust.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/rust.yml) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy)
+# funzzy [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
@@ -23,7 +23,7 @@ Configure execution of different commands using semantic YAML.
   change: ".watch.yaml"
 
 - name: say hello
-  run: say hello
+  run: echo "hello on init"
   change: ".watch.yaml"
   run_on_init: true
 ```
@@ -83,6 +83,11 @@ Change the YAML as you want. Then run:
 ```bash
 funzzy watch
 ```
+Filtering task by target:
+
+```bash
+funzzy --target="my task"
+```
 
 Run with some arbitrary command and stdin
 
@@ -96,15 +101,24 @@ Run some arbitrary command in an interval of seconds
 funzzy run 'cargo build' 10
 ```
 
-## Tests
+See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
+or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
-Running tests:
+## Automated tests
+
+Running unit tests:
 
 ```bash
 cargo test
 ```
 
 or simple `make tests`
+
+Running integration tests:
+```
+make integration
+```
+
 
 ## Code Style
 
