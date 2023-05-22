@@ -19,6 +19,7 @@ find . -name '*.txt' | \
 FUNZZY_PID=$!
 
 echo "test" >> $WORKDIR/test.txt
+echo "test" >> $WORKDIR/test2.txt
 wait_for_file "$WORKDIR/output.txt"
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/test2.txt -u NONE"
