@@ -11,6 +11,6 @@ docopt = "1"
 serde = "1.0" # if you're using `derive(Deserialize)`
 serde_derive = "1.0" # if you're using `derive(Deserialize)`
 notify = "4.0.0"
-yaml-rust = "0.3.2"
+yaml-rust = "0.4.1"
 glob="0.2.11"
 #clippy = "*"

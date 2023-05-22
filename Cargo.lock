@@ -158,6 +158,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6785aa7dd976f5fbf3b71cfd9cd49d7f783c1ff565a858d71031c6c313aa5c6"
 
 [[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
 name = "log"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,6 +442,9 @@ dependencies = [
 
 [[package]]
 name = "yaml-rust"
-version = "0.3.5"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e66366e18dc58b46801afbf2ca7661a9f59cc8c5962c29892b6039b4f86fa992"
+checksum = "fe0fad48adbecafa9588846b38af3f015ccaef0a79d92f9b2892dd310aa9f9e1"
+dependencies = [
+ "linked-hash-map",
+]
