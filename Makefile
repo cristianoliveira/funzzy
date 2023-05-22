@@ -10,6 +10,10 @@ tests: ## Execute all the tests
 build: tests ## Execute all the tests and build funzzy binary
 	@cargo test
 
+.PHONY: integration
+integration:
+	@bash tests/integration/runner.sh
+
 .PHONY: install
 install: build ## Install funzzy on your machine
 	cp target/release/funzzy /usr/local/bin/

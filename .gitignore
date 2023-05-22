@@ -18,3 +18,4 @@ Cargo.lock
 *.rs.bk
 
 funzzy*
+tests/integration/workdir/
