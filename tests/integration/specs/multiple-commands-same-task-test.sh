@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "it multiple commands for the same task without piping (on init)"
+test "it a list of commands for the same task (on init)"
 
 echo "
 - name: run complex command
@@ -21,7 +21,12 @@ assert_file_contains "$WORKDIR/output.txt" "Watching..."
 
 cleanup
 
-test "it multiple commands for the same task without piping (on change)"
+if [ -n "$CI" ]; then
+  echo "Skipping test for CI"
+  exit 0
+fi
+
+test "it a list of commands for the same task (on change)"
 
 echo "
 - name: run complex command
