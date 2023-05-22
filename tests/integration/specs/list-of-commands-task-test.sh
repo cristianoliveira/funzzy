@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "it a list of commands for the same task (on init)"
+test "it allows a list of commands for the same task (on init)"
 
 echo "
 - name: run complex command
@@ -29,7 +29,7 @@ if [ -n "$CI" ]; then
   exit 0
 fi
 
-test "it a list of commands for the same task (on change)"
+test "it allows a list of commands for the same task (on change)"
 
 echo "
 - name: run complex command

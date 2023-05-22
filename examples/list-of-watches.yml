@@ -1,0 +1,5 @@
+- name: run a list of watches
+  run: "echo complex | sed s/complex/third/g"
+  change: ["src/**", "tests/**"]
+  ignore: ["tests/integration/**"]
+  run_on_init: true

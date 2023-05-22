@@ -1,11 +1,13 @@
 - name: run my test
   run: "echo 'tests'"
   change: "**"
+  ignore: ["tests/**", "src/**"]
   run_on_init: true
 
 - name: run my build
   run: "echo 'build'"
-  change: "**"
+  change: ["src/**"]
+  ignore: ["tests/**", "src/**/*.specs"]
 
 - name: run my lint
   run: "echo 'lint'"
