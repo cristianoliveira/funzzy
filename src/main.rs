@@ -104,7 +104,7 @@ fn main() {
             let watches = Watches::from(&from_file(&args.flag_config));
             if !args.flag_target.is_empty() {
                 execute(WatchCommand::new(
-                        watches.filter(|r| *r.name == args.flag_target),
+                        watches.filter(|r| r.name.contains(&args.flag_target)),
                             args.flag_V));
             } else {
                 execute(WatchCommand::new(watches, args.flag_V));
