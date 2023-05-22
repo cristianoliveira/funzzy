@@ -2,12 +2,12 @@
 #
 
 function test() {
+  rm -rf "$TEST_DIR/workdir"
   echo "test: $1"
   mkdir "$TEST_DIR/workdir"
 }
 
 function cleanup() {
-  rm -rf workdir
   echo "kill funzzy $FUNZZY_PID"
   kill "$FUNZZY_PID"
 }
