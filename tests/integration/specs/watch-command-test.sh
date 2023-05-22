@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
+# skip if in CI
+if [ -n "$CI" ]; then
+  echo "skipping watch-command-test.sh in CI no trigger is possible"
+  exit 0
+fi
+
 test "it watches the configured rules"
 
 echo "
