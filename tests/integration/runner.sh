@@ -6,15 +6,14 @@ export TEST_DIR="$PWD/tests/integration"
 export HELPERS="$TEST_DIR/functions.sh"
 export WORKDIR="$TEST_DIR/workdir"
 
-# funzzy binary is not present build
-if [ ! -f $PWD/target/release/funzzy ]; then
-  echo "Building funzzy"
-  cargo build --release
-fi
-
+echo "Building funzzy"
+cargo build --release
 cp target/release/funzzy $TEST_DIR/funzzy
 
 PATH=$PATH:tests/integration
+
+$TEST_DIR/funzzy --version
+$TEST_DIR/funzzy --help
 
 for spec in $TEST_DIR/specs/*; do
   echo "Running $spec"

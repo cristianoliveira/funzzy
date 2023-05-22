@@ -7,7 +7,7 @@ function test() {
 }
 
 function cleanup() {
-  rm -rf "$TEST_DIR/workdir"
+  rm -rf workdir
   echo "kill funzzy $FUNZZY_PID"
   kill "$FUNZZY_PID"
 }
@@ -26,9 +26,33 @@ function assert_file_contains() {
     if grep -q "$2" "$1"; then
       success=1
       break
+    else
+      echo "Attempt failed: file $1 does not contain $2"
+      echo "Attempt $i..."
+      sleep 5
     fi
-    echo "Attempt $i..."
-    sleep 5
+  done
+
+  if [ $success -eq 0 ]; then
+    echo "ERROR: file $1 does not contain $2"
+    echo "file content:"
+    echo "$(cat $1)"
+    exit 1
+  fi
+}
+
+function assert_file_not_contains() {
+  local success=0
+  for i in {1..10}
+  do
+    if grep -q "$2" "$1"; then
+      echo "Attempt failed: file $1 does contain $2"
+      echo "Attempt $i..."
+      sleep 5
+    else
+      success=1
+      break
+    fi
   done
 
   if [ $success -eq 0 ]; then

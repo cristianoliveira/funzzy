@@ -10,8 +10,14 @@ tests: ## Execute all the tests
 build: tests ## Execute all the tests and build funzzy binary
 	@cargo test
 
+.PHONY: integration-cleanup
+integration-cleanup:
+	rm -rf target && \
+		rm -rf tests/integration/workdir && \
+		rm -f tests/integration/funzzy
+
 .PHONY: integration
-integration:
+integration: integration-cleanup
 	@bash tests/integration/runner.sh
 
 .PHONY: install

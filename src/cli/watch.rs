@@ -130,6 +130,20 @@ impl Watches {
         Watches { rules: rules }
     }
 
+    pub fn filter(&self, predicate: impl Fn(&rules::Rules) -> bool) -> Self {
+        let targeted = self.rules
+            .iter()
+            .filter(|x| predicate(*x))
+            .map(|x| x.clone())
+            .collect::<Vec<rules::Rules>>();
+
+        if targeted.len() == 0 {
+            panic!("No rules found for the given filter")
+        }
+
+        Watches { rules: targeted }
+    }
+
     fn load_from_str(plain_text: &str) -> Self {
         Watches {
             rules: rules::from_yaml(plain_text),
