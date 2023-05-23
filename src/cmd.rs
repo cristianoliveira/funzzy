@@ -9,7 +9,8 @@ pub fn execute(command_line: String) -> Result<(), String> {
             if status.success() {
                 return Ok(());
             } else {
-                return Err(String::from("Command failed"));
+                println!("This task command has failed {}", status);
+                return Ok(());
             }
         }
     };
