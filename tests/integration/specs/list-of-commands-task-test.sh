@@ -22,8 +22,6 @@ assert_file_contains "$WORKDIR/output.txt" "Watching..."
 
 cleanup
 
-exit 0
-
 if [ -n "$CI" ]; then
   echo "skipping test in CI cuz no trigger is possible"
   exit 0
