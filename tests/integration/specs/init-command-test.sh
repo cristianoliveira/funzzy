@@ -4,6 +4,7 @@ test "it allows creating a new configuration file"
 
 rm -f .watch.yaml
 
+cd $WORKDIR
 funzzy init
-
-wait_for_file .watch.yaml
+assert_file_contains "$WORKDIR/.watch.yaml" "Funzzy events file"
+cd $TESTDIR
