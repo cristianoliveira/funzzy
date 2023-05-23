@@ -24,7 +24,7 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 echo "test" >> $WORKDIR/test.txt

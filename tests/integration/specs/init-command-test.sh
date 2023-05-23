@@ -2,9 +2,8 @@
 source "$HELPERS"
 test "it allows creating a new configuration file"
 
-rm -f .watch.yaml
-
 cd $WORKDIR
-funzzy init
+$TEST_DIR/funzzy init
+ls -la
 assert_file_contains "$WORKDIR/.watch.yaml" "Funzzy events file"
-cd $TESTDIR
+cd $TEST_DIR

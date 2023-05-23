@@ -15,7 +15,7 @@ echo "
   run_on_init: true
 " > $WORKDIR/.dontdie.yaml
 
-funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"
@@ -48,7 +48,7 @@ echo "
   run_on_init: true
 " > $WORKDIR/.dontdie.yaml
 
-funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"

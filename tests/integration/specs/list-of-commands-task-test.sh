@@ -10,7 +10,7 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 assert_file_content_at "$WORKDIR/output.txt" "Running on init commands" 1
@@ -35,7 +35,7 @@ echo "
   change: \"$WORKDIR/**\"
 " > $WORKDIR/.oninit.yaml
 
-funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 assert_file_contains "$WORKDIR/output.txt" "Watching..."
