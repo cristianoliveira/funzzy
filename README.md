@@ -14,8 +14,8 @@ Configure execution of different commands using semantic YAML.
   change: "tests/**"
   ignore: "tests/integration/**"
 
-- name: fast compile sass
-  run: compass compile src/static/some.scss
+- name: run linters
+  run: ["npm run lint", "npm run tsc"]
   change: ["src/static/**", "src/assets/*"]
 
 - name: Starwars
