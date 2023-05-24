@@ -18,7 +18,7 @@ echo "
 touch $WORKDIR/test.txt
 touch $WORKDIR/output.txt
 # $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
-$TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml >> $WORKDIR/output.txt &
+$TEST_DIR/funzzy watch --config $WORKDIR/.onwatch.yaml >> $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 echo "test" >> $WORKDIR/test.txt
