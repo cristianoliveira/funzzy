@@ -111,20 +111,6 @@ pub struct Watches {
     rules: Vec<rules::Rules>,
 }
 impl Watches {
-    pub fn from_args(command: String) -> Self {
-        let template = format!(
-            "
-        - name: from command
-          run: {command}
-          change: '{path}'
-        ",
-            path = "**",
-            command = command
-        );
-
-        Watches::load_from_str(&template)
-    }
-
     pub fn from(plain_text: &str) -> Self {
         Watches::load_from_str(plain_text)
     }
@@ -202,7 +188,7 @@ mod tests {
     #[test]
     fn it_loads_from_args() {
         let args = String::from("cargo build");
-        let watches = Watches::from_args(args);
+        let watches = Watches::new(rules::from_string("**".to_owned(), &args));
 
         assert!(watches.watch("src/main.rs").is_some());
         assert!(watches.watch("test/main.rs").is_some());
