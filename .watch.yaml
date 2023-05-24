@@ -8,10 +8,16 @@
   change: "src/**"
   run_on_init: true
 
-- name: run my build
-  run: "make build"
-  change: "src/**"
-
 - name: run my lint
   run: "make lint"
   change: "src/**"
+
+- name: run integration
+  run: "make integration"
+  change: "tests/integration/**"
+  ignore: "tests/integration/workdir"
+  run_on_init: true
+
+- name: run my build
+  run: "make build"
+  change: ["Cargo.*"]
