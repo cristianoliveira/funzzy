@@ -64,6 +64,10 @@ impl WatchCommand {
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
+        if self.verbose {
+            println!("---- Verbose mode enabled. ----")
+        };
+
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher = match Watcher::new(tx, Duration::from_secs(2)) {
             Ok(w) => w,
@@ -86,7 +90,7 @@ impl Command for WatchCommand {
                 let path_str = path.into_os_string().into_string().unwrap();
                 if let Some(rules) = self.watches.watch(&*path_str) {
                     if self.verbose {
-                        println!("path: {}", path_str)
+                        println!("Triggered by change in: {}", path_str)
                     };
 
                     self.run_rules(rules)?
