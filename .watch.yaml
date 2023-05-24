@@ -2,17 +2,17 @@
 # more details see: https://github.com/cristianoliveira/funzzy
 #
 # list here all the events and the commands that it should execute
-
-- name: run my test
+#
+- name: run my test (tag:quick)
   run: "make tests"
   change: "src/**"
   run_on_init: true
 
-- name: run my lint
+- name: run my lint (tag:quick)
   run: "make lint"
   change: "src/**"
 
-- name: run formatter
+- name: run formatter (tag:quick)
   run: "cargo fmt"
   change: "src/**"
 

@@ -11,17 +11,16 @@ mod cmd;
 mod rules;
 mod yaml;
 
-use std::fs::File;
+use cli::*;
+
 use std::io;
 #[warn(unused_imports)]
 use std::io::prelude::*;
 
-use cli::*;
-
 use docopt::Docopt;
 
-const VERSION: &'static str = env!("CARGO_PKG_VERSION");
-const USAGE: &'static str = "
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const USAGE: &str = "
 Funzzy the watcher.
 
 Usage:
@@ -94,29 +93,38 @@ fn main() {
             };
         }
 
-        Args {
-            ref flag_config, ..
-        } if !flag_config.is_empty() => {
-            let watches = Watches::from(&from_file(&args.flag_config));
-            if !args.flag_target.is_empty() {
-                execute(WatchCommand::new(
-                    watches.filter(|r| r.name.contains(&args.flag_target)),
-                    args.flag_V,
-                ));
-            } else {
-                execute(WatchCommand::new(watches, args.flag_V));
-            }
-        }
-
         _ => {
-            let watches = Watches::from(&from_file(cli::watch::DEFAULT_FILENAME));
-            if !args.flag_target.is_empty() {
-                execute(WatchCommand::new(
-                    watches.filter(|r| r.name.contains(&args.flag_target)),
-                    args.flag_V,
-                ));
+            let filename = if args.flag_config.is_empty() {
+                cli::watch::DEFAULT_FILENAME
             } else {
-                execute(WatchCommand::new(watches, args.flag_V));
+                &args.flag_config
+            };
+
+            match rules::from_file(filename) {
+                Ok(rules) => {
+                    if !args.flag_target.is_empty() {
+                        let filtered = rules
+                            .iter()
+                            .cloned()
+                            .filter(|r| r.name.contains(&args.flag_target))
+                            .collect::<Vec<rules::Rules>>();
+
+                        if filtered.is_empty() {
+                            println!("No target found for {}", args.flag_target);
+                            println!("Available targets:");
+                            for rule in rules {
+                                println!("  {}", rule.name);
+                            }
+
+                            show("Finihed");
+                        }
+
+                        execute(WatchCommand::new(Watches::new(filtered), args.flag_V));
+                    } else {
+                        execute(WatchCommand::new(Watches::new(rules), args.flag_V));
+                    }
+                }
+                Err(err) => error("Error while reading config file", err),
             }
         }
     }
@@ -145,28 +153,12 @@ fn from_stdin() -> Option<String> {
     }
 }
 
-fn from_file(filename: &str) -> String {
-    let mut file = match File::open(filename) {
-        Ok(f) => f,
-        Err(err) => show(
-            format!(
-                "File {} cannot be opened. Cause: {}",
-                cli::watch::DEFAULT_FILENAME,
-                err
-            )
-            .as_str(),
-        ),
-    };
-
-    let mut content = String::new();
-    if let Err(err) = file.read_to_string(&mut content) {
-        panic!("Error while trying read file. {}", err);
-    }
-
-    content
-}
-
 fn show(text: &str) -> ! {
     println!("{}", text);
-    std::process::exit(0)
+    std::process::exit(0);
+}
+
+fn error(text: &str, err: String) -> ! {
+    println!("{} cause: {}", text, err);
+    std::process::exit(1);
 }
