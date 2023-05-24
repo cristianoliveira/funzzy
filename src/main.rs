@@ -25,16 +25,19 @@ const USAGE: &'static str = "
 Funzzy the watcher.
 
 Usage:
-  funzzy
-  funzzy init
-  funzzy <command>
-  funzzy watch [-V]
-  funzzy watch [-V | -c | -s] <command>
-  funzzy run [-V] <command> <interval>
   funzzy [options]
+  funzzy init
+  funzzy watch [<command>] [options]
+  funzzy run <command> <interval>
+  funzzy <command> [options]
+
+Commands:
+    init                Create a new funzzy.yml file.
+    watch               Watch for file changes and execute a command.
+    run                 Run a command every <interval> seconds.
 
 Options:
-  run                  Execute command in a given interval (seconds)
+  <command>            Run an arbitrary command for current folder.
   --config=<cfgfile>   Use given config file.
   --target=<task>      Execute only the given task target.
   -h --help            Shows this message.
@@ -78,15 +81,6 @@ fn main() {
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
         Args { cmd_run: true, .. } => execute(RunCommand::new(args.arg_command, args.arg_interval)),
-
-        Args {
-            cmd_watch: true,
-            flag_c: true,
-            ..
-        } => {
-            let watches = Watches::from_args(args.arg_command);
-            execute(WatchCommand::new(watches, args.flag_V))
-        }
 
         Args {
             ref arg_command, ..
