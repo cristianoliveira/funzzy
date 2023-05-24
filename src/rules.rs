@@ -1,11 +1,15 @@
 extern crate glob;
 extern crate yaml_rust;
 
+use cli;
 use yaml;
 
 use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
+use std::fs::File;
+#[warn(unused_imports)]
+use std::io::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct Rules {
@@ -90,6 +94,27 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
         vec![],
         false,
     )]
+}
+
+pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
+    let result = match File::open(filename) {
+        Ok(mut file) => {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .expect(format!("Cannot read file {}", filename).as_str());
+
+            Ok(from_yaml(&content))
+        }
+
+        Err(err) => Err(format!(
+            "File {} cannot be opened. Cause: {}",
+            cli::watch::DEFAULT_FILENAME,
+            err
+        )
+        .to_owned()),
+    };
+
+    result
 }
 
 fn pattern(pattern: &str) -> Pattern {

@@ -111,33 +111,8 @@ pub struct Watches {
     rules: Vec<rules::Rules>,
 }
 impl Watches {
-    pub fn from(plain_text: &str) -> Self {
-        Watches::load_from_str(plain_text)
-    }
-
     pub fn new(rules: Vec<rules::Rules>) -> Self {
         Watches { rules: rules }
-    }
-
-    pub fn filter(&self, predicate: impl Fn(&rules::Rules) -> bool) -> Self {
-        let targeted = self
-            .rules
-            .iter()
-            .filter(|x| predicate(*x))
-            .map(|x| x.clone())
-            .collect::<Vec<rules::Rules>>();
-
-        if targeted.len() == 0 {
-            panic!("No rules found for the given filter")
-        }
-
-        Watches { rules: targeted }
-    }
-
-    fn load_from_str(plain_text: &str) -> Self {
-        Watches {
-            rules: rules::from_yaml(plain_text),
-        }
     }
 
     /// Returns the commands for first rule found for the given path
@@ -205,7 +180,7 @@ mod tests {
           run: 'cargo tests'
           change: 'tests/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         assert!(watches
             .watch("/Users/crosa/others/funzzy/tests/test.rs")
             .is_some());
@@ -221,7 +196,7 @@ mod tests {
           run: 'cargo tests'
           change: './tests/foo/bar.rs'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         assert!(watches.watch("./tests/foo/bar.rs").is_some())
     }
 
@@ -232,7 +207,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
 
         assert!(watches
             .watch("/Users/crosa/others/funzzy/events.yaml")
@@ -249,7 +224,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         let result = watches.watch("src/test.rs").unwrap();
         assert_eq!(vec!["cargo build"], result[0])
     }
@@ -265,7 +240,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
 
         let result = watches.watch("test/test.rs").unwrap();
         assert_eq!(vec!["cargo test"], result[0]);
@@ -289,7 +264,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
 
         let result = watches.watch("test/test.rs").unwrap();
         assert_eq!(vec!["echo same"], result[0]);
@@ -308,7 +283,7 @@ mod tests {
           change: 'src/**'
           ignore: 'src/test/**'
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/test/other.tmp").is_none())
@@ -322,7 +297,7 @@ mod tests {
           change: 'src/**'
           ignore: ['src/test/**', 'src/tmp/**']
         ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
@@ -346,7 +321,7 @@ mod tests {
               run: 'cargo test'
               change: 'test/**'
             ";
-        let watches = Watches::from(file_content);
+        let watches = Watches::new(rules::from_yaml(&file_content));
         let results = watches.run_on_init().unwrap();
 
         assert_eq!(results[0], vec!["cargo build".to_string(),]);
