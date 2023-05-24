@@ -7,10 +7,16 @@ export HELPERS="$TEST_DIR/functions.sh"
 export WORKDIR="$TEST_DIR/workdir"
 
 echo "Building funzzy"
-cargo build --release
-cp target/release/funzzy $TEST_DIR/funzzy
 
-PATH=$PATH:tests/integration
+rm -f $TEST_DIR/funzzy
+# if CI build with --release flag else build with debug flag
+if [ -n "$CI" ]; then
+  cargo build --release --target-dir $TEST_DIR
+  cp $TEST_DIR/release/funzzy $TEST_DIR/funzzy
+else
+  cargo build --target-dir $TEST_DIR
+  cp $TEST_DIR/debug/funzzy $TEST_DIR/funzzy
+fi
 
 $TEST_DIR/funzzy --version
 $TEST_DIR/funzzy --help
