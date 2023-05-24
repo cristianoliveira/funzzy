@@ -81,8 +81,9 @@ funzzy init
 Change the YAML as you want. Then run:
 
 ```bash
-funzzy watch
+funzzy
 ```
+
 Filtering task by target:
 
 ```bash
@@ -115,10 +116,10 @@ cargo test
 or simple `make tests`
 
 Running integration tests:
+
 ```
 make integration
 ```
-
 
 ## Code Style
 
