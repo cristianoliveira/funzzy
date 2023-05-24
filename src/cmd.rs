@@ -1,4 +1,4 @@
-use std::process::{ Command };
+use std::process::Command;
 
 pub fn execute(command_line: String) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
@@ -20,7 +20,7 @@ pub fn execute(command_line: String) -> Result<(), String> {
 fn it_executes_a_command() {
     let result = match execute(String::from("echo 'foo'")) {
         Ok(_) => true,
-        Err(err) => panic!("{:?}",err),
+        Err(err) => panic!("{:?}", err),
     };
 
     assert!(result)

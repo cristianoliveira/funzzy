@@ -12,6 +12,10 @@
   run: "make lint"
   change: "src/**"
 
+- name: run formatter
+  run: "cargo fmt"
+  change: "src/**"
+
 - name: run integration
   run: "make integration"
   change: "tests/integration/**"

@@ -83,7 +83,13 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
         .filter(|line| line.len() > 1)
         .map(|line| format!("**/{}", &line[2..]))
         .collect();
-    vec![Rules::new("unnamed".to_owned(),vec![command.clone()], watches, vec![], false)]
+    vec![Rules::new(
+        "unnamed".to_owned(),
+        vec![command.clone()],
+        watches,
+        vec![],
+        false,
+    )]
 }
 
 fn pattern(pattern: &str) -> Pattern {

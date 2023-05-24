@@ -94,12 +94,15 @@ fn main() {
             };
         }
 
-        Args { ref flag_config, .. } if !flag_config.is_empty() => {
+        Args {
+            ref flag_config, ..
+        } if !flag_config.is_empty() => {
             let watches = Watches::from(&from_file(&args.flag_config));
             if !args.flag_target.is_empty() {
                 execute(WatchCommand::new(
-                        watches.filter(|r| r.name.contains(&args.flag_target)),
-                            args.flag_V));
+                    watches.filter(|r| r.name.contains(&args.flag_target)),
+                    args.flag_V,
+                ));
             } else {
                 execute(WatchCommand::new(watches, args.flag_V));
             }
@@ -109,8 +112,9 @@ fn main() {
             let watches = Watches::from(&from_file(cli::watch::DEFAULT_FILENAME));
             if !args.flag_target.is_empty() {
                 execute(WatchCommand::new(
-                        watches.filter(|r| r.name.contains(&args.flag_target)),
-                            args.flag_V));
+                    watches.filter(|r| r.name.contains(&args.flag_target)),
+                    args.flag_V,
+                ));
             } else {
                 execute(WatchCommand::new(watches, args.flag_V));
             }

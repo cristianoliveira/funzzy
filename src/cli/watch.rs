@@ -46,18 +46,17 @@ impl WatchCommand {
 
     fn run_rules(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
         clear_shell();
-        let results = rules.iter().map(|rule_cmds| {
-            self.run(&rule_cmds)
-        }).find(|r| {
-            match r {
+        let results = rules
+            .iter()
+            .map(|rule_cmds| self.run(&rule_cmds))
+            .find(|r| match r {
                 Ok(_) => false,
-                Err(_) => true
-            }
-        });
+                Err(_) => true,
+            });
 
         match results {
             Some(Err(err)) => Err(err),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 }
@@ -135,7 +134,8 @@ impl Watches {
     }
 
     pub fn filter(&self, predicate: impl Fn(&rules::Rules) -> bool) -> Self {
-        let targeted = self.rules
+        let targeted = self
+            .rules
             .iter()
             .filter(|x| predicate(*x))
             .map(|x| x.clone())
@@ -157,7 +157,8 @@ impl Watches {
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<Vec<String>>> {
-        let cmds = self.rules
+        let cmds = self
+            .rules
             .iter()
             .filter(|r| !r.ignore(path) && r.watch(path))
             .map(|r| r.commands())
@@ -172,7 +173,8 @@ impl Watches {
     /// Returns the commands for the rules that should run on init
     ///
     pub fn run_on_init(&self) -> Option<Vec<Vec<String>>> {
-        let cmds = self.rules
+        let cmds = self
+            .rules
             .iter()
             .filter(|r| r.run_on_init())
             .map(|r| r.commands())
@@ -361,18 +363,10 @@ mod tests {
         let watches = Watches::from(file_content);
         let results = watches.run_on_init().unwrap();
 
-        assert_eq!(
-            results[0],
-            vec![
-                "cargo build".to_string(),
-            ]
-        );
+        assert_eq!(results[0], vec!["cargo build".to_string(),]);
         assert_eq!(
             results[1],
-            vec![
-                "cat foo".to_string(),
-                "cat bar".to_string(),
-            ]
+            vec!["cat foo".to_string(), "cat bar".to_string(),]
         );
     }
 }
