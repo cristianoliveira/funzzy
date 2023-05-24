@@ -26,3 +26,26 @@ sh -c "vi +%s/test/foo/g +wq $WORKDIR/test2.txt -u NONE"
 assert_file_contains "$WORKDIR/output.txt" "echo arbitrary"
 
 cleanup
+
+test "it does not run when the changed file doesn't match"
+
+touch $WORKDIR/test.txt
+touch $WORKDIR/test2.txt
+touch $WORKDIR/output.txt
+# $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
+
+find . -name '*.txt' | \
+  $TEST_DIR/funzzy 'echo arbitrary' > $WORKDIR/output.txt &
+FUNZZY_PID=$!
+
+echo "test" >> $WORKDIR/test.js
+echo "test" >> $WORKDIR/test2.js
+wait_for_file "$WORKDIR/output.txt"
+sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.js -u NONE"
+sh -c "vi +%s/test/foo/g +wq $WORKDIR/test2.js -u NONE"
+
+sleep 5
+
+assert_file_not_contains "$WORKDIR/output.txt" "echo arbitrary"
+
+cleanup
