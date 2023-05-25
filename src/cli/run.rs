@@ -14,10 +14,7 @@ pub struct RunCommand {
 
 impl RunCommand {
     pub fn new(command: String, interval: u64) -> Self {
-        RunCommand {
-            command: command,
-            interval: interval,
-        }
+        RunCommand { command, interval }
     }
 }
 

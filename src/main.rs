@@ -9,6 +9,7 @@ extern crate docopt;
 mod cli;
 mod cmd;
 mod rules;
+mod stdout;
 mod yaml;
 
 use cli::*;
@@ -110,16 +111,17 @@ fn main() {
                             .collect::<Vec<rules::Rules>>();
 
                         if filtered.is_empty() {
-                            println!("No target found for {}", args.flag_target);
-                            println!("Available targets:");
+                            stdout::info(&format!("No target found for {}", args.flag_target));
+                            stdout::info(&format!("Available targets:"));
+
                             for rule in rules {
-                                println!("  {}", rule.name);
+                                stdout::info(&format!("  {}", rule.name));
                             }
 
-                            show("Finihed");
+                            show("Finished there is no task to run");
+                        } else {
+                            execute(WatchCommand::new(Watches::new(filtered), args.flag_V));
                         }
-
-                        execute(WatchCommand::new(Watches::new(filtered), args.flag_V));
                     } else {
                         execute(WatchCommand::new(Watches::new(rules), args.flag_V));
                     }
@@ -132,7 +134,7 @@ fn main() {
 
 fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
-        println!("Error: {}", err);
+        stdout::error(&format!("{}", err));
     }
 }
 

@@ -19,13 +19,13 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: echo before"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: exit 1"
+assert_file_contains "$WORKDIR/output.txt" "command: echo before"
+assert_file_contains "$WORKDIR/output.txt" "command: exit 1"
 assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 1"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: cat foo/bar/baz"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: exit 125"
+assert_file_contains "$WORKDIR/output.txt" "command: cat foo/bar/baz"
+assert_file_contains "$WORKDIR/output.txt" "command: exit 125"
 assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 125"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: echo after"
+assert_file_contains "$WORKDIR/output.txt" "command: echo after"
 
 cleanup
 
@@ -52,9 +52,9 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: echo before"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: cat baz/bar/foo"
+assert_file_contains "$WORKDIR/output.txt" "command: echo before"
+assert_file_contains "$WORKDIR/output.txt" "command: cat baz/bar/foo"
 assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 1"
-assert_file_contains "$WORKDIR/output.txt" "funzzy running: echo finally"
+assert_file_contains "$WORKDIR/output.txt" "command: echo finally"
 
 cleanup
