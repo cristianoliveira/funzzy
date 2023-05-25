@@ -73,11 +73,11 @@ impl Rules {
     }
 }
 
-pub fn from_yaml(file_content: &str) -> Vec<Rules> {
+pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
     let items = YamlLoader::load_from_str(file_content).unwrap();
     match items[0] {
-        Yaml::Array(ref items) => items.iter().map(|rule| Rules::from(rule)).collect(),
-        _ => panic!("You must have at last one item in the yaml."),
+        Yaml::Array(ref items) => Ok(items.iter().map(|item| Rules::from(item)).collect()),
+        _ => Err("You must have at last one item in the yaml.".to_owned()),
     }
 }
 
@@ -97,13 +97,16 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
 }
 
 pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
-    let result = match File::open(filename) {
+    match File::open(filename) {
         Ok(mut file) => {
             let mut content = String::new();
             file.read_to_string(&mut content)
                 .expect(format!("Cannot read file {}", filename).as_str());
 
-            Ok(from_yaml(&content))
+            match from_yaml(&content) {
+                Err(err) => Err(err),
+                rules => rules,
+            }
         }
 
         Err(err) => Err(format!(
@@ -112,9 +115,7 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
             err
         )
         .to_owned()),
-    };
-
-    result
+    }
 }
 
 fn pattern(pattern: &str) -> Pattern {
