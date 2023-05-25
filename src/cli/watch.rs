@@ -67,19 +67,21 @@ impl Command for WatchCommand {
         };
 
         let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = match Watcher::new(tx, Duration::from_secs(2)) {
-            Ok(w) => w,
-            Err(err) => panic!("Error while trying watch. Cause: {:?}", err),
-        };
+        let mut watcher: RecommendedWatcher =
+            Watcher::new(tx, Duration::from_secs(2)).expect("Unable to create watcher");
 
         if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
-            panic!("Unable to watch current directory. Cause: {:?}", err)
+            return Err(format!("Unable to watch current directory {:?}", err));
         }
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info(&format!("Running on init commands."));
 
-            self.run_rules(rules)?
+            if let Err(err) = self.run_rules(rules) {
+                return Err(err);
+            }
+
+            println!("-- Task finished. --")
         }
 
         stdout::info(&format!("Watching..."));
