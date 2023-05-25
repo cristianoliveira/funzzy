@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 
+TEST_REFERENCE=""
+
 function test() {
   rm -rf "$TEST_DIR/workdir"
+  TEST_REFERENCE="$1"
   echo "test: $1"
   mkdir "$TEST_DIR/workdir"
 }
@@ -15,13 +18,18 @@ function cleanup() {
 function assert_equal() {
   if [ "$1" != "$2" ]; then
     echo "ERROR: $1 != $2"
-    exit 1
+    report_failure
   fi
+}
+
+function report_failure() {
+  touch "$TEST_DIR/failed.log"
+  echo "Failed: $TEST_REFERENCE" >> "$TEST_DIR/failed.log"
 }
 
 function assert_file_content_at() {
   local success=0
-  for i in {1..10}
+  for i in {1..5}
   do
     if sed "$3!d" $1 | grep -q "$2"; then
       success=1
@@ -37,16 +45,16 @@ function assert_file_content_at() {
   done
 
   if [ $success -eq 0 ]; then
-    echo "ERROR: file $1 does not contain $2"
+    echo "ERROR: file $1 does not contain $2" echo "file content:"
     echo "file content:"
-    echo cat $1
-    exit 1
+    cat $1
+    report_failure
   fi
 }
 
 function assert_file_contains() {
   local success=0
-  for i in {1..10}
+  for i in {1..5}
   do
     if grep -q "$2" "$1"; then
       success=1
@@ -60,15 +68,15 @@ function assert_file_contains() {
 
   if [ $success -eq 0 ]; then
     echo "ERROR: file $1 does not contain $2"
-    echo "file content:"
-    echo "$(cat $1)"
-    exit 1
+    echo "final output content:"
+    cat $1
+    report_failure
   fi
 }
 
 function assert_file_not_contains() {
   local success=0
-  for i in {1..10}
+  for i in {1..5}
   do
     if grep -q "$2" "$1"; then
       echo "Attempt failed: file $1 does contain $2"
@@ -82,15 +90,15 @@ function assert_file_not_contains() {
 
   if [ $success -eq 0 ]; then
     echo "ERROR: file $1 does not contain $2"
-    echo "file content:"
-    echo "$(cat $1)"
-    exit 1
+    echo "final output content:"
+    cat "$1"
+    report_failure
   fi
 }
 
 function wait_for_file() {
   local file_exists=0
-  for i in {1..10}
+  for i in {1..5}
   do
     if [ -s "$1" ]
     then
@@ -103,6 +111,6 @@ function wait_for_file() {
 
   if [ $file_exists -eq 0 ]; then
     echo "ERROR: file $1 does not exist"
-    exit 1
+    report_failure
   fi
 }

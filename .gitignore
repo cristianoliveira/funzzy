@@ -21,3 +21,4 @@ Cargo.lock
 
 funzzy*
 tests/integration/workdir/
+*.log

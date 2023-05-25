@@ -19,7 +19,14 @@
 - name: run integration
   run: "make integration"
   change: "tests/integration/**"
-  ignore: "tests/integration/workdir"
+  ignore:
+    [
+      "tests/integration/workdir/**",
+      "tests/integration/release/**",
+      "tests/integration/debug/**",
+      "tests/integration/failed.log",
+      "tests/integration/funzzy",
+    ]
   run_on_init: true
 
 - name: run my build
