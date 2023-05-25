@@ -14,9 +14,9 @@ $TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 assert_file_content_at "$WORKDIR/output.txt" "Running on init commands" 1
-assert_file_contains "$WORKDIR/output.txt" "running: echo first"
-assert_file_contains "$WORKDIR/output.txt" "running: echo second"
-assert_file_contains "$WORKDIR/output.txt" "running: echo complex"
+assert_file_contains "$WORKDIR/output.txt" "command: echo first"
+assert_file_contains "$WORKDIR/output.txt" "command: echo second"
+assert_file_contains "$WORKDIR/output.txt" "command: echo complex"
 assert_file_content_at "$WORKDIR/output.txt" "third" 6
 assert_file_contains "$WORKDIR/output.txt" "Watching..."
 
@@ -41,9 +41,9 @@ FUNZZY_PID=$!
 assert_file_contains "$WORKDIR/output.txt" "Watching..."
 echo "test" >> $WORKDIR/test.txt
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
-assert_file_contains "$WORKDIR/output.txt" "running: echo 100"
-assert_file_contains "$WORKDIR/output.txt" "running: echo 200"
-assert_file_contains "$WORKDIR/output.txt" "running: echo 4000"
+assert_file_contains "$WORKDIR/output.txt" "command: echo 100"
+assert_file_contains "$WORKDIR/output.txt" "command: echo 200"
+assert_file_contains "$WORKDIR/output.txt" "command: echo 4000"
 assert_file_content_at "$WORKDIR/output.txt" "3333" 6
 
 cleanup

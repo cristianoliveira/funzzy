@@ -9,6 +9,7 @@ use std::time::Duration;
 use cli::Command;
 use cmd;
 use rules;
+use stdout;
 
 pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
 
@@ -25,20 +26,18 @@ pub struct WatchCommand {
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool) -> Self {
         if verbose {
-            println!("watches {:?}", watches);
+            stdout::verbose(&format!("watches {:?}", watches));
         }
-        WatchCommand {
-            watches: watches,
-            verbose: verbose,
-        }
+
+        WatchCommand { watches, verbose }
     }
 
     fn run(&self, commands: &Vec<String>) -> Result<(), String> {
         for command in commands {
             if self.verbose {
-                println!("command: {:?}", command)
+                stdout::verbose(&format!("struct command: {:?}", command));
             };
-            println!(" ----- funzzy running: {} -------", command);
+            stdout::info(&format!("----- command: {} -------", command));
             cmd::execute(String::from(command))?
         }
         Ok(())
@@ -64,7 +63,7 @@ impl WatchCommand {
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
         if self.verbose {
-            println!("---- Verbose mode enabled. ----")
+            stdout::verbose(&format!("Verbose mode enabled."));
         };
 
         let (tx, rx) = channel();
@@ -78,22 +77,23 @@ impl Command for WatchCommand {
         }
 
         if let Some(rules) = self.watches.run_on_init() {
-            println!("Running on init commands.");
+            stdout::info(&format!("Running on init commands."));
 
             self.run_rules(rules)?
         }
 
-        println!("Watching...");
+        stdout::info(&format!("Watching..."));
         while let Ok(event) = rx.recv() {
             if let DebouncedEvent::Create(path) = event {
                 let path_str = path.into_os_string().into_string().unwrap();
                 if let Some(rules) = self.watches.watch(&*path_str) {
                     if self.verbose {
-                        println!("Triggered by change in: {}", path_str)
+                        stdout::verbose(&format!("Triggered by change in: {}", path_str));
                     };
 
                     self.run_rules(rules)?
                 }
+                stdout::info(&format!("Watching..."));
             }
         }
         Ok(())
@@ -112,7 +112,7 @@ pub struct Watches {
 }
 impl Watches {
     pub fn new(rules: Vec<rules::Rules>) -> Self {
-        Watches { rules: rules }
+        Watches { rules }
     }
 
     /// Returns the commands for first rule found for the given path
