@@ -81,7 +81,7 @@ impl Command for WatchCommand {
                 return Err(err);
             }
 
-            println!("-- Task finished. --")
+            stdout::info(&"All tasks finished");
         }
 
         stdout::info(&format!("Watching..."));
@@ -95,7 +95,7 @@ impl Command for WatchCommand {
 
                     self.run_rules(rules)?
                 }
-                stdout::info(&format!("Watching..."));
+                stdout::info(&format!("Task finished. Watching for more changes..."));
             }
         }
         Ok(())
