@@ -93,7 +93,6 @@ impl Command for WatchCommand {
 
                     self.run_rules(rules)?
                 }
-                stdout::info(&format!("Watching..."));
             }
         }
         Ok(())
