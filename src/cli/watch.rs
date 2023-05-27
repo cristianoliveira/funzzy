@@ -67,19 +67,21 @@ impl Command for WatchCommand {
         };
 
         let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher = match Watcher::new(tx, Duration::from_secs(2)) {
-            Ok(w) => w,
-            Err(err) => panic!("Error while trying watch. Cause: {:?}", err),
-        };
+        let mut watcher: RecommendedWatcher =
+            Watcher::new(tx, Duration::from_secs(2)).expect("Unable to create watcher");
 
         if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
-            panic!("Unable to watch current directory. Cause: {:?}", err)
+            return Err(format!("Unable to watch current directory {:?}", err));
         }
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info(&format!("Running on init commands."));
 
-            self.run_rules(rules)?
+            if let Err(err) = self.run_rules(rules) {
+                return Err(err);
+            }
+
+            stdout::info(&"All tasks finished");
         }
 
         stdout::info(&format!("Watching..."));
@@ -179,7 +181,7 @@ mod tests {
           run: 'cargo tests'
           change: 'tests/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches
             .watch("/Users/crosa/others/funzzy/tests/test.rs")
             .is_some());
@@ -195,7 +197,7 @@ mod tests {
           run: 'cargo tests'
           change: './tests/foo/bar.rs'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("./tests/foo/bar.rs").is_some())
     }
 
@@ -206,7 +208,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
         assert!(watches
             .watch("/Users/crosa/others/funzzy/events.yaml")
@@ -223,7 +225,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         let result = watches.watch("src/test.rs").unwrap();
         assert_eq!(vec!["cargo build"], result[0])
     }
@@ -239,7 +241,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
         let result = watches.watch("test/test.rs").unwrap();
         assert_eq!(vec!["cargo test"], result[0]);
@@ -263,7 +265,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
         let result = watches.watch("test/test.rs").unwrap();
         assert_eq!(vec!["echo same"], result[0]);
@@ -282,7 +284,7 @@ mod tests {
           change: 'src/**'
           ignore: 'src/test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/test/other.tmp").is_none())
@@ -296,7 +298,7 @@ mod tests {
           change: 'src/**'
           ignore: ['src/test/**', 'src/tmp/**']
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
@@ -320,7 +322,7 @@ mod tests {
               run: 'cargo test'
               change: 'test/**'
             ";
-        let watches = Watches::new(rules::from_yaml(&file_content));
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         let results = watches.run_on_init().unwrap();
 
         assert_eq!(results[0], vec!["cargo build".to_string(),]);

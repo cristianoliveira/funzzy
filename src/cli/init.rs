@@ -32,12 +32,18 @@ impl InitCommand {
 
 impl Command for InitCommand {
     fn execute(&self) -> Result<(), String> {
-        let mut yaml: File = match File::create(&self.file_name) {
-            Ok(f) => f,
-            Err(err) => panic!("File wasn't created. Cause: {}", err),
+        let res = match File::create(&self.file_name) {
+            Ok(mut yaml) => {
+                if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
+                    return Err(String::from(err.to_string()));
+                }
+
+                Ok(())
+            }
+            Err(err) => Err(format!("File wasn't created. Cause: {}", err)),
         };
 
-        if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
+        if let Err(err) = res {
             return Err(String::from(err.to_string()));
         }
 

@@ -86,11 +86,11 @@ fn main() {
             ref arg_command, ..
         } if !arg_command.is_empty() => {
             match from_stdin() {
-                Some(content) => {
+                Ok(content) => {
                     let watches = Watches::new(rules::from_string(content, arg_command));
                     execute(WatchCommand::new(watches, args.flag_V));
                 }
-                None => show("Nothing to run"),
+                Err(err) => show(err.as_str()),
             };
         }
 
@@ -138,7 +138,7 @@ fn execute<T: Command>(command: T) {
     }
 }
 
-fn from_stdin() -> Option<String> {
+fn from_stdin() -> Result<String, String> {
     let mut buffer = String::new();
     let stdin = io::stdin();
     let mut handle = stdin.lock();
@@ -146,12 +146,12 @@ fn from_stdin() -> Option<String> {
     match handle.read_to_string(&mut buffer) {
         Ok(bytes) => {
             if bytes > 0 {
-                Some(buffer)
+                Ok(buffer)
             } else {
-                None
+                Err(String::from("No input"))
             }
         }
-        Err(err) => panic!("Error while reading stdin {}", err),
+        Err(err) => Err(format!("Error while reading stdin {}", err)),
     }
 }
 
