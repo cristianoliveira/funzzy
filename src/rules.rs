@@ -82,11 +82,39 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
 }
 
 pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
+    // get current directory
+    let current_dir = std::env::current_dir().expect("Cannot get current directory");
+    let current_dir_str = current_dir
+        .to_str()
+        .expect("Cannot convert current directory to string");
+
     let watches = patterns
         .lines()
         .filter(|line| line.len() > 1)
-        .map(|line| format!("**/{}", &line[2..]))
+        .map(|line| {
+            let path = std::path::Path::new(&line);
+
+            let full_path = if path.starts_with(".") {
+                std::path::Path::new(&current_dir_str).join(&line[2..])
+            } else {
+                std::path::Path::new(&current_dir_str).join(&line)
+            };
+
+            if full_path.is_dir() {
+                return full_path
+                    .join("**")
+                    .to_str()
+                    .expect(format!("Cannot convert {:?} to path with wildcard", line).as_str())
+                    .to_owned();
+            }
+
+            full_path
+                .to_str()
+                .expect(format!("Cannot convert {:?} to absolute path", line).as_str())
+                .to_owned()
+        })
         .collect();
+
     vec![Rules::new(
         "unnamed".to_owned(),
         vec![command.clone()],
