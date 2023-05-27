@@ -23,8 +23,8 @@ function assert_equal() {
 }
 
 function report_failure() {
-  touch "$TEST_DIR/failed.log"
-  echo "Failed: $TEST_REFERENCE" >> "$TEST_DIR/failed.log"
+  echo "Failed: $TEST_REFERENCE"
+  exit 1
 }
 
 function assert_file_content_at() {
