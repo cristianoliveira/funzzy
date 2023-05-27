@@ -82,11 +82,42 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
 }
 
 pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
+    // get current directory
+    let current_dir = std::env::current_dir().expect("Cannot get current directory");
+    let current_dir_str = current_dir
+        .to_str()
+        .expect("Cannot convert current directory to string");
+
     let watches = patterns
         .lines()
-        .filter(|line| line.len() > 1)
-        .map(|line| format!("**/{}", &line[2..]))
+        .map(|line| {
+            let path = std::path::Path::new(&line);
+
+            let full_path = if path.starts_with(".") {
+                if line.len() == 1 {
+                    std::path::Path::new(&current_dir_str).join("")
+                } else {
+                    std::path::Path::new(&current_dir_str).join(&line[2..])
+                }
+            } else {
+                std::path::Path::new(&current_dir_str).join(&line)
+            };
+
+            if full_path.is_dir() {
+                return full_path
+                    .join("**")
+                    .to_str()
+                    .expect(format!("Cannot convert {:?} to path with wildcard", line).as_str())
+                    .to_owned();
+            }
+
+            full_path
+                .to_str()
+                .expect(format!("Cannot convert {:?} to absolute path", line).as_str())
+                .to_owned()
+        })
         .collect();
+
     vec![Rules::new(
         "unnamed".to_owned(),
         vec![command.clone()],
@@ -129,6 +160,7 @@ mod tests {
     use self::yaml_rust::YamlLoader;
     use super::from_string;
     use super::Rules;
+    use std::env::current_dir;
 
     #[test]
     fn it_is_watching_path_tests() {
@@ -272,13 +304,19 @@ mod tests {
         Rules::from(&content[0][0]);
     }
 
+    fn get_absolute_path(path: &str) -> String {
+        let mut absolute_path = current_dir().unwrap();
+        absolute_path.push(path);
+        absolute_path.to_str().unwrap().to_string()
+    }
+
     #[test]
-    fn it_filters_empty_or_one_character_path() {
+    fn it_does_not_filters_empty_or_one_character_path() {
         let content = "./foo\n./bar\n.\n./baz\n";
         let rules = from_string(String::from(content), &String::from("cargo test"));
-        assert!(rules[0].watch("foo"));
-        assert!(rules[0].watch("bar"));
-        assert!(rules[0].watch("baz"));
-        assert!(!rules[0].watch("."));
+        assert!(rules[0].watch(&get_absolute_path("foo")));
+        assert!(rules[0].watch(&get_absolute_path("bar")));
+        assert!(rules[0].watch(&get_absolute_path("baz")));
+        assert!(rules[0].watch(&get_absolute_path(".")));
     }
 }
