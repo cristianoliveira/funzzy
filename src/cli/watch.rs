@@ -95,7 +95,6 @@ impl Command for WatchCommand {
 
                     self.run_rules(rules)?
                 }
-                stdout::info(&format!("Task finished. Watching for more changes..."));
             }
         }
         Ok(())
