@@ -1,4 +1,4 @@
-VERSION="v0.6.2"
+VERSION="v1.0.0"
 
 cd /tmp
 
