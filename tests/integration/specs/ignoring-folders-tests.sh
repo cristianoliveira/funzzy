@@ -11,15 +11,15 @@ test "it allows setting up ignored paths"
 echo "
 - name: run ignored
   run: ['echo {{placeholder}} | sed s/placeholder/ignored/g']
-  change: \"$WORKDIR/**\"
+  change: '$WORKDIR/**'
   ignore: [
-    \"$WORKDIR/ignored/**\",
-    \"$WORKDIR/file-to-ignore.txt\",
+    '$WORKDIR/ignored/**',
+    '$WORKDIR/file-to-ignore.txt'
   ]
 
 - name: run not ignored
   run: ['echo {{placeholder}} | sed s/placeholder/changed/g']
-  change: \"$WORKDIR/**\"
+  change: '$WORKDIR/**'
 " > $WORKDIR/.oninit.yaml
 
 
