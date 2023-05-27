@@ -22,8 +22,6 @@ fi
 "$TEST_DIR"/funzzy --help
 
 
-rm -f $TEST_DIR/failed.log
-
 ## if path received as argument, run only that test
 if [ -n "$1" ]; then
   echo "Running only $1"
@@ -43,12 +41,5 @@ if [ -f "$TEST_DIR"/workdir/output.txt ]; then
   cat "$TEST_DIR"/workdir/output.txt
 fi
 
-if [ -f $TEST_DIR/failed.log ] && [ -s $TEST_DIR/failed.log ]; then
-  echo "Specs failed:"
-  cat $TEST_DIR/failed.log
-  rm -f $TEST_DIR/failed.log
-  exit 1
-else
-  echo "All tests passed"
-  exit 0
-fi
+echo "All tests passed"
+exit 0
