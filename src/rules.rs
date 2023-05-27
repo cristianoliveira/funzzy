@@ -82,11 +82,7 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
 }
 
 pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
-    // get current directory
     let current_dir = std::env::current_dir().expect("Cannot get current directory");
-    let current_dir_str = current_dir
-        .to_str()
-        .expect("Cannot convert current directory to string");
 
     let watches = patterns
         .lines()
@@ -95,12 +91,12 @@ pub fn from_string(patterns: String, command: &String) -> Vec<Rules> {
 
             let full_path = if path.starts_with(".") {
                 if line.len() == 1 {
-                    std::path::Path::new(&current_dir_str).join("")
+                    current_dir.join("")
                 } else {
-                    std::path::Path::new(&current_dir_str).join(&line[2..])
+                    current_dir.join(&line[2..])
                 }
             } else {
-                std::path::Path::new(&current_dir_str).join(&line)
+                current_dir.join(&line)
             };
 
             if full_path.is_dir() {
