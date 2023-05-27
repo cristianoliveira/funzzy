@@ -190,12 +190,14 @@ mod tests {
           change: 'tests/**'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        assert!(watches.watch(&get_absolute_path("tests/test.rs")).is_some());
         assert!(watches
-            .watch("/Users/crosa/others/funzzy/tests/test.rs")
+            .watch(&get_absolute_path("tests/tests.rs"))
             .is_some());
-        assert!(watches.watch("tests/tests.rs").is_some());
-        assert!(watches.watch("tests/ruby.rb").is_some());
-        assert!(watches.watch("tests/folder/other.rs").is_some())
+        assert!(watches.watch(&get_absolute_path("tests/ruby.rb")).is_some());
+        assert!(watches
+            .watch(&get_absolute_path("tests/folder/other.rs"))
+            .is_some())
     }
 
     #[test]
@@ -206,7 +208,9 @@ mod tests {
           change: './tests/foo/bar.rs'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        assert!(watches.watch("./tests/foo/bar.rs").is_some())
+        assert!(watches
+            .watch(&get_absolute_path("./tests/foo/bar.rs"))
+            .is_some())
     }
 
     #[test]
@@ -218,12 +222,12 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
+        assert!(watches.watch(&get_absolute_path("events.yaml")).is_none());
+        assert!(watches.watch(&get_absolute_path("tests/")).is_none());
+        assert!(watches.watch(&get_absolute_path("tests/test.rs")).is_none());
         assert!(watches
-            .watch("/Users/crosa/others/funzzy/events.yaml")
+            .watch(&get_absolute_path("tests/folder/other.rs"))
             .is_none());
-        assert!(watches.watch("tests/").is_none());
-        assert!(watches.watch("tests/test.rs").is_none());
-        assert!(watches.watch("tests/folder/other.rs").is_none());
     }
 
     #[test]
@@ -234,7 +238,7 @@ mod tests {
           change: 'src/**'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        let result = watches.watch("src/test.rs").unwrap();
+        let result = watches.watch(&get_absolute_path("src/test.rs")).unwrap();
         assert_eq!(vec!["cargo build"], result[0])
     }
 
@@ -251,10 +255,10 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
-        let result = watches.watch("test/test.rs").unwrap();
+        let result = watches.watch(&get_absolute_path("test/test.rs")).unwrap();
         assert_eq!(vec!["cargo test"], result[0]);
 
-        let result_src = watches.watch("src/test.rs").unwrap();
+        let result_src = watches.watch(&get_absolute_path("src/test.rs")).unwrap();
         assert_eq!(vec!["cargo build"], result_src[0]);
     }
 
@@ -275,11 +279,11 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
-        let result = watches.watch("test/test.rs").unwrap();
+        let result = watches.watch(&get_absolute_path("test/test.rs")).unwrap();
         assert_eq!(vec!["echo same"], result[0]);
         assert_eq!(vec!["cargo test"], result[1]);
 
-        let result_multiple = watches.watch("src/test.rs").unwrap();
+        let result_multiple = watches.watch(&get_absolute_path("src/test.rs")).unwrap();
         assert_eq!(vec!["echo same"], result_multiple[0]);
         assert_eq!(vec!["cargo build"], result_multiple[1]);
     }
@@ -293,9 +297,11 @@ mod tests {
           ignore: 'src/test/**'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        assert!(watches.watch("src/other.rb").is_some());
-        assert!(watches.watch("src/test.txt").is_some());
-        assert!(watches.watch("src/test/other.tmp").is_none())
+        assert!(watches.watch(&get_absolute_path("src/other.rb")).is_some());
+        assert!(watches.watch(&get_absolute_path("src/test.txt")).is_some());
+        assert!(watches
+            .watch(&get_absolute_path("src/test/other.tmp"))
+            .is_none())
     }
 
     #[test]
@@ -307,10 +313,14 @@ mod tests {
           ignore: ['src/test/**', 'src/tmp/**']
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        assert!(watches.watch("src/other.rb").is_some());
-        assert!(watches.watch("src/test.txt").is_some());
-        assert!(watches.watch("src/tmp/test.txt").is_none());
-        assert!(watches.watch("src/test/other.tmp").is_none())
+        assert!(watches.watch(&get_absolute_path("src/other.rb")).is_some());
+        assert!(watches.watch(&get_absolute_path("src/test.txt")).is_some());
+        assert!(watches
+            .watch(&get_absolute_path("src/tmp/test.txt"))
+            .is_none());
+        assert!(watches
+            .watch(&get_absolute_path("src/test/other.tmp"))
+            .is_none())
     }
 
     #[test]
