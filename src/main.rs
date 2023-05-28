@@ -89,10 +89,13 @@ fn main() {
         } if !arg_command.is_empty() => {
             match from_stdin() {
                 Ok(content) => {
+                    if content.trim().is_empty() {
+                        show("The list of files received is empty");
+                    }
                     let watches = Watches::new(rules::from_string(content, arg_command));
                     execute(WatchCommand::new(watches, args.flag_V));
                 }
-                Err(err) => show(err.as_str()),
+                Err(err) => error("Error while reading stdin", err),
             };
         }
 
@@ -143,14 +146,28 @@ fn execute<T: Command>(command: T) {
 fn from_stdin() -> Result<String, String> {
     let mut buffer = String::new();
     let stdin = io::stdin();
-    let mut handle = stdin.lock();
 
-    match handle.read_to_string(&mut buffer) {
+    // Spawn a thread and if there is no input in 5 seconds kills the process
+    let has_input = std::sync::Arc::new(std::sync::Mutex::new(false));
+    let clone_has_input = has_input.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+
+        let had_input = clone_has_input.lock().unwrap().clone();
+        if !had_input {
+            stdout::info("Timed out waiting for input after 5 seconds");
+            std::process::exit(0);
+        }
+    });
+
+    match stdin.read_line(&mut buffer) {
         Ok(bytes) => {
+            let mut has_input_mutex = has_input.lock().unwrap();
+            *has_input_mutex = bytes > 0;
             if bytes > 0 {
                 Ok(buffer)
             } else {
-                Err(String::from("No input"))
+                Err(String::from("There was no inputs"))
             }
         }
         Err(err) => Err(format!("Error while reading stdin {}", err)),
