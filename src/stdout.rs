@@ -3,7 +3,7 @@ pub fn info(msg: &str) {
 }
 
 pub fn error(msg: &str) {
-    println!("Funzzy error: {}", msg);
+    println!("Funzzy ERROR: {}", msg);
 }
 
 pub fn verbose(msg: &str) {
