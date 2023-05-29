@@ -20,7 +20,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new() -> Self {
+    pub fn new(verbose: bool) -> Self {
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
         let (tscheduler, rscheduler) = channel::<Vec<Vec<String>>>();
@@ -53,7 +53,9 @@ impl Worker {
                     break;
                 }
 
-                stdout::info(&format!("Finished running all tasks. Watching..."));
+                if verbose {
+                    stdout::info(&format!("Finished running all tasks. Watching..."));
+                }
             }
         });
 
@@ -82,9 +84,12 @@ impl Worker {
                                     // Check if there is any kill signal otherwise
                                     // continue running
                                     if let Ok(_) = rcancel.try_recv() {
-                                        stdout::info(&format!(
-                                            "---- cancelling remaining tasks ----"
-                                        ));
+                                        if verbose {
+                                            stdout::info(&format!(
+                                                "---- cancelling: {:?} ----",
+                                                task
+                                            ));
+                                        }
 
                                         if let Err(err) = child.kill() {
                                             stdout::error(&format!(
@@ -107,10 +112,15 @@ impl Worker {
                                     continue;
                                 }
                                 Ok(Some(status)) => {
-                                    if status.success() {
-                                        stdout::info(&format!("---- finished: {:?} ----", task));
-                                    } else {
-                                        stdout::error(&format!("---- failed: {:?} ----", task));
+                                    if verbose {
+                                        if status.success() {
+                                            stdout::info(&format!(
+                                                "---- finished: {:?} ----",
+                                                task
+                                            ));
+                                        } else {
+                                            stdout::error(&format!("---- failed: {:?} ----", task));
+                                        }
                                     }
 
                                     if let Err(err) = tconsumer.send(TaskEvent::Next) {

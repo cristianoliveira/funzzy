@@ -31,7 +31,7 @@ impl WatchNonBlockCommand {
         WatchNonBlockCommand {
             watches,
             verbose,
-            worker: workers::Worker::new(),
+            worker: workers::Worker::new(verbose),
         }
     }
 }
