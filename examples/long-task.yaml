@@ -15,3 +15,8 @@
   run: "bash examples/longtask.sh short 5"
   change: ["src/**", "tests/integration/workdir/**"]
   run_on_init: true
+
+- name: run long task 6
+  run: ["bash examples/longtask.sh list 3", "bash examples/longtask.sh list 4"]
+  change: ["src/**", "tests/integration/workdir/**"]
+  run_on_init: true

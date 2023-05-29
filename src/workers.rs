@@ -12,7 +12,7 @@ enum TaskEvent {
 
 pub struct Worker {
     canceller: Sender<()>,
-    scheduler: Sender<Vec<Vec<String>>>,
+    scheduler: Sender<Vec<String>>,
     dropper: Sender<()>,
 
     producer: Option<JoinHandle<()>>,
@@ -26,15 +26,15 @@ impl Worker {
         };
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
-        let (tscheduler, rscheduler) = channel::<Vec<Vec<String>>>();
+        let (tscheduler, rscheduler) = channel::<Vec<String>>();
         let (tconsumer, rconsumer) = channel::<TaskEvent>();
-        let (tproducer, rproducer) = channel::<Option<Vec<String>>>();
+        let (tproducer, rproducer) = channel::<Option<String>>();
         let (tcancel, rcancel) = channel::<()>();
         let (tdrop, rdrop) = channel::<()>();
 
         let producer = std::thread::spawn(move || {
-            while let Ok(mut rules) = rscheduler.recv() {
-                if let Err(err) = tproducer.send(rules.pop()) {
+            while let Ok(mut tasks) = rscheduler.recv() {
+                if let Err(err) = tproducer.send(tasks.pop()) {
                     stdout::error(&format!("failed to initiate the execution: {:?}", err));
                 }
 
@@ -43,7 +43,7 @@ impl Worker {
                         break;
                     }
 
-                    if let Err(err) = tproducer.send(rules.pop()) {
+                    if let Err(err) = tproducer.send(tasks.pop()) {
                         stdout::error(&format!("failed to initiate next execution: {:?}", err));
                     }
                 }
@@ -63,97 +63,86 @@ impl Worker {
         });
 
         let consumer = std::thread::spawn(move || {
-            while let Ok(tasks_in_rule) = rproducer.recv() {
-                if let Some(tasks) = tasks_in_rule {
-                    for task in tasks {
-                        stdout::info(&format!("---- running: {:?} ----", task));
-                        let mut child = match spawn_command(task.clone()) {
-                            Ok(child) => child,
-                            Err(err) => {
-                                stdout::error(&format!("failed to create command: {:?}", err));
-                                continue;
-                            }
-                        };
+            while let Ok(next_task) = rproducer.recv() {
+                if let Some(task) = next_task {
+                    stdout::info(&format!("---- running: {:?} ----", task));
+                    let mut child = match spawn_command(task.clone()) {
+                        Ok(child) => child,
+                        Err(err) => {
+                            stdout::error(&format!("failed to create command: {:?}", err));
+                            continue;
+                        }
+                    };
 
-                        loop {
-                            // We don't want the tasks to run in parallel but
-                            // we need it to be async so we can kill it.
-                            match child.try_wait() {
-                                Ok(None) => {
-                                    // Task is still running...
-                                    // Check if there is any kill signal otherwise
-                                    // continue running
-                                    if let Ok(_) = rcancel.try_recv() {
+                    loop {
+                        // We don't want the tasks to run in parallel but
+                        // we need it to be async so we can kill it.
+                        match child.try_wait() {
+                            Ok(None) => {
+                                // Task is still running...
+                                // Check if there is any kill signal otherwise
+                                // continue running
+                                if let Ok(_) = rcancel.try_recv() {
+                                    if verbose {
+                                        stdout::info(&format!("---- cancelling: {:?} ----", task));
+                                    }
+
+                                    child.kill().expect("failed to kill current task");
+                                    if let Ok(status) = child.wait() {
                                         if verbose {
                                             stdout::info(&format!(
-                                                "---- cancelling: {:?} ----",
-                                                task
+                                                "---- finished: {:?} status: {} ----",
+                                                task, status
                                             ));
                                         }
-
-                                        child.kill().expect("failed to kill current task");
-                                        if let Ok(status) = child.wait() {
-                                            if verbose {
-                                                stdout::info(&format!(
-                                                    "---- finished: {:?} status: {} ----",
-                                                    task, status
-                                                ));
-                                            }
-                                        } else {
-                                            stdout::error(&format!(
-                                                "failed to wait for the task to finish: {:?}",
-                                                task
-                                            ));
-                                        }
-
-                                        if let Err(err) = tconsumer.send(TaskEvent::Break) {
-                                            stdout::error(&format!(
-                                                "failed to send stop current queued tasks: {:?}",
-                                                err
-                                            ));
-                                        };
-
-                                        break;
-                                    }
-
-                                    std::thread::sleep(std::time::Duration::from_millis(200));
-                                    continue;
-                                }
-                                Ok(Some(status)) => {
-                                    if verbose {
-                                        if status.success() {
-                                            stdout::info(&format!(
-                                                "---- finished: {:?} ----",
-                                                task
-                                            ));
-                                        } else {
-                                            stdout::error(&format!("---- failed: {:?} ----", task));
-                                        }
-                                    }
-
-                                    if let Err(err) = tconsumer.send(TaskEvent::Next) {
+                                    } else {
                                         stdout::error(&format!(
-                                            "failed to request next task: {:?}",
-                                            err
+                                            "failed to wait for the task to finish: {:?}",
+                                            task
                                         ));
-                                    };
-                                }
-                                Err(err) => {
-                                    if let Err(err) = tconsumer.send(TaskEvent::Next) {
+                                    }
+
+                                    if let Err(err) = tconsumer.send(TaskEvent::Break) {
                                         stdout::error(&format!(
-                                            "failed to request next task: {:?}",
+                                            "failed to send stop current queued tasks: {:?}",
                                             err
                                         ));
                                     };
 
+                                    break;
+                                }
+
+                                std::thread::sleep(std::time::Duration::from_millis(200));
+                                continue;
+                            }
+                            Ok(Some(status)) => {
+                                if verbose {
+                                    if status.success() {
+                                        stdout::info(&format!("---- finished: {:?} ----", task));
+                                    } else {
+                                        stdout::error(&format!("---- failed: {:?} ----", task));
+                                    }
+                                }
+
+                                if let Err(err) = tconsumer.send(TaskEvent::Next) {
                                     stdout::error(&format!(
-                                        "failed while trying to wait: {:?}",
+                                        "failed to request next task: {:?}",
                                         err
                                     ));
-                                }
-                            };
-                            break;
-                        }
+                                };
+                            }
+                            Err(err) => {
+                                if let Err(err) = tconsumer.send(TaskEvent::Next) {
+                                    stdout::error(&format!(
+                                        "failed to request next task: {:?}",
+                                        err
+                                    ));
+                                };
+
+                                stdout::error(&format!("failed while trying to wait: {:?}", err));
+                            }
+                        };
+                        break;
                     }
                 } else {
                     if let Err(err) = tconsumer.send(TaskEvent::Break) {
@@ -181,7 +170,13 @@ impl Worker {
     }
 
     pub fn schedule(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
-        if let Err(err) = self.scheduler.send(rules) {
+        let tasks = rules
+            .iter()
+            .map(|rule| rule.iter().cloned().collect::<Vec<String>>())
+            .flatten()
+            .collect::<Vec<String>>();
+
+        if let Err(err) = self.scheduler.send(tasks) {
             return Err(format!("{:?}", err));
         }
 

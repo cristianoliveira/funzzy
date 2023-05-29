@@ -17,15 +17,15 @@ echo "test" > "$WORKDIR"/temp.txt
 wait_for_file "$WORKDIR"/output.txt
 
 assert_file_contains "$WORKDIR"/output.txt "Watching..."
-assert_file_contains "$WORKDIR/output.txt" "Task short finished"
+assert_file_contains "$WORKDIR/output.txt" "Task list finished"
 vi +wq tests/integration/workdir/temp.txt -u NONE
-assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh short 5" 2
+assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh list 4" 2
 
 vi +wq tests/integration/workdir/temp.txt -u NONE
-assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh short 5" 3
+assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh list 4" 3
 
 vi +wq tests/integration/workdir/temp.txt -u NONE
-assert_file_occurrencies "$WORKDIR"/output.txt "longtask.sh short 5" 4
+assert_file_occurrencies "$WORKDIR"/output.txt "longtask.sh list 4" 4
 
 # Check if there are any zombie processes
 leaks=$(ps -A -ostat,pid,ppid | grep -e '[zZ]')
