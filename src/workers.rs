@@ -28,7 +28,7 @@ impl Worker {
         let (tproducer, rproducer) = channel::<Option<Vec<String>>>();
         let (tcancel, rcancel) = channel::<()>();
         let (tdrop, rdrop) = channel::<()>();
-        // producer
+
         let producer = std::thread::spawn(move || {
             while let Ok(mut rules) = rscheduler.recv() {
                 if let Err(err) = tproducer.send(rules.pop()) {
@@ -59,10 +59,9 @@ impl Worker {
             }
         });
 
-        // consumer
         let consumer = std::thread::spawn(move || {
             while let Ok(tasks_in_rule) = rproducer.recv() {
-                // ignore first kill signal because it's the first task
+                // ignore first cancel signal because it's the first task
                 let _ = rcancel.try_recv();
                 if let Some(tasks) = tasks_in_rule {
                     for task in tasks {
