@@ -106,13 +106,32 @@ impl Worker {
                                     std::thread::sleep(std::time::Duration::from_millis(200));
                                     continue;
                                 }
-                                _ => {
+                                Ok(Some(status)) => {
+                                    if status.success() {
+                                        stdout::info(&format!("---- finished: {:?} ----", task));
+                                    } else {
+                                        stdout::error(&format!("---- failed: {:?} ----", task));
+                                    }
+
                                     if let Err(err) = tconsumer.send(TaskEvent::Next) {
                                         stdout::error(&format!(
                                             "failed to request next task: {:?}",
                                             err
                                         ));
                                     };
+                                }
+                                Err(err) => {
+                                    if let Err(err) = tconsumer.send(TaskEvent::Next) {
+                                        stdout::error(&format!(
+                                            "failed to request next task: {:?}",
+                                            err
+                                        ));
+                                    };
+
+                                    stdout::error(&format!(
+                                        "failed while trying to wait: {:?}",
+                                        err
+                                    ));
                                 }
                             };
                             break;
