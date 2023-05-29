@@ -27,4 +27,11 @@ assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh short 5" 3
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR"/output.txt "longtask.sh short 5" 4
 
+# Check if there are any zombie processes
+leaks=$(ps -A -ostat,pid,ppid | grep -e '[zZ]')
+if [ -n "$leaks" ]; then
+  echo "Zombie processes found: $leaks"
+  exit 1
+fi
+
 cleanup

@@ -21,6 +21,9 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(verbose: bool) -> Self {
+        if verbose {
+            stdout::verbose(&format!("Worker in verbose mode."));
+        };
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
         let (tscheduler, rscheduler) = channel::<Vec<Vec<String>>>();
@@ -61,8 +64,6 @@ impl Worker {
 
         let consumer = std::thread::spawn(move || {
             while let Ok(tasks_in_rule) = rproducer.recv() {
-                // ignore first cancel signal because it's the first task
-                let _ = rcancel.try_recv();
                 if let Some(tasks) = tasks_in_rule {
                     for task in tasks {
                         stdout::info(&format!("---- running: {:?} ----", task));
@@ -90,12 +91,20 @@ impl Worker {
                                             ));
                                         }
 
-                                        if let Err(err) = child.kill() {
+                                        child.kill().expect("failed to kill current task");
+                                        if let Ok(status) = child.wait() {
+                                            if verbose {
+                                                stdout::info(&format!(
+                                                    "---- finished: {:?} status: {} ----",
+                                                    task, status
+                                                ));
+                                            }
+                                        } else {
                                             stdout::error(&format!(
-                                                "failed to kill current task: {:?}",
-                                                err
+                                                "failed to wait for the task to finish: {:?}",
+                                                task
                                             ));
-                                        };
+                                        }
 
                                         if let Err(err) = tconsumer.send(TaskEvent::Break) {
                                             stdout::error(&format!(

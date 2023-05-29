@@ -38,7 +38,10 @@ impl WatchCommand {
                 stdout::verbose(&format!("struct command: {:?}", command));
             };
             stdout::info(&format!("----- command: {} -------", command));
-            cmd::execute(String::from(command))?
+            if let Err(err) = cmd::execute(String::from(command)) {
+                stdout::error(&format!("failed to run command: {:?}", err));
+                return Err(err);
+            }
         }
         Ok(())
     }

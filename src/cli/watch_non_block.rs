@@ -58,26 +58,36 @@ impl Command for WatchNonBlockCommand {
         }
 
         stdout::info(&format!("Watching..."));
+        let mut first_run = true;
         loop {
             match rx.recv() {
                 Ok(event) => {
                     if let DebouncedEvent::Create(path) = event {
                         let path_str = path.into_os_string().into_string().unwrap();
+
+                        if self.verbose {
+                            stdout::verbose(&format!("Changed file: {}", path_str));
+                        };
+
                         if let Some(rules) = self.watches.watch(&*path_str) {
                             if self.verbose {
                                 stdout::verbose(&format!("Triggered by change in: {}", path_str));
                             };
 
-                            if let Err(err) = self.worker.cancel_running_tasks() {
-                                stdout::error(&format!(
-                                    "failed to cancel current running tasks: {:?}",
-                                    err
-                                ));
+                            if !first_run {
+                                if let Err(err) = self.worker.cancel_running_tasks() {
+                                    stdout::error(&format!(
+                                        "failed to cancel current running tasks: {:?}",
+                                        err
+                                    ));
+                                }
                             }
 
                             if let Err(err) = self.worker.schedule(rules.clone()) {
                                 stdout::error(&format!("failed to initiate next run: {:?}", err));
                             }
+
+                            first_run = false;
                         }
                     }
                 }
