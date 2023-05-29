@@ -12,7 +12,8 @@ function test() {
 
 function cleanup() {
   echo "kill funzzy $FUNZZY_PID"
-  kill "$FUNZZY_PID"
+  # https://github.com/drbeco/killgracefully
+  for SIG in 2 9 ; do echo $SIG ; kill -$SIG $FUNZZY_PID || break ; sleep 10 ; done
 }
 
 function assert_equal() {
@@ -47,6 +48,30 @@ function assert_file_content_at() {
   if [ $success -eq 0 ]; then
     echo "ERROR: file $1 does not contain $2" echo "file content:"
     echo "file content:"
+    cat $1
+    report_failure
+  fi
+}
+
+function assert_file_occurrencies() {
+  local success=0
+  for i in {1..5}
+  do
+    occurrencies=$(grep -o "$2" "$1" | wc -l)
+    echo  "occurrencies: $occurrencies"
+    if [ $occurrencies -eq $3 ]; then
+      success=1
+      break
+    else
+      echo "Attempt failed: file $1 does not contain $2"
+      echo "Attempt $i..."
+      sleep 5
+    fi
+  done
+
+  if [ $success -eq 0 ]; then
+    echo "ERROR: file $1 does not contain $2"
+    echo "final output content:"
     cat $1
     report_failure
   fi
