@@ -34,12 +34,19 @@ impl Worker {
 
         let producer = std::thread::spawn(move || {
             while let Ok(mut tasks) = rscheduler.recv() {
+                if verbose {
+                    stdout::info(&format!("---- tasks scheduled {:?} ----", tasks));
+                }
+
                 if let Err(err) = tproducer.send(tasks.pop()) {
                     stdout::error(&format!("failed to initiate the execution: {:?}", err));
                 }
 
                 while let Some(event) = rconsumer.recv().ok() {
                     if event == TaskEvent::Break {
+                        if verbose {
+                            stdout::verbose(&format!("breaking loop {:?}", event));
+                        }
                         break;
                     }
 
@@ -64,6 +71,10 @@ impl Worker {
 
         let consumer = std::thread::spawn(move || {
             while let Ok(next_task) = rproducer.recv() {
+                let ignored = rcancel.try_recv();
+                if verbose {
+                    stdout::verbose(&format!("ignored kill: {:?}", ignored));
+                }
                 if let Some(task) = next_task {
                     stdout::info(&format!("---- running: {:?} ----", task));
                     let mut child = match spawn_command(task.clone()) {
