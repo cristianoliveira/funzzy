@@ -62,6 +62,12 @@ impl Worker {
                     }
                 }
 
+                if verbose {
+                    stdout::verbose(&format!(
+                        "Finished producing tasks. Waiting new schedule..."
+                    ));
+                }
+
                 if let Ok(_) = rdrop.try_recv() {
                     if let Err(err) = tproducer.send(None) {
                         stdout::error(&format!("failed to finish last task: {:?}", err));
@@ -69,11 +75,9 @@ impl Worker {
                     stdout::info(&format!("Killing all tasks..."));
                     break;
                 }
-
-                if verbose {
-                    stdout::info(&format!("Finished running all tasks. Watching..."));
-                }
             }
+
+            stdout::info(&format!("Producer thread finished."));
         });
 
         let consumer = std::thread::spawn(move || {
@@ -139,8 +143,10 @@ impl Worker {
                                 break;
                             }
 
+                            if verbose {
+                                stdout::verbose(&format!("waiting next tick for task: {}", task));
+                            }
                             std::thread::sleep(std::time::Duration::from_millis(200));
-                            continue;
                         }
                         Ok(Some(status)) => {
                             if verbose {
@@ -154,6 +160,8 @@ impl Worker {
                             if let Err(err) = tconsumer.send(TaskEvent::Next) {
                                 stdout::error(&format!("failed to request next task: {:?}", err));
                             };
+
+                            break;
                         }
                         Err(err) => {
                             stdout::error(&format!("failed while trying to wait: {:?}", err));
@@ -161,11 +169,14 @@ impl Worker {
                             if let Err(err) = tconsumer.send(TaskEvent::Next) {
                                 stdout::error(&format!("failed to request next task: {:?}", err));
                             };
+
+                            break;
                         }
                     };
-                    break;
                 }
             }
+
+            stdout::info(&format!("Consumer thread finished."));
         });
 
         Worker {
