@@ -1,6 +1,6 @@
 use cmd::spawn_command;
 use std::sync::mpsc::channel;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
 use stdout;
 
@@ -8,12 +8,12 @@ use stdout;
 enum TaskEvent {
     Break = 1,
     Next = 2,
+    Kill = 3,
 }
 
 pub struct Worker {
-    canceller: Sender<()>,
-    scheduler: Sender<Vec<String>>,
-    dropper: Sender<()>,
+    canceller: Option<Sender<()>>,
+    scheduler: Option<Sender<Vec<String>>>,
 
     producer: Option<JoinHandle<()>>,
     consumer: Option<JoinHandle<()>>,
@@ -30,9 +30,9 @@ impl Worker {
         let (tconsumer, rconsumer) = channel::<TaskEvent>();
         let (tproducer, rproducer) = channel::<Option<String>>();
         let (tcancel, rcancel) = channel::<()>();
-        let (tdrop, rdrop) = channel::<()>();
 
         let producer = std::thread::spawn(move || {
+            let mut thread_finished = false;
             while let Ok(mut tasks) = rscheduler.recv() {
                 if verbose {
                     stdout::info(&format!("---- tasks scheduled {:?} ----", tasks));
@@ -51,6 +51,7 @@ impl Worker {
                             }
                             break;
                         }
+
                         TaskEvent::Next => {
                             if verbose {
                                 stdout::verbose(&format!("---- next consumer ----"));
@@ -59,21 +60,27 @@ impl Worker {
                                 stdout::error(&format!("failed to send next task: {:?}", err));
                             }
                         }
+
+                        TaskEvent::Kill => {
+                            if verbose {
+                                stdout::verbose(&format!("---- kill consumer ----"));
+                            }
+
+                            thread_finished = true;
+
+                            break;
+                        }
                     }
+                }
+
+                if thread_finished {
+                    break;
                 }
 
                 if verbose {
                     stdout::verbose(&format!(
                         "Finished producing tasks. Waiting new schedule..."
                     ));
-                }
-
-                if let Ok(_) = rdrop.try_recv() {
-                    if let Err(err) = tproducer.send(None) {
-                        stdout::error(&format!("failed to finish last task: {:?}", err));
-                    }
-                    stdout::info(&format!("Killing all tasks..."));
-                    break;
                 }
             }
 
@@ -113,46 +120,63 @@ impl Worker {
                             // Task is still running...
                             // Check if there is any kill signal otherwise
                             // continue running
-                            if let Ok(_) = rcancel.try_recv() {
-                                if verbose {
-                                    stdout::info(&format!("---- cancelling: {:?} ----", task));
-                                }
-
-                                if let Err(err) = child.kill() {
-                                    stdout::error(&format!(
-                                        "failed to kill the task {:?}: {:?}",
-                                        task, err
-                                    ));
-                                }
-
-                                if let Ok(status) = child.wait() {
+                            match rcancel.try_recv() {
+                                Ok(_) => {
                                     if verbose {
-                                        stdout::info(&format!(
-                                            "---- finished: {:?} status: {} ----",
-                                            task, status
+                                        stdout::info(&format!("---- cancelling: {:?} ----", task));
+                                    }
+
+                                    if let Err(err) = child.kill() {
+                                        stdout::error(&format!(
+                                            "failed to kill the task {:?}: {:?}",
+                                            task, err
                                         ));
                                     }
-                                } else {
-                                    stdout::error(&format!(
-                                        "failed to wait for the task to finish: {:?}",
-                                        task
-                                    ));
+
+                                    if let Ok(status) = child.wait() {
+                                        if verbose {
+                                            stdout::info(&format!(
+                                                "---- finished: {:?} status: {} ----",
+                                                task, status
+                                            ));
+                                        }
+                                    } else {
+                                        stdout::error(&format!(
+                                            "failed to wait for the task to finish: {:?}",
+                                            task
+                                        ));
+                                    }
+
+                                    if let Err(err) = tconsumer.send(TaskEvent::Break) {
+                                        stdout::error(&format!(
+                                            "failed to send stop current queued tasks: {:?}",
+                                            err
+                                        ));
+                                    };
+
+                                    break;
                                 }
 
-                                if let Err(err) = tconsumer.send(TaskEvent::Break) {
-                                    stdout::error(&format!(
-                                        "failed to send stop current queued tasks: {:?}",
-                                        err
-                                    ));
-                                };
+                                Err(val) if val != TryRecvError::Empty => {
+                                    if let Err(err) = tconsumer.send(TaskEvent::Kill) {
+                                        stdout::error(&format!(
+                                            "failed to send stop current queued tasks: {:?}",
+                                            err
+                                        ));
+                                    };
+                                }
 
-                                break;
-                            }
+                                _ => {
+                                    if verbose {
+                                        stdout::verbose(&format!(
+                                            "waiting next tick for task: {}",
+                                            task
+                                        ));
+                                    }
 
-                            if verbose {
-                                stdout::verbose(&format!("waiting next tick for task: {}", task));
+                                    std::thread::sleep(std::time::Duration::from_millis(200));
+                                }
                             }
-                            std::thread::sleep(std::time::Duration::from_millis(200));
                         }
                         Ok(Some(status)) => {
                             if verbose {
@@ -186,17 +210,19 @@ impl Worker {
         });
 
         Worker {
-            canceller: tcancel,
-            scheduler: tscheduler,
-            dropper: tdrop,
+            canceller: Some(tcancel),
+            scheduler: Some(tscheduler),
             producer: Some(producer),
             consumer: Some(consumer),
         }
     }
 
     pub fn cancel_running_tasks(&self) -> Result<(), String> {
-        if let Err(err) = self.canceller.send(()) {
-            return Err(format!("{:?}", err));
+        if let Some(canceller) = self.canceller.as_ref() {
+            if let Err(err) = canceller.send(()) {
+                println!("failed to send cancel signal: {:?}", err);
+                return Err(format!("{:?}", err));
+            }
         }
 
         Ok(())
@@ -209,8 +235,10 @@ impl Worker {
             .flatten()
             .collect::<Vec<String>>();
 
-        if let Err(err) = self.scheduler.send(tasks) {
-            return Err(format!("{:?}", err));
+        if let Some(scheduler) = self.scheduler.as_ref() {
+            if let Err(err) = scheduler.send(tasks) {
+                return Err(format!("{:?}", err));
+            }
         }
 
         Ok(())
@@ -219,7 +247,10 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.dropper.send(()).unwrap();
+        let tc = self.canceller.take();
+        drop(tc);
+        let ts = self.scheduler.take();
+        drop(ts);
         if let Some(th) = self.producer.take() {
             th.join().expect("failed to join producer thread");
         }

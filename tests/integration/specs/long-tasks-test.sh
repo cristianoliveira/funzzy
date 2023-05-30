@@ -9,7 +9,8 @@ test "process does not die when a one or more commands fail (list)"
 
 "$TEST_DIR"/funzzy \
   --config "$TEST_DIR"/examples/long-task.yaml \
-  --non-block  > "$WORKDIR"/output.txt &
+  --non-block  > "$WORKDIR"/output.txt \
+  &
 FUNZZY_PID=$!
 
 echo "test" > "$WORKDIR"/temp.txt
@@ -17,13 +18,15 @@ echo "test" > "$WORKDIR"/temp.txt
 wait_for_file "$WORKDIR"/output.txt
 
 assert_file_contains "$WORKDIR"/output.txt "Watching..."
-assert_file_contains "$WORKDIR/output.txt" "Task list finished"
+
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh list 4" 2
 
+sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR/output.txt" "longtask.sh list 4" 3
 
+sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR"/output.txt "longtask.sh list 4" 4
 

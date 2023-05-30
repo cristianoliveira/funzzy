@@ -58,7 +58,6 @@ impl Command for WatchNonBlockCommand {
         }
 
         stdout::info(&format!("Watching..."));
-        let mut first_run = true;
         loop {
             match rx.recv() {
                 Ok(event) => {
@@ -74,20 +73,16 @@ impl Command for WatchNonBlockCommand {
                                 stdout::verbose(&format!("Triggered by change in: {}", path_str));
                             };
 
-                            if !first_run {
-                                if let Err(err) = self.worker.cancel_running_tasks() {
-                                    stdout::error(&format!(
-                                        "failed to cancel current running tasks: {:?}",
-                                        err
-                                    ));
-                                }
+                            if let Err(err) = self.worker.cancel_running_tasks() {
+                                stdout::error(&format!(
+                                    "failed to cancel current running tasks: {:?}",
+                                    err
+                                ));
                             }
 
                             if let Err(err) = self.worker.schedule(rules.clone()) {
                                 stdout::error(&format!("failed to initiate next run: {:?}", err));
                             }
-
-                            first_run = false;
                         }
                     }
                 }
