@@ -118,7 +118,13 @@ impl Worker {
                                     stdout::info(&format!("---- cancelling: {:?} ----", task));
                                 }
 
-                                child.kill().expect("failed to kill current task");
+                                if let Err(err) = child.kill() {
+                                    stdout::error(&format!(
+                                        "failed to kill the task {:?}: {:?}",
+                                        task, err
+                                    ));
+                                }
+
                                 if let Ok(status) = child.wait() {
                                     if verbose {
                                         stdout::info(&format!(
