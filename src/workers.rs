@@ -87,10 +87,11 @@ impl Worker {
                     if let Err(err) = tconsumer.send(TaskEvent::Break) {
                         stdout::error(&format!("failed to send final break: {:?}", err));
                     };
+
+                    continue;
                 }
 
                 let task = next_task.unwrap();
-
                 stdout::info(&format!("---- running: {:?} ----", task));
                 let mut child = match spawn_command(task.clone()) {
                     Ok(child) => child,
