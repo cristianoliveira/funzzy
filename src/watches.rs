@@ -54,17 +54,24 @@ mod tests {
 
     use super::*;
     use rules;
+    use std::env;
+
+    fn get_absolute_path(path: &str) -> String {
+        let mut absolute_path = env::current_dir().unwrap();
+        absolute_path.push(path);
+        absolute_path.to_str().unwrap().to_string()
+    }
 
     #[test]
     fn it_loads_from_args() {
         let args = String::from("cargo build");
-        let watches = Watches::new(rules::from_string("**".to_owned(), &args));
+        let watches = Watches::new(rules::from_string(".".to_owned(), &args));
 
-        assert!(watches.watch("src/main.rs").is_some());
-        assert!(watches.watch("test/main.rs").is_some());
-        assert!(watches.watch(".").is_some());
+        assert!(watches.watch(&get_absolute_path("src/main.rs")).is_some());
+        assert!(watches.watch(&get_absolute_path("test/main.rs")).is_some());
+        assert!(watches.watch(&get_absolute_path(".")).is_some());
 
-        let result = watches.watch(".").unwrap();
+        let result = watches.watch(&get_absolute_path(".")).unwrap();
         assert_eq!(vec!["cargo build"], result[0]);
     }
 
