@@ -4,4 +4,5 @@ pub mod cli;
 pub mod cmd;
 pub mod rules;
 pub mod stdout;
+pub mod watches;
 pub mod yaml;

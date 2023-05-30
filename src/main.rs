@@ -10,9 +10,11 @@ mod cli;
 mod cmd;
 mod rules;
 mod stdout;
+mod watches;
 mod yaml;
 
 use cli::*;
+use watches::Watches;
 
 use std::io;
 #[warn(unused_imports)]

@@ -4,7 +4,7 @@ pub mod watch;
 
 pub use self::run::RunCommand;
 pub use cli::init::InitCommand;
-pub use cli::watch::{WatchCommand, Watches};
+pub use cli::watch::WatchCommand;
 
 /// # Command interface
 ///
