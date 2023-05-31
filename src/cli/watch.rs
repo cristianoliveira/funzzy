@@ -1,14 +1,11 @@
 extern crate notify;
 
 use std::process::Command as ShellCommand;
-use std::sync::mpsc::channel;
-
-use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
-use std::time::Duration;
 
 use cli::Command;
 use cmd;
 use stdout;
+use watchers::*;
 use watches::Watches;
 
 pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
@@ -69,14 +66,6 @@ impl Command for WatchCommand {
             stdout::verbose(&format!("Verbose mode enabled."));
         };
 
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher =
-            Watcher::new(tx, Duration::from_secs(2)).expect("Unable to create watcher");
-
-        if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
-            return Err(format!("Unable to watch current directory {:?}", err));
-        }
-
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info(&format!("Running on init commands."));
 
@@ -87,19 +76,24 @@ impl Command for WatchCommand {
             stdout::info(&"All tasks finished");
         }
 
-        stdout::info(&format!("Watching..."));
-        while let Ok(event) = rx.recv() {
-            if let DebouncedEvent::Create(path) = event {
-                let path_str = path.into_os_string().into_string().unwrap();
-                if let Some(rules) = self.watches.watch(&*path_str) {
-                    if self.verbose {
-                        stdout::verbose(&format!("Triggered by change in: {}", path_str));
-                    };
+        let rule_watcher = RulesWatcher::new(self.watches, self.verbose);
 
-                    self.run_rules(rules)?
+        stdout::info(&format!("Watching..."));
+        loop {
+            if let Err(err) = rule_watcher.on_event(Box::new(|rules| {
+                if let Some(rules) = rules {
+                    if let Err(err) = self.run_rules(rules) {
+                        stdout::error(&format!("Unable to run rules {:?}", err));
+                    }
                 }
+            })) {
+                stdout::error(&format!("Unable to watch current directory {:?}", err));
+                return Err(err);
             }
+
+            break;
         }
+
         Ok(())
     }
 }

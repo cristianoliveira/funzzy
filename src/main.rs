@@ -10,6 +10,7 @@ mod cli;
 mod cmd;
 mod rules;
 mod stdout;
+mod watchers;
 mod watches;
 mod workers;
 mod yaml;

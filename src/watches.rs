@@ -44,6 +44,21 @@ impl Watches {
             _ => Some(cmds),
         }
     }
+
+    pub fn watching(&self, path: &str) -> Option<Vec<Rules>> {
+        let rules = self
+            .rules
+            .iter()
+            .cloned()
+            .filter(|r| !r.ignore(path) && r.watch(path))
+            .collect::<Vec<Rules>>();
+
+        if rules.len() == 0 {
+            None
+        } else {
+            Some(rules)
+        }
+    }
 }
 
 #[cfg(test)]
