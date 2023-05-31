@@ -25,18 +25,14 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool) -> Self {
-        if verbose {
-            stdout::verbose(&format!("watches {:?}", watches));
-        }
+        stdout::verbose(&format!("watches {:?}", watches), verbose);
 
         WatchCommand { watches, verbose }
     }
 
     fn run(&self, commands: &Vec<String>) -> Result<(), String> {
         for command in commands {
-            if self.verbose {
-                stdout::verbose(&format!("struct command: {:?}", command));
-            };
+            stdout::verbose(&format!("struct command: {:?}", command), self.verbose);
             stdout::info(&format!("----- command: {} -------", command));
             if let Err(err) = cmd::execute(String::from(command)) {
                 stdout::error(&format!("failed to run command: {:?}", err));
@@ -65,9 +61,7 @@ impl WatchCommand {
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
-        if self.verbose {
-            stdout::verbose(&format!("Verbose mode enabled."));
-        };
+        stdout::verbose(&format!("Verbose mode enabled."), self.verbose);
 
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher =
@@ -92,9 +86,10 @@ impl Command for WatchCommand {
             if let DebouncedEvent::Create(path) = event {
                 let path_str = path.into_os_string().into_string().unwrap();
                 if let Some(rules) = self.watches.watch(&*path_str) {
-                    if self.verbose {
-                        stdout::verbose(&format!("Triggered by change in: {}", path_str));
-                    };
+                    stdout::verbose(
+                        &format!("Triggered by change in: {}", path_str),
+                        self.verbose,
+                    );
 
                     self.run_rules(rules)?
                 }

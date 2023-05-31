@@ -25,9 +25,7 @@ pub struct WatchNonBlockCommand {
 
 impl WatchNonBlockCommand {
     pub fn new(watches: Watches, verbose: bool) -> Self {
-        if verbose {
-            stdout::verbose(&format!("watches {:?}", watches));
-        }
+        stdout::verbose(&format!("watches {:?}", watches), verbose);
 
         WatchNonBlockCommand { watches, verbose }
     }
@@ -35,9 +33,7 @@ impl WatchNonBlockCommand {
 
 impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), String> {
-        if self.verbose {
-            stdout::verbose(&format!("Verbose mode enabled."));
-        };
+        stdout::verbose(&format!("Verbose mode enabled."), self.verbose);
 
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher =
@@ -63,14 +59,13 @@ impl Command for WatchNonBlockCommand {
                     if let DebouncedEvent::Create(path) = event {
                         let path_str = path.into_os_string().into_string().unwrap();
 
-                        if self.verbose {
-                            stdout::verbose(&format!("Changed file: {}", path_str));
-                        };
+                        stdout::verbose(&format!("Changed file: {}", path_str), self.verbose);
 
                         if let Some(rules) = self.watches.watch(&*path_str) {
-                            if self.verbose {
-                                stdout::verbose(&format!("Triggered by change in: {}", path_str));
-                            };
+                            stdout::verbose(
+                                &format!("Triggered by change in: {}", path_str),
+                                self.verbose,
+                            );
 
                             if let Err(err) = worker.cancel_running_tasks() {
                                 stdout::error(&format!(

@@ -13,9 +13,7 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(verbose: bool) -> Self {
-        if verbose {
-            stdout::verbose(&format!("Worker in verbose mode."));
-        };
+        stdout::verbose(&format!("Worker in verbose mode."), verbose);
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
         let (tscheduler, rscheduler) = channel::<Vec<String>>();
@@ -24,9 +22,7 @@ impl Worker {
         let consumer = std::thread::spawn(move || {
             while let Ok(mut tasks) = rscheduler.recv() {
                 let ignored = rcancel.try_recv();
-                if verbose {
-                    stdout::verbose(&format!("ignored kill: {:?}", ignored));
-                }
+                stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
 
                 let mut has_been_cancelled = false;
                 while let Some(task) = tasks.pop() {
@@ -52,12 +48,10 @@ impl Worker {
                                 // continue running
                                 match rcancel.try_recv() {
                                     Ok(_) => {
-                                        if verbose {
-                                            stdout::info(&format!(
-                                                "---- cancelling: {:?} ----",
-                                                task
-                                            ));
-                                        }
+                                        stdout::verbose(
+                                            &format!("---- cancelling: {:?} ----", task),
+                                            verbose,
+                                        );
 
                                         if let Err(err) = child.kill() {
                                             stdout::error(&format!(
@@ -67,12 +61,13 @@ impl Worker {
                                         }
 
                                         if let Ok(status) = child.wait() {
-                                            if verbose {
-                                                stdout::info(&format!(
+                                            stdout::verbose(
+                                                &format!(
                                                     "---- finished: {:?} status: {} ----",
                                                     task, status
-                                                ));
-                                            }
+                                                ),
+                                                verbose,
+                                            );
                                         } else {
                                             stdout::error(&format!(
                                                 "failed to wait for the task to finish: {:?}",
@@ -92,12 +87,10 @@ impl Worker {
                                     }
 
                                     _ => {
-                                        if verbose {
-                                            stdout::verbose(&format!(
-                                                "waiting next tick for task: {}",
-                                                task
-                                            ));
-                                        }
+                                        stdout::verbose(
+                                            &format!("waiting next tick for task: {}", task),
+                                            verbose,
+                                        );
 
                                         std::thread::sleep(std::time::Duration::from_millis(200));
                                     }
