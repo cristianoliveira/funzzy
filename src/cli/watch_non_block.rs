@@ -1,8 +1,10 @@
 extern crate notify;
 
 use std::sync::mpsc::channel;
+use std::sync::mpsc::TryRecvError;
 
 use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
+use std::thread;
 use std::time::Duration;
 
 use cli::Command;
@@ -19,7 +21,6 @@ use workers;
 pub struct WatchNonBlockCommand {
     watches: Watches,
     verbose: bool,
-    pub worker: workers::Worker,
 }
 
 impl WatchNonBlockCommand {
@@ -28,11 +29,7 @@ impl WatchNonBlockCommand {
             stdout::verbose(&format!("watches {:?}", watches));
         }
 
-        WatchNonBlockCommand {
-            watches,
-            verbose,
-            worker: workers::Worker::new(verbose),
-        }
+        WatchNonBlockCommand { watches, verbose }
     }
 }
 
@@ -50,16 +47,18 @@ impl Command for WatchNonBlockCommand {
             return Err(format!("Unable to watch current directory {:?}", err));
         }
 
+        let worker = workers::Worker::new(self.verbose);
+
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info(&format!("Running on init commands."));
-            if let Err(err) = self.worker.schedule(rules.clone()) {
+            if let Err(err) = worker.schedule(rules.clone()) {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
             }
         }
 
         stdout::info(&format!("Watching..."));
         loop {
-            match rx.recv() {
+            match rx.try_recv() {
                 Ok(event) => {
                     if let DebouncedEvent::Create(path) = event {
                         let path_str = path.into_os_string().into_string().unwrap();
@@ -73,22 +72,25 @@ impl Command for WatchNonBlockCommand {
                                 stdout::verbose(&format!("Triggered by change in: {}", path_str));
                             };
 
-                            if let Err(err) = self.worker.cancel_running_tasks() {
+                            if let Err(err) = worker.cancel_running_tasks() {
                                 stdout::error(&format!(
                                     "failed to cancel current running tasks: {:?}",
                                     err
                                 ));
                             }
 
-                            if let Err(err) = self.worker.schedule(rules.clone()) {
+                            if let Err(err) = worker.schedule(rules.clone()) {
                                 stdout::error(&format!("failed to initiate next run: {:?}", err));
                             }
                         }
                     }
                 }
+
                 Err(err) => {
-                    stdout::error(&format!("failed to receive event: {:?}", err));
-                    break;
+                    if err != TryRecvError::Empty {
+                        stdout::error(&format!("failed to receive event: {:?}", err));
+                        break;
+                    }
                 }
             }
         }
