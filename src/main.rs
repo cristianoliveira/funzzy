@@ -11,6 +11,7 @@ mod cmd;
 mod rules;
 mod stdout;
 mod watches;
+mod workers;
 mod yaml;
 
 use cli::*;
@@ -42,6 +43,7 @@ Options:
   <command>            Run an arbitrary command for current folder.
   --config=<cfgfile>   Use given config file.
   --target=<task>      Execute only the given task target.
+  -n --non-block       Execute tasks and cancel them if a new event is received.
   -h --help            Shows this message.
   -v --version         Shows version.
   -V                   Use verbose output.
@@ -63,6 +65,7 @@ pub struct Args {
     pub flag_config: String,
     pub flag_target: String,
 
+    pub flag_n: bool,
     pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
@@ -93,7 +96,11 @@ fn main() {
                         show("The list of files received is empty");
                     }
                     let watches = Watches::new(rules::from_string(content, arg_command));
-                    execute(WatchCommand::new(watches, args.flag_V));
+                    if args.flag_n {
+                        execute(WatchNonBlockCommand::new(watches, args.flag_V));
+                    } else {
+                        execute(WatchCommand::new(watches, args.flag_V));
+                    }
                 }
                 Err(err) => error("Error while reading stdin", err),
             };
@@ -125,10 +132,20 @@ fn main() {
 
                             show("Finished there is no task to run");
                         } else {
-                            execute(WatchCommand::new(Watches::new(filtered), args.flag_V));
+                            let watches = Watches::new(filtered);
+
+                            if args.flag_n {
+                                execute(WatchNonBlockCommand::new(watches, args.flag_V));
+                            } else {
+                                execute(WatchCommand::new(watches, args.flag_V));
+                            }
                         }
                     } else {
-                        execute(WatchCommand::new(Watches::new(rules), args.flag_V));
+                        if args.flag_n {
+                            execute(WatchNonBlockCommand::new(Watches::new(rules), args.flag_V));
+                        } else {
+                            execute(WatchCommand::new(Watches::new(rules), args.flag_V));
+                        }
                     }
                 }
                 Err(err) => error("Error while reading config file", err),

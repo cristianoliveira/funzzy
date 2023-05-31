@@ -1,0 +1,22 @@
+- name: run long task 2
+  run: "bash examples/longtask.sh long 2"
+  change: ["src/**", "tests/integration/workdir/**"]
+
+- name: run long task 3
+  run: "bash examples/longtask.sh short 3"
+  change: ["src/**", "tests/integration/workdir/**"]
+
+- name: run long task 4
+  run: "bash examples/longtask.sh short 4"
+  change: ["src/**", "tests/integration/workdir/**"]
+  run_on_init: true
+
+- name: run long task 5
+  run: "bash examples/longtask.sh short 5"
+  change: ["src/**", "tests/integration/workdir/**"]
+  run_on_init: true
+
+- name: run long task 6
+  run: ["bash examples/longtask.sh list 3", "bash examples/longtask.sh list 4"]
+  change: ["src/**", "tests/integration/workdir/**"]
+  run_on_init: true
