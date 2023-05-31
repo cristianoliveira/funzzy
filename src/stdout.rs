@@ -6,7 +6,11 @@ pub fn error(msg: &str) {
     println!("Funzzy ERROR: {}", msg);
 }
 
-pub fn verbose(msg: &str) {
+pub fn verbose(msg: &str, verbose: bool) {
+    if !verbose {
+        return;
+    }
+
     println!("-----------------------------");
     println!("Funzzy verbose: {} ", msg);
     println!("-----------------------------");
