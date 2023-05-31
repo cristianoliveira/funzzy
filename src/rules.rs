@@ -30,11 +30,11 @@ impl Rules {
         run_on_init: bool,
     ) -> Self {
         Rules {
-            name: name,
-            commands: commands,
+            name,
+            commands,
             watch_patterns: watches,
             ignore_patterns: ignores,
-            run_on_init: run_on_init,
+            run_on_init,
         }
     }
 
@@ -71,6 +71,14 @@ impl Rules {
     pub fn run_on_init(&self) -> bool {
         self.run_on_init
     }
+}
+
+pub fn as_list(rules: Vec<Vec<String>>) -> Vec<String> {
+    rules
+        .iter()
+        .map(|rule| rule.iter().cloned().collect::<Vec<String>>())
+        .flatten()
+        .collect::<Vec<String>>()
 }
 
 pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {

@@ -23,9 +23,10 @@ impl Watches {
             .map(|r| r.commands())
             .collect::<Vec<Vec<String>>>();
 
-        match cmds.len() {
-            0 => None,
-            _ => Some(cmds),
+        if cmds.len() > 0 {
+            Some(cmds)
+        } else {
+            None
         }
     }
 
@@ -39,9 +40,10 @@ impl Watches {
             .map(|r| r.commands())
             .collect::<Vec<Vec<String>>>();
 
-        match cmds.len() {
-            0 => None,
-            _ => Some(cmds),
+        if cmds.len() > 0 {
+            Some(cmds)
+        } else {
+            None
         }
     }
 }

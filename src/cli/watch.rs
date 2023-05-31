@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use cli::Command;
 use cmd;
+use rules;
 use stdout;
 use watches::Watches;
 
@@ -29,34 +30,6 @@ impl WatchCommand {
 
         WatchCommand { watches, verbose }
     }
-
-    fn run(&self, commands: &Vec<String>) -> Result<(), String> {
-        for command in commands {
-            stdout::verbose(&format!("struct command: {:?}", command), self.verbose);
-            stdout::info(&format!("----- command: {} -------", command));
-            if let Err(err) = cmd::execute(String::from(command)) {
-                stdout::error(&format!("failed to run command: {:?}", err));
-                return Err(err);
-            }
-        }
-        Ok(())
-    }
-
-    fn run_rules(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
-        clear_shell();
-        let results = rules
-            .iter()
-            .map(|rule_cmds| self.run(&rule_cmds))
-            .find(|r| match r {
-                Ok(_) => false,
-                Err(_) => true,
-            });
-
-        match results {
-            Some(Err(err)) => Err(err),
-            _ => Ok(()),
-        }
-    }
 }
 
 impl Command for WatchCommand {
@@ -74,11 +47,15 @@ impl Command for WatchCommand {
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info(&format!("Running on init commands."));
 
-            if let Err(err) = self.run_rules(rules) {
-                return Err(err);
-            }
+            let results = rules::as_list(rules)
+                .iter()
+                .map(|task| {
+                    stdout::info(&format!("---- running: {} ----", task));
+                    cmd::execute(task)
+                })
+                .collect::<Vec<Result<(), String>>>();
 
-            stdout::info(&"All tasks finished");
+            stdout::present_results(results);
         }
 
         stdout::info(&format!("Watching..."));
@@ -91,14 +68,18 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
-                    self.run_rules(rules)?
+                    let results = rules::as_list(rules)
+                        .iter()
+                        .map(|task| {
+                            stdout::info(&format!("---- running: {} ----", task));
+                            cmd::execute(task)
+                        })
+                        .collect::<Vec<Result<(), String>>>();
+
+                    stdout::present_results(results);
                 }
             }
         }
         Ok(())
     }
-}
-
-fn clear_shell() {
-    let _ = ShellCommand::new("clear").status();
 }
