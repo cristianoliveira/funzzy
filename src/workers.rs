@@ -1,4 +1,5 @@
 use cmd::spawn_command;
+use rules;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -21,6 +22,7 @@ impl Worker {
 
         let consumer = std::thread::spawn(move || {
             while let Ok(mut tasks) = rscheduler.recv() {
+                let mut results: Vec<Result<(), String>> = vec![];
                 let ignored = rcancel.try_recv();
                 stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
 
@@ -96,23 +98,34 @@ impl Worker {
                                     }
                                 }
                             }
+
                             Ok(Some(status)) => {
-                                if verbose {
-                                    if status.success() {
-                                        stdout::info(&format!("---- finished: {:?} ----", task));
-                                    } else {
-                                        stdout::error(&format!("---- failed: {:?} ----", task));
-                                    }
+                                if status.success() {
+                                    results.push(Ok(()));
+                                } else {
+                                    results.push(Err(format!(
+                                        "Command {} has failed with {}",
+                                        task, status
+                                    )));
                                 }
 
                                 break;
                             }
+
                             Err(err) => {
-                                stdout::error(&format!("failed while trying to wait: {:?}", err));
+                                results.push(Err(format!(
+                                    "Command {} has errored with {}",
+                                    task, err
+                                )));
+
                                 break;
                             }
                         };
                     }
+                }
+
+                if !has_been_cancelled {
+                    stdout::present_results(results);
                 }
             }
 
@@ -138,14 +151,8 @@ impl Worker {
     }
 
     pub fn schedule(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
-        let tasks = rules
-            .iter()
-            .map(|rule| rule.iter().cloned().collect::<Vec<String>>())
-            .flatten()
-            .collect::<Vec<String>>();
-
         if let Some(scheduler) = self.scheduler.as_ref() {
-            if let Err(err) = scheduler.send(tasks) {
+            if let Err(err) = scheduler.send(rules::as_list(rules)) {
                 return Err(format!("{:?}", err));
             }
         }

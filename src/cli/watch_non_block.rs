@@ -4,7 +4,6 @@ use std::sync::mpsc::channel;
 use std::sync::mpsc::TryRecvError;
 
 use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
-use std::thread;
 use std::time::Duration;
 
 use cli::Command;

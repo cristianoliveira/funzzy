@@ -25,6 +25,7 @@ function assert_equal() {
 
 function report_failure() {
   echo "Failed: $TEST_REFERENCE"
+  cleanup
   exit 1
 }
 

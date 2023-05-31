@@ -176,8 +176,6 @@ fn from_stdin() -> Result<String, String> {
         }
     });
 
-    // read all content from stdin
-
     let mut buffer = String::new();
     match stdin.lock().read_to_string(&mut buffer) {
         Ok(bytes) => {
