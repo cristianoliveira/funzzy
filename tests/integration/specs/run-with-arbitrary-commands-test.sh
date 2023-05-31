@@ -11,12 +11,19 @@ test "it allows watching a given file list and run an arbitrary command"
 
 touch $WORKDIR/test.txt
 touch $WORKDIR/test2.txt
+touch $WORKDIR/readme.md
 touch $WORKDIR/output.txt
 # $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
 
 find . -name '*.txt' | \
-  $TEST_DIR/funzzy 'echo arbitrary' > $WORKDIR/output.txt &
+  $TEST_DIR/funzzy 'echo arbitrary' -V > $WORKDIR/output.txt &
 FUNZZY_PID=$!
+
+assert_file_contains "$WORKDIR/output.txt" "verbose"
+assert_file_contains "$WORKDIR/output.txt" "test.txt"
+assert_file_contains "$WORKDIR/output.txt" "test2.txt"
+assert_file_contains "$WORKDIR/output.txt" "output.txt"
+assert_file_not_contains "$WORKDIR/output.txt" "readme.md"
 
 echo "test" >> $WORKDIR/test.txt
 echo "test" >> $WORKDIR/test2.txt

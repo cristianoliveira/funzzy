@@ -144,7 +144,6 @@ fn execute<T: Command>(command: T) {
 }
 
 fn from_stdin() -> Result<String, String> {
-    let mut buffer = String::new();
     let stdin = io::stdin();
 
     // Spawn a thread and if there is no input in 5 seconds kills the process
@@ -160,7 +159,10 @@ fn from_stdin() -> Result<String, String> {
         }
     });
 
-    match stdin.read_line(&mut buffer) {
+    // read all content from stdin
+
+    let mut buffer = String::new();
+    match stdin.lock().read_to_string(&mut buffer) {
         Ok(bytes) => {
             let mut has_input_mutex = has_input.lock().unwrap();
             *has_input_mutex = bytes > 0;
