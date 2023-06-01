@@ -26,7 +26,7 @@ impl Command for RunCommand {
 
         loop {
             if let Err(error) = command.status() {
-                return Err(String::from(error.to_string()));
+                return Err(error.to_string());
             }
             let wait = time::Duration::from_secs(self.interval);
             thread::sleep(wait)

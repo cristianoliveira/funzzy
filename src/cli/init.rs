@@ -3,7 +3,7 @@ use cli::Command;
 use std::fs::File;
 use std::io::Write;
 
-pub const DEFAULT_CONTENT: &'static str = "
+pub const DEFAULT_CONTENT: &str = "
 ## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
@@ -35,7 +35,7 @@ impl Command for InitCommand {
         let res = match File::create(&self.file_name) {
             Ok(mut yaml) => {
                 if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
-                    return Err(String::from(err.to_string()));
+                    return Err(err.to_string());
                 }
 
                 Ok(())
@@ -43,9 +43,7 @@ impl Command for InitCommand {
             Err(err) => Err(format!("File wasn't created. Cause: {}", err)),
         };
 
-        if let Err(err) = res {
-            return Err(String::from(err.to_string()));
-        }
+        res?;
 
         Ok(())
     }

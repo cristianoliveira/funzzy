@@ -32,7 +32,7 @@ impl WatchNonBlockCommand {
 
 impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), String> {
-        stdout::verbose(&format!("Verbose mode enabled."), self.verbose);
+        stdout::verbose("Verbose mode enabled.", self.verbose);
 
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher =
@@ -45,13 +45,13 @@ impl Command for WatchNonBlockCommand {
         let worker = workers::Worker::new(self.verbose);
 
         if let Some(rules) = self.watches.run_on_init() {
-            stdout::info(&format!("Running on init commands."));
-            if let Err(err) = worker.schedule(rules.clone()) {
+            stdout::info("Running on init commands.");
+            if let Err(err) = worker.schedule(rules) {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
             }
         }
 
-        stdout::info(&format!("Watching..."));
+        stdout::info("Watching...");
         loop {
             match rx.try_recv() {
                 Ok(event) => {
@@ -60,7 +60,7 @@ impl Command for WatchNonBlockCommand {
 
                         stdout::verbose(&format!("Changed file: {}", path_str), self.verbose);
 
-                        if let Some(rules) = self.watches.watch(&*path_str) {
+                        if let Some(rules) = self.watches.watch(&path_str) {
                             stdout::verbose(
                                 &format!("Triggered by change in: {}", path_str),
                                 self.verbose,
