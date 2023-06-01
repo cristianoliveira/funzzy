@@ -17,6 +17,7 @@ echo "test" > "$WORKDIR"/temp.txt
 
 wait_for_file "$WORKDIR"/output.txt
 
+assert_file_not_contains "$WORKDIR"/output.txt "All tasks finished successfully."
 assert_file_contains "$WORKDIR"/output.txt "Watching..."
 
 vi +wq tests/integration/workdir/temp.txt -u NONE

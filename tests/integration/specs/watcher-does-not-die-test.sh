@@ -19,13 +19,17 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "command: echo before"
-assert_file_contains "$WORKDIR/output.txt" "command: exit 1"
-assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 1"
-assert_file_contains "$WORKDIR/output.txt" "command: cat foo/bar/baz"
-assert_file_contains "$WORKDIR/output.txt" "command: exit 125"
-assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 125"
-assert_file_contains "$WORKDIR/output.txt" "command: echo after"
+assert_file_contains "$WORKDIR/output.txt" "running: echo before"
+assert_file_contains "$WORKDIR/output.txt" "running: exit 1"
+assert_file_contains "$WORKDIR/output.txt" "running: cat foo/bar/baz"
+assert_file_contains "$WORKDIR/output.txt" "running: exit 125"
+assert_file_contains "$WORKDIR/output.txt" "running: echo after"
+
+assert_file_contains "$WORKDIR"/output.txt "Failed tasks: 3"
+assert_file_contains "$WORKDIR"/output.txt "Command exit 1 has failed with exit status: 1"
+assert_file_contains "$WORKDIR"/output.txt "Command cat foo/bar/baz has failed with exit status: 1"
+assert_file_contains "$WORKDIR"/output.txt "Command exit 125 has failed with exit status: 125"
+
 
 cleanup
 
@@ -52,9 +56,11 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "command: echo before"
-assert_file_contains "$WORKDIR/output.txt" "command: cat baz/bar/foo"
-assert_file_contains "$WORKDIR/output.txt" "This task command has failed exit status: 1"
-assert_file_contains "$WORKDIR/output.txt" "command: echo finally"
+assert_file_contains "$WORKDIR/output.txt" "running: echo before"
+assert_file_contains "$WORKDIR/output.txt" "running: cat baz/bar/foo"
+assert_file_contains "$WORKDIR/output.txt" "running: echo finally"
+
+assert_file_contains "$WORKDIR"/output.txt "Failed tasks: 1"
+assert_file_contains "$WORKDIR"/output.txt "Command cat baz/bar/foo has failed with exit status: 1"
 
 cleanup
