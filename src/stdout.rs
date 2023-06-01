@@ -19,7 +19,7 @@ pub fn verbose(msg: &str, verbose: bool) {
 pub fn present_results(results: Vec<Result<(), String>>) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
     println!("------------- Funzzy result --------------");
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         println!("Failed tasks: {:?}", errors.len());
         errors.iter().for_each(|err| {
             println!(" - {}", err.as_ref().unwrap_err());

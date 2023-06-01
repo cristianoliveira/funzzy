@@ -1,6 +1,5 @@
 extern crate notify;
 
-use std::process::Command as ShellCommand;
 use std::sync::mpsc::channel;
 
 use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
@@ -12,7 +11,7 @@ use rules;
 use stdout;
 use watches::Watches;
 
-pub const DEFAULT_FILENAME: &'static str = ".watch.yaml";
+pub const DEFAULT_FILENAME: &str = ".watch.yaml";
 
 /// # `WatchCommand`
 ///
@@ -34,7 +33,7 @@ impl WatchCommand {
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
-        stdout::verbose(&format!("Verbose mode enabled."), self.verbose);
+        stdout::verbose("Verbose mode enabled.", self.verbose);
 
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher =
@@ -45,7 +44,7 @@ impl Command for WatchCommand {
         }
 
         if let Some(rules) = self.watches.run_on_init() {
-            stdout::info(&format!("Running on init commands."));
+            stdout::info("Running on init commands.");
 
             let results = rules::as_list(rules)
                 .iter()
@@ -58,11 +57,11 @@ impl Command for WatchCommand {
             stdout::present_results(results);
         }
 
-        stdout::info(&format!("Watching..."));
+        stdout::info("Watching...");
         while let Ok(event) = rx.recv() {
             if let DebouncedEvent::Create(path) = event {
                 let path_str = path.into_os_string().into_string().unwrap();
-                if let Some(rules) = self.watches.watch(&*path_str) {
+                if let Some(rules) = self.watches.watch(&path_str) {
                     stdout::verbose(
                         &format!("Triggered by change in: {}", path_str),
                         self.verbose,

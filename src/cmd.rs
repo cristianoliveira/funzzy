@@ -3,7 +3,7 @@ use std::process::{Child, Command};
 pub fn execute(command_line: &String) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
-    match cmd.arg("-c").arg(command_line.to_owned()).status() {
+    match cmd.arg("-c").arg(command_line).status() {
         Err(error) => Err(format!(
             "Command {} has errored with {}",
             command_line, error
@@ -25,7 +25,7 @@ pub fn spawn_command(command_line: String) -> Result<Child, String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
 
-    match cmd.arg("-c").arg(command_line.to_owned()).spawn() {
+    match cmd.arg("-c").arg(&command_line).spawn() {
         Ok(child) => Ok(child),
 
         Err(error) => Err(format!(

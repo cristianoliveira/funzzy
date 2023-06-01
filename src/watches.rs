@@ -23,7 +23,7 @@ impl Watches {
             .map(|r| r.commands())
             .collect::<Vec<Vec<String>>>();
 
-        if cmds.len() > 0 {
+        if !cmds.is_empty() {
             Some(cmds)
         } else {
             None
@@ -40,7 +40,7 @@ impl Watches {
             .map(|r| r.commands())
             .collect::<Vec<Vec<String>>>();
 
-        if cmds.len() > 0 {
+        if !cmds.is_empty() {
             Some(cmds)
         } else {
             None
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn it_loads_from_args() {
         let args = String::from("cargo build");
-        let watches = Watches::new(rules::from_string(".".to_owned(), &args));
+        let watches = Watches::new(rules::from_string(".".to_owned(), args));
 
         assert!(watches.watch(&get_absolute_path("src/main.rs")).is_some());
         assert!(watches.watch(&get_absolute_path("test/main.rs")).is_some());

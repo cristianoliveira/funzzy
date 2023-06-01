@@ -88,20 +88,18 @@ fn main() {
 
         Args { cmd_run: true, .. } => execute(RunCommand::new(args.arg_command, args.arg_interval)),
 
-        Args {
-            ref arg_command, ..
-        } if !arg_command.is_empty() => {
+        Args { arg_command, .. } if !arg_command.is_empty() => {
             match from_stdin() {
                 Ok(content) => {
                     if content.trim().is_empty() {
                         show("The list of files received is empty");
                     }
-                    let watches = Watches::new(rules::from_string(content, arg_command));
-                    if args.flag_n {
-                        execute(WatchNonBlockCommand::new(watches, args.flag_V));
-                    } else {
-                        execute(WatchCommand::new(watches, args.flag_V));
-                    }
+
+                    execute_watch_command(
+                        Watches::new(rules::from_string(content, arg_command)),
+                        args.flag_n,
+                        args.flag_V,
+                    );
                 }
                 Err(err) => error("Error while reading stdin", err),
             };
@@ -125,7 +123,7 @@ fn main() {
 
                         if filtered.is_empty() {
                             stdout::info(&format!("No target found for {}", args.flag_target));
-                            stdout::info(&format!("Available targets:"));
+                            stdout::info("Available targets:");
 
                             for rule in rules {
                                 stdout::info(&format!("  {}", rule.name));
@@ -133,31 +131,30 @@ fn main() {
 
                             show("Finished there is no task to run");
                         } else {
-                            let watches = Watches::new(filtered);
-
-                            if args.flag_n {
-                                execute(WatchNonBlockCommand::new(watches, args.flag_V));
-                            } else {
-                                execute(WatchCommand::new(watches, args.flag_V));
-                            }
+                            execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
                         }
                     } else {
-                        if args.flag_n {
-                            execute(WatchNonBlockCommand::new(Watches::new(rules), args.flag_V));
-                        } else {
-                            execute(WatchCommand::new(Watches::new(rules), args.flag_V));
-                        }
+                        execute_watch_command(Watches::new(rules), args.flag_n, args.flag_V);
                     }
                 }
+
                 Err(err) => error("Error while reading config file", err),
             }
         }
     }
 }
 
+pub fn execute_watch_command(watches: Watches, non_block: bool, verbose: bool) {
+    if non_block {
+        execute(WatchNonBlockCommand::new(watches, verbose))
+    } else {
+        execute(WatchCommand::new(watches, verbose))
+    }
+}
+
 fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
-        stdout::error(&format!("{}", err));
+        stdout::error(err.as_str());
     }
 }
 
@@ -170,7 +167,7 @@ fn from_stdin() -> Result<String, String> {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(5));
 
-        let had_input = clone_has_input.lock().unwrap().clone();
+        let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
             stdout::info("Timed out waiting for input after 5 seconds");
             std::process::exit(0);
@@ -194,7 +191,7 @@ fn from_stdin() -> Result<String, String> {
 
 fn get_version() -> String {
     if let Some(sha) = SHA {
-        format!("{}-{}", VERSION, sha).to_owned()
+        format!("{}-{}", VERSION, sha)
     } else {
         VERSION.to_owned()
     }

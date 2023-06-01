@@ -14,7 +14,7 @@ pub struct Worker {
 
 impl Worker {
     pub fn new(verbose: bool) -> Self {
-        stdout::verbose(&format!("Worker in verbose mode."), verbose);
+        stdout::verbose("Worker in verbose mode.", verbose);
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
         let (tscheduler, rscheduler) = channel::<Vec<String>>();
@@ -129,7 +129,7 @@ impl Worker {
                 }
             }
 
-            stdout::info(&format!("Consumer thread finished."));
+            stdout::info("Consumer thread finished.");
         });
 
         Worker {
