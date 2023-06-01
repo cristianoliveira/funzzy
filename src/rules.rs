@@ -72,9 +72,10 @@ impl Rules {
     }
 }
 
-pub fn as_list(rules: Vec<Vec<String>>) -> Vec<String> {
+pub fn commands(rules: Vec<Rules>) -> Vec<String> {
     rules
         .iter()
+        .map(|rule| rule.commands())
         .flat_map(|rule| rule.to_vec())
         .collect::<Vec<String>>()
 }

@@ -15,13 +15,13 @@ impl Watches {
 
     /// Returns the commands for first rule found for the given path
     ///
-    pub fn watch(&self, path: &str) -> Option<Vec<Vec<String>>> {
+    pub fn watch(&self, path: &str) -> Option<Vec<Rules>> {
         let cmds = self
             .rules
             .iter()
+            .cloned()
             .filter(|r| !r.ignore(path) && r.watch(path))
-            .map(|r| r.commands())
-            .collect::<Vec<Vec<String>>>();
+            .collect::<Vec<Rules>>();
 
         if !cmds.is_empty() {
             Some(cmds)
@@ -32,13 +32,13 @@ impl Watches {
 
     /// Returns the commands for the rules that should run on init
     ///
-    pub fn run_on_init(&self) -> Option<Vec<Vec<String>>> {
+    pub fn run_on_init(&self) -> Option<Vec<Rules>> {
         let cmds = self
             .rules
             .iter()
+            .cloned()
             .filter(|r| r.run_on_init())
-            .map(|r| r.commands())
-            .collect::<Vec<Vec<String>>>();
+            .collect::<Vec<Rules>>();
 
         if !cmds.is_empty() {
             Some(cmds)
@@ -73,8 +73,8 @@ mod tests {
         assert!(watches.watch(&get_absolute_path("test/main.rs")).is_some());
         assert!(watches.watch(&get_absolute_path(".")).is_some());
 
-        let result = watches.watch(&get_absolute_path(".")).unwrap();
-        assert_eq!(vec!["cargo build"], result[0]);
+        let result = rules::commands(watches.watch(&get_absolute_path(".")).unwrap());
+        assert_eq!(vec!["cargo build"], result);
     }
 
     #[test]
@@ -129,8 +129,8 @@ mod tests {
           change: 'src/**'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        let result = watches.watch("src/test.rs").unwrap();
-        assert_eq!(vec!["cargo build"], result[0])
+        let result = rules::commands(watches.watch("src/test.rs").unwrap());
+        assert_eq!("cargo build", result[0])
     }
 
     #[test]
@@ -146,11 +146,11 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
-        let result = watches.watch("test/test.rs").unwrap();
-        assert_eq!(vec!["cargo test"], result[0]);
+        let result = rules::commands(watches.watch("test/test.rs").unwrap());
+        assert_eq!("cargo test", result[0]);
 
-        let result_src = watches.watch("src/test.rs").unwrap();
-        assert_eq!(vec!["cargo build"], result_src[0]);
+        let result_src = rules::commands(watches.watch("src/test.rs").unwrap());
+        assert_eq!("cargo build", result_src[0]);
     }
 
     #[test]
@@ -170,13 +170,11 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
-        let result = watches.watch("test/test.rs").unwrap();
-        assert_eq!(vec!["echo same"], result[0]);
-        assert_eq!(vec!["cargo test"], result[1]);
+        let result = rules::commands(watches.watch("src/test.rs").unwrap());
+        assert_eq!(vec!["echo same", "cargo build"], result);
 
-        let result_multiple = watches.watch("src/test.rs").unwrap();
-        assert_eq!(vec!["echo same"], result_multiple[0]);
-        assert_eq!(vec!["cargo build"], result_multiple[1]);
+        let result_multiple = rules::commands(watches.watch("test/test.rs").unwrap());
+        assert_eq!(vec!["echo same", "cargo test"], result_multiple);
     }
 
     #[test]
@@ -226,12 +224,15 @@ mod tests {
               change: 'test/**'
             ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        let results = watches.run_on_init().unwrap();
+        let results = rules::commands(watches.run_on_init().unwrap());
 
-        assert_eq!(results[0], vec!["cargo build".to_string(),]);
         assert_eq!(
-            results[1],
-            vec!["cat foo".to_string(), "cat bar".to_string(),]
+            results,
+            vec![
+                "cargo build".to_string(),
+                "cat foo".to_string(),
+                "cat bar".to_string(),
+            ]
         );
     }
 }

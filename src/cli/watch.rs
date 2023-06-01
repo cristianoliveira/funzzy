@@ -46,11 +46,11 @@ impl Command for WatchCommand {
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");
 
-            let results = rules::as_list(rules)
+            let results = rules::commands(rules)
                 .iter()
-                .map(|task| {
-                    stdout::info(&format!("---- running: {} ----", task));
-                    cmd::execute(task)
+                .map(|c| {
+                    stdout::info(&format!("---- running: {} ----", c));
+                    cmd::execute(c)
                 })
                 .collect::<Vec<Result<(), String>>>();
 
@@ -67,11 +67,11 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
-                    let results = rules::as_list(rules)
+                    let results = rules::commands(rules)
                         .iter()
-                        .map(|task| {
-                            stdout::info(&format!("---- running: {} ----", task));
-                            cmd::execute(task)
+                        .map(|c| {
+                            stdout::info(&format!("---- running: {} ----", c));
+                            cmd::execute(c)
                         })
                         .collect::<Vec<Result<(), String>>>();
 
