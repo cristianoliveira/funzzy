@@ -16,18 +16,9 @@ integration-cleanup:
 		rm -rf tests/integration/workdir && \
 		rm -f tests/integration/funzzy
 
-.PHONY: integration
+.PHONY: integration ## Exectute integration tests
 integration: integration-cleanup
 	@bash tests/integration/runner.sh
-
-.PHONY: install
-install: ## Install funzzy on your machine
-	GITSHA=$(shell git rev-parse --short HEAD) \
-		cargo install --path .
-
-.PHONY: lint
-lint:
-	cargo clippy
 
 .PHONY: lint
 lint:
@@ -35,3 +26,7 @@ lint:
 
 .PHONY: linter
 linter: lint
+
+.PHONY: install
+install: tests ## Install funzzy on your machine
+	GITSHA="$(shell git rev-parse --short HEAD)" cargo install
