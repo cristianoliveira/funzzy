@@ -1,5 +1,5 @@
 use cmd::spawn_command;
-use rules;
+use rules::{self, Rules};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -150,9 +150,9 @@ impl Worker {
         Ok(())
     }
 
-    pub fn schedule(&self, rules: Vec<Vec<String>>) -> Result<(), String> {
+    pub fn schedule(&self, rules: Vec<Rules>) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            if let Err(err) = scheduler.send(rules::as_list(rules)) {
+            if let Err(err) = scheduler.send(rules::commands(rules)) {
                 return Err(format!("{:?}", err));
             }
         }
