@@ -23,6 +23,7 @@ use std::io::prelude::*;
 
 use docopt::Docopt;
 
+const SHA: Option<&str> = option_env!("GITSHA");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const USAGE: &str = "
 Funzzy the watcher.
@@ -79,7 +80,7 @@ fn main() {
 
     match args {
         // Metainfo
-        Args { flag_v: true, .. } => show(VERSION),
+        Args { flag_v: true, .. } => show(get_version().as_str()),
         Args { flag_h: true, .. } => show(USAGE),
 
         // Commands
@@ -188,6 +189,14 @@ fn from_stdin() -> Result<String, String> {
             }
         }
         Err(err) => Err(format!("Error while reading stdin {}", err)),
+    }
+}
+
+fn get_version() -> String {
+    if let Some(sha) = SHA {
+        format!("{}-{}", VERSION, sha).to_owned()
+    } else {
+        VERSION.to_owned()
     }
 }
 

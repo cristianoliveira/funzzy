@@ -21,8 +21,9 @@ integration: integration-cleanup
 	@bash tests/integration/runner.sh
 
 .PHONY: install
-install: build ## Install funzzy on your machine
-	cp target/release/funzzy /usr/local/bin/
+install: ## Install funzzy on your machine
+	GITSHA=$(shell git rev-parse --short HEAD) \
+		cargo install --path .
 
 .PHONY: lint
 lint:
