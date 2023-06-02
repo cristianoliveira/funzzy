@@ -1,4 +1,4 @@
-use cmd::spawn_command;
+use cmd::spawn;
 use rules::{self, Rules};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
@@ -32,7 +32,7 @@ impl Worker {
                         break;
                     }
                     stdout::info(&format!("---- running: {:?} ----", task));
-                    let mut child = match spawn_command(task.clone()) {
+                    let mut child = match spawn(task.clone()) {
                         Ok(child) => child,
                         Err(err) => {
                             stdout::error(&format!("failed to create command: {:?}", err));

@@ -1,43 +1,34 @@
 use std::process::{Child, Command};
 
-pub fn execute(command_line: &String) -> Result<(), String> {
+pub fn execute(command: &String) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
-    match cmd.arg("-c").arg(command_line).status() {
-        Err(error) => Err(format!(
-            "Command {} has errored with {}",
-            command_line, error
-        )),
+    match cmd.arg("-c").arg(command).status() {
+        Err(error) => Err(format!("Command {} has errored with {}", command, error)),
         Ok(status) => {
             if status.success() {
                 Ok(())
             } else {
-                Err(format!(
-                    "Command {} has failed with {}",
-                    command_line, status
-                ))
+                Err(format!("Command {} has failed with {}", command, status))
             }
         }
     }
 }
 
-pub fn spawn_command(command_line: String) -> Result<Child, String> {
+pub fn spawn(command: String) -> Result<Child, String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
 
-    match cmd.arg("-c").arg(&command_line).spawn() {
+    match cmd.arg("-c").arg(&command).spawn() {
         Ok(child) => Ok(child),
 
-        Err(error) => Err(format!(
-            "Command {} has errored with {}",
-            command_line, error
-        )),
+        Err(error) => Err(format!("Command {} has errored with {}", command, error)),
     }
 }
 
 #[test]
 fn it_spawn_a_command_returning_a_child_ref() {
-    let result = match spawn_command(String::from("echo 'foo'")) {
+    let result = match spawn(String::from("echo 'foo'")) {
         Ok(mut child) => child.wait().expect("fail to wait"),
         Err(err) => panic!("{:?}", err),
     };
