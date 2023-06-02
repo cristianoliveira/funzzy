@@ -103,7 +103,7 @@ find . -R '**.rs' | funzzy 'cargo build'
 Templates for composing commands
 
 ```bash
-find . -R '**.rs' | funzzy 'cargo lint {{file}}'
+find . -R '**.rs' | funzzy 'cargo lint {{filepath}}'
 ```
 
 Run some arbitrary command in an interval of seconds
