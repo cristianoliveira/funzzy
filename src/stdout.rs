@@ -18,6 +18,7 @@ pub fn verbose(msg: &str, verbose: bool) {
 
 pub fn present_results(results: Vec<Result<(), String>>) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
+    println!("\n\n");
     println!("------------- Funzzy result --------------");
     if !errors.is_empty() {
         println!("Failed tasks: {:?}", errors.len());

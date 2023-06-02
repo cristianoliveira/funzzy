@@ -150,9 +150,9 @@ impl Worker {
         Ok(())
     }
 
-    pub fn schedule(&self, rules: Vec<Rules>) -> Result<(), String> {
+    pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            if let Err(err) = scheduler.send(rules::commands(rules)) {
+            if let Err(err) = scheduler.send(rules::template(rules::commands(rules), filepath)) {
                 return Err(format!("{:?}", err));
             }
         }

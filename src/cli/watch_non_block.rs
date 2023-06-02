@@ -46,7 +46,7 @@ impl Command for WatchNonBlockCommand {
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");
-            if let Err(err) = worker.schedule(rules) {
+            if let Err(err) = worker.schedule(rules, "") {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
             }
         }
@@ -73,7 +73,7 @@ impl Command for WatchNonBlockCommand {
                                 ));
                             }
 
-                            if let Err(err) = worker.schedule(rules.clone()) {
+                            if let Err(err) = worker.schedule(rules.clone(), path_str.as_str()) {
                                 stdout::error(&format!("failed to initiate next run: {:?}", err));
                             }
                         }
