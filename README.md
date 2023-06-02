@@ -14,9 +14,12 @@ Configure execution of different commands using semantic YAML.
   change: "tests/**"
   ignore: "tests/integration/**"
 
-# Templates for running commands to changed files
+# Command templates for custom scripts
 - name: run linters
-  run: ["npm run lint {{file}}", "npm run tsc", "npm run test {{file}}"]
+  run: [
+    "npm run lint {{filepath}}",
+    "npm test $(echo '{{filepath}}' | sed s/\.tsx//g)"
+  ]
   change: ["src/**", "libs/**"]
 
 - name: Starwars
