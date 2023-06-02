@@ -14,9 +14,10 @@ Configure execution of different commands using semantic YAML.
   change: "tests/**"
   ignore: "tests/integration/**"
 
+# Templates for running commands to changed files
 - name: run linters
-  run: ["npm run lint", "npm run tsc"]
-  change: ["src/static/**", "src/assets/*"]
+  run: ["npm run lint {{file}}", "npm run tsc", "npm run test {{file}}"]
+  change: ["src/**", "libs/**"]
 
 - name: Starwars
   run: telnet towel.blinkenlights.nl
@@ -94,6 +95,12 @@ Run with some arbitrary command and stdin
 
 ```bash
 find . -R '**.rs' | funzzy 'cargo build'
+```
+
+Templates for composing commands
+
+```bash
+find . -R '**.rs' | funzzy 'cargo lint {{file}}'
 ```
 
 Run some arbitrary command in an interval of seconds
