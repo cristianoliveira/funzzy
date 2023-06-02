@@ -10,6 +10,7 @@ use self::yaml_rust::YamlLoader;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
+use stdout;
 
 #[derive(Debug, Clone)]
 pub struct Rules {
@@ -119,7 +120,9 @@ pub fn from_string(patterns: String, command: String) -> Vec<Rules> {
                 .unwrap_or_else(|| panic!("Cannot convert {:?} to absolute path", line))
                 .to_owned()
         })
-        .collect();
+        .collect::<Vec<String>>();
+
+    stdout::info(&format!("watching patterns \n {}", watches.join("\n ")));
 
     vec![Rules::new(
         "unnamed".to_owned(),
