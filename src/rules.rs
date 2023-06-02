@@ -84,7 +84,7 @@ pub fn commands(rules: Vec<Rules>) -> Vec<String> {
 pub fn template(commands: Vec<String>, filepath: &str) -> Vec<String> {
     commands
         .iter()
-        .map(|c| c.replace("{{file}}", filepath))
+        .map(|c| c.replace("{{filepath}}", filepath))
         .collect()
 }
 
@@ -338,11 +338,11 @@ mod tests {
     fn it_replaces_template_with_filepath() {
         let file_content = "
         - name: my tests
-          run: 'cargo tests {{file}}'
+          run: 'cargo tests {{filepath}}'
           change: 'tests/**'
 
         - name: my tests
-          run: ['echo {{file}}', 'make tests {{file}}']
+          run: ['echo {{filepath}}', 'make tests {{filepath}}']
           change: 'tests/**'
         ";
 
