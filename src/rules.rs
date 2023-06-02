@@ -81,6 +81,13 @@ pub fn commands(rules: Vec<Rules>) -> Vec<String> {
         .collect::<Vec<String>>()
 }
 
+pub fn template(commands: Vec<String>, filepath: &str) -> Vec<String> {
+    commands
+        .iter()
+        .map(|c| c.replace("{{file}}", filepath))
+        .collect()
+}
+
 pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
     let items = YamlLoader::load_from_str(file_content).unwrap();
     match items[0] {
@@ -164,7 +171,9 @@ mod tests {
 
     use self::yaml_rust::YamlLoader;
     use super::from_string;
+    use super::from_yaml;
     use super::Rules;
+    use super::{commands, template};
     use std::env::current_dir;
 
     #[test]
@@ -323,5 +332,29 @@ mod tests {
         assert!(rules[0].watch(&get_absolute_path("bar")));
         assert!(rules[0].watch(&get_absolute_path("baz")));
         assert!(rules[0].watch(&get_absolute_path(".")));
+    }
+
+    #[test]
+    fn it_replaces_template_with_filepath() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests {{file}}'
+          change: 'tests/**'
+
+        - name: my tests
+          run: ['echo {{file}}', 'make tests {{file}}']
+          change: 'tests/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        assert_eq!(
+            template(commands(rules), "tests/foo.rs"),
+            vec![
+                "cargo tests tests/foo.rs",
+                "echo tests/foo.rs",
+                "make tests tests/foo.rs"
+            ]
+        );
     }
 }

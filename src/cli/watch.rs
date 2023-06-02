@@ -67,7 +67,7 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
-                    let results = rules::commands(rules)
+                    let results = rules::template(rules::commands(rules), path_str.as_str())
                         .iter()
                         .map(|c| {
                             stdout::info(&format!("---- running: {} ----", c));
