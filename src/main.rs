@@ -1,10 +1,8 @@
 // #![feature(plugin)]
 // #![plugin(clippy)]
 // #![deny(clippy)]
-
-#[macro_use]
-extern crate serde_derive;
 extern crate docopt;
+extern crate serde_derive;
 
 mod cli;
 mod cmd;
@@ -17,6 +15,7 @@ mod yaml;
 use cli::*;
 use watches::Watches;
 
+use serde_derive::Deserialize;
 use std::io;
 #[warn(unused_imports)]
 use std::io::prelude::*;
@@ -32,13 +31,12 @@ Usage:
   funzzy [options]
   funzzy init
   funzzy watch [<command>] [options]
-  funzzy run <command> <interval>
+  funzzy run <command> <interval> (*deprecated*)
   funzzy <command> [options]
 
 Commands:
     init                Create a new funzzy.yml file.
     watch               Watch for file changes and execute a command.
-    run                 Run a command every <interval> seconds.
 
 Options:
   <command>            Run an arbitrary command for current folder.
@@ -57,7 +55,6 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
-    pub cmd_run: bool,
 
     pub arg_command: String,
     pub arg_interval: u64,
@@ -86,8 +83,6 @@ fn main() {
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        Args { cmd_run: true, .. } => execute(RunCommand::new(args.arg_command, args.arg_interval)),
-
         Args { arg_command, .. } if !arg_command.is_empty() => {
             match from_stdin() {
                 Ok(content) => {
@@ -101,7 +96,7 @@ fn main() {
                         args.flag_V,
                     );
                 }
-                Err(err) => error("Error while reading stdin", err),
+                Err(err) => error("Error while greading stdin", err),
             };
         }
 
