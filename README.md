@@ -106,12 +106,6 @@ Templates for composing commands
 find . -R '**.rs' | funzzy 'cargo lint {{filepath}}'
 ```
 
-Run some arbitrary command in an interval of seconds
-
-```bash
-funzzy run 'cargo build' 10
-```
-
 See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
