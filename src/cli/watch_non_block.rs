@@ -36,7 +36,7 @@ impl Command for WatchNonBlockCommand {
 
         let (tx, rx) = channel();
         let mut watcher: RecommendedWatcher =
-            Watcher::new(tx, Duration::from_secs(2)).expect("Unable to create watcher");
+            Watcher::new(tx, Duration::from_millis(200)).expect("Unable to create watcher");
 
         if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
             return Err(format!("Unable to watch current directory {:?}", err));
