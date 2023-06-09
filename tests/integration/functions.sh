@@ -13,7 +13,7 @@ function test() {
 function cleanup() {
   echo "kill funzzy $FUNZZY_PID"
   # https://github.com/drbeco/killgracefully
-  for SIG in 2 9 ; do echo $SIG ; kill -$SIG $FUNZZY_PID || break ; sleep 10 ; done
+  for SIG in 2 9 ; do echo $SIG ; kill -$SIG $FUNZZY_PID || break ; sleep 2 ; done
 }
 
 function assert_equal() {
