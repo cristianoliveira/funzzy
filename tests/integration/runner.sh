@@ -9,14 +9,9 @@ export WORKDIR="$TEST_DIR"/workdir
 echo "Building funzzy"
 
 rm -f "$TEST_DIR"/funzzy
-# if CI build with --release flag else build with debug flag
-if [ -n "$CI" ]; then
-  cargo build --release --target-dir "$TEST_DIR"
-  cp "$TEST_DIR"/release/funzzy "$TEST_DIR"/funzzy
-else
-  cargo build --release --target-dir "$TEST_DIR"
-  cp "$TEST_DIR"/release/funzzy "$TEST_DIR"/funzzy
-fi
+
+cargo build --release --target-dir "$TEST_DIR"
+cp "$TEST_DIR"/release/funzzy "$TEST_DIR"/funzzy
 
 "$TEST_DIR"/funzzy --version
 "$TEST_DIR"/funzzy --help
