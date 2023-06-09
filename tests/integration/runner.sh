@@ -14,8 +14,8 @@ if [ -n "$CI" ]; then
   cargo build --release --target-dir "$TEST_DIR"
   cp "$TEST_DIR"/release/funzzy "$TEST_DIR"/funzzy
 else
-  cargo build --target-dir "$TEST_DIR"
-  cp "$TEST_DIR"/debug/funzzy "$TEST_DIR"/funzzy
+  cargo build --release --target-dir "$TEST_DIR"
+  cp "$TEST_DIR"/release/funzzy "$TEST_DIR"/funzzy
 fi
 
 "$TEST_DIR"/funzzy --version

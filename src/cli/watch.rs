@@ -48,9 +48,9 @@ impl Command for WatchCommand {
 
             let results = rules::commands(rules)
                 .iter()
-                .map(|c| {
-                    stdout::info(&format!("---- running: {} ----", c));
-                    cmd::execute(c)
+                .map(|task| {
+                    stdout::info(&format!(" task {} \n", String::from(task)));
+                    cmd::execute(task)
                 })
                 .collect::<Vec<Result<(), String>>>();
 
@@ -69,9 +69,9 @@ impl Command for WatchCommand {
 
                     let results = rules::template(rules::commands(rules), path_str.as_str())
                         .iter()
-                        .map(|c| {
-                            stdout::info(&format!("---- running: {} ----", c));
-                            cmd::execute(c)
+                        .map(|task| {
+                            stdout::info(&format!(" task {} \n", String::from(task)));
+                            cmd::execute(task)
                         })
                         .collect::<Vec<Result<(), String>>>();
 
