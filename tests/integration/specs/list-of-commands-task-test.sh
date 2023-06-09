@@ -44,6 +44,6 @@ sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
 assert_file_contains "$WORKDIR/output.txt" "task echo 100"
 assert_file_contains "$WORKDIR/output.txt" "task echo 200"
 assert_file_contains "$WORKDIR/output.txt" "task echo 4000"
-assert_file_content_at "$WORKDIR/output.txt" "3333" 7
+assert_file_content_at "$WORKDIR/output.txt" "3333" 10
 
 cleanup

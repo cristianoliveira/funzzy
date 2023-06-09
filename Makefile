@@ -13,6 +13,7 @@ build: tests ## Execute all the tests and build funzzy binary
 .PHONY: integration-cleanup
 integration-cleanup:
 	rm -rf target && \
+		rm -rf tests/integration/release && \
 		rm -rf tests/integration/workdir && \
 		rm -f tests/integration/funzzy
 
