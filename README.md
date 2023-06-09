@@ -2,7 +2,7 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Configure execution of different commands using semantic YAML.
+Configure execution of different commands using semantic YAML. See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
 ```yaml
 # .watch.yaml
