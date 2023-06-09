@@ -49,7 +49,7 @@ impl Command for WatchCommand {
             let results = rules::commands(rules)
                 .iter()
                 .map(|task| {
-                    stdout::info(&format!(" task {} \n", String::from(task)));
+                    stdout::info(&format!("task {} \n", String::from(task)));
                     cmd::execute(task)
                 })
                 .collect::<Vec<Result<(), String>>>();
