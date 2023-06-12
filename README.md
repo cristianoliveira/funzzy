@@ -12,10 +12,7 @@ Configure execution of different commands using semantic YAML and [Unix shell st
 - name: run my tests
   run: make test
   change: "tests/**"
-  ignore: [
-    "tests/integration/**",
-    "**/*logs*"
-  ]
+  ignore: "tests/integration/**"
 
 # Command templates for custom scripts
 - name: run test & linter for single file
