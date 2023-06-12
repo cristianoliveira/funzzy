@@ -8,6 +8,7 @@ mod cli;
 mod cmd;
 mod rules;
 mod stdout;
+mod watcher;
 mod watches;
 mod workers;
 mod yaml;

@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use cli::Command;
 use stdout;
+use watcher;
 use watches::Watches;
 use workers;
 
@@ -51,6 +52,28 @@ impl Command for WatchNonBlockCommand {
             }
         }
 
+        watcher::events(
+            |file_changed| {
+                if let Some(rules) = self.watches.watch(&file_changed) {
+                    stdout::verbose(
+                        &format!("Triggered by change in: {}", file_changed),
+                        self.verbose,
+                    );
+
+                    if let Err(err) = worker.cancel_running_tasks() {
+                        stdout::error(&format!(
+                            "failed to cancel current running tasks: {:?}",
+                            err
+                        ));
+                    }
+
+                    if let Err(err) = worker.schedule(rules.clone(), file_changed) {
+                        stdout::error(&format!("failed to initiate next run: {:?}", err));
+                    }
+                }
+            },
+            self.verbose,
+        );
         stdout::info("Watching...");
         loop {
             match rx.try_recv() {
