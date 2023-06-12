@@ -15,19 +15,18 @@
 - name: run formatter (tag:quick)
   run: "cargo fmt"
   change: "src/**"
+  ignore: "src/**/*log*"
 
 - name: run integration
   run: "make integration"
-  change: "tests/integration/**"
-  ignore:
-    [
-      "tests/integration/workdir/**",
-      "tests/integration/release/**",
-      "tests/integration/debug/**",
-      "tests/integration/failed.log",
-      "tests/integration/funzzy",
-    ]
-  run_on_init: true
+  change: "tests/integration/**/*.sh"
+  ignore: [
+    "tests/integration/workdir/**",
+    "tests/integration/release/**",
+    "tests/integration/debug/**",
+    "tests/integration/*log*",
+    "tests/integration/funzzy",
+  ]
 
 - name: run my build
   run: "make build"

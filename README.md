@@ -2,7 +2,7 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Configure execution of different commands using semantic YAML. See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
+Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
 ```yaml
 # .watch.yaml
@@ -12,15 +12,19 @@ Configure execution of different commands using semantic YAML. See also [funzzy.
 - name: run my tests
   run: make test
   change: "tests/**"
-  ignore: "tests/integration/**"
+  ignore: [
+    "tests/integration/**",
+    "**/*logs*"
+  ]
 
 # Command templates for custom scripts
-- name: run test & linter
+- name: run test & linter for single file
   run: [
-    "npm run lint {{filepath}}",
-    "npm test $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
+    "npm run lint -- {{filepath}}",
+    "npm test -- $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
   ]
   change: ["src/**", "libs/**"]
+  ignore: ["src/**/*.stories.*", "libs/**"]
 
 - name: Starwars
   run: telnet towel.blinkenlights.nl
@@ -28,7 +32,7 @@ Configure execution of different commands using semantic YAML. See also [funzzy.
 
 - name: say hello
   run: echo "hello on init"
-  change: ".watch.yaml"
+  change: "./*.yaml"
   run_on_init: true
 ```
 
@@ -114,7 +118,7 @@ or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/ma
 #### Why the watcher is running the same task multiple times?
 
 This might be due to different causes, the most common issue when using VIM is because of the default backup setting
-which causes changes to multiple files on save. See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474). 
+which causes changes to multiple files on save. See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474).
 For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/long-task.yaml#L5).
 
 For other cases use verbose `funzzy -V` to undersand what is triggering a task to be executed.
