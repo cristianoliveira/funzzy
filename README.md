@@ -15,10 +15,10 @@ Configure execution of different commands using semantic YAML. See also [funzzy.
   ignore: "tests/integration/**"
 
 # Command templates for custom scripts
-- name: run linters
+- name: run test & linter
   run: [
     "npm run lint {{filepath}}",
-    "npm test $(echo '{{filepath}}' | sed s/\.tsx//g)"
+    "npm test $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
   ]
   change: ["src/**", "libs/**"]
 
@@ -108,6 +108,16 @@ find . -R '**.rs' | funzzy 'cargo lint {{filepath}}'
 
 See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
+
+## Trouble shooting
+
+#### Why the watcher is running the same task multiple times?
+
+This might be due to different causes, the most common issue when using VIM is because of the default backup setting
+which causes changes to multiple files on save. See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474). 
+For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/long-task.yaml#L5).
+
+For other cases use verbose `funzzy -V` to undersand what is triggering a task to be executed.
 
 ## Automated tests
 
