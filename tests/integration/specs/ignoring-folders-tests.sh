@@ -16,7 +16,8 @@ echo "
     '$WORKDIR/ignored/**',
     '$WORKDIR/output.txt',
     '$WORKDIR/file-to-ignore.txt',
-    # Vim swap files
+
+    # Vim backup files
     '$WORKDIR/file-to-ignore.txt~',
     '$WORKDIR/.file-to-ignore.txt.swp',
     '$WORKDIR/.file-to-ignore.txt.swx'
