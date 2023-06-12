@@ -59,6 +59,7 @@ impl Command for WatchCommand {
 
         stdout::info("Watching...");
         while let Ok(event) = rx.recv() {
+            stdout::verbose(&format!("Event {:?}", event), self.verbose);
             if let DebouncedEvent::Create(path) = event {
                 let path_str = path.into_os_string().into_string().unwrap();
                 if let Some(rules) = self.watches.watch(&path_str) {
