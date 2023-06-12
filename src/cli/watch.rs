@@ -45,7 +45,7 @@ impl Command for WatchCommand {
 
         watcher::events(
             |file_changed| {
-                if let Some(rules) = self.watches.watch(&file_changed) {
+                if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::verbose(
                         &format!("Triggered by change in: {}", file_changed),
                         self.verbose,

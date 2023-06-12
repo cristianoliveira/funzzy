@@ -40,7 +40,7 @@ impl Command for WatchNonBlockCommand {
 
         watcher::events(
             |file_changed| {
-                if let Some(rules) = self.watches.watch(&file_changed) {
+                if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::verbose(
                         &format!("Triggered by change in: {}", file_changed),
                         self.verbose,
@@ -53,7 +53,7 @@ impl Command for WatchNonBlockCommand {
                         ));
                     }
 
-                    if let Err(err) = worker.schedule(rules.clone(), file_changed) {
+                    if let Err(err) = worker.schedule(rules, file_changed) {
                         stdout::error(&format!("failed to initiate next run: {:?}", err));
                     }
                 }
