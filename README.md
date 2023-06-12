@@ -110,7 +110,7 @@ find . -R '**.rs' | funzzy 'cargo lint {{filepath}}'
 See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
-## Trouble shooting
+## Troubleshooting
 
 #### Why the watcher is running the same task multiple times?
 
