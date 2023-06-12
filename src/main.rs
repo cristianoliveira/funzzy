@@ -118,14 +118,16 @@ fn main() {
                             .collect::<Vec<rules::Rules>>();
 
                         if filtered.is_empty() {
-                            stdout::info(&format!("No target found for {}", args.flag_target));
-                            stdout::info("Available targets:");
+                            let mut output = String::new();
+                            output.push_str(&format!("No target found for {}", args.flag_target));
+                            output.push_str(&"Available targets:");
 
                             for rule in rules {
-                                stdout::info(&format!("  {}", rule.name));
+                                output.push_str(&format!("  {}", rule.name));
                             }
 
-                            show("Finished there is no task to run");
+                            output.push_str(&"Finished there is no task to run");
+                            show(output.as_str());
                         } else {
                             execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
                         }
