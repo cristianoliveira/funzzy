@@ -29,10 +29,7 @@ FUNZZY_PID=$!
 
 echo "test" >> $WORKDIR/test.txt
 # Run vim in ex mode
-ex $WORKDIR/test.txt <<EOEX
-  :%s/test/foo/g
-  :x
-EOEX
+vi +%s/test/foo/g +wq "$WORKDIR"/test.txt -u NONE
 
 wait_for_file "$WORKDIR/output.txt"
 assert_file_contains "$WORKDIR/output.txt" "{{first}} command"

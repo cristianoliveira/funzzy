@@ -16,8 +16,7 @@ echo "
 touch "$WORKDIR"/test.txt
 touch "$WORKDIR"/output.txt
 # $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
-"$TEST_DIR"/funzzy watch \
-  --config "$WORKDIR"/.onwatch.yaml >> "$WORKDIR"/output.txt &
+$TEST_DIR/funzzy watch --config $WORKDIR/.onwatch.yaml -V >> $WORKDIR/output.txt &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.txt"

@@ -18,7 +18,11 @@ jobs:
       - uses: actions/checkout@v3
 
       - name: Install depedencies
-        run: apt-get install -y vi
+        run: |
+          apt-get update -y
+          apt-get install -y apt-file
+          apt-file update
+          apt-get install -y vim
 
       - name: Run integration tests
         run: make integration
