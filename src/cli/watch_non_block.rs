@@ -1,13 +1,8 @@
 extern crate notify;
 
-use std::sync::mpsc::channel;
-use std::sync::mpsc::TryRecvError;
-
-use self::notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
-use std::time::Duration;
-
 use cli::Command;
 use stdout;
+use watcher;
 use watches::Watches;
 use workers;
 
@@ -34,14 +29,6 @@ impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let (tx, rx) = channel();
-        let mut watcher: RecommendedWatcher =
-            Watcher::new(tx, Duration::from_millis(200)).expect("Unable to create watcher");
-
-        if let Err(err) = watcher.watch(".", RecursiveMode::Recursive) {
-            return Err(format!("Unable to watch current directory {:?}", err));
-        }
-
         let worker = workers::Worker::new(self.verbose);
 
         if let Some(rules) = self.watches.run_on_init() {
@@ -51,46 +38,29 @@ impl Command for WatchNonBlockCommand {
             }
         }
 
+        watcher::events(
+            |file_changed| {
+                if let Some(rules) = self.watches.watch(file_changed) {
+                    stdout::verbose(
+                        &format!("Triggered by change in: {}", file_changed),
+                        self.verbose,
+                    );
+
+                    if let Err(err) = worker.cancel_running_tasks() {
+                        stdout::error(&format!(
+                            "failed to cancel current running tasks: {:?}",
+                            err
+                        ));
+                    }
+
+                    if let Err(err) = worker.schedule(rules, file_changed) {
+                        stdout::error(&format!("failed to initiate next run: {:?}", err));
+                    }
+                }
+            },
+            self.verbose,
+        );
         stdout::info("Watching...");
-        loop {
-            match rx.try_recv() {
-                Ok(event) => {
-                    stdout::verbose(&format!("Event {:?}", event), self.verbose);
-                    if let DebouncedEvent::Create(path) = event {
-                        let path_str = path.into_os_string().into_string().unwrap();
-
-                        stdout::verbose(&format!("Changed file: {}", path_str), self.verbose);
-
-                        if let Some(rules) = self.watches.watch(&path_str) {
-                            stdout::verbose(
-                                &format!("Triggered by change in: {}", path_str),
-                                self.verbose,
-                            );
-
-                            if let Err(err) = worker.cancel_running_tasks() {
-                                stdout::error(&format!(
-                                    "failed to cancel current running tasks: {:?}",
-                                    err
-                                ));
-                            }
-
-                            if let Err(err) = worker.schedule(rules.clone(), path_str.as_str()) {
-                                stdout::error(&format!("failed to initiate next run: {:?}", err));
-                            }
-                        }
-                    }
-                }
-
-                Err(err) => {
-                    if err != TryRecvError::Empty {
-                        stdout::error(&format!("failed to receive event: {:?}", err));
-                        break;
-                    }
-                }
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
 
         Ok(())
     }
