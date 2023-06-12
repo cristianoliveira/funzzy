@@ -12,6 +12,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: rust:1.67
 
     steps:
       - uses: actions/checkout@v3
