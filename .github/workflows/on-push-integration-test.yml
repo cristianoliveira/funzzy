@@ -17,5 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install depedencies
+        run: apt-get install -y vi
+
       - name: Run integration tests
         run: make integration
