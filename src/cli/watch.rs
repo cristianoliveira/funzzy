@@ -51,6 +51,8 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
+                    stdout::verbose(&format!("Rules: {:?}", rules), self.verbose);
+
                     let results = rules::template(rules::commands(rules), file_changed)
                         .iter()
                         .map(|task| {
