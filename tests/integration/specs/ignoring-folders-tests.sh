@@ -14,7 +14,12 @@ echo "
   change: '$WORKDIR/**'
   ignore: [
     '$WORKDIR/ignored/**',
-    '$WORKDIR/file-to-ignore.txt'
+    '$WORKDIR/output.txt',
+    '$WORKDIR/file-to-ignore.txt',
+    # Vim swap files
+    '$WORKDIR/file-to-ignore.txt~',
+    '$WORKDIR/.file-to-ignore.txt.swp',
+    '$WORKDIR/.file-to-ignore.txt.swx'
   ]
 
 - name: run not ignored
