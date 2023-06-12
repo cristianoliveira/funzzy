@@ -11,7 +11,7 @@ use stdout;
 pub fn events(handler: impl Fn(&str), verbose: bool) {
     let (tx, rx) = channel();
     let mut debouncer =
-        new_debouncer(Duration::from_millis(200), None, tx).expect("Unable to create watcher");
+        new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
 
     if let Err(err) = watcher.watch(Path::new("."), RecursiveMode::Recursive) {
