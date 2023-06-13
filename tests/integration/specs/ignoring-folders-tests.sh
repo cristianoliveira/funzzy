@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-if [ -n "$CI" ]; then
-  echo "skipping ignoring-folders-tests.sh in CI no trigger is possible"
-  exit 0
-fi
-
 test "it allows setting up ignored paths"
 
 echo "
