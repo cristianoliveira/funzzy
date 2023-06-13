@@ -2,7 +2,8 @@ use std::process::{Child, Command};
 use stdout;
 
 pub fn execute(command: &String) -> Result<(), String> {
-    stdout::info(&format!("task {} \n", String::from(command)));
+    println!();
+    stdout::info(&format!("{} \n", String::from(command)));
 
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
@@ -19,6 +20,7 @@ pub fn execute(command: &String) -> Result<(), String> {
 }
 
 pub fn spawn(command: &String) -> Result<Child, String> {
+    println!();
     stdout::info(&format!("task {} \n", String::from(command)));
 
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
