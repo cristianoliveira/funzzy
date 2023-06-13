@@ -6,7 +6,7 @@ test "it allows a list of commands for the same task (on init)"
 echo "
 - name: run complex command
   run: ['echo first', 'echo second', 'echo complex | sed s/complex/third/g']
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
@@ -22,17 +22,12 @@ assert_file_contains "$WORKDIR/output.log" "Watching..."
 
 cleanup
 
-if [ -n "$CI" ]; then
-  echo "skipping test in CI cuz no trigger is possible"
-  exit 0
-fi
-
 test "it allows a list of commands for the same task (on change)"
 
 echo "
 - name: run complex command
   run: ['echo 100', 'echo 200', 'echo 4000 | sed s/4000/3333/g']
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
 " > $WORKDIR/.oninit.yaml
 
 $TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
