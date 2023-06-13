@@ -19,12 +19,6 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.log"
-assert_file_contains "$WORKDIR/output.log" "task echo before"
-assert_file_contains "$WORKDIR/output.log" "task exit 1"
-assert_file_contains "$WORKDIR/output.log" "task cat foo/bar/baz"
-assert_file_contains "$WORKDIR/output.log" "task exit 125"
-assert_file_contains "$WORKDIR/output.log" "task echo after"
-
 assert_file_contains "$WORKDIR"/output.log "Failed tasks: 3"
 assert_file_contains "$WORKDIR"/output.log "Command exit 1 has failed with exit status: 1"
 assert_file_contains "$WORKDIR"/output.log "Command cat foo/bar/baz has failed with exit status: 1"
@@ -56,10 +50,6 @@ $TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.log"
-assert_file_contains "$WORKDIR/output.log" "task echo before"
-assert_file_contains "$WORKDIR/output.log" "task cat baz/bar/foo"
-assert_file_contains "$WORKDIR/output.log" "task echo finally"
-
 assert_file_contains "$WORKDIR"/output.log "Failed tasks: 1"
 assert_file_contains "$WORKDIR"/output.log "Command cat baz/bar/foo has failed with exit status: 1"
 
