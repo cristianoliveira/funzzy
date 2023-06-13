@@ -21,7 +21,7 @@ Configure execution of different commands using semantic YAML and [Unix shell st
     "npm test -- $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
   ]
   change: ["src/**", "libs/**"]
-  ignore: ["src/**/*.stories.*", "libs/**"]
+  ignore: ["src/**/*.stories.*", "libs/**.log"]
 
 - name: Starwars
   run: telnet towel.blinkenlights.nl
