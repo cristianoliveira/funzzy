@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 source "$HELPERS"
-if [ -n "$CI" ]; then
-  echo "skipping long tasks test on CI"
-  exit 0
-fi
 
 test "process does not die when a one or more commands fail (list)"
 
