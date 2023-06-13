@@ -21,6 +21,10 @@ integration-cleanup:
 integration: integration-cleanup
 	@bash tests/integration/runner.sh
 
+.PHONY: integration-tail
+integration-tail:
+	while true; do cat tests/integration/workdir/output.log; sleep 4; clear;  done
+
 .PHONY: integration-batch-1
 integration-batch-1: integration-cleanup
 	@bash tests/integration/batches.sh 5
