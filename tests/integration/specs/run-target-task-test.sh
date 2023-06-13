@@ -8,17 +8,16 @@ config_file="$WORKDIR/target.yaml"
 echo "
 - name: run first command
   run: \"echo '{{test}} command' | sed  s/test/first/g\"
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
   run_on_init: true
 
 - name: run second command
   run: \"echo '{{test}} command' | sed  s/test/second/g\"
-  change: \"$WORKDIR/**\"
-  run_on_init: true
+  change: \"$WORKDIR/*.txt\"
 
 - name: run third command
   run: \"echo '{{test}} command' | sed  s/test/third/g\"
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
   run_on_init: true
 " > "$config_file"
 
@@ -29,8 +28,11 @@ $TEST_DIR/funzzy --config="$config_file" \
 FUNZZY_PID=$!
 
 wait_for_file "$WORKDIR/output.log"
-assert_file_contains "$WORKDIR/output.log" "{{second}} command"
 assert_file_not_contains "$WORKDIR/output.log" "{{first}} command"
+
+echo "test" >> "$WORKDIR/test.txt"
+assert_file_contains "$WORKDIR/output.log" "{{second}} command"
+
 assert_file_not_contains "$WORKDIR/output.log" "{{third}} command"
 
 cleanup
