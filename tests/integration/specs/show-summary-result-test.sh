@@ -10,13 +10,13 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-assert_file_contains "$WORKDIR/output.txt" "Watching..."
-assert_file_contains "$WORKDIR/output.txt" "Funzzy result"
-assert_file_contains "$WORKDIR/output.txt" "Failed tasks: 2"
-assert_file_contains "$WORKDIR/output.txt" "Command exit 1 has failed with exit status: 1"
-assert_file_contains "$WORKDIR/output.txt" "Command cat unknow has failed with exit status: 1"
+assert_file_contains "$WORKDIR/output.log" "Watching..."
+assert_file_contains "$WORKDIR/output.log" "Funzzy result"
+assert_file_contains "$WORKDIR/output.log" "Failed tasks: 2"
+assert_file_contains "$WORKDIR/output.log" "Command exit 1 has failed with exit status: 1"
+assert_file_contains "$WORKDIR/output.log" "Command cat unknow has failed with exit status: 1"
 
 cleanup

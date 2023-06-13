@@ -31,9 +31,9 @@ for spec in "$PWD"/tests/integration/specs/*; do
   echo "----------------------------"
 done
 
-if [ -f "$TEST_DIR"/workdir/output.txt ]; then
+if [ -f "$TEST_DIR"/workdir/output.log ]; then
   echo "output:"
-  cat "$TEST_DIR"/workdir/output.txt
+  cat "$TEST_DIR"/workdir/output.log
 fi
 
 echo "All tests passed"

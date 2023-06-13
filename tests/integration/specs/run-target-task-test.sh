@@ -25,12 +25,12 @@ echo "
 echo "target: $target";
 
 $TEST_DIR/funzzy --config="$config_file" \
-  --target="$target" > "$WORKDIR/output.txt" &
+  --target="$target" > "$WORKDIR/output.log" &
 FUNZZY_PID=$!
 
-wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "{{second}} command"
-assert_file_not_contains "$WORKDIR/output.txt" "{{first}} command"
-assert_file_not_contains "$WORKDIR/output.txt" "{{third}} command"
+wait_for_file "$WORKDIR/output.log"
+assert_file_contains "$WORKDIR/output.log" "{{second}} command"
+assert_file_not_contains "$WORKDIR/output.log" "{{first}} command"
+assert_file_not_contains "$WORKDIR/output.log" "{{third}} command"
 
 cleanup

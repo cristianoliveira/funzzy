@@ -24,16 +24,16 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
 echo "test" >> $WORKDIR/test.txt
 # Run vim in ex mode
 vi +%s/test/foo/g +wq "$WORKDIR"/test.txt -u NONE
 
-wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "{{first}} command"
-assert_file_contains "$WORKDIR/output.txt" "{{second}} command"
-assert_file_contains "$WORKDIR/output.txt" "{{not_executed}} command"
+wait_for_file "$WORKDIR/output.log"
+assert_file_contains "$WORKDIR/output.log" "{{first}} command"
+assert_file_contains "$WORKDIR/output.log" "{{second}} command"
+assert_file_contains "$WORKDIR/output.log" "{{not_executed}} command"
 
 cleanup

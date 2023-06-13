@@ -9,10 +9,10 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "running command on init"
+wait_for_file "$WORKDIR/output.log"
+assert_file_contains "$WORKDIR/output.log" "running command on init"
 
 cleanup

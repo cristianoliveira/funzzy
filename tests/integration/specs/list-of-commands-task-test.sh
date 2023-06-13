@@ -10,22 +10,17 @@ echo "
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-assert_file_content_at "$WORKDIR/output.txt" "Running on init commands" 1
-assert_file_contains "$WORKDIR/output.txt" "task echo first"
-assert_file_contains "$WORKDIR/output.txt" "task echo second"
-assert_file_contains "$WORKDIR/output.txt" "task echo complex"
-assert_file_content_at "$WORKDIR/output.txt" "third" 10
-assert_file_contains "$WORKDIR/output.txt" "Watching..."
+assert_file_content_at "$WORKDIR/output.log" "Running on init commands" 1
+assert_file_contains "$WORKDIR/output.log" "task echo first"
+assert_file_contains "$WORKDIR/output.log" "task echo second"
+assert_file_contains "$WORKDIR/output.log" "task echo complex"
+assert_file_content_at "$WORKDIR/output.log" "third" 10
+assert_file_contains "$WORKDIR/output.log" "Watching..."
 
 cleanup
-
-if [ -n "$CI" ]; then
-  echo "skipping test in CI cuz no trigger is possible"
-  exit 0
-fi
 
 test "it allows a list of commands for the same task (on change)"
 
@@ -35,15 +30,15 @@ echo "
   change: \"$WORKDIR/**\"
 " > $WORKDIR/.oninit.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-assert_file_contains "$WORKDIR/output.txt" "Watching..."
+assert_file_contains "$WORKDIR/output.log" "Watching..."
 echo "test" >> $WORKDIR/test.txt
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
-assert_file_contains "$WORKDIR/output.txt" "task echo 100"
-assert_file_contains "$WORKDIR/output.txt" "task echo 200"
-assert_file_contains "$WORKDIR/output.txt" "task echo 4000"
-assert_file_content_at "$WORKDIR/output.txt" "3333" 10
+assert_file_contains "$WORKDIR/output.log" "task echo 100"
+assert_file_contains "$WORKDIR/output.log" "task echo 200"
+assert_file_contains "$WORKDIR/output.log" "task echo 4000"
+assert_file_content_at "$WORKDIR/output.log" "3333" 10
 
 cleanup
