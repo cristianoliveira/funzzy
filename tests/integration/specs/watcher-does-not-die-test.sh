@@ -15,20 +15,20 @@ echo "
   run_on_init: true
 " > $WORKDIR/.dontdie.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "echo before"
-assert_file_contains "$WORKDIR/output.txt" "exit 1"
-assert_file_contains "$WORKDIR/output.txt" "cat foo/bar/baz"
-assert_file_contains "$WORKDIR/output.txt" "exit 125"
-assert_file_contains "$WORKDIR/output.txt" "echo after"
+wait_for_file "$WORKDIR/output.log"
+assert_file_contains "$WORKDIR/output.log" "echo before"
+assert_file_contains "$WORKDIR/output.log" "exit 1"
+assert_file_contains "$WORKDIR/output.log" "cat foo/bar/baz"
+assert_file_contains "$WORKDIR/output.log" "exit 125"
+assert_file_contains "$WORKDIR/output.log" "echo after"
 
-assert_file_contains "$WORKDIR"/output.txt "Failed tasks: 3"
-assert_file_contains "$WORKDIR"/output.txt "Command exit 1 has failed with exit status: 1"
-assert_file_contains "$WORKDIR"/output.txt "Command cat foo/bar/baz has failed with exit status: 1"
-assert_file_contains "$WORKDIR"/output.txt "Command exit 125 has failed with exit status: 125"
+assert_file_contains "$WORKDIR"/output.log "Failed tasks: 3"
+assert_file_contains "$WORKDIR"/output.log "Command exit 1 has failed with exit status: 1"
+assert_file_contains "$WORKDIR"/output.log "Command cat foo/bar/baz has failed with exit status: 1"
+assert_file_contains "$WORKDIR"/output.log "Command exit 125 has failed with exit status: 125"
 
 
 cleanup
@@ -52,15 +52,15 @@ echo "
   run_on_init: true
 " > $WORKDIR/.dontdie.yaml
 
-$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.dontdie.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-wait_for_file "$WORKDIR/output.txt"
-assert_file_contains "$WORKDIR/output.txt" "echo before"
-assert_file_contains "$WORKDIR/output.txt" "cat baz/bar/foo"
-assert_file_contains "$WORKDIR/output.txt" "echo finally"
+wait_for_file "$WORKDIR/output.log"
+assert_file_contains "$WORKDIR/output.log" "echo before"
+assert_file_contains "$WORKDIR/output.log" "cat baz/bar/foo"
+assert_file_contains "$WORKDIR/output.log" "echo finally"
 
-assert_file_contains "$WORKDIR"/output.txt "Failed tasks: 1"
-assert_file_contains "$WORKDIR"/output.txt "Command cat baz/bar/foo has failed with exit status: 1"
+assert_file_contains "$WORKDIR"/output.log "Failed tasks: 1"
+assert_file_contains "$WORKDIR"/output.log "Command cat baz/bar/foo has failed with exit status: 1"
 
 cleanup

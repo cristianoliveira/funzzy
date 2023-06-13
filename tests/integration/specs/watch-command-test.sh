@@ -20,20 +20,20 @@ echo "
 " > "$WORKDIR"/.onwatch.yaml
 
 touch "$WORKDIR"/test.txt
-touch "$WORKDIR"/output.txt
+touch "$WORKDIR"/output.log
 # $TEST_DIR/funzzy --config $WORKDIR/.onwatch.yaml &
 "$TEST_DIR"/funzzy watch \
-  --config "$WORKDIR"/.onwatch.yaml >> "$WORKDIR"/output.txt &
+  --config "$WORKDIR"/.onwatch.yaml >> "$WORKDIR"/output.log &
 FUNZZY_PID=$!
 
-wait_for_file "$WORKDIR/output.txt"
+wait_for_file "$WORKDIR/output.log"
 
 echo "some content" > "$WORKDIR"/test.txt
 
 touch "$WORKDIR"/test.txt
-assert_file_occurrencies "$WORKDIR/output.txt" "__second_commmand__" 1
+assert_file_occurrencies "$WORKDIR/output.log" "__second_commmand__" 1
 
 touch "$WORKDIR"/test.txt
-assert_file_occurrencies "$WORKDIR/output.txt" "__second_commmand__" 2
+assert_file_occurrencies "$WORKDIR/output.log" "__second_commmand__" 2
 
 cleanup
