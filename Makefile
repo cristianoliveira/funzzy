@@ -21,6 +21,14 @@ integration-cleanup:
 integration: integration-cleanup
 	@bash tests/integration/runner.sh
 
+.PHONY: integration-batch-1
+integration-batch-1: integration-cleanup
+	@bash tests/integration/batches.sh 5
+
+.PHONY: integration-batch-2
+integration-batch-2: integration-cleanup
+	@bash tests/integration/batches.sh 10
+
 .PHONY: lint
 lint:
 	cargo clippy
