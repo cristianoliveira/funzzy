@@ -1,6 +1,9 @@
 use std::process::{Child, Command};
+use stdout;
 
 pub fn execute(command: &String) -> Result<(), String> {
+    stdout::info(&format!("task {} \n", String::from(command)));
+
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
     match cmd.arg("-c").arg(command).status() {
@@ -15,7 +18,9 @@ pub fn execute(command: &String) -> Result<(), String> {
     }
 }
 
-pub fn spawn(command: String) -> Result<Child, String> {
+pub fn spawn(command: &String) -> Result<Child, String> {
+    stdout::info(&format!("task {} \n", String::from(command)));
+
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
 
@@ -28,7 +33,7 @@ pub fn spawn(command: String) -> Result<Child, String> {
 
 #[test]
 fn it_spawn_a_command_returning_a_child_ref() {
-    let result = match spawn(String::from("echo 'foo'")) {
+    let result = match spawn(&String::from("echo 'foo'")) {
         Ok(mut child) => child.wait().expect("fail to wait"),
         Err(err) => panic!("{:?}", err),
     };

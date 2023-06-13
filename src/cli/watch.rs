@@ -34,10 +34,7 @@ impl Command for WatchCommand {
 
             let results = rules::commands(rules)
                 .iter()
-                .map(|task| {
-                    stdout::info(&format!("task {} \n", String::from(task)));
-                    cmd::execute(task)
-                })
+                .map(cmd::execute)
                 .collect::<Vec<Result<(), String>>>();
 
             stdout::present_results(results);
@@ -55,10 +52,7 @@ impl Command for WatchCommand {
 
                     let results = rules::template(rules::commands(rules), file_changed)
                         .iter()
-                        .map(|task| {
-                            stdout::info(&format!(" task {} \n", String::from(task)));
-                            cmd::execute(task)
-                        })
+                        .map(cmd::execute)
                         .collect::<Vec<Result<(), String>>>();
                     stdout::present_results(results);
                 }

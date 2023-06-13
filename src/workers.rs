@@ -31,8 +31,8 @@ impl Worker {
                     if has_been_cancelled {
                         break;
                     }
-                    stdout::info(&format!("task {} \n", String::from(&task)));
-                    let mut child = match spawn(task.clone()) {
+
+                    let mut child = match spawn(&task) {
                         Ok(child) => child,
                         Err(err) => {
                             stdout::error(&format!("failed to create command: {:?}", err));
