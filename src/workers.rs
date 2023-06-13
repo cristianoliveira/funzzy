@@ -31,7 +31,7 @@ impl Worker {
                     if has_been_cancelled {
                         break;
                     }
-
+                    stdout::info(&format!("task {} \n", String::from(&task)));
                     let mut child = match spawn(task.clone()) {
                         Ok(child) => child,
                         Err(err) => {

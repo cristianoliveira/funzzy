@@ -119,24 +119,15 @@ fn main() {
 
                         if filtered.is_empty() {
                             let mut output = String::new();
-                            output.push_str(&format!(
-                                "No target found for '{}'\n\n",
-                                args.flag_target
-                            ));
-                            output.push_str("Available targets:\n");
-                            output.push_str(&format!(
-                                "  {}\n",
-                                rules
-                                    .iter()
-                                    .cloned()
-                                    .map(|r| r.name)
-                                    .collect::<Vec<String>>()
-                                    .join("\n  ")
-                            ));
+                            output.push_str(&format!("No target found for {}", args.flag_target));
+                            output.push_str(&"Available targets:");
 
-                            stdout::info(output.as_str());
+                            for rule in rules {
+                                output.push_str(&format!("  {}", rule.name));
+                            }
 
-                            show("Finished there is no task to run.");
+                            output.push_str(&"Finished there is no task to run");
+                            show(output.as_str());
                         } else {
                             execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
                         }
