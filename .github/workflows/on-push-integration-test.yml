@@ -10,26 +10,10 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  integration-batch-1:
+  integration-tests:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v3
-      - name: Run integration tests second batch
-        run: bash tests/integration/batches.sh 5
-
-  integration-batch-2:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Run integration tests second batch
-        run: bash tests/integration/batches.sh 10
-
-  # integration-batch-3:
-  #   runs-on: ubuntu-latest
-
-  #   steps:
-  #     - uses: actions/checkout@v3
-  #     - name: Run integration tests second batch
-  #       run: bash tests/integration/batches.sh 15
+      - name: Run integration tests
+        run: make integration
