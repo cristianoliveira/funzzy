@@ -14,7 +14,9 @@ pub fn events(handler: impl Fn(&str), verbose: bool) {
         new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
 
-    if let Err(err) = watcher.watch(Path::new("."), RecursiveMode::Recursive) {
+    let current_dir = std::env::current_dir().expect("Unable to get current directory");
+
+    if let Err(err) = watcher.watch(Path::new(&current_dir), RecursiveMode::Recursive) {
         println!("Unable to watch current directory {:?}", err);
     }
 
