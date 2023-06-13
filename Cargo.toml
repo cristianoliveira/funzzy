@@ -5,6 +5,7 @@ authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "Yet another fancy watcher inspired by entr."
 license = "MIT"
 repository = "https://github.com/cristianoliveira/funzzy"
+edition = "2018"
 
 [dependencies]
 docopt = "1"
@@ -14,4 +15,5 @@ notify = "4.0.0"
 yaml-rust = "0.4.1"
 glob="0.2.11"
 notify-debouncer-mini = "0.3.0"
+nix = "0.26.2"
 #clippy = "*"

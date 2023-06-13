@@ -2,9 +2,9 @@ pub mod init;
 pub mod watch;
 pub mod watch_non_block;
 
-pub use cli::init::InitCommand;
-pub use cli::watch::WatchCommand;
-pub use cli::watch_non_block::WatchNonBlockCommand;
+pub use crate::cli::init::InitCommand;
+pub use crate::cli::watch::WatchCommand;
+pub use crate::cli::watch_non_block::WatchNonBlockCommand;
 
 /// # Command interface
 ///

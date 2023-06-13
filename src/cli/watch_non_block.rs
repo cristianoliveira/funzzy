@@ -1,10 +1,11 @@
 extern crate notify;
 
-use cli::Command;
-use stdout;
-use watcher;
-use watches::Watches;
-use workers;
+use crate::cli::Command;
+use crate::cmd;
+use crate::stdout;
+use crate::watcher;
+use crate::watches::Watches;
+use crate::workers;
 
 /// # `WatchNonBlockCommand`
 ///

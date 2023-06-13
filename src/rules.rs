@@ -1,16 +1,16 @@
 extern crate glob;
 extern crate yaml_rust;
 
-use cli;
-use yaml;
+use crate::cli;
+use crate::yaml;
 
 use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
+use crate::stdout;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
-use stdout;
 
 #[derive(Debug, Clone)]
 pub struct Rules {
