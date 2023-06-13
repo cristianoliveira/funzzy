@@ -6,11 +6,11 @@ test "it watches the configured rules"
 echo "
 - name: run simple command
   run: echo 'test1'
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
 
 - name: run different command
   run: echo '__placeholder__' | sed s/placeholder/second_commmand/g
-  change: \"$WORKDIR/**\"
+  change: \"$WORKDIR/*.txt\"
 " > "$WORKDIR"/.onwatch.yaml
 
 touch "$WORKDIR"/test.txt
