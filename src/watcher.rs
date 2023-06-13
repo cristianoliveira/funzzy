@@ -4,7 +4,6 @@ use self::notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 
 use std::path::Path;
 use std::sync::mpsc::channel;
-use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 use stdout;
 
@@ -22,7 +21,7 @@ pub fn events(handler: impl Fn(&str), verbose: bool) {
 
     stdout::info("Watching...");
     loop {
-        match rx.try_recv() {
+        match rx.recv() {
             Ok(debounced_evts) => {
                 stdout::verbose(&format!("Events {:?}", debounced_evts), verbose);
                 if let Ok(file_change_event) = debounced_evts {
@@ -40,10 +39,7 @@ pub fn events(handler: impl Fn(&str), verbose: bool) {
             }
 
             Err(err) => {
-                if err != TryRecvError::Empty {
-                    stdout::error(&format!("failed to receive event: {:?}", err));
-                    break;
-                }
+                stdout::error(&format!("failed to receive event: {:?}", err));
             }
         }
 

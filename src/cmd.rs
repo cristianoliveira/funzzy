@@ -26,7 +26,7 @@ pub fn spawn(command: &String) -> Result<Child, String> {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
 
-    match cmd.arg("-c").arg(&command).spawn() {
+    match cmd.arg("-c").arg(command).spawn() {
         Ok(child) => Ok(child),
 
         Err(error) => Err(format!("Command {} has errored with {}", command, error)),
