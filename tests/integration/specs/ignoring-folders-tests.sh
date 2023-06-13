@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-if [ -n "$CI" ]; then
-  echo "skipping ignoring-folders-tests.sh in CI no trigger is possible"
-  exit 0
-fi
-
 test "it allows setting up ignored paths"
 
 echo "
@@ -14,7 +9,7 @@ echo "
   change: '$WORKDIR/**'
   ignore: [
     '$WORKDIR/ignored/**',
-    '$WORKDIR/output.txt',
+    '$WORKDIR/output.log',
     '$WORKDIR/file-to-ignore.txt',
 
     # Vim backup files
@@ -31,10 +26,10 @@ echo "
 
 mkdir -p "$WORKDIR/ignored"
 
-$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.txt &
+$TEST_DIR/funzzy --config $WORKDIR/.oninit.yaml > $WORKDIR/output.log &
 FUNZZY_PID=$!
 
-assert_file_contains "$WORKDIR/output.txt" "Watching..."
+assert_file_contains "$WORKDIR/output.log" "Watching..."
 
 echo "test" >> $WORKDIR/file-to-ignore.txt
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/file-to-ignore.txt -u NONE"
@@ -42,13 +37,13 @@ sh -c "vi +%s/test/foo/g +wq $WORKDIR/file-to-ignore.txt -u NONE"
 echo "test" >> $WORKDIR/ignored/test.txt
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/ignored/text.txt -u NONE"
 
-assert_file_contains "$WORKDIR/output.txt" "{{changed}}"
-assert_file_not_contains "$WORKDIR/output.txt" "{{ignored}}"
+assert_file_contains "$WORKDIR/output.log" "{{changed}}"
+assert_file_not_contains "$WORKDIR/output.log" "{{ignored}}"
 
 echo "test" >> $WORKDIR/test.txt
 sh -c "vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE"
 
-assert_file_contains "$WORKDIR/output.txt" "{{changed}}"
-assert_file_contains "$WORKDIR/output.txt" "{{ignored}}"
+assert_file_contains "$WORKDIR/output.log" "{{changed}}"
+assert_file_contains "$WORKDIR/output.log" "{{ignored}}"
 
 cleanup
