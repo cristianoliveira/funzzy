@@ -17,13 +17,13 @@ assert_file_not_contains "$WORKDIR"/output.log "All tasks finished successfully.
 assert_file_contains "$WORKDIR"/output.log "Watching..."
 
 vi +wq tests/integration/workdir/temp.txt -u NONE
-assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 2
 assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 3" 0
+assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 2
 
 sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
-assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 3
 assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 3" 0
+assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 3
 
 sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
