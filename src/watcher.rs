@@ -2,10 +2,10 @@ extern crate notify;
 extern crate notify_debouncer_mini;
 use self::notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 
+use crate::stdout;
 use std::path::Path;
 use std::sync::mpsc::channel;
 use std::time::Duration;
-use stdout;
 
 pub fn events(handler: impl Fn(&str), verbose: bool) {
     let (tx, rx) = channel();
