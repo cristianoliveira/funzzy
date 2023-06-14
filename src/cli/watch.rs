@@ -1,9 +1,9 @@
-use cli::Command;
-use cmd;
-use rules;
-use stdout;
-use watcher;
-use watches::Watches;
+use crate::cli::Command;
+use crate::cmd;
+use crate::rules;
+use crate::stdout;
+use crate::watcher;
+use crate::watches::Watches;
 
 pub const DEFAULT_FILENAME: &str = ".watch.yaml";
 

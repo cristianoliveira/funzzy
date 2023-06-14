@@ -1,5 +1,5 @@
+use crate::stdout;
 use std::process::{Child, Command};
-use stdout;
 
 pub fn execute(command: &String) -> Result<(), String> {
     println!();

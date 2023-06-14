@@ -1,4 +1,4 @@
-use rules::Rules;
+use crate::rules::Rules;
 
 /// # Watches
 ///
@@ -55,7 +55,7 @@ mod tests {
     extern crate yaml_rust;
 
     use super::*;
-    use rules;
+    use crate::rules;
     use std::env;
 
     fn get_absolute_path(path: &str) -> String {

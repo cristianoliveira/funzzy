@@ -1,4 +1,4 @@
-use cli::Command;
+use crate::cli::Command;
 
 use std::fs::File;
 use std::io::Write;
