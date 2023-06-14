@@ -5,7 +5,7 @@ test "it allows a list of commands for the same task (on init)"
 
 echo "
 - name: run complex command
-  run: ['echo first', 'echo second', 'echo {{place}} | sed s/place/{{replace}}/g']
+  run: ['echo first', 'echo second', 'echo {{place}} | sed s/place/replace/g']
   change: \"$WORKDIR/*.txt\"
   run_on_init: true
 " > $WORKDIR/.oninit.yaml
@@ -22,7 +22,7 @@ assert_file_contains "$WORKDIR/output.log" "Watching..."
 
 cleanup
 
-test "it allows a list of commands for the same task (on change)"
+test "it allows a list of commands for the same task on change"
 
 echo "
 - name: run complex command
