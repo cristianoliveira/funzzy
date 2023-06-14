@@ -42,4 +42,4 @@ linter: lint
 
 .PHONY: install
 install: tests ## Install funzzy on your machine
-	GITSHA="$(shell git rev-parse --short HEAD)" cargo install
+	GITSHA="$(shell git rev-parse --short HEAD)" cargo install --path .

@@ -1,9 +1,9 @@
-use cmd::spawn;
-use rules::{self, Rules};
+use crate::cmd::spawn;
+use crate::rules::{self, Rules};
+use crate::stdout;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
-use stdout;
 
 pub struct Worker {
     canceller: Option<Sender<()>>,
