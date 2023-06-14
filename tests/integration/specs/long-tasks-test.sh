@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 source "$HELPERS"
 
-test "process does not die when a one or more commands fail (list)"
+test "it cancels the previous task if a new one is triggered"
 
 "$TEST_DIR"/funzzy \
   --config "$TEST_DIR"/examples/long-task.yaml \
@@ -18,14 +18,17 @@ assert_file_contains "$WORKDIR"/output.log "Watching..."
 
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 2
+assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 3" 0
 
 sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR/output.log" "longtask.sh list 4" 3
+assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 3" 0
 
 sleep 1
 vi +wq tests/integration/workdir/temp.txt -u NONE
 assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 4" 4
+assert_file_occurrencies "$WORKDIR"/output.log "longtask.sh list 3" 0
 
 # Check if there are any zombie processes
 leaks=$(ps -A -ostat,pid,ppid | grep -e '[zZ]')

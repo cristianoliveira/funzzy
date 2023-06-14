@@ -39,6 +39,6 @@ vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE
 assert_file_contains "$WORKDIR/output.log" "echo 100"
 assert_file_contains "$WORKDIR/output.log" "echo 200"
 assert_file_contains "$WORKDIR/output.log" "echo 4000"
-assert_file_content_at "$WORKDIR/output.log" "3333" 13
+assert_file_content_at "$WORKDIR/output.log" "3333" 16
 
 cleanup

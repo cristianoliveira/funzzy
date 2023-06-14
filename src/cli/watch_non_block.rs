@@ -1,6 +1,7 @@
 extern crate notify;
 
 use crate::cli::Command;
+use crate::cmd;
 use crate::stdout;
 use crate::watcher;
 use crate::watches::Watches;
