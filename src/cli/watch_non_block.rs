@@ -41,10 +41,6 @@ impl Command for WatchNonBlockCommand {
         watcher::events(
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
-                    if let Err(err) = cmd::execute(&"clear".to_owned()) {
-                        stdout::error(&format!("failed to clear screen: {:?}", err));
-                    }
-
                     stdout::verbose(
                         &format!("Triggered by change in: {}", file_changed),
                         self.verbose,
