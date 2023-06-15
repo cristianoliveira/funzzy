@@ -1,6 +1,7 @@
 extern crate notify;
 
 use crate::cli::Command;
+use crate::cmd;
 use crate::stdout;
 use crate::watcher;
 use crate::watches::Watches;
@@ -41,6 +42,10 @@ impl Command for WatchNonBlockCommand {
         watcher::events(
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
+                    if let Err(err) = cmd::execute(&"clear".to_owned()) {
+                        stdout::error(&format!("failed to clear screen: {:?}", err));
+                    }
+
                     stdout::verbose(
                         &format!("Triggered by change in: {}", file_changed),
                         self.verbose,
