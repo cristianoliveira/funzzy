@@ -1,6 +1,10 @@
+extern crate nix;
+
 use crate::cmd::spawn;
 use crate::rules::{self, Rules};
 use crate::stdout;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -55,7 +59,10 @@ impl Worker {
                                             verbose,
                                         );
 
-                                        if let Err(err) = child.kill() {
+                                        if let Err(err) = signal::kill(
+                                            Pid::from_raw(child.id() as i32),
+                                            Signal::SIGINT,
+                                        ) {
                                             stdout::error(&format!(
                                                 "failed to kill the task {:?}: {:?}",
                                                 task, err
