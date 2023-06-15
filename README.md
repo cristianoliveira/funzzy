@@ -2,7 +2,9 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](http://entrproject.org/))
 
-Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
+Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)).
+
+See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
 ```yaml
 # .watch.yaml
@@ -14,15 +16,6 @@ Configure execution of different commands using semantic YAML and [Unix shell st
   change: "tests/**"
   ignore: "tests/integration/**"
 
-# Command templates for custom scripts
-- name: run test & linter for single file
-  run: [
-    "npm run lint -- {{filepath}}",
-    "npm test -- $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
-  ]
-  change: ["src/**", "libs/**"]
-  ignore: ["src/**/*.stories.*", "libs/**.log"]
-
 - name: Starwars
   run: telnet towel.blinkenlights.nl
   change: ".watch.yaml"
@@ -31,12 +24,21 @@ Configure execution of different commands using semantic YAML and [Unix shell st
   run: echo "hello on init"
   change: "./*.yaml"
   run_on_init: true
+
+# Command templates for custom scripts
+- name: run test & linter for a single file
+  run: [
+    "npm run lint -- {{filepath}}",
+    "npm test -- $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
+  ]
+  change: ["src/**", "libs/**"]
+  ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 ```
 
 ## Motivation
 
 Create a lightweight watcher to run my tests every time something in my project change.
-So I won't forget to keep my tests passing. Funzzy was made with Rust that is why it consumes almost nothing to run.
+So I won't forget to keep my tests passing. Funzzy was made with Rust which is why it consumes almost nothing to run.
 
 ## Installing
 
@@ -65,11 +67,17 @@ cargo install funzzy
 
 #### From source
 
-Make sure you have installed the follow dependencies:
+Make sure you have installed the following dependencies:
 
 - Rust
+- Cargo
 
-Clone this repo and do:
+Execute:
+```
+cargo install --git https://github.com/cristianoliveira/funzzy.git
+```
+
+Or, clone this repo and run:
 
 ```bash
 make install
@@ -98,13 +106,13 @@ funzzy --target="my task"
 Run with some arbitrary command and stdin
 
 ```bash
-find . -R '**.rs' | funzzy 'cargo build'
+find . -name '*.rs' | funzzy 'cargo build'
 ```
 
 Templates for composing commands
 
 ```bash
-find . -R '**.rs' | funzzy 'cargo lint {{filepath}}'
+find . -name '*.[jt]s' | funzzy 'npx eslint {{filepath}}'
 ```
 
 See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
@@ -118,7 +126,7 @@ This might be due to different causes, the most common issue when using VIM is b
 which causes changes to multiple files on save. See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474).
 For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/long-task.yaml#L5).
 
-For other cases use verbose `funzzy -V` to undersand what is triggering a task to be executed.
+For other cases use the verbose `funzzy -V` to understand what is triggering a task to be executed.
 
 ## Automated tests
 
@@ -138,7 +146,7 @@ make integration
 
 ## Code Style
 
-We use [clippy](https://github.com/Manishearth/rust-clippy) for lintting the funzzy's source code. Make sure you had validated it before commit.
+We use [clippy](https://github.com/Manishearth/rust-clippy) for linting the funzzy's source code. Make sure you had validated it before committing.
 
 ## Contributing
 
