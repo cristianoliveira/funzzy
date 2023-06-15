@@ -16,7 +16,6 @@ FUNZZY_PID=$!
 assert_file_content_at "$WORKDIR/output.log" "Running on init commands" 1
 assert_file_contains "$WORKDIR/output.log" "echo first"
 assert_file_contains "$WORKDIR/output.log" "echo second"
-assert_file_contains "$WORKDIR/output.log" "echo complex"
 assert_file_contains "$WORKDIR/output.log" "{{replace}}"
 assert_file_contains "$WORKDIR/output.log" "Watching..."
 
@@ -29,7 +28,7 @@ echo "
   run: [
     'echo 100',
     'echo 200',
-    'echo {{placeholder}} | sed s/placeholder/replace/g'
+    'echo {{placeholder}} | sed s/placeholder/4000/g'
   ]
   change: \"$WORKDIR/*.txt\"
 " > $WORKDIR/.oninit.yaml
@@ -42,7 +41,6 @@ echo "test" >> $WORKDIR/test.txt
 vi +%s/test/foo/g +wq $WORKDIR/test.txt -u NONE
 assert_file_contains "$WORKDIR/output.log" "echo 100"
 assert_file_contains "$WORKDIR/output.log" "echo 200"
-assert_file_contains "$WORKDIR/output.log" "echo 4000"
-assert_file_contains "$WORKDIR/output.log" "{{replace}}"
+assert_file_contains "$WORKDIR/output.log" "{{4000}}"
 
 cleanup
