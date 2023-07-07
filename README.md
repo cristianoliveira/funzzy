@@ -115,7 +115,14 @@ Templates for composing commands
 find . -name '*.[jt]s' | funzzy 'npx eslint {{filepath}}'
 ```
 
-See more on [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
+Running in "non-block" mode which cancels the currently running task once something changes
+super useful if you need to run a long task and don't want to wait for it to finish after a change in the code.
+See: [long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/integration/specs/long-tasks-test.sh)
+```bash
+funzzy --non-block
+```
+
+See more in [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
 ## Troubleshooting
