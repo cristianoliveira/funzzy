@@ -1,11 +1,14 @@
 # funzzy [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](https://github.com/eradman/entr))
+Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](https://github.com/eradman/entr)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
-Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)).
+Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
-See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
-
+As simple as
+```bash
+find . -name '*.rs' | funzzy 'cargo build'
+```
+Or complicated as
 ```yaml
 # .watch.yaml
 # list here all the events and the commands that it should execute
