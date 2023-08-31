@@ -6,7 +6,7 @@ Configure execution of different commands using semantic YAML and [Unix shell st
 
 As simple as
 ```bash
-find . -name '*.rs' | funzzy 'cargo build'
+find . -name '*.ts' | funzzy 'npx prettier .'
 ```
 Or complicated as
 ```yaml
