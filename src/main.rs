@@ -175,11 +175,11 @@ fn from_stdin() -> Result<String, String> {
     let has_input = std::sync::Arc::new(std::sync::Mutex::new(false));
     let clone_has_input = has_input.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
         let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
-            stdout::info("Timed out waiting for input after 5 seconds");
+            stdout::info("Timed out waiting for input after 1 seconds");
             std::process::exit(0);
         }
     });
