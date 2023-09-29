@@ -1,4 +1,4 @@
-# funzzy [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
+# funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](https://github.com/eradman/entr)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
@@ -98,31 +98,33 @@ Change the YAML as you want. Then run:
 
 ```bash
 funzzy
+# or use the short version
+fzz
 ```
 
 Filtering task by target:
 
 ```bash
-funzzy --target="my task"
+fzz --target="my task"
 ```
 
 Run with some arbitrary command and stdin
 
 ```bash
-find . -name '*.rs' | funzzy 'cargo build'
+find . -name '*.rs' | fzz 'cargo build'
 ```
 
 Templates for composing commands
 
 ```bash
-find . -name '*.[jt]s' | funzzy 'npx eslint {{filepath}}'
+find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
 ```
 
 Running in "non-block" mode which cancels the currently running task once something changes
 super useful if you need to run a long task and don't want to wait for it to finish after a change in the code.
 See: [long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/integration/specs/long-tasks-test.sh)
 ```bash
-funzzy --non-block
+fzz --non-block
 ```
 
 See more in [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
