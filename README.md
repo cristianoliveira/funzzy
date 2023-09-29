@@ -32,7 +32,7 @@ Or complicated as
 - name: run test & linter for a single file
   run: [
     "npm run lint -- {{filepath}}",
-    "npm test -- $(echo '{{filepath}}' | sed -r 's/\.(j|t)sx?//')"
+    "npm test -- $(echo '{{filepath}}' | sed -r s/.(j|t)sx?//)"
   ]
   change: ["src/**", "libs/**"]
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
