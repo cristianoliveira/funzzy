@@ -1,6 +1,6 @@
 [package]
 name = "funzzy"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "Yet another fancy watcher inspired by entr."
 license = "MIT"
@@ -17,3 +17,12 @@ glob="0.2.11"
 notify-debouncer-mini = "0.3.0"
 nix = "0.26.2"
 #clippy = "*"
+
+[[bin]]
+name = "funzzy"
+path = "src/main.rs"
+
+# alias
+[[bin]]
+name = "fzz"
+path = "src/main.rs"

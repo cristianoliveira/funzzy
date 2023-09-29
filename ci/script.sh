@@ -9,9 +9,11 @@ cargo build --target $TARGET --release
 
 ARTIFACT="funzzy-${RELEASE_TAG:?"Missing release tag"}-${TARGET}.tar.gz"
 
-cp target/$TARGET/release/funzzy funzzy
+mkdir -p pkg
+cp target/$TARGET/release/funzzy pkg
+cp target/$TARGET/release/fzz pkg
 
-tar czf "$ARTIFACT" funzzy
+tar czf "$ARTIFACT" pkg
 
 # sanity check the file type
-file funzzy
+file pkg/funzzy
