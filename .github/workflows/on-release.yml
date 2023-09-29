@@ -9,6 +9,7 @@ jobs:
   build_release_osx:
     env:
       TARGET: x86_64-apple-darwin
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
 
     runs-on: macos-latest
 
@@ -17,9 +18,6 @@ jobs:
 
       - name: Create artifacts folder
         run: mkdir artifacts
-
-      - name: Release info
-        run: echo "RELEASE_TAG=${GITHUB_REF_NAME//(\/|\.)/_}" >> $GITHUB_ENV
 
       - name: Create artifacts for darwin
         run: sh ci/script.sh
@@ -36,7 +34,7 @@ jobs:
   build_release_linux:
     env:
       TARGET: x86_64-unknown-linux-gnu
-      RELEASE_TAG: ${{ github.ref }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
 
     runs-on: ubuntu-latest
 
@@ -45,9 +43,6 @@ jobs:
 
       - name: Create artifacts folder
         run: mkdir artifacts
-
-      - name: Release info
-        run: echo "RELEASE_TAG=${GITHUB_REF_NAME//(\/|\.)/_}" >> $GITHUB_ENV
 
       - name: Create artifacts for linux
         run: sh ci/script.sh
