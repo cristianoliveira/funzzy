@@ -1,4 +1,4 @@
-VERSION=$(cat Cargo.toml | grep version | awk -F\" '{print $2}')
+VERSION="v$(cat Cargo.toml | grep version | awk -F\" '{print $2}')"
 
 echo "Installing funzzy $VERSION"
 
