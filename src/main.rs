@@ -28,6 +28,9 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const USAGE: &str = "
 Funzzy the watcher.
 
+Alias:
+  fzz -> funzzy
+
 Usage:
   funzzy [options]
   funzzy init
