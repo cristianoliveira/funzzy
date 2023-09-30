@@ -6,11 +6,14 @@ pub fn extract_strings(yaml: &Yaml) -> Vec<String> {
     match yaml.clone() {
         Yaml::Array(ref items) => items
             .iter()
-            .map(|i| String::from(i.as_str().unwrap()))
+            .map(|i| String::from(i.as_str().unwrap_or_else(|| "_invalid_value_")))
             .collect(),
         Yaml::String(ref item) => vec![String::from(item.as_str())],
         Yaml::BadValue => vec![],
-        _ => panic!("Unkown format. Please review the yaml"),
+        unknown => {
+            println!("Error: config file has an unknown type. {:?}", unknown);
+            panic!("Interrupted due the previou error.")
+        }
     }
 }
 
@@ -25,7 +28,7 @@ pub fn extract_bool(yaml: &Yaml) -> bool {
 
 pub fn validate(yaml: &Yaml, key: &str) {
     if yaml[key].is_badvalue() {
-        println!("File has a bad format. (Key {} not found)", key);
-        panic!("Panicate due the previou error.")
+        println!("Config file has an invalid format. (Key {} was not found)", key);
+        panic!("Interrupted due the previou error.")
     }
 }

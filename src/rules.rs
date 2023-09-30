@@ -89,15 +89,31 @@ pub fn template(commands: Vec<String>, filepath: &str) -> Vec<String> {
 }
 
 pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
-    let items = YamlLoader::load_from_str(file_content).unwrap();
+    let items = match YamlLoader::load_from_str(file_content) {
+        Ok(val) => val,
+        Err(err) => {
+            return Err(format!(
+                "Found an invalid yaml format {}",
+                err
+            ));
+        }
+    };
     match items[0] {
         Yaml::Array(ref items) => Ok(items.iter().map(Rules::from).collect()),
         _ => Err("You must have at last one item in the yaml.".to_owned()),
     }
 }
 
-pub fn from_string(patterns: String, command: String) -> Vec<Rules> {
-    let current_dir = std::env::current_dir().expect("Cannot get current directory");
+pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, String> {
+    let current_dir = match std::env::current_dir() {
+        Ok(val) => val,
+        Err(err) => {
+            return Err(format!(
+                "Failed to get current directory {}",
+                err
+            ));
+        }
+    };
 
     let watches = patterns
         .lines()
@@ -115,42 +131,53 @@ pub fn from_string(patterns: String, command: String) -> Vec<Rules> {
             };
 
             if full_path.is_dir() {
-                return full_path
-                    .join("**")
-                    .to_str()
-                    .unwrap_or_else(|| panic!("Cannot convert {:?} to path with wildcard", line))
-                    .to_owned();
+                let full_path_as_str = match full_path.join("**").to_str() {
+                    Some(val) => val.to_owned(),
+                    None => {
+                        println!("Warning: Was not possible to convert {} to absolute path", line);
+
+                        String::from("")
+                    }
+                };
+
+                return full_path_as_str;
             }
 
-            full_path
-                .to_str()
-                .unwrap_or_else(|| panic!("Cannot convert {:?} to absolute path", line))
-                .to_owned()
+            match full_path.to_str() {
+                Some(val) => val.to_owned(),
+                None => {
+                    println!("Warning: Was not possible to convert {} to absolute path", line);
+
+                    String::from("")
+                }
+            }
         })
         .collect::<Vec<String>>();
 
     stdout::info(&format!("watching patterns \n {}", watches.join("\n ")));
 
-    vec![Rules::new(
+    Ok(vec![Rules::new(
         "unnamed".to_owned(),
         vec![command],
         watches,
         vec![],
         false,
-    )]
+    )])
 }
 
 pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
     match File::open(filename) {
         Ok(mut file) => {
             let mut content = String::new();
-            file.read_to_string(&mut content)
-                .unwrap_or_else(|_| panic!("Cannot read file {}", filename));
 
-            match from_yaml(&content) {
-                Err(err) => Err(err),
-                rules => rules,
+            if let Err(err) = file.read_to_string(&mut content) {
+                return Err(format!(
+                    "Invalid config file format '{}'. Details: {}",
+                    filename, err
+                ));
             }
+
+            return from_yaml(&content);
         }
 
         Err(err) => Err(format!(
@@ -327,7 +354,7 @@ mod tests {
     #[test]
     fn it_does_not_filters_empty_or_one_character_path() {
         let content = "./foo\n./bar\n.\n./baz\n";
-        let rules = from_string(String::from(content), String::from("cargo test"));
+        let rules = from_string(String::from(content), String::from("cargo test")).unwrap();
         assert!(rules[0].watch(&get_absolute_path("foo")));
         assert!(rules[0].watch(&get_absolute_path("bar")));
         assert!(rules[0].watch(&get_absolute_path("baz")));

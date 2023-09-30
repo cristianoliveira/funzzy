@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn it_loads_from_args() {
         let args = String::from("cargo build");
-        let watches = Watches::new(rules::from_string(".".to_owned(), args));
+        let watches = Watches::new(rules::from_string(".".to_owned(), args).unwrap());
 
         assert!(watches.watch(&get_absolute_path("src/main.rs")).is_some());
         assert!(watches.watch(&get_absolute_path("test/main.rs")).is_some());
