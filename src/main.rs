@@ -94,13 +94,18 @@ fn main() {
                         show("The list of files received is empty");
                     }
 
+                    let watch_rules = match rules::from_string(content, arg_command) {
+                        Ok(rules) => rules,
+                        Err(err) => error("Failed to get rules from stdin", err),
+                    };
+
                     execute_watch_command(
-                        Watches::new(rules::from_string(content, arg_command)),
+                        Watches::new(watch_rules),
                         args.flag_n,
                         args.flag_V,
                     );
                 }
-                Err(err) => error("Error while greading stdin", err),
+                Err(err) => error("Failed to read stdin", err),
             };
         }
 
@@ -148,7 +153,7 @@ fn main() {
                     }
                 }
 
-                Err(err) => error("Error while reading config file", err),
+                Err(err) => error("Failed to read config file", err),
             }
         }
     }
@@ -175,11 +180,11 @@ fn from_stdin() -> Result<String, String> {
     let has_input = std::sync::Arc::new(std::sync::Mutex::new(false));
     let clone_has_input = has_input.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::sleep(std::time::Duration::from_secs(1));
 
         let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
-            stdout::info("Timed out waiting for input after 5 seconds");
+            stdout::info("Timed out waiting for input after 1 seconds");
             std::process::exit(0);
         }
     });
@@ -187,7 +192,13 @@ fn from_stdin() -> Result<String, String> {
     let mut buffer = String::new();
     match stdin.lock().read_to_string(&mut buffer) {
         Ok(bytes) => {
-            let mut has_input_mutex = has_input.lock().unwrap();
+            let mut has_input_mutex = match has_input.lock() {
+                Ok(mutex) => mutex,
+                Err(err) =>  {
+                    return Err(format!("Could not lock stdin mutex {}", err));
+                }
+            };
+
             *has_input_mutex = bytes > 0;
             if bytes > 0 {
                 Ok(buffer)
@@ -213,6 +224,8 @@ fn show(text: &str) -> ! {
 }
 
 fn error(text: &str, err: String) -> ! {
-    println!("{} cause: {}", text, err);
+    println!("Execution failed");
+    println!("  {}", text);
+    println!("  {}", err);
     std::process::exit(1);
 }
