@@ -34,5 +34,5 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
           asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
-          tag: ${{ github.ref }}
+          tag: v1.1.1
           overwrite: true
