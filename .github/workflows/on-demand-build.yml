@@ -1,7 +1,9 @@
-name: Release artifacts
+name: Release artifacts for arm7
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["master"]
 
 jobs:
 
