@@ -18,6 +18,22 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - uses: uraimo/run-on-arch-action@v2
+        name: Run commands
+        id: runcmd
+        with:
+          arch: armv7
+          distro: ubuntu18.04
+
+          # Not required, but speeds up builds by storing container images in
+          # a GitHub package registry.
+          githubToken: ${{ github.token }}
+
+          # Set an output parameter `uname` for use in subsequent steps
+          run: |
+            uname -a
+            echo ::set-output name=uname::$(uname -a)
+
       - name: Install gcc tools
         run: 
           sudo apt install gcc-arm-linux-gnueabihf
