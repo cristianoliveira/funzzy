@@ -1,0 +1,36 @@
+name: Release artifacts
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  build_release_osx:
+    env:
+      TARGET: armv7-unknown-linux-gnueabihf
+      RELEASE_TAG: v1.1.1
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: /usr/bin/arm-linux-gnueabihf-gcc
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install gcc tools
+        run: 
+          apt install gcc-arm-linux-gnueabihf
+
+      - name: Create artifacts folder
+        run: mkdir artifacts
+
+      - name: Create artifacts for darwin
+        run: sh ci/script.sh
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
+          asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
+          tag: ${{ github.ref }}
+          overwrite: true
