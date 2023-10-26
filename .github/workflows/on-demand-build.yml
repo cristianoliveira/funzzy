@@ -2,12 +2,12 @@ name: Release artifacts for arm7
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches: ["master"]
 
 jobs:
 
-  build_release_osx:
+  build_arm:
     env:
       TARGET: armv7-unknown-linux-gnueabihf
       RELEASE_TAG: v1.1.1
