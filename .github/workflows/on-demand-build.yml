@@ -20,7 +20,7 @@ jobs:
 
       - name: Install gcc tools
         run: 
-          apt install gcc-arm-linux-gnueabihf
+          sudo apt install gcc-arm-linux-gnueabihf
 
       - name: Create artifacts folder
         run: mkdir artifacts
