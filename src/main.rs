@@ -60,7 +60,6 @@ pub struct Args {
     pub cmd_watch: bool,
 
     pub arg_command: String,
-    pub arg_interval: u64,
 
     // options
     pub flag_config: String,
