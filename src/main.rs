@@ -35,11 +35,10 @@ Usage:
   funzzy [options]
   funzzy init
   funzzy watch [<command>] [options]
-  funzzy run <command> <interval> (*deprecated*)
   funzzy <command> [options]
 
 Commands:
-    init                Create a new funzzy.yml file.
+    init                Create a new '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
 
 Options:
@@ -61,7 +60,6 @@ pub struct Args {
     pub cmd_watch: bool,
 
     pub arg_command: String,
-    pub arg_interval: u64,
 
     // options
     pub flag_config: String,
