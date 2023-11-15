@@ -35,11 +35,10 @@ Usage:
   funzzy [options]
   funzzy init
   funzzy watch [<command>] [options]
-  funzzy run <command> <interval> (*deprecated*)
   funzzy <command> [options]
 
 Commands:
-    init                Create a new funzzy.yml file.
+    init                Create a new '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
 
 Options:
