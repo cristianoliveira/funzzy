@@ -94,7 +94,7 @@ Initializing with boilerplate:
 funzzy init
 ```
 
-Change the YAML as you want. Then run:
+Change the config file `.watch.yaml` as you want. Then run:
 
 ```bash
 funzzy
