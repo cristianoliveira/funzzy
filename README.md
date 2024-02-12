@@ -2,12 +2,13 @@
 
 Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](https://github.com/eradman/entr)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
-Configure execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
+Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
 As simple as
 ```bash
-find . -name '*.ts' | funzzy 'npx prettier .'
+find . -name '*.ts' | funzzy 'npx eslint .'
 ```
+
 Or complicated as
 ```yaml
 # .watch.yaml
