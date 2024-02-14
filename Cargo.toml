@@ -26,3 +26,6 @@ path = "src/main.rs"
 [[bin]]
 name = "fzz"
 path = "src/main.rs"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-none-linux-gnueabihf-gcc"
