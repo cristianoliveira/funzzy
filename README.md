@@ -103,10 +103,18 @@ funzzy
 fzz
 ```
 
-Filtering task by target:
+### Options
+
+Use a different config file:
 
 ```bash
-fzz --target="my task"
+fzz -c ~/watch.yaml
+```
+
+Filtering task by target (contais in task name):
+
+```bash
+fzz -t "my task"
 ```
 
 Run with some arbitrary command and stdin
