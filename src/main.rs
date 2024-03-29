@@ -106,50 +106,54 @@ fn main() {
         }
 
         _ => {
-            let filename = if args.flag_config.is_empty() {
-                cli::watch::DEFAULT_FILENAME
+            let rules = if args.flag_config.is_empty() {
+                let default_filename = cli::watch::DEFAULT_FILENAME;
+                match rules::from_file(default_filename) {
+                    Ok(rules) => rules,
+                    Err(err) => match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
+                        Ok(rules) => rules,
+                        Err(_) => error("Failed to read default config file", err),
+                    },
+                }
             } else {
-                &args.flag_config
+                match rules::from_file(&args.flag_config) {
+                    Ok(rules) => rules,
+                    Err(err) => error("Failed to read config file", err),
+                }
             };
 
-            match rules::from_file(filename) {
-                Ok(rules) => {
-                    if !args.flag_target.is_empty() {
-                        let filtered = rules
+            if !args.flag_target.is_empty() {
+                let filtered = rules
+                    .iter()
+                    .cloned()
+                    .filter(|r| r.name.contains(&args.flag_target))
+                    .collect::<Vec<rules::Rules>>();
+
+                if filtered.is_empty() {
+                    let mut output = String::new();
+                    output.push_str(&format!(
+                            "No target found for '{}'\n\n",
+                            args.flag_target
+                            ));
+                    output.push_str("Available targets:\n");
+                    output.push_str(&format!(
+                            "  {}\n",
+                            rules
                             .iter()
                             .cloned()
-                            .filter(|r| r.name.contains(&args.flag_target))
-                            .collect::<Vec<rules::Rules>>();
-
-                        if filtered.is_empty() {
-                            let mut output = String::new();
-                            output.push_str(&format!(
-                                "No target found for '{}'\n\n",
-                                args.flag_target
-                            ));
-                            output.push_str("Available targets:\n");
-                            output.push_str(&format!(
-                                "  {}\n",
-                                rules
-                                    .iter()
-                                    .cloned()
-                                    .map(|r| r.name)
-                                    .collect::<Vec<String>>()
-                                    .join("\n  ")
+                            .map(|r| r.name)
+                            .collect::<Vec<String>>()
+                            .join("\n  ")
                             ));
 
-                            stdout::info(output.as_str());
+                    stdout::info(output.as_str());
 
-                            show("Finished there is no task to run.");
-                        } else {
-                            execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
-                        }
-                    } else {
-                        execute_watch_command(Watches::new(rules), args.flag_n, args.flag_V);
-                    }
+                    show("Finished there is no task to run.");
+                } else {
+                    execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
                 }
-
-                Err(err) => error("Failed to read config file", err),
+            } else {
+                execute_watch_command(Watches::new(rules), args.flag_n, args.flag_V);
             }
         }
     }

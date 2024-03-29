@@ -11,7 +11,7 @@ find . -name '*.ts' | funzzy 'npx eslint .'
 
 Or complicated as
 ```yaml
-# .watch.yaml
+# .watch.yaml (or .watch.yml)
 # list here all the events and the commands that it should execute
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 
