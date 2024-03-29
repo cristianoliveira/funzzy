@@ -8,7 +8,7 @@ tests: ## Execute all the tests
 
 .PHONY: build
 build: tests ## Execute all the tests and build funzzy binary
-	@cargo test
+	@cargo build --release
 
 .PHONY: integration-cleanup
 integration-cleanup:
