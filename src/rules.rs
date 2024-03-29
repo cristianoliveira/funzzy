@@ -89,15 +89,20 @@ pub fn template(commands: Vec<String>, filepath: &str) -> Vec<String> {
 }
 
 pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
+    println!("@@@@@@@@@ filecontent  {:?}", file_content);
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
+            println!("@@@@@@@@@ err {:?}", err);
             return Err(format!(
                 "Found an invalid yaml format {}",
                 err
             ));
         }
     };
+
+    println!("@@@@@@@@@ items {:?}", items);
+    
     match items[0] {
         Yaml::Array(ref items) => Ok(items.iter().map(Rules::from).collect()),
         _ => Err("You must have at last one item in the yaml.".to_owned()),
