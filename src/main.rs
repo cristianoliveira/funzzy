@@ -42,14 +42,13 @@ Commands:
     watch               Watch for file changes and execute a command.
 
 Options:
-  <command>            Run an arbitrary command for current folder.
-  --config=<cfgfile>   Use given config file.
-  --target=<task>      Execute only the given task target.
-  -n --non-block       Execute tasks and cancel them if a new event is received.
-  -h --help            Shows this message.
-  -v --version         Shows version.
-  -V                   Use verbose output.
-  -c                   Execute given command for current folder.
+  <command>               Run an arbitrary command for current folder.
+  -c --config=<cfgfile>   Use given config file.
+  -t --target=<task>      Execute only the given task target.
+  -n --non-block          Execute tasks and cancel them if a new event is received.
+  -h --help               Shows this message.
+  -v --version            Shows version.
+  -V                      Use verbose output.
 ";
 
 #[allow(non_snake_case)]
@@ -66,7 +65,6 @@ pub struct Args {
     pub flag_target: String,
 
     pub flag_n: bool,
-    pub flag_c: bool,
     pub flag_h: bool,
     pub flag_v: bool,
     pub flag_V: bool,
