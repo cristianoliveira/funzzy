@@ -94,11 +94,23 @@ fn main() {
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
         Args { cmd_check: true, .. } => {
-            match rules::from_file(config_file) {
-                Ok(rules) => { rules::print_matches(rules, &args.arg_path); }
+            let rules = if args.flag_config.is_empty() {
+                let default_filename = cli::watch::DEFAULT_FILENAME;
+                match rules::from_file(default_filename) {
+                    Ok(rules) => rules,
+                    Err(err) => match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
+                        Ok(rules) => rules,
+                        Err(_) => error("Failed to read default config file", err),
+                    },
+                }
+            } else {
+                match rules::from_file(&args.flag_config) {
+                    Ok(rules) => rules,
+                    Err(err) => error("Failed to read config file", err),
+                }
+            };
 
-                Err(err) => error("Failed to read config file", err),
-            }
+            rules::print_matches(rules, &args.arg_path);
         }
 
         Args { arg_command, .. } if !arg_command.is_empty() => {
