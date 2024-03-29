@@ -6,6 +6,7 @@ description = "Yet another fancy watcher inspired by entr."
 license = "MIT"
 repository = "https://github.com/cristianoliveira/funzzy"
 edition = "2021"
+default-run = "funzzy" # the binary to run when `cargo run` is called
 
 [dependencies]
 docopt = "1"
