@@ -35,11 +35,13 @@ Usage:
   funzzy [options]
   funzzy init
   funzzy watch [<command>] [options]
+  funzzy check <path> [options]
   funzzy <command> [options]
 
 Commands:
     init                Create a new '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
+    check               Given a path it checks which rules match.
 
 Options:
   <command>               Run an arbitrary command for current folder.
@@ -57,8 +59,10 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
+    pub cmd_check: bool,
 
     pub arg_command: String,
+    pub arg_path: String,
 
     // options
     pub flag_config: String,
@@ -75,6 +79,12 @@ fn main() {
         .and_then(|d| d.deserialize())
         .unwrap_or_else(|e| e.exit());
 
+    let config_file = if args.flag_config.is_empty() {
+        cli::watch::DEFAULT_FILENAME
+    } else {
+        &args.flag_config
+    };
+
     match args {
         // Metainfo
         Args { flag_v: true, .. } => show(get_version().as_str()),
@@ -82,6 +92,14 @@ fn main() {
 
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
+
+        Args { cmd_check: true, .. } => {
+            match rules::from_file(config_file) {
+                Ok(rules) => { rules::print_matches(rules, &args.arg_path); }
+
+                Err(err) => error("Failed to read config file", err),
+            }
+        }
 
         Args { arg_command, .. } if !arg_command.is_empty() => {
             match from_stdin() {
