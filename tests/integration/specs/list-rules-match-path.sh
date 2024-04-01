@@ -22,7 +22,7 @@ echo "
   ]
 " > $WORKDIR/.check.yaml
 
-$TEST_DIR/funzzy check "$WORKDIR/src/foo.txt" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
+$TEST_DIR/funzzy rules -m "$WORKDIR/src/foo.txt" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
 
 wait_for_file "$WORKDIR/output.log"
 
@@ -34,7 +34,7 @@ assert_file_occurrencies "$WORKDIR/output.log" "3rd task" 1
 
 echo "" > "$WORKDIR"/output.log
 
-$TEST_DIR/funzzy check "$WORKDIR/src/foo.log" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
+$TEST_DIR/funzzy rules -m "$WORKDIR/src/foo.log" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
 
 cat "$WORKDIR"/output.log
 
@@ -44,7 +44,7 @@ assert_file_occurrencies "$WORKDIR/output.log" "3rd task" 1
 
 echo "" > "$WORKDIR"/output.log
 
-$TEST_DIR/funzzy check "$WORKDIR/src/test.log" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
+$TEST_DIR/funzzy rules -m "$WORKDIR/src/test.log" -c $WORKDIR/.check.yaml >> $WORKDIR/output.log
 
 cat "$WORKDIR"/output.log
 

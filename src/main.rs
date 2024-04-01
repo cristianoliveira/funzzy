@@ -35,16 +35,17 @@ Usage:
   funzzy [options]
   funzzy init
   funzzy watch [<command>] [options]
-  funzzy check <path> [options]
+  funzzy rules [--match=<path>] [--config=<cfgfile>]
   funzzy <command> [options]
 
 Commands:
     init                Create a new '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
-    check               Given a path it checks which rules match.
+    rules               List all rules available in the config file.
 
 Options:
   <command>               Run an arbitrary command for current folder.
+  -m --match=<path>       Check which rules match the given path.
   -c --config=<cfgfile>   Use given config file.
   -t --target=<task>      Execute only the given task target.
   -n --non-block          Execute tasks and cancel them if a new event is received.
@@ -59,14 +60,14 @@ pub struct Args {
     // comand
     pub cmd_init: bool,
     pub cmd_watch: bool,
-    pub cmd_check: bool,
+    pub cmd_rules: bool,
 
     pub arg_command: String,
-    pub arg_path: String,
 
     // options
     pub flag_config: String,
     pub flag_target: String,
+    pub flag_match: String,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -93,7 +94,7 @@ fn main() {
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        Args { cmd_check: true, .. } => {
+        Args { cmd_rules: true, .. } if !args.flag_match.is_empty() => {
             let rules = if args.flag_config.is_empty() {
                 let default_filename = cli::watch::DEFAULT_FILENAME;
                 match rules::from_file(default_filename) {
@@ -110,7 +111,27 @@ fn main() {
                 }
             };
 
-            rules::print_matches(rules, &args.arg_path);
+            rules::print_matches(rules, &args.flag_match);
+        }
+
+        Args { cmd_rules: true, .. } => {
+            let rules = if args.flag_config.is_empty() {
+                let default_filename = cli::watch::DEFAULT_FILENAME;
+                match rules::from_file(default_filename) {
+                    Ok(rules) => rules,
+                    Err(err) => match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
+                        Ok(rules) => rules,
+                        Err(_) => error("Failed to read default config file", err),
+                    },
+                }
+            } else {
+                match rules::from_file(&args.flag_config) {
+                    Ok(rules) => rules,
+                    Err(err) => error("Failed to read config file", err),
+                }
+            };
+
+            rules::print_rules(rules);
         }
 
         Args { arg_command, .. } if !arg_command.is_empty() => {
@@ -136,6 +157,7 @@ fn main() {
         }
 
         _ => {
+
             let rules = if args.flag_config.is_empty() {
                 let default_filename = cli::watch::DEFAULT_FILENAME;
                 match rules::from_file(default_filename) {

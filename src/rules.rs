@@ -188,6 +188,26 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
     }
 }
 
+pub fn print_rules(rules: Vec<Rules>) {
+    let template = &r"
+
+Available Rules
+{{#available}}
+";
+    
+    let available = rules
+        .iter()
+        .cloned()
+        .map(|r| format!("  - {}", r.name))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let output = template.replace("{{#available}}", &available);
+
+    stdout::info(output.as_str());
+
+}
+
 pub fn print_matches(rules: Vec<Rules>, path: &str) {
     let template = &r"
 
