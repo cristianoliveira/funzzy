@@ -46,7 +46,7 @@ So I won't forget to keep my tests passing. Funzzy was made with Rust which is w
 
 ## Installing
 
-- OSX:
+### OSX:
 
 ```bash
 brew tap cristianoliveira/tap
@@ -54,13 +54,18 @@ brew update
 brew install funzzy
 ```
 
-- Linux:
+### Linux:
 
 ```bash
 curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
 ```
 
-- Nix
+You can specify the versions:
+```bash
+curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | bash - 1.0.0
+```
+
+### Nix
   
 ```bash
 nix-env -iA nixpkgs.funzzy
@@ -77,7 +82,7 @@ or, if you use `shell.nix`:
   };
 ```
 
-- With Cargo
+### With Cargo
 
 ```bash
 cargo install funzzy
