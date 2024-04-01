@@ -19,7 +19,7 @@ integration-cleanup:
 
 .PHONY: integration ## Exectute integration tests
 integration: integration-cleanup
-	@bash tests/integration/runner.sh
+	@bash tests/integration/runner.sh $(testpath)
 
 .PHONY: integration-tail
 integration-tail:
