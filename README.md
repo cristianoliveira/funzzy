@@ -60,12 +60,6 @@ brew install funzzy
 curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
 ```
 
-- With Cargo
-
-```bash
-cargo install funzzy
-```
-
 - Nix
   
 ```bash
@@ -83,10 +77,16 @@ or, if you use `shell.nix`:
   };
 ```
 
+- With Cargo
+
+```bash
+cargo install funzzy
+```
+
 \*Make sure you have `$HOME/.cargo/bin` in your PATH
 `export $PATH:$HOME/.cargo/bin`
 
-#### From source
+- From source
 
 Make sure you have installed the following dependencies:
 
