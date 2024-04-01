@@ -198,7 +198,7 @@ Available Rules
     let available = rules
         .iter()
         .cloned()
-        .map(|r| format!("  - {}", r.name))
+        .map(|r| format!("  -{}", r.name))
         .collect::<Vec<String>>()
         .join("\n");
 
@@ -211,10 +211,12 @@ Available Rules
 pub fn print_matches(rules: Vec<Rules>, path: &str) {
     let template = &r"
 
-Matches for this path
+Matches - count: {{#count}}
+
 {{#matches}}
 
 Available Rules
+
 {{#available}}
 ";
 
@@ -222,7 +224,7 @@ Available Rules
     let available = rules
         .iter()
         .cloned()
-        .map(|r| format!("  - {}", r.name))
+        .map(|r| format!("  -{}", r.name))
         .collect::<Vec<String>>()
         .join("\n");
 
@@ -234,11 +236,13 @@ Available Rules
         .filter(|r| !r.ignore(path) && r.watch(path))
         .collect::<Vec<Rules>>();
 
-    let output = with_available.replace("{{#matches}}", 
+    let with_count = with_available.replace("{{#count}}", &matches.len().to_string());
+
+    let output = with_count.replace("{{#matches}}", 
                                         &matches
                                         .iter()
                                         .filter(|r| !r.ignore(path) && r.watch(path))
-                                        .map(|r| format!("  - {}", r.name))
+                                        .map(|r| format!("  -{}", r.name))
                                         .collect::<Vec<String>>()
                                         .join("\n"));
 
