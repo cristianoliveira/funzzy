@@ -66,6 +66,23 @@ curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-i
 cargo install funzzy
 ```
 
+- Nix
+  
+```bash
+nix-env -iA nixpkgs.funzzy
+```
+
+or, if you use `shell.nix`:
+  
+  ```nix
+{ pkgs ? import <nixpkgs> {} }:
+  pkgs.mkShell {
+    buildInputs = [
+      pkgs.funzzy
+    ];
+  };
+```
+
 \*Make sure you have `$HOME/.cargo/bin` in your PATH
 `export $PATH:$HOME/.cargo/bin`
 
