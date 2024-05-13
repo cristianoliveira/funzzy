@@ -18,7 +18,7 @@
   ignore: "src/**/*log*"
 
 - name: run integration
-  run: "make integration"
+  run: "make testpath={{filepath}} integration"
   change: "tests/integration/**/*.sh"
   ignore: [
     "tests/integration/workdir/**",
