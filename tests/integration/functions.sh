@@ -59,7 +59,7 @@ function assert_file_occurrencies() {
   for i in {1..5}
   do
     occurrencies=$(grep -o "$2" "$1" | wc -l)
-    echo  "occurrencies: $occurrencies"
+    echo  "occurrencies of '$2': $occurrencies"
     if [ $occurrencies -eq $3 ]; then
       success=1
       break

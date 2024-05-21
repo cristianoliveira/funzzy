@@ -188,6 +188,67 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
     }
 }
 
+pub fn print_rules(rules: Vec<Rules>) {
+    let template = &r"
+
+Available Rules
+{{#available}}
+";
+    
+    let available = rules
+        .iter()
+        .cloned()
+        .map(|r| format!("  -{}", r.name))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let output = template.replace("{{#available}}", &available);
+
+    stdout::info(output.as_str());
+
+}
+
+pub fn print_matches(rules: Vec<Rules>, path: &str) {
+    let template = &r"
+
+Matches - count: {{#count}}
+
+{{#matches}}
+
+Available Rules
+
+{{#available}}
+";
+
+
+    let available = rules
+        .iter()
+        .cloned()
+        .map(|r| format!("  -{}", r.name))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    let with_available = template.replace("{{#available}}", &available);
+
+    let matches = rules
+        .iter()
+        .cloned()
+        .filter(|r| !r.ignore(path) && r.watch(path))
+        .collect::<Vec<Rules>>();
+
+    let with_count = with_available.replace("{{#count}}", &matches.len().to_string());
+
+    let output = with_count.replace("{{#matches}}", 
+                                        &matches
+                                        .iter()
+                                        .filter(|r| !r.ignore(path) && r.watch(path))
+                                        .map(|r| format!("  -{}", r.name))
+                                        .collect::<Vec<String>>()
+                                        .join("\n"));
+
+    stdout::info(output.as_str());
+}
+
 fn pattern(pattern: &str) -> Pattern {
     Pattern::new(&format!("**/{}", pattern)).expect("Pattern error.")
 }
