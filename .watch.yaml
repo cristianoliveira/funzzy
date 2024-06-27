@@ -13,7 +13,7 @@
   change: "src/**"
 
 - name: run formatter (tag:quick)
-  run: "cargo fmt"
+  run: "cargo fmt -- {{filepath}}"
   change: "src/**"
   ignore: "src/**/*log*"
 
