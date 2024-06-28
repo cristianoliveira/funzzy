@@ -1,0 +1,4 @@
+- name: run a list of commands
+  run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
+  change: "examples/workdir/**/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"

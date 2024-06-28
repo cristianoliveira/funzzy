@@ -1,5 +1,19 @@
 - name: run a list of watches
   run: "echo complex | sed s/complex/third/g"
-  change: ["src/**", "tests/**"]
-  ignore: ["tests/integration/**"]
+  change: 
+    - "src/**"
+    - "tests/**"
+    - "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+  run_on_init: true
+
+- name: tasks with exit 1
+  run: 
+    - 'echo before'
+    - 'exit 1'
+    - 'cat foo/bar/baz'
+    - 'exit 125'
+    - 'echo after'
+  change: ["src/**", "tests/**", "examples/workdir/*.txt"]
+  ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true
