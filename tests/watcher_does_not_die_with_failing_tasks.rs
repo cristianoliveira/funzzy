@@ -7,37 +7,8 @@ use std::{
     time::Duration,
 };
 
-struct ScopeCall<F: FnMut()> {
-    c: F,
-}
-impl<F: FnMut()> Drop for ScopeCall<F> {
-    fn drop(&mut self) {
-        println!("Cleaning up...");
-        (self.c)();
-    }
-}
-
-macro_rules! defer {
-    ($e:expr) => {
-        let _scope_call = ScopeCall {
-            c: || -> () {
-                $e;
-            },
-        };
-    };
-}
-
-macro_rules! wait_until {
-    ($e:expr) => {
-        for _ in 0..100 {
-            let result = $e;
-            if result {
-                break;
-            }
-            sleep(Duration::from_millis(100));
-        }
-    };
-}
+#[path = "./common/macros.rs"]
+mod common_macros;
 
 #[test]
 fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
