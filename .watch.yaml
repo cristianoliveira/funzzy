@@ -4,7 +4,9 @@
 # list here all the events and the commands that it should execute
 #
 - name: run my test (tag:quick)
-  run: "make tests"
+  run: 
+    - "make tests"
+    # - 'cargo test it_returns_an_error_when_fail_to_load_config_file -- --nocapture'
   change: "src/**"
   run_on_init: true
 
