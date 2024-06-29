@@ -1,0 +1,20 @@
+- name: run the first task
+  run: 'echo before'
+  change: \"$WORKDIR/**\"
+  run_on_init: true
+
+- name: run the list and do not die
+  run: [
+    'echo before',
+    'exit 1',
+    'cat foo/bar/baz',
+    'exit 125',
+    'echo after'
+  ]
+  change: \"$WORKDIR/**\"
+  run_on_init: true
+
+- name: run finally
+  run: 'echo finally'
+  change: \"$WORKDIR/**\"
+  run_on_init: true

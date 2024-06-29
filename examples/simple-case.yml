@@ -1,0 +1,12 @@
+- name: run a list of commands
+  run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
+  change: "examples/workdir/trigger-watcher.txt"
+
+- name: task with ignoring rules
+  run: 
+    - "echo 'should not trigger when modifying files in ignored files'"
+  change: "examples/workdir/**/*"
+  ignore: 
+    - "examples/workdir/trigger-watcher.txt"
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
