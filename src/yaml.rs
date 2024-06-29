@@ -28,7 +28,10 @@ pub fn extract_bool(yaml: &Yaml) -> bool {
 
 pub fn validate(yaml: &Yaml, key: &str) {
     if yaml[key].is_badvalue() {
-        println!("Config file has an invalid format. (Key {} was not found)", key);
+        println!(
+            "Config file has an invalid format. (Key {} was not found)",
+            key
+        );
         panic!("Interrupted due the previou error.")
     }
 }

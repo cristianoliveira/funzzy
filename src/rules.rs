@@ -92,10 +92,7 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
-            return Err(format!(
-                "Found an invalid yaml format {}",
-                err
-            ));
+            return Err(format!("Found an invalid yaml format {}", err));
         }
     };
     match items[0] {
@@ -108,10 +105,7 @@ pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, Stri
     let current_dir = match std::env::current_dir() {
         Ok(val) => val,
         Err(err) => {
-            return Err(format!(
-                "Failed to get current directory {}",
-                err
-            ));
+            return Err(format!("Failed to get current directory {}", err));
         }
     };
 
@@ -134,7 +128,10 @@ pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, Stri
                 let full_path_as_str = match full_path.join("**").to_str() {
                     Some(val) => val.to_owned(),
                     None => {
-                        println!("Warning: Was not possible to convert {} to absolute path", line);
+                        println!(
+                            "Warning: Was not possible to convert {} to absolute path",
+                            line
+                        );
 
                         String::from("")
                     }
@@ -146,7 +143,10 @@ pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, Stri
             match full_path.to_str() {
                 Some(val) => val.to_owned(),
                 None => {
-                    println!("Warning: Was not possible to convert {} to absolute path", line);
+                    println!(
+                        "Warning: Was not possible to convert {} to absolute path",
+                        line
+                    );
 
                     String::from("")
                 }
