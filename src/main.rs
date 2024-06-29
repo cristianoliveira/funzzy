@@ -95,11 +95,7 @@ fn main() {
                         Err(err) => error("Failed to get rules from stdin", err),
                     };
 
-                    execute_watch_command(
-                        Watches::new(watch_rules),
-                        args.flag_n,
-                        args.flag_V,
-                    );
+                    execute_watch_command(Watches::new(watch_rules), args.flag_n, args.flag_V);
                 }
                 Err(err) => error("Failed to read stdin", err),
             };
@@ -110,10 +106,12 @@ fn main() {
                 let default_filename = cli::watch::DEFAULT_FILENAME;
                 match rules::from_file(default_filename) {
                     Ok(rules) => rules,
-                    Err(err) => match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
-                        Ok(rules) => rules,
-                        Err(_) => error("Failed to read default config file", err),
-                    },
+                    Err(err) => {
+                        match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
+                            Ok(rules) => rules,
+                            Err(_) => error("Failed to read default config file", err),
+                        }
+                    }
                 }
             } else {
                 match rules::from_file(&args.flag_config) {
@@ -131,20 +129,17 @@ fn main() {
 
                 if filtered.is_empty() {
                     let mut output = String::new();
-                    output.push_str(&format!(
-                            "No target found for '{}'\n\n",
-                            args.flag_target
-                            ));
+                    output.push_str(&format!("No target found for '{}'\n\n", args.flag_target));
                     output.push_str("Available targets:\n");
                     output.push_str(&format!(
-                            "  {}\n",
-                            rules
+                        "  {}\n",
+                        rules
                             .iter()
                             .cloned()
                             .map(|r| r.name)
                             .collect::<Vec<String>>()
                             .join("\n  ")
-                            ));
+                    ));
 
                     stdout::info(output.as_str());
 
@@ -194,7 +189,7 @@ fn from_stdin() -> Result<String, String> {
         Ok(bytes) => {
             let mut has_input_mutex = match has_input.lock() {
                 Ok(mutex) => mutex,
-                Err(err) =>  {
+                Err(err) => {
                     return Err(format!("Could not lock stdin mutex {}", err));
                 }
             };
