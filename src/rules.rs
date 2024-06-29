@@ -95,9 +95,14 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
             return Err(format!("Found an invalid yaml format {}", err));
         }
     };
+
+    if items.len() == 0 {
+        return Err("There is no rule in the config file.".to_owned());
+    }
+
     match items[0] {
         Yaml::Array(ref items) => Ok(items.iter().map(Rules::from).collect()),
-        _ => Err("You must have at last one item in the yaml.".to_owned()),
+        _ => Err("Config file is invalid. At least one rule must be declared.".to_owned()),
     }
 }
 
