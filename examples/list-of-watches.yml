@@ -7,13 +7,24 @@
   ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true
 
-- name: tasks with exit 1
+- name: tasks with errors
   run: 
     - 'echo before'
     - 'exit 1'
     - 'cat foo/bar/baz'
     - 'exit 125'
     - 'echo after'
-  change: ["src/**", "tests/**", "examples/workdir/*.txt"]
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+
+- name: run the first task
+  run: 'cat baz/bar/foo'
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+  run_on_init: true
+
+- name: run finally
+  run: 'echo finally'
+  change: "examples/workdir/*.txt"
   ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true
