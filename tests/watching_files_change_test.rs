@@ -155,10 +155,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
 
     sleep(Duration::from_secs(2));
 
-    assert_eq!(
-        output.replace(clear_char, ""),
-        ""
-    );
+    assert_eq!(output.replace(clear_char, ""), "");
 }
 
 #[test]
@@ -183,7 +180,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
 
     defer!({
         child.kill().expect("failed to kill child");
-        // let _ = std::fs::remove_file(dir.join(test_log));
+        let _ = std::fs::remove_file(dir.join(test_log));
     });
 
     let mut output = String::new();

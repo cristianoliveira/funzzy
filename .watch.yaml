@@ -5,7 +5,7 @@
 #
 - name: run my test (tag:quick)
   run: 
-    - "make tests"
+    - "cargo test --verbose"
     # - 'cargo test it_returns_an_error_when_fail_to_load_config_file -- --nocapture'
   change: "src/**"
   run_on_init: true
@@ -18,6 +18,12 @@
   run: "cargo fmt -- {{filepath}}"
   change: "src/**"
   ignore: "src/**/*log*"
+
+- name: run new-integration (tag:quick)
+  run: 
+    - "cargo test --test '*' -- --nocapture"
+  change: "tests/**/*.rs"
+  run_on_init: true
 
 - name: run integration
   run: "make testpath={{filepath}} integration"
