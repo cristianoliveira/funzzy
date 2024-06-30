@@ -1,18 +1,20 @@
 #[path = "./macros.rs"]
 mod macros;
 
-use crate::defer;
-
 use std::{
     env,
     fs::File,
-    process::{Command, Stdio},
+    process::{Command, Stdio}, thread::sleep, time::Duration,
 };
+
+use crate::defer;
 
 pub struct Options {
     pub output_file: &'static str,
     pub example_file: &'static str,
 }
+
+static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
@@ -20,8 +22,31 @@ where
 {
     let dir = env::current_dir().expect("error getting current directory");
 
-    // Try to remove the file but ignore the error which is thrown if the file does not exist
     let _ = std::fs::remove_file(dir.join(opts.output_file));
+
+    // NOTE: OK, this is a bit hacky, but it's a simple way to avoid running
+    // the tests from tests/*.rs in parallel.
+    //
+    // I'm aware of `cargo test -- --test-threads=1` option, but I want to run 
+    // all tests with `cargo test` in parallel and limit the parallelism only
+    // for tests that write to the file system, like the integration tests.
+    let mut is_running = IS_RUNNING_MULTITHREAD.lock().unwrap();
+    println!("SINGLE THREAD: Is there another test running: {}", *is_running != 0);
+    loop {
+        // This here isn't really necessary, I noticed that since there is a
+        // mutex lock, the test will run in sequence, but I'm leaving it here
+        if *is_running == 0 {
+            *is_running = 1;
+            break;
+        }
+
+        let next_tick = 200;
+        println!("test already running, wait for the next tick in {} ms", next_tick);
+        sleep(Duration::from_millis(next_tick));
+    } 
+    defer!({
+        *is_running = 0;
+    });
 
     // check if the file exists if so fail
     assert!(
@@ -32,6 +57,7 @@ where
 
     let bin_path = dir.join("target/debug/fzz");
     let output_file = File::create(dir.join(opts.output_file)).expect("error log file");
+
 
     handler(
         Command::new(bin_path)

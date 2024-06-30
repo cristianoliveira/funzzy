@@ -128,15 +128,6 @@ Funzzy: echo 'something changed in workdir!'
 something changed in workdir!
 Funzzy results ----------------------------
 All tasks finished successfully.
-
-Funzzy: clear 
-
-
-Funzzy: echo 'something changed in workdir!' 
-
-something changed in workdir!
-Funzzy results ----------------------------
-All tasks finished successfully.
 "
             );
         },
