@@ -2,9 +2,13 @@
   run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
   change: "examples/workdir/trigger-watcher.txt"
 
+- name: run if anything inside workdir changes
+  run: "echo 'something changed in workdir!'"
+  change: "examples/workdir/**/*"
+
 - name: task with ignoring rules
   run: 
-    - "echo 'should not trigger when modifying files in ignored files'"
+    - "echo 'should not trigger when modifying files listed in ignore'"
   change: "examples/workdir/**/*"
   ignore: 
     - "examples/workdir/trigger-watcher.txt"
