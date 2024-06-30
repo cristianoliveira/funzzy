@@ -22,7 +22,12 @@
 - name: run new-integration (tag:quick)
   run: 
     - "cargo test --test '*' -- --nocapture"
-  change: "tests/**/*.rs"
+    # - "cargo test --test 'test_it_watch_files_and_execute_configured_commands' -- --nocapture"
+    # - "cargo test 'test_it_watch_files_and_execute_configured_commands' -- --nocapture"
+  change: 
+    - "tests/**/*.rs"
+    - "examples/*.yaml"
+    - "examples/*.yml"
   run_on_init: true
 
 - name: run integration

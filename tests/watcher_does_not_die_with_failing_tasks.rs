@@ -1,5 +1,4 @@
 use std::io::prelude::*;
-use std::{fs::File, thread::sleep, time::Duration};
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -9,9 +8,9 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
     setup::with_example(
         setup::Options {
             example_file: "examples/list-of-watches.yml",
-            log_file: "test_it_watches_a_list_of_tasks_and_do_not_panic.log",
+            output_file: "test_it_watches_a_list_of_tasks_and_do_not_panic.log",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_file| {
             let mut output = String::new();
             let mut child = fzz_cmd.spawn().expect("failed to spawn sub process");
             defer!({
@@ -19,11 +18,11 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             });
 
             wait_until!({
-                output_log
+                output_file
                     .read_to_string(&mut output)
                     .expect("failed to read test output file");
 
-                output.contains("Watching...")
+                output.contains("Funzzy: Watching...")
             });
 
             output.truncate(0);
@@ -31,11 +30,11 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             write_to_file!("examples/workdir/trigger-watcher.txt");
 
             wait_until!({
-                output_log
+                output_file
                     .read_to_string(&mut output)
                     .expect("failed to read test output file");
 
-                output.contains("Funzzy: results")
+                output.contains("Funzzy results")
             });
 
             let clear_char = "[H[J";
