@@ -20,7 +20,7 @@ macro_rules! defer {
 
 #[macro_export]
 macro_rules! wait_until {
-    ($e:expr,$m:expr) => {
+    ($e:expr, $($arg:tt)+) => {
         for _ in 0..100 {
             let result = $e;
             if result {
@@ -29,7 +29,7 @@ macro_rules! wait_until {
             sleep(Duration::from_millis(100));
         }
 
-        assert!($e, $m);
+        assert!($e, $($arg)+);
     };
 
     ($e:expr) => {
@@ -47,6 +47,7 @@ macro_rules! wait_until {
 macro_rules! write_to_file {
     ($file:expr) => {
         let mut file = File::create($file).expect("failed to open file");
-        file.write_all(b"test_content\n").expect("failed to write to file");
+        file.write_all(b"test_content\n")
+            .expect("failed to write to file");
     };
 }

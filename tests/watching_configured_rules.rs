@@ -1,144 +1,119 @@
 use std::io::prelude::*;
 use std::{
-    env,
     fs::File,
-    process::{Command, Stdio},
     thread::sleep,
     time::Duration,
 };
 
-#[path = "./common/macros.rs"]
-mod common_macros;
+#[path = "./common/lib.rs"]
+mod setup;
 
 #[test]
 fn test_it_is_not_triggered_by_ignored_files() {
-    let test_log = "test_it_is_not_triggered_by_ignored_files.log";
-
-    let dir = env::current_dir().expect("failed to get current directory");
-    let bin_path = dir.join("target/debug/fzz");
-
-    let output_log = File::create(dir.join(test_log)).expect("error log file");
-    output_log.set_len(0).expect("failed to truncate file");
-    let stdio = Stdio::from(output_log);
-
-    let mut child = Command::new(bin_path)
-        .arg("-V")
-        .arg("-c")
-        .arg(dir.join("examples/simple-case.yml"))
-        .arg("-t")
-        .arg("ignoring rules")
-        .stdout(stdio)
-        .spawn()
-        .expect("failed to spawn child");
-
-    defer!({
-        child.kill().expect("failed to kill child");
-        if let Err(e) = std::fs::remove_file(dir.join(test_log)) {
-            assert!(false, "Failed while removing log file: {:?}", e);
-        }
-    });
-
-    let mut output = String::new();
-    let mut log = File::open(dir.join(test_log)).expect("failed to open file");
-
-    wait_until!(
-        {
-            log.read_to_string(&mut output)
-                .expect("failed to read from file");
-
-            output.contains("Funzzy verbose") && output.contains("Watching...")
+    setup::with_example(
+        setup::Options {
+            log_file: "test_it_is_not_triggered_by_ignored_files.log",
+            example_file: "examples/simple-case.yml",
         },
-        "Funzzy has not been started with verbose mode"
-    );
+        |fzz_cmd, mut log| {
+            let mut child = fzz_cmd
+                .arg("-V")
+                .arg("-t")
+                .arg("ignoring rules")
+                .spawn()
+                .expect("failed to spawn child");
 
-    output.truncate(0);
+            defer!({
+                child.kill().expect("failed to kill child");
+            });
 
-    write_to_file!("examples/workdir/ignored/modifyme.txt");
+            let mut output = String::new();
 
-    sleep(Duration::from_secs(2));
+            wait_until!(
+                {
+                    log.read_to_string(&mut output)
+                        .expect("failed to read from file");
 
-    wait_until!({
-        sleep(Duration::from_millis(100));
-        log.read_to_string(&mut output)
-            .expect("failed to read from file");
+                    output.contains("Funzzy verbose") && output.contains("Watching...")
+                },
+                "Funzzy has not been started with verbose mode {}",
+                output
+            );
 
-        output.contains("Funzzy verbose: Events Ok")
-            && output.contains("examples/workdir/ignored/modifyme.txt")
-    });
+            output.truncate(0);
 
-    assert!(
-        !output.contains("Triggered by"),
-        "triggered an ignored rule. \n Output: {}",
-        output
-    );
+            write_to_file!("examples/workdir/ignored/modifyme.txt");
 
-    write_to_file!("examples/workdir/another_ignored_file.foo");
+            sleep(Duration::from_secs(2));
 
-    assert!(
-        !output.contains("Triggered by"),
-        "triggered an ignored rule. \n Output: {}",
-        output
+            wait_until!({
+                sleep(Duration::from_millis(100));
+                log.read_to_string(&mut output)
+                    .expect("failed to read from file");
+
+                output.contains("Funzzy verbose: Events Ok")
+                    && output.contains("examples/workdir/ignored/modifyme.txt")
+            });
+
+            assert!(
+                !output.contains("Triggered by"),
+                "triggered an ignored rule. \n Output: {}",
+                output
+            );
+
+            write_to_file!("examples/workdir/another_ignored_file.foo");
+
+            assert!(
+                !output.contains("Triggered by"),
+                "triggered an ignored rule. \n Output: {}",
+                output
+            );
+        },
     );
 }
 
 #[test]
-fn test_it_watch_a_simple_case() {
-    let test_log = "test_it_watch_a_simple_case.log";
-    let clear_char = "[H[J";
-
-    let dir = env::current_dir().expect("failed to get current directory");
-    let bin_path = dir.join("target/debug/fzz");
-
-    let _ = std::fs::remove_file(dir.join(test_log));
-    let output_log = File::create(dir.join(test_log)).expect("error log file");
-    output_log.set_len(0).expect("failed to truncate file");
-    let stdio = Stdio::from(output_log);
-
-    let mut child = Command::new(bin_path)
-        .arg("-c")
-        .arg(dir.join("examples/simple-case.yml"))
-        .arg("-t")
-        .arg("list of commands")
-        .stdout(stdio)
-        .spawn()
-        .expect("failed to spawn child");
-
-    defer!({
-        child.kill().expect("failed to kill child");
-        if let Err(e) = std::fs::remove_file(dir.join(test_log)) {
-            assert!(false, "Failed while removing log file: {:?}", e);
-        }
-    });
-
-    let mut output = String::new();
-    let mut log = File::open(dir.join(test_log)).expect("failed to open file");
-
-    // wait for the watcher to start
-    wait_until!({
-        sleep(Duration::from_millis(100));
-        log.read_to_string(&mut output)
-            .expect("failed to read from file");
-
-        output.contains("Watching...")
-    });
-
-    output.truncate(0);
-
-    write_to_file!("examples/workdir/trigger-watcher.txt");
-
-    wait_until!(
-        {
-            log.read_to_string(&mut output)
-                .expect("failed to read from file");
-
-            output.contains("Funzzy results")
+fn test_it_watch_files_and_execute_configured_commands() {
+    setup::with_example(
+        setup::Options {
+            example_file: "examples/simple-case.yml",
+            log_file: "test_it_watch_files_and_execute_configured_commands.log",
         },
-        "Output does not contain 'Funzzy results'"
-    );
+        |fzz_cmd, mut logger| {
+            let mut child = fzz_cmd.spawn().expect("failed to spawn process");
+            let mut output = String::new();
+            defer!({
+                child.kill().expect("failed to close process");
+            });
 
-    assert_eq!(
-        output.replace(clear_char, ""),
-        "
+            wait_until!({
+                logger
+                    .read_to_string(&mut output)
+                    .expect("failed to read from file");
+
+                output.contains("Watching ...")
+            });
+
+            output.truncate(0);
+
+            write_to_file!("examples/workdir/trigger-watcher.txt");
+
+            wait_until!(
+                {
+                    logger
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    output.contains("Funzzy results")
+                },
+                "OUTPUT: {}",
+                output
+            );
+
+            let clear_noise = "[H[J";
+            assert_eq!(
+                output.replace(clear_noise, ""),
+                "
 Funzzy: clear 
 
 
@@ -156,5 +131,7 @@ third
 Funzzy results ----------------------------
 All tasks finished successfully.
 "
+            );
+        },
     );
 }
