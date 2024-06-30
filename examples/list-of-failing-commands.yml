@@ -1,20 +1,30 @@
-- name: run the first task
-  run: 'echo before'
-  change: \"$WORKDIR/**\"
+- name: run a list of watches
+  run: "echo complex | sed s/complex/third/g"
+  change: 
+    - "src/**"
+    - "tests/**"
+    - "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true
 
-- name: run the list and do not die
-  run: [
-    'echo before',
-    'exit 1',
-    'cat foo/bar/baz',
-    'exit 125',
-    'echo after'
-  ]
-  change: \"$WORKDIR/**\"
+- name: tasks with errors
+  run: 
+    - 'echo before'
+    - 'exit 1'
+    - 'cat foo/bar/baz'
+    - 'exit 125'
+    - 'echo after'
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+
+- name: run the first task
+  run: 'cat baz/bar/foo'
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true
 
 - name: run finally
   run: 'echo finally'
-  change: \"$WORKDIR/**\"
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
   run_on_init: true

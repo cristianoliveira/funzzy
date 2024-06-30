@@ -1,0 +1,19 @@
+- name: run on init first
+  run: "echo 'running on init first'"
+  change: 
+    - "src/**"
+    - "tests/**"
+    - "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+  run_on_init: true
+
+- name: do not run on init
+  run: 'echo "should not run on init but on change"'
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+
+- name: run on init second
+  run: 'echo "run on init sencod"'
+  change: "examples/workdir/*.txt"
+  ignore: "examples/workdir/ignored/**/*.txt"
+  run_on_init: true

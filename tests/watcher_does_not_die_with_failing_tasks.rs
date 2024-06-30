@@ -7,7 +7,7 @@ mod setup;
 fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
     setup::with_example(
         setup::Options {
-            example_file: "examples/list-of-watches.yml",
+            example_file: "examples/list-of-failing-commands.yml",
             output_file: "test_it_watches_a_list_of_tasks_and_do_not_panic.log",
         },
         |fzz_cmd, mut output_file| {
