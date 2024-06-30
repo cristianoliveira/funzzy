@@ -28,6 +28,7 @@
     - "tests/**/*.rs"
     - "examples/*.yaml"
     - "examples/*.yml"
+  ignore: "examples/workdir/ignored/**"
   run_on_init: true
 
 - name: run integration
