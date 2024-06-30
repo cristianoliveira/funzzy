@@ -1,14 +1,29 @@
-- name: run my test
-  run: "echo 'tests'"
-  change: "**"
-  ignore: ["tests/**", "src/**"]
-  run_on_init: true
+- name: run my test @quick
+  run: 
+    - "echo 'quick tests'"
+    - "echo 'another quick task'"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
 
 - name: run my build
-  run: "echo 'build'"
-  change: ["src/**"]
-  ignore: ["tests/**", "src/**/*.specs"]
+  run:
+    - "echo 'prebuild'"
+    - "echo 'build'"
+    - "echo 'should not run when using --target @quick'"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+  run_on_init: true
 
-- name: run my lint
-  run: "echo 'lint'"
-  change: "**"
+- name: run my lint @quick
+  run: "echo 'quick lint'"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
