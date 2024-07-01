@@ -19,7 +19,6 @@ pub fn events(handler: impl Fn(&str), verbose: bool) {
         println!("Unable to watch current directory {:?}", err);
     }
 
-    stdout::info("Watching...");
     loop {
         match rx.recv() {
             Ok(debounced_evts) => {

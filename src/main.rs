@@ -46,6 +46,7 @@ Options:
   -c --config=<cfgfile>   Use given config file.
   -t --target=<task>      Execute only the given task target.
   -n --non-block          Execute tasks and cancel them if a new event is received.
+  --fail-fast             Quits execution if a task fails (exit code != 0).
   -h --help               Shows this message.
   -v --version            Shows version.
   -V                      Use verbose output.
@@ -68,6 +69,7 @@ pub struct Args {
     pub flag_h: bool,
     pub flag_v: bool,
     pub flag_V: bool,
+    pub flag_fail_fast: bool,
 }
 
 fn main() {
@@ -95,7 +97,12 @@ fn main() {
                         Err(err) => error("Failed to get rules from stdin", err),
                     };
 
-                    execute_watch_command(Watches::new(watch_rules), args.flag_n, args.flag_V);
+                    execute_watch_command(
+                        Watches::new(watch_rules),
+                        args.flag_n,
+                        args.flag_V,
+                        args.flag_fail_fast,
+                    );
                 }
                 Err(err) => error("Failed to read stdin", err),
             };
@@ -145,20 +152,30 @@ fn main() {
 
                     show("Finished there is no task to run.");
                 } else {
-                    execute_watch_command(Watches::new(filtered), args.flag_n, args.flag_V);
+                    execute_watch_command(
+                        Watches::new(filtered),
+                        args.flag_n,
+                        args.flag_V,
+                        args.flag_fail_fast,
+                    );
                 }
             } else {
-                execute_watch_command(Watches::new(rules), args.flag_n, args.flag_V);
+                execute_watch_command(
+                    Watches::new(rules),
+                    args.flag_n,
+                    args.flag_V,
+                    args.flag_fail_fast,
+                );
             }
         }
     }
 }
 
-pub fn execute_watch_command(watches: Watches, non_block: bool, verbose: bool) {
+pub fn execute_watch_command(watches: Watches, non_block: bool, verbose: bool, fail_fast: bool) {
     if non_block {
-        execute(WatchNonBlockCommand::new(watches, verbose))
+        execute(WatchNonBlockCommand::new(watches, verbose, fail_fast))
     } else {
-        execute(WatchCommand::new(watches, verbose))
+        execute(WatchCommand::new(watches, verbose, fail_fast))
     }
 }
 

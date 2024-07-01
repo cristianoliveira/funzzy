@@ -1,3 +1,13 @@
+## 
+# This example contains failing tasks (code != 0)
+#
+# Scenarios
+#  - When running normally with `fzz` it will execute all tasks
+#  and report the failings
+#
+#  - When running with `fzz --fail-fast` it exits once the first task fails.
+# The execution sequence is top to down and left to right
+#
 - name: run a list of watches
   run: "echo complex | sed s/complex/third/g"
   change: 
@@ -17,7 +27,7 @@
   change: "examples/workdir/*.txt"
   ignore: "examples/workdir/ignored/**/*.txt"
 
-- name: run the first task
+- name: run another task with error
   run: 'cat baz/bar/foo'
   change: "examples/workdir/*.txt"
   ignore: "examples/workdir/ignored/**/*.txt"

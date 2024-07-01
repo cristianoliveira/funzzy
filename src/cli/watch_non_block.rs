@@ -16,13 +16,18 @@ use crate::workers;
 pub struct WatchNonBlockCommand {
     watches: Watches,
     verbose: bool,
+    fail_fast: bool,
 }
 
 impl WatchNonBlockCommand {
-    pub fn new(watches: Watches, verbose: bool) -> Self {
+    pub fn new(watches: Watches, verbose: bool, fail_fast: bool) -> Self {
         stdout::verbose(&format!("watches {:?}", watches), verbose);
 
-        WatchNonBlockCommand { watches, verbose }
+        WatchNonBlockCommand {
+            watches,
+            verbose,
+            fail_fast,
+        }
     }
 }
 
@@ -30,13 +35,15 @@ impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let worker = workers::Worker::new(self.verbose);
+        let worker = workers::Worker::new(self.verbose, self.fail_fast);
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");
             if let Err(err) = worker.schedule(rules, "") {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
             }
+        } else {
+            stdout::info("Watching...");
         }
 
         watcher::events(
@@ -63,7 +70,6 @@ impl Command for WatchNonBlockCommand {
             },
             self.verbose,
         );
-        stdout::info("Watching...");
 
         Ok(())
     }

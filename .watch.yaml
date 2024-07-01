@@ -9,8 +9,8 @@
 # then start making my changes, everytime all the tests pass the changed file
 # is staged to git. Once I'm done with my changes I simply commit. :)
 #
-# Run all tasks with `fzz`
-# Run quick tasks with `fzz -t @quick`
+# Run all tasks with `fzz --fail-fast`
+# Run quick tasks with `fzz -t @quick --fail-fast`
 #
 - name: run my build
   run: "make build"
