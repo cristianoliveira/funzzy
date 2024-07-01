@@ -18,8 +18,8 @@
 
 - name: run my test (@quick)
   run: 
-    - "cargo test --verbose"
-    # - 'cargo test it_returns_an_error_when_fail_to_load_config_file -- --nocapture'
+    # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
+    - "cargo test ${UNIT_TEST:-'*'}"
   change: "src/**"
   run_on_init: true
 
@@ -37,9 +37,8 @@
 
 - name: run integration
   run: 
-    - "cargo test --test '*' -- --nocapture"
-    # - "cargo test --test 'test_it_watch_files_and_execute_configured_commands' -- --nocapture"
-    # - "cargo test 'test_it_watch_files_and_execute_configured_commands' -- --nocapture"
+    # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
+    - "cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
   change: 
     - "tests/**/*.rs"
     - "examples/*.yaml"
