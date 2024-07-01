@@ -8,6 +8,7 @@
     # Ignoring VIM backup files
     - "**/*~"
     - "**/*.sw?"
+  run_on_init: true
 
 - name: run long task 3
   run: "bash examples/longtask.sh short 3"
@@ -30,10 +31,11 @@
     # Ignoring VIM backup files
     - "**/*~"
     - "**/*.sw?"
-  run_on_init: true
 
-- name: run long task 5
-  run: "bash examples/longtask.sh short 5"
+- name: run long task 5 run on init
+  run: 
+    - "sleep 3"
+    - "bash examples/longtask.sh short 5"
   change: 
     - "examples/workdir/*.txt"
   ignore: 
@@ -42,7 +44,6 @@
     # Ignoring VIM backup files
     - "**/*~"
     - "**/*.sw?"
-  run_on_init: true
 
 - name: run long task 6
   run: ["bash examples/longtask.sh list 3", "bash examples/longtask.sh list 4"]
@@ -54,4 +55,3 @@
     # Ignoring VIM backup files
     - "**/*~"
     - "**/*.sw?"
-  run_on_init: true
