@@ -143,8 +143,7 @@ Filtering tasks by target.
 
 ```bash
 fzz -t "@quick"
-// Assuming you have one or more tasks with `@quick` in the name,
-// it will only load the tasks those.
+// Assuming you have one or more tasks with `@quick` in the name, it will only load those tasks
 ```
 
 Run with some arbitrary command and stdin
