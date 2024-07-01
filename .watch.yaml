@@ -3,30 +3,39 @@
 #
 # list here all the events and the commands that it should execute
 #
-- name: run my test (tag:quick)
+# HOWTO: use in a workflow
+#
+# My current workflow is very simple I start by spining up funzzy and 
+# then start making my changes, everytime all the tests pass the changed file
+# is staged to git. Once I'm done with my changes I simply commit. :)
+#
+# Run all tasks with `fzz`
+# Run quick tasks with `fzz -t @quick`
+#
+- name: run my build
+  run: "make build"
+  change: ["Cargo.*"]
+
+- name: run my test (@quick)
   run: 
     - "cargo test --verbose"
     # - 'cargo test it_returns_an_error_when_fail_to_load_config_file -- --nocapture'
   change: "src/**"
   run_on_init: true
 
-- name: run my lint (tag:quick)
-  run: "make lint"
-  change: "src/**"
-
-- name: run formatter (tag:quick)
-  run: "cargo fmt -- {{filepath}}"
+- name: run lint and formatter (@quick)
+  run: "cargo fmt -- --check {{filepath}}"
   run_on_init: true
   change: 
-    - ".watch.yaml"
     - "src/**"
     - "tests/**"
-    - "examples/*.yml"
-    - "examples/*.yaml"
   ignore: 
     - "src/**/*log*"
+    - "examples/*.yml"
+    - "examples/*.yaml"
+    - "examples/workdir/**"
 
-- name: run new-integration (tag:quick)
+- name: run integration
   run: 
     - "cargo test --test '*' -- --nocapture"
     # - "cargo test --test 'test_it_watch_files_and_execute_configured_commands' -- --nocapture"
@@ -35,18 +44,17 @@
     - "tests/**/*.rs"
     - "examples/*.yaml"
     - "examples/*.yml"
-  ignore: "examples/workdir/ignored/**"
+  ignore: 
+    - "examples/workdir/ignored/**"
+    - "**/*.log"
   run_on_init: true
-
-- name: run my build
-  run: "make build"
-  change: ["Cargo.*"]
 
 - name: after all checks if no error stage to git (@quick)
   run: "git add {{filepath}}"
   change: 
-    - ".watch.yaml"
     - "src/**"
     - "tests/**"
     - "examples/*.yml"
     - "examples/*.yaml"
+  ignore: 
+    - "examples/workdir/**"

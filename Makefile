@@ -16,7 +16,7 @@ integration:
 
 .PHONY: lint
 lint:
-	cargo clippy
+	@cargo clippy && @cargo fmt -- --check
 
 .PHONY: linter
 linter: lint
