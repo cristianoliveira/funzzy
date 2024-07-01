@@ -65,47 +65,41 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output
             );
 
-            // FIXME: The async nature of the non-block flag makes it hard to test
-            // the output in a deterministic way. There might be an way to test this
-            // or there might be a bug in the implementation.
-            /*
             let clear_sign = "[H[J";
             assert_eq!(
                 output.replace(clear_sign, ""),
                 "Funzzy: Running on init commands.
 
-            Funzzy: task bash examples/longtask.sh long 2
+Funzzy: task bash examples/longtask.sh long 2 
 
-            Funzzy: Watching...
-            Started task long 2
-            Long task running... 0
+Started task long 2
+Long task running... 0
 
-            Funzzy: clear
+Funzzy: clear 
 
-            Long task running... 1
-            Task long 2 finished
+Long task running... 1
+Task long 2 finished
 
-            Funzzy: task bash examples/longtask.sh list 4
+Funzzy: task bash examples/longtask.sh list 4 
 
-            Started task list 4
-            Long task running... 0
+Started task list 4
+Long task running... 0
 
-            Funzzy: clear
+Funzzy: clear 
 
-            Long task running... 1
-            Long task running... 2
-            Long task running... 3
-            Task list 4 finished
+Long task running... 1
+Long task running... 2
+Long task running... 3
+Task list 4 finished
 
-            Funzzy: task bash examples/longtask.sh list 4
+Funzzy: task bash examples/longtask.sh list 4 
 
-            Started task list 4
-            Long task running... 0
-            ",
-                            "Output does not match expected: \n {}",
-                            output
-                        );
-                     */
+Started task list 4
+Long task running... 0
+",
+                "Output does not match expected: \n {}",
+                output
+            );
         },
     );
 }
