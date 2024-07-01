@@ -1,4 +1,4 @@
-use std::io::prelude::*; 
+use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -11,10 +11,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
             example_file: "examples/simple-case.yml",
         },
         |fzz_cmd, mut output_log| {
-            let mut child = fzz_cmd
-                .arg("-V")
-                .spawn()
-                .expect("failed to spawn child");
+            let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn child");
 
             defer!({
                 child.kill().expect("failed to kill child");
@@ -38,24 +35,32 @@ fn test_it_is_not_triggered_by_ignored_files() {
 
             write_to_file!("examples/workdir/ignored/modifyme.txt");
 
-            wait_until!({
-                output_log
-                    .read_to_string(&mut output)
-                    .expect("failed to read from file");
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
 
-                output.contains("Funzzy verbose: Events Ok")
-                    && output.contains("examples/workdir/ignored/modifyme.txt")
-            }, "Failed to find Events Ok: {}", output);
+                    output.contains("Funzzy verbose: Events Ok")
+                        && output.contains("examples/workdir/ignored/modifyme.txt")
+                },
+                "Failed to find Events Ok: {}",
+                output
+            );
 
             write_to_file!("examples/workdir/another_ignored_file.foo");
 
-            wait_until!({
-                output_log
-                    .read_to_string(&mut output)
-                    .expect("failed to read from file");
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
 
-                output.contains("something changed in workdir!")
-            }, "Failed to find 'something changed in workdir!': {}", output);
+                    output.contains("something changed in workdir!")
+                },
+                "Failed to find 'something changed in workdir!': {}",
+                output
+            );
 
             assert!(
                 !output.contains("should not trigger when modifying files in ignored files"),
@@ -80,13 +85,17 @@ fn test_it_watch_files_and_execute_configured_commands() {
                 child.kill().expect("failed to close process");
             });
 
-            wait_until!({
-                output_log
-                    .read_to_string(&mut output)
-                    .expect("failed to read from file");
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
 
-                output.contains("Funzzy: Watching...")
-            }, "OUTPUT: {}", output);
+                    output.contains("Funzzy: Watching...")
+                },
+                "OUTPUT: {}",
+                output
+            );
 
             output.truncate(0);
 

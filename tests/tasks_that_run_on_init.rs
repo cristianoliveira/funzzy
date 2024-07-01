@@ -1,4 +1,4 @@
-use std::io::prelude::*; 
+use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -31,7 +31,6 @@ fn test_it_executes_tasks_on_init_when_configured() {
                 output
             );
 
-
             let clear_noise = "[H[J";
             assert_eq!(
                 output.replace(clear_noise, ""),
@@ -63,7 +62,6 @@ Funzzy: Watching...
                 "OUTPUT: {}",
                 output
             );
-
         },
     );
 }

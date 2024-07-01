@@ -69,7 +69,10 @@ All tasks finished successfully.
 ";
 
             let clear_sign = "[H[J";
-            assert_eq!(output.replace(clear_sign, ""), expected.replace("$PWD", &dir.to_string_lossy()));
+            assert_eq!(
+                output.replace(clear_sign, ""),
+                expected.replace("$PWD", &dir.to_string_lossy())
+            );
         },
     );
 }

@@ -11,7 +11,10 @@ fn test_it_creates_the_config_file_with_cmd_init() {
     std::env::set_current_dir(dir.join("examples/workdir/ignored"))
         .expect("failed to change to examples/workdir/ignored");
 
-    Command::new(bin_path).arg("init").output().expect("failed to run init");
+    Command::new(bin_path)
+        .arg("init")
+        .output()
+        .expect("failed to run init");
 
     let file = dir.join("examples/workdir/ignored/.watch.yaml");
     wait_until!(
@@ -24,7 +27,9 @@ fn test_it_creates_the_config_file_with_cmd_init() {
     );
 
     let file_content = std::fs::read_to_string(&file).expect("failed to read .watch.yml");
-    assert_eq!(file_content, "
+    assert_eq!(
+        file_content,
+        "
 ## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
@@ -33,7 +38,8 @@ fn test_it_creates_the_config_file_with_cmd_init() {
 - name: run my test
   run: 'ls -a'
   change: 'src/**'
-");
+"
+    );
 
     std::fs::remove_file(file).expect("failed to remove file from examples/workdir/ignored");
 }
