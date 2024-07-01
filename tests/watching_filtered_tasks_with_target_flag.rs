@@ -1,4 +1,4 @@
-use std::io::prelude::*; 
+use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -70,7 +70,8 @@ Funzzy: echo 'quick lint'
 quick lint
 Funzzy results ----------------------------
 All tasks finished successfully.
-");
+"
+            );
         },
     );
 }
@@ -107,7 +108,6 @@ fn test_it_list_the_available_tasks_when_nothing_matches() {
                 output
             );
 
-
             assert_eq!(
                 output,
                 "Funzzy: No target found for '@something_not_in_the_list'
@@ -118,7 +118,8 @@ Available targets:
   run my lint @quick
 
 Finished there is no task to run.
-");
+"
+            );
         },
     );
 }

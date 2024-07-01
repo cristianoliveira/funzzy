@@ -16,8 +16,15 @@
 
 - name: run formatter (tag:quick)
   run: "cargo fmt -- {{filepath}}"
-  change: "src/**"
-  ignore: "src/**/*log*"
+  run_on_init: true
+  change: 
+    - ".watch.yaml"
+    - "src/**"
+    - "tests/**"
+    - "examples/*.yml"
+    - "examples/*.yaml"
+  ignore: 
+    - "src/**/*log*"
 
 - name: run new-integration (tag:quick)
   run: 
@@ -31,17 +38,15 @@
   ignore: "examples/workdir/ignored/**"
   run_on_init: true
 
-- name: run integration
-  run: "make testpath={{filepath}} integration"
-  change: "tests/integration/**/*.sh"
-  ignore: [
-    "tests/integration/workdir/**",
-    "tests/integration/release/**",
-    "tests/integration/debug/**",
-    "tests/integration/*log*",
-    "tests/integration/funzzy",
-  ]
-
 - name: run my build
   run: "make build"
   change: ["Cargo.*"]
+
+- name: after all checks if no error stage to git (@quick)
+  run: "git add {{filepath}}"
+  change: 
+    - ".watch.yaml"
+    - "src/**"
+    - "tests/**"
+    - "examples/*.yml"
+    - "examples/*.yaml"
