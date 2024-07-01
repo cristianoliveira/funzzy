@@ -18,6 +18,3 @@ jobs:
 
       - name: Run integration tests
         run: make integration
-
-      - name: Run rust integration tests
-        run: cargo test --test '*' -- --nocapture

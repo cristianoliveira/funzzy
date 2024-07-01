@@ -6,10 +6,10 @@ echo "Started task $1 $2"
 while true; do
     echo "Long task running... $count"
     count=$((count+1))
-    sleep 5
+    sleep 3
 
     if [ $count -eq "$2" ]; then
-        echo "Task $1 finished"
+        echo "Task $1 $2 finished"
         break
     fi
 done
