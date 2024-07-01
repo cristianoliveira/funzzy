@@ -1,11 +1,10 @@
 - name: replaces {{filepath}} with changed file path
   run:
     - "echo 'this file has changed: {{filepath}}'"
-    - "cat {{filepath}}"
+    - "cat '{{filepath}}' || echo 'nothing to run'"
   change: "examples/workdir/**/*"
   ignore: "examples/workdir/ignored/**/*.txt"
-  # FIXME it fails when running on init
-  # run_on_init: true
+  run_on_init: true
 
 - name: more advanced usage of {{filepath}}
   run:
@@ -14,5 +13,4 @@
   ignore: 
     - "examples/workdir/ignored/**/*.txt"
     - "examples/workdir/another_ignored_file.foo"
-  # FIXME it fails when running on init
-  # run_on_init: true
+  run_on_init: true
