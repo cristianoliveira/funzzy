@@ -52,6 +52,7 @@
 - name: after all checks if no error stage to git (@quick)
   run: "git add {{filepath}}"
   change: 
+    - "README.md"
     - "src/**"
     - "tests/**"
     - "examples/*.yml"
