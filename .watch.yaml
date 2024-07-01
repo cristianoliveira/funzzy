@@ -20,6 +20,7 @@
   run: 
     # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
     - "cargo test $UNIT_TEST --verbose"
+
   change: "src/**"
   run_on_init: true
 
