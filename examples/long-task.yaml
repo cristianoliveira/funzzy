@@ -1,32 +1,57 @@
 - name: run long task 2
   run: "bash examples/longtask.sh long 2"
-  change: ["src/*.txt", "tests/integration/workdir/*.txt"]
-  # Ignoring VIM backup files
-  ignore: ["**/*~", "**/*.sw?"]
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"
+  run_on_init: true
 
 - name: run long task 3
   run: "bash examples/longtask.sh short 3"
-  change: ["src/*.txt", "tests/integration/workdir/*.txt"]
-  # Ignoring VIM backup files
-  ignore: ["**/*~", "**/*.sw?"]
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"
 
 - name: run long task 4
   run: "bash examples/longtask.sh short 4"
-  change: ["src/*.txt", "tests/integration/workdir/*.txt"]
-  # Ignoring VIM backup files
-  ignore: ["**/*~", "**/*.sw?"]
-  run_on_init: true
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"
 
-- name: run long task 5
-  run: "bash examples/longtask.sh short 5"
-  change: ["src/*.txt", "tests/integration/workdir/*.txt"]
-  # Ignoring VIM backup files
-  ignore: ["**/*~", "**/*.sw?"]
-  run_on_init: true
+- name: run long task 5 run on init
+  run: 
+    - "sleep 3"
+    - "bash examples/longtask.sh short 5"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"
 
 - name: run long task 6
   run: ["bash examples/longtask.sh list 3", "bash examples/longtask.sh list 4"]
-  change: ["src/*.txt", "tests/integration/workdir/*.txt"]
-  # Ignoring VIM backup files
-  ignore: ["**/*~", "**/*.sw?"]
-  run_on_init: true
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"

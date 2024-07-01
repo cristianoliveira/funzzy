@@ -10,28 +10,9 @@ tests: ## Execute all the tests
 build: tests ## Execute all the tests and build funzzy binary
 	@cargo build --release
 
-.PHONY: integration-cleanup
-integration-cleanup:
-	rm -rf target && \
-		rm -rf tests/integration/release && \
-		rm -rf tests/integration/workdir && \
-		rm -f tests/integration/funzzy
-
 .PHONY: integration ## Exectute integration tests
-integration: integration-cleanup
-	@bash tests/integration/runner.sh $(testpath)
-
-.PHONY: integration-tail
-integration-tail:
-	while true; do cat tests/integration/workdir/output.log; sleep 1; clear;  done
-
-.PHONY: integration-batch-1
-integration-batch-1: integration-cleanup
-	@bash tests/integration/batches.sh 5
-
-.PHONY: integration-batch-2
-integration-batch-2: integration-cleanup
-	@bash tests/integration/batches.sh 10
+integration:
+	@cargo test --test '*' -- --nocapture
 
 .PHONY: lint
 lint:
