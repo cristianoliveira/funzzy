@@ -1,9 +1,0 @@
-- name: run my test
-  run: "echo 'foo bar baz' | sed 's/foo/FIRST/g'"
-  change: "**"
-  run_on_init: true
-
-- name: run my test
-  run: "ls | sed 's/Cargo/Foo/g'"
-  change: "**"
-  run_on_init: true
