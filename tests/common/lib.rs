@@ -58,7 +58,7 @@ where
 
     // check if the file exists if so fail
     assert!(
-        !std::path::Path::new(&dir.join(opts.output_file)).exists(), 
+        !std::path::Path::new(&dir.join(opts.output_file)).exists(),
        "the log file already exists, make sure to give an unique log file to avoid multiple writes to same file: {}",
        dir.join(opts.output_file).display()
     );
@@ -118,7 +118,7 @@ where
 
     // check if the file exists if so fail
     assert!(
-        !std::path::Path::new(&dir.join(output_file_path)).exists(), 
+        !std::path::Path::new(&dir.join(output_file_path)).exists(),
        "the log file already exists, make sure to give an unique log file to avoid multiple writes to same file: {}",
        dir.join(output_file_path).display()
     );
