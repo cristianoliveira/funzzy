@@ -25,7 +25,8 @@ fn test_it_replaces_filepath_template_with_changed_file() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Watching...")
+                    output.contains("Running on init commands.")
+                        && output.contains("Funzzy results")
                 },
                 "Funzzy has not been started with verbose mode {}",
                 output
@@ -48,7 +49,22 @@ fn test_it_replaces_filepath_template_with_changed_file() {
             );
 
             let dir = std::env::current_dir().expect("failed to get current dir");
-            let expected = "Funzzy: Watching...
+            let expected = "Funzzy: Running on init commands.
+
+Funzzy: echo 'this file has changed: ' 
+
+this file has changed: 
+
+Funzzy: cat '' || echo 'nothing to run' 
+
+nothing to run
+
+Funzzy: echo '' | sed -r s/trigger/foobar/ 
+
+
+Funzzy results ----------------------------
+All tasks finished successfully.
+Funzzy: Watching...
 
 Funzzy: clear 
 
@@ -57,7 +73,7 @@ Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt'
 
 this file has changed: $PWD/examples/workdir/trigger-watcher.txt
 
-Funzzy: cat $PWD/examples/workdir/trigger-watcher.txt 
+Funzzy: cat '$PWD/examples/workdir/trigger-watcher.txt' || echo 'nothing to run' 
 
 test_content
 

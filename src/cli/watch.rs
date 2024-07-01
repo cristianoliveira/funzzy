@@ -32,7 +32,7 @@ impl Command for WatchCommand {
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");
 
-            let results = rules::commands(rules)
+            let results = rules::template(rules::commands(rules), "")
                 .iter()
                 .map(cmd::execute)
                 .collect::<Vec<Result<(), String>>>();
