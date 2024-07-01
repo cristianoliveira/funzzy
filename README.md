@@ -1,48 +1,54 @@
 # funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-Yet another fancy watcher. (Inspired by [antr](https://github.com/juanibiapina/antr) / [entr](https://github.com/eradman/entr)). See also [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
+A lightweight watcher inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr). See also: [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
 Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
-As simple as
+For a workflow as simple as:
 ```bash
 find . -name '*.ts' | funzzy 'npx eslint .'
 ```
 
-Or complicated as
+Or more complex workflows like:
 ```yaml
 # .watch.yaml (or .watch.yml)
 # list here all the events and the commands that it should execute
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
+# Run: `fzz` to start the workflow
 
 - name: run my tests
   run: make test
   change: "tests/**"
   ignore: "tests/integration/**"
 
-- name: Starwars
+- name: Starwars ascii art
   run: telnet towel.blinkenlights.nl
   change: ".watch.yaml"
 
-- name: say hello
-  run: echo "hello on init"
-  change: "./*.yaml"
-  run_on_init: true
-
 # Command templates for custom scripts
 - name: run test & linter for a single file
-  run: [
-    "npm run lint -- {{filepath}}",
-    "npm test -- $(echo '{{filepath}}' | sed -r s/.(j|t)sx?//)"
-  ]
+  run: 
+   - "npm run lint -- {{filepath}}",
+   - "npm test -- $(echo '{{filepath}}' | sed -r s/.(j|t)sx?//)"
   change: ["src/**", "libs/**"]
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
+
+- name: finally stage the changed files in git
+  run: git add {{filepath}}
+  change: 
+    - "src/**"
+    - "tests/**"
+  ignore: "**/*.log"
 ```
+
+Want more examples? 
+
+ - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
+ - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 
 ## Motivation
 
-Create a lightweight watcher to run my tests every time something in my project change.
-So I won't forget to keep my tests passing. Funzzy was made with Rust which is why it consumes almost nothing to run.
+To create a lightweight watcher that **allows me to develop personal local workflows with specific automated checks and steps, similar to GitHub Actions**. Funzzy was built with Rust, which makes it blazingly fast and light :).
 
 ## Installing
 
@@ -89,7 +95,7 @@ cargo install funzzy
 ```
 
 \*Make sure you have `$HOME/.cargo/bin` in your PATH
-`export $PATH:$HOME/.cargo/bin`
+`export PATH=$HOME/.cargo/bin:$PATH`
 
 - From source
 
@@ -133,10 +139,12 @@ Use a different config file:
 fzz -c ~/watch.yaml
 ```
 
-Filtering task by target (contais in task name):
+Filtering tasks by target. 
 
 ```bash
-fzz -t "my task"
+fzz -t "@quick"
+// Assuming you have one or more tasks with `@quick` in the name,
+// it will only load the tasks those.
 ```
 
 Run with some arbitrary command and stdin
@@ -151,25 +159,24 @@ Templates for composing commands
 find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
 ```
 
-Running in "non-block" mode which cancels the currently running task once something changes
-super useful if you need to run a long task and don't want to wait for it to finish after a change in the code.
-See: [long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/integration/specs/long-tasks-test.sh)
+Run in "non-block" mode, which cancels the currently running task when there is change in a file.
+This is super useful if you need to run a long task and don't want to wait for it to finish after a code change.
+See how it works in: [long task test](https://github.com/cristianoliveira/funzzy/blob/2e6b53b8af3c3d85f193ec6abb49bd8450f31c83/tests/watching_with_non_block_flag.rs#L7)
 ```bash
 fzz --non-block
 ```
 
-See more in [examples](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
 ## Troubleshooting
 
 #### Why the watcher is running the same task multiple times?
 
-This might be due to different causes, the most common issue when using VIM is because of the default backup setting
-which causes changes to multiple files on save. See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474).
+This might be due to different causes, the most common issue when using VIM is because of its default backup setting
+which causes changes to multiple files on save. (See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474)).
 For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/long-task.yaml#L5).
 
-For other cases use the verbose `funzzy -V` to understand what is triggering a task to be executed.
+For other cases use the verbose `fzz -V | grep 'Triggered by'` to understand what is triggering a task to be executed.
 
 ## Automated tests
 
@@ -189,7 +196,11 @@ make integration
 
 ## Code Style
 
-We use [clippy](https://github.com/Manishearth/rust-clippy) for linting the funzzy's source code. Make sure you had validated it before committing.
+We use `rustfmt` to format the code. To format the code run:
+
+```bash
+cargo fmt
+```
 
 ## Contributing
 
@@ -199,7 +210,14 @@ We use [clippy](https://github.com/Manishearth/rust-clippy) for linting the funz
 - Push to the branch: `git push origin my-new-feature`
 - Submit a pull request
 
-Pull Requests are really welcome! Others support also.
+### Want to help?
+
+ - Open pull requests
+ - Create Issues
+ - Report bugs
+ - Suggest new features or enhancements
+
+Any help is appreciated!
 
 **Pull Request should have unit tests**
 
