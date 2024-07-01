@@ -64,7 +64,6 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 Funzzy results ----------------------------
 All tasks finished successfully.
-Funzzy: Watching...
 
 Funzzy: clear 
 

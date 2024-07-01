@@ -15,13 +15,18 @@ pub const DEFAULT_FILENAME: &str = ".watch.yaml";
 pub struct WatchCommand {
     watches: Watches,
     verbose: bool,
+    fail_fast: bool,
 }
 
 impl WatchCommand {
-    pub fn new(watches: Watches, verbose: bool) -> Self {
+    pub fn new(watches: Watches, verbose: bool, fail_fast: bool) -> Self {
         stdout::verbose(&format!("watches {:?}", watches), verbose);
 
-        WatchCommand { watches, verbose }
+        WatchCommand {
+            watches,
+            verbose,
+            fail_fast,
+        }
     }
 }
 
@@ -32,12 +37,22 @@ impl Command for WatchCommand {
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");
 
-            let results = rules::template(rules::commands(rules), "")
-                .iter()
-                .map(cmd::execute)
-                .collect::<Vec<Result<(), String>>>();
+            let tasks = rules::template(rules::commands(rules), "");
+            let mut results: Vec<Result<(), String>> = vec![];
+            for task in tasks {
+                let result = cmd::execute(&task);
+
+                if self.fail_fast && result.is_err() {
+                    results.push(result);
+                    break;
+                }
+
+                results.push(result);
+            }
 
             stdout::present_results(results);
+        } else {
+            stdout::info("Watching...");
         }
 
         watcher::events(
@@ -52,10 +67,19 @@ impl Command for WatchCommand {
 
                     stdout::verbose(&format!("Rules: {:?}", rules), self.verbose);
 
-                    let results = rules::template(rules::commands(rules), file_changed)
-                        .iter()
-                        .map(cmd::execute)
-                        .collect::<Vec<Result<(), String>>>();
+                    let tasks = rules::template(rules::commands(rules), file_changed);
+                    let mut results: Vec<Result<(), String>> = vec![];
+                    for task in tasks {
+                        let result = cmd::execute(&task);
+
+                        if self.fail_fast && result.is_err() {
+                            results.push(result);
+                            break;
+                        }
+
+                        results.push(result);
+                    }
+
                     stdout::present_results(results);
                 }
             },

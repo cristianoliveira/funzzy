@@ -22,25 +22,42 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
                     .read_to_string(&mut output)
                     .expect("failed to read test output file");
 
-                output.contains("Funzzy: Watching...")
+                output.contains("Running on init commands.") && output.contains("Funzzy results")
             });
-
-            output.truncate(0);
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
 
-            wait_until!({
-                output_file
-                    .read_to_string(&mut output)
-                    .expect("failed to read test output file");
+            wait_until!(
+                {
+                    output_file
+                        .read_to_string(&mut output)
+                        .expect("failed to read test output file");
 
-                output.contains("Funzzy results")
-            });
+                    output.contains("Failed tasks: 4")
+                },
+                "failed failed less than 4 tasks {}",
+                output
+            );
 
             let clear_char = "[H[J";
             assert_eq!(
                 output.replace(clear_char, ""),
-                "
+                "Funzzy: Running on init commands.
+
+Funzzy: echo complex | sed s/complex/third/g 
+
+third
+
+Funzzy: cat baz/bar/foo 
+
+
+Funzzy: echo finally 
+
+finally
+Funzzy results ----------------------------
+Failed tasks: 1
+ - Command cat baz/bar/foo has failed with exit status: 1
+
 Funzzy: clear 
 
 
@@ -77,7 +94,9 @@ Failed tasks: 4
  - Command cat foo/bar/baz has failed with exit status: 1
  - Command exit 125 has failed with exit status: 125
  - Command cat baz/bar/foo has failed with exit status: 1
-"
+",
+                "failed to match {}",
+                output
             );
         },
     );

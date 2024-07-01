@@ -17,7 +17,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(verbose: bool) -> Self {
+    pub fn new(verbose: bool, fail_fast: bool) -> Self {
         stdout::verbose("Worker in verbose mode.", verbose);
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
@@ -31,8 +31,12 @@ impl Worker {
                 stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
 
                 let mut has_been_cancelled = false;
+
                 while let Some(task) = tasks.pop() {
-                    if has_been_cancelled {
+                    if has_been_cancelled
+                        || (fail_fast
+                            && !results.clone().into_iter().find(|r| r.is_err()).is_none())
+                    {
                         break;
                     }
 

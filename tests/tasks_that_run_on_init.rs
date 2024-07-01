@@ -45,7 +45,6 @@ Funzzy: echo \"run on init sencod\"
 run on init sencod
 Funzzy results ----------------------------
 All tasks finished successfully.
-Funzzy: Watching...
 "
             );
 
