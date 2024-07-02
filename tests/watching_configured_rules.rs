@@ -113,13 +113,9 @@ fn test_it_watch_files_and_execute_configured_commands() {
                 output
             );
 
-            let clear_noise = "[H[J";
             assert_eq!(
-                output.replace(clear_noise, ""),
-                "
-Funzzy: clear 
-
-
+                output,
+                "[2J
 Funzzy: echo first 
 
 first

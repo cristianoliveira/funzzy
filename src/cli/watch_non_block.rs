@@ -49,7 +49,7 @@ impl Command for WatchNonBlockCommand {
         watcher::events(
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
-                    let _ = cmd::execute(&"clear".to_owned());
+                    stdout::clear_screen();
 
                     stdout::verbose(
                         &format!("Triggered by change in: {}", file_changed),

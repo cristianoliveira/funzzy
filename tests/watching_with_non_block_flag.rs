@@ -67,21 +67,17 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output
             );
 
-            let clear_sign = "[H[J";
             assert_eq!(
-                output.replace(clear_sign, ""),
+                output,
                 "Funzzy: Running on init commands.
 
 Funzzy: bash examples/longtask.sh long 2 
 
 Started task long 2
 Long task running... 0
-
-Funzzy: clear 
-
 Long task running... 1
 Task long 2 finished
-
+\u{1b}[2J
 Funzzy: bash examples/longtask.sh long 1 
 
 Started task long 1
@@ -92,12 +88,9 @@ Funzzy: bash examples/longtask.sh long 2
 
 Started task long 2
 Long task running... 0
-
-Funzzy: clear 
-
 Long task running... 1
 Task long 2 finished
-
+\u{1b}[2J
 Funzzy: bash examples/longtask.sh long 1 
 
 Started task long 1
