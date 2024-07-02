@@ -20,6 +20,7 @@ Or more complex workflows like:
   run: make test
   change: "tests/**"
   ignore: "tests/integration/**"
+  run_on_init: true
 
 - name: Starwars ascii art
   run: telnet towel.blinkenlights.nl
@@ -48,7 +49,8 @@ Want more examples?
 
 ## Motivation
 
-To create a lightweight watcher that **allows me to develop personal local workflows with specific automated checks and steps, similar to GitHub Actions**. Funzzy was built with Rust, which makes it blazingly fast and light :).
+To create a lightweight watcher that **allows me to set up personal local workflows with specific automated checks and steps, similar to GitHub Actions**. 
+Funzzy was built with Rust, which makes it blazingly fast and light.
 
 ## Installing
 
@@ -150,7 +152,7 @@ Filtering tasks by target.
 
 ```bash
 fzz -t "@quick"
-// Assuming you have one or more tasks with `@quick` in the name, it will only load those tasks
+# Assuming you have one or more tasks with `@quick` in the name, it will only load those tasks
 ```
 
 Run with some arbitrary command and stdin
@@ -165,14 +167,12 @@ Templates for composing commands
 find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
 ```
 
-Run in "non-block" mode, which cancels the currently running task when there is change in a file.
-This is super useful if you need to run a long task and don't want to wait for it to finish after a code change.
-See how it works in: [long task test](https://github.com/cristianoliveira/funzzy/blob/2e6b53b8af3c3d85f193ec6abb49bd8450f31c83/tests/watching_with_non_block_flag.rs#L7)
+Run in "non-block" mode, which cancels the currently running task when there are new change events from files.
+It's super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/2e6b53b8af3c3d85f193ec6abb49bd8450f31c83/tests/watching_with_non_block_flag.rs#L7)
+
 ```bash
 fzz --non-block
 ```
-
-or in [the integration specs](https://github.com/cristianoliveira/funzzy/tree/master/tests/integration/specs)
 
 ## Troubleshooting
 
