@@ -14,7 +14,9 @@ Or more complex workflows like:
 # .watch.yaml (or .watch.yml)
 # list here all the events and the commands that it should execute
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
-# Run: `fzz` to start the workflow
+# TIP2: List the tasks/steps from quicker to slower for better workflows
+#
+# Run: `fzz` to start this workflow
 
 - name: run my tests
   run: make test
