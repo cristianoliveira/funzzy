@@ -20,6 +20,7 @@ Or more complex workflows like:
   run: make test
   change: "tests/**"
   ignore: "tests/integration/**"
+  run_on_init: true
 
 - name: Starwars ascii art
   run: telnet towel.blinkenlights.nl
