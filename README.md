@@ -143,13 +143,6 @@ Use a different config file:
 fzz -c ~/watch.yaml
 ```
 
-Fail fast which bails the execution if any task fails. Useful for workflows that
-depend on all task to be successful. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6)
-
-```bash
-fzz --fail-fast
-```
-
 Filtering tasks by target. 
 
 ```bash
