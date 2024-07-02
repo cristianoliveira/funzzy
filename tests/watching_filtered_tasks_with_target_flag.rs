@@ -53,10 +53,7 @@ fn test_it_filter_tasks_with_target_flag() {
             assert_eq!(
                 output.replace(clear_char, ""),
                 "Funzzy: Watching...
-
-Funzzy: clear 
-
-
+[2J
 Funzzy: echo 'quick tests' 
 
 quick tests

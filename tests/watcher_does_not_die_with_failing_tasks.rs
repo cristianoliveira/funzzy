@@ -39,9 +39,8 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
                 output
             );
 
-            let clear_char = "[H[J";
             assert_eq!(
-                output.replace(clear_char, ""),
+                output,
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -57,10 +56,7 @@ finally
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-
-Funzzy: clear 
-
-
+[2J
 Funzzy: echo complex | sed s/complex/third/g 
 
 third

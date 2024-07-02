@@ -28,9 +28,8 @@ fn test_when_using_fail_fast_exit_before() {
                 output.contains("Funzzy results") && output.contains("Failed tasks: 1")
             });
 
-            let clear_char = "[H[J";
             assert_eq!(
-                output.replace(clear_char, ""),
+                &output,
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -56,7 +55,7 @@ Failed tasks: 1
             });
 
             assert_eq!(
-                output.replace(clear_char, ""),
+                output,
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -68,10 +67,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-
-Funzzy: clear 
-
-
+[2J
 Funzzy: echo complex | sed s/complex/third/g 
 
 third
@@ -119,9 +115,8 @@ fn test_fail_fast_with_non_block() {
                 output.contains("Funzzy results") && output.contains("Failed tasks: 1")
             });
 
-            let clear_char = "[H[J";
             assert_eq!(
-                output.replace(clear_char, ""),
+                output,
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -147,7 +142,7 @@ Failed tasks: 1
             });
 
             assert_eq!(
-                output.replace(clear_char, ""),
+                output,
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -159,10 +154,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-
-Funzzy: clear 
-
-
+[2J
 Funzzy: echo complex | sed s/complex/third/g 
 
 third

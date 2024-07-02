@@ -28,3 +28,8 @@ pub fn present_results(results: Vec<Result<(), String>>) {
         println!("All tasks finished successfully.");
     }
 }
+
+pub fn clear_screen() -> () {
+    // See https://archive.ph/d3Z3O
+    print!("{}[2J", 27 as char);
+}

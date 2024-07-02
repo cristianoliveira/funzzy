@@ -64,10 +64,7 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 Funzzy results ----------------------------
 All tasks finished successfully.
-
-Funzzy: clear 
-
-
+[2J
 Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt' 
 
 this file has changed: $PWD/examples/workdir/trigger-watcher.txt
@@ -83,9 +80,8 @@ Funzzy results ----------------------------
 All tasks finished successfully.
 ";
 
-            let clear_sign = "[H[J";
             assert_eq!(
-                output.replace(clear_sign, ""),
+                output,
                 expected.replace("$PWD", &dir.to_string_lossy())
             );
         },
