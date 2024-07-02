@@ -69,6 +69,8 @@ pub struct Args {
     pub flag_h: bool,
     pub flag_v: bool,
     pub flag_V: bool,
+
+    pub flag_non_block: bool,
     pub flag_fail_fast: bool,
 }
 
@@ -85,24 +87,21 @@ fn main() {
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        Args { arg_command, .. } if !arg_command.is_empty() => {
+        Args {
+            ref arg_command, ..
+        } if !arg_command.is_empty() => {
             match from_stdin() {
                 Ok(content) => {
                     if content.trim().is_empty() {
                         show("The list of files received is empty");
                     }
 
-                    let watch_rules = match rules::from_string(content, arg_command) {
+                    let watch_rules = match rules::from_string(content, arg_command.to_string()) {
                         Ok(rules) => rules,
                         Err(err) => error("Failed to get rules from stdin", err),
                     };
 
-                    execute_watch_command(
-                        Watches::new(watch_rules),
-                        args.flag_n,
-                        args.flag_V,
-                        args.flag_fail_fast,
-                    );
+                    execute_watch_command(Watches::new(watch_rules), args);
                 }
                 Err(err) => error("Failed to read stdin", err),
             };
@@ -152,27 +151,19 @@ fn main() {
 
                     show("Finished there is no task to run.");
                 } else {
-                    execute_watch_command(
-                        Watches::new(filtered),
-                        args.flag_n,
-                        args.flag_V,
-                        args.flag_fail_fast,
-                    );
+                    execute_watch_command(Watches::new(filtered), args);
                 }
             } else {
-                execute_watch_command(
-                    Watches::new(rules),
-                    args.flag_n,
-                    args.flag_V,
-                    args.flag_fail_fast,
-                );
+                execute_watch_command(Watches::new(rules), args);
             }
         }
     }
 }
 
-pub fn execute_watch_command(watches: Watches, non_block: bool, verbose: bool, fail_fast: bool) {
-    if non_block {
+pub fn execute_watch_command(watches: Watches, args: Args) {
+    let verbose = args.flag_V;
+    let fail_fast = args.flag_fail_fast;
+    if args.flag_non_block {
         execute(WatchNonBlockCommand::new(watches, verbose, fail_fast))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast))
