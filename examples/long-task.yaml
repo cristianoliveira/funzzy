@@ -1,3 +1,14 @@
+- name: run long task 1
+  run: "bash examples/longtask.sh long 1"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+    # Ignoring VIM backup files
+    - "**/*~"
+    - "**/*.sw?"
+
 - name: run long task 2
   run: "bash examples/longtask.sh long 2"
   change: 
