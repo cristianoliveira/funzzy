@@ -16,14 +16,6 @@
   run: "make build"
   change: ["Cargo.*"]
 
-- name: run my test (@quick)
-  run: 
-    # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
-    - "cargo test $UNIT_TEST --verbose"
-
-  change: "src/**"
-  run_on_init: true
-
 - name: run lint and formatter (@quick)
   run: "cargo fmt -- --check {{filepath}}"
   run_on_init: true
@@ -35,6 +27,14 @@
     - "examples/*.yml"
     - "examples/*.yaml"
     - "examples/workdir/**"
+
+- name: run my test (@quick)
+  run: 
+    # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
+    - "cargo test $UNIT_TEST --verbose"
+
+  change: "src/**"
+  run_on_init: true
 
 - name: run integration
   run: 
