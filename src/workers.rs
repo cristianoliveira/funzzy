@@ -150,6 +150,205 @@ impl Worker {
         }
     }
 
+    #[rustfmt::skip]
+    pub fn run(&mut self) -> Result<(), String> {
+        // stdout::verbose("Worker in verbose mode.", verbose);
+        // on_init
+        // Unfortunatelly channels can't have multiple receiver so we need to
+        // create a channel for each kind of event.
+        let (tscheduler, rscheduler) = channel::<Vec<String>>();
+        let (tcancel, rcancel) = channel::<()>();
+
+        let consumer = std::thread::spawn(move || {
+            while let Ok(mut tasks) = rscheduler.recv() {
+                let mut results: Vec<Result<(), String>> = vec![];
+                let ignored = rcancel.try_recv();
+
+                // on_event("initial_load")
+                // stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
+                todo!("implement on_event");
+
+                let mut has_been_cancelled = false;
+
+                while let Some(task) = tasks.pop() {
+                    if has_been_cancelled {
+                        // || (fail_fast
+                        //     && !results.clone().into_iter().find(|r| r.is_err()).is_none())
+                        // on_task_fails set has_been_cancelled to true when fail fast
+                        //
+                        // on_event("cancelled")
+                        todo!("implement on_event");
+                        break;
+                    }
+
+                    let mut child = match spawn(&task) {
+                        Ok(child) => child,
+                        Err(err) => {
+                            // on_event("spawn_task", Err(&format!("failed to create command: {:?}", err)))
+                            // stdout::error(&format!("failed to create command: {:?}", err));
+                            todo!("implement on_event");
+                            continue;
+                        }
+                    };
+
+                    loop {
+                        // We don't want the tasks to run in parallel but
+                        // we need it to be async so we can kill it.
+                        match child.try_wait() {
+                            Ok(None) => {
+                                // Task is still running...
+                                // Check if there is any kill signal otherwise
+                                // continue running
+                                match rcancel.try_recv() {
+                                    Ok(_) => {
+                                        todo!("implement on_event");
+                                        // on_event("cancelling_init", Ok(&format!("failed to create command: {:?}", err)))
+                                        // stdout::verbose(
+                                        //     &format!("---- cancelling: {:?} ----", task),
+                                        //     verbose,
+                                        // );
+
+                                        if let Err(err) = signal::kill(
+                                            Pid::from_raw(child.id() as i32),
+                                            Signal::SIGINT,
+                                        ) {
+                                            todo!("implement on_event");
+                                            // on_event(
+                                            //   "cancelling_init", 
+                                            //   Err(&format!(
+                                            //     "failed to kill the task {:?}: {:?}",
+                                            //     task,
+                                            //     err
+                                            //   ));
+                                            // );
+                                            // stdout::error(&format!(
+                                            //     "failed to kill the task {:?}: {:?}",
+                                            //     task, err
+                                            // ));
+                                        }
+
+                                        if let Ok(status) = child.wait() {
+                                            todo!("implement on_event");
+                                            // on_event(
+                                            //   "cancelling_done", 
+                                            //   Ok(&format!(
+                                            //     "failed to kill the task {:?}: {:?}",
+                                            //     task,
+                                            //     err
+                                            //   ));
+                                            // );
+                                            // stdout::verbose(
+                                            //     &format!(
+                                            //         "---- finished: {:?} status: {} ----",
+                                            //         task, status
+                                            //     ),
+                                            //     verbose,
+                                            // );
+                                        } else {
+                                            todo!("implement on_event");
+                                            // on_event(
+                                            //   "cancelling_done", 
+                                            //   Err(&format!(
+                                            //       "failed to wait for the task to finish: {:?}",
+                                            //       task
+                                            //   )),
+                                            // );
+                                            // stdout::error(&format!(
+                                            //     "failed to wait for the task to finish: {:?}",
+                                            //     task
+                                            // ));
+                                        }
+                                        has_been_cancelled = true;
+                                        break;
+                                    }
+
+                                    Err(err) if err != TryRecvError::Empty => {
+                                        todo!("implement on_event");
+                                        // on_event(
+                                        //   "cancelling_error", 
+                                        //   Err(&format!(
+                                        //          "failed to receive cancel event: {:?}",
+                                        //          task
+                                        //   )),
+                                        // );
+                                        // stdout::error(&format!(
+                                        //     "failed to receive cancel event: {:?}",
+                                        //     task
+                                        // ));
+                                        break;
+                                    }
+
+                                    _ => {
+                                        todo!("implement on_event");
+                                        // on_event(
+                                        //   "tick", 
+                                        //   Err(&format!(
+                                        //          "failed to receive cancel event: {:?}",
+                                        //          task
+                                        //   )),
+                                        // );
+
+                                        // stdout::verbose(
+                                        //     &format!("waiting next tick for task: {}", task),
+                                        //     verbose,
+                                        // );
+
+                                        std::thread::sleep(std::time::Duration::from_millis(200));
+                                    }
+                                }
+                            }
+
+                            Ok(Some(status)) => {
+                                todo!("implement on_event");
+                                if status.success() {
+                                    // on_event("task_result", Ok(())),
+                                    results.push(Ok(()));
+                                } else {
+                                    // on_event("task_result", Err(format!(
+                                    //     "Command {} has failed with {}",
+                                    //     task, status
+                                    // ))),
+                                    results.push(Err(format!(
+                                        "Command {} has failed with {}",
+                                        task, status
+                                    )));
+                                }
+
+                                break;
+                            }
+
+                            Err(err) => {
+                                todo!("implement on_event");
+                                // on_event("task_result", Err(format!(
+                                //     "Command {} has errored with {}",
+                                //     task, err
+                                // ))),
+                                // results.push(Err(format!(
+                                //     "Command {} has errored with {}",
+                                //     task, err
+                                // )));
+
+                                break;
+                            }
+                        };
+                    }
+                }
+
+                if !has_been_cancelled {
+                    stdout::present_results(results);
+                }
+            }
+
+            stdout::info("Consumer thread finished.");
+        });
+
+        self.canceller = Some(tcancel);
+        self.scheduler = Some(tscheduler);
+        self.consumer = Some(consumer);
+
+        Ok(())
+    }
+
     pub fn cancel_running_tasks(&self) -> Result<(), String> {
         if let Some(canceller) = self.canceller.as_ref() {
             if let Err(err) = canceller.send(()) {
