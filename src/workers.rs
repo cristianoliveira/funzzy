@@ -32,7 +32,7 @@ impl Worker {
 
                 let mut has_been_cancelled = false;
 
-                while let Some(task) = tasks.pop() {
+                for task in tasks {
                     if has_been_cancelled
                         || (fail_fast
                             && !results.clone().into_iter().find(|r| r.is_err()).is_none())

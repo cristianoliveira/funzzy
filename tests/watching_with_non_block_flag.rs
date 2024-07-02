@@ -44,10 +44,9 @@ fn test_it_cancel_current_running_task_when_something_change() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Started task list 4")
-                        && output.match_indices("Started task list 4").count() == 1
+                    output.contains("Task long 1 finished")
                 },
-                "Failed find one instance of task list 4: {}",
+                "Failed to find task 1: {}",
                 output
             );
 
@@ -59,9 +58,12 @@ fn test_it_cancel_current_running_task_when_something_change() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.match_indices("Started task list 4").count() == 2
+                    // First on init
+                    // Second when the file is changed
+                    // Third when the file is changed again
+                    output.match_indices("Started task long 2").count() == 3
                 },
-                "Failed find 2 instances of task list 4: {}",
+                "Failed find 3 instances of task list 2: {}",
                 output
             );
 
@@ -70,7 +72,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output.replace(clear_sign, ""),
                 "Funzzy: Running on init commands.
 
-Funzzy: task bash examples/longtask.sh long 2 
+Funzzy: bash examples/longtask.sh long 2 
 
 Started task long 2
 Long task running... 0
@@ -80,21 +82,31 @@ Funzzy: clear
 Long task running... 1
 Task long 2 finished
 
-Funzzy: task bash examples/longtask.sh list 4 
+Funzzy: bash examples/longtask.sh long 1 
 
-Started task list 4
+Started task long 1
+Long task running... 0
+Task long 1 finished
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
 Long task running... 0
 
 Funzzy: clear 
 
 Long task running... 1
-Long task running... 2
-Long task running... 3
-Task list 4 finished
+Task long 2 finished
 
-Funzzy: task bash examples/longtask.sh list 4 
+Funzzy: bash examples/longtask.sh long 1 
 
-Started task list 4
+Started task long 1
+Long task running... 0
+Task long 1 finished
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
 Long task running... 0
 ",
                 "Output does not match expected: \n {}",

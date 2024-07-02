@@ -124,11 +124,11 @@ fn test_fail_fast_with_non_block() {
                 output.replace(clear_char, ""),
                 "Funzzy: Running on init commands.
 
-Funzzy: task echo finally 
+Funzzy: echo complex | sed s/complex/third/g 
 
-finally
+third
 
-Funzzy: task cat baz/bar/foo 
+Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
 Failed tasks: 1
@@ -150,11 +150,11 @@ Failed tasks: 1
                 output.replace(clear_char, ""),
                 "Funzzy: Running on init commands.
 
-Funzzy: task echo finally 
+Funzzy: echo complex | sed s/complex/third/g 
 
-finally
+third
 
-Funzzy: task cat baz/bar/foo 
+Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
 Failed tasks: 1
@@ -163,15 +163,19 @@ Failed tasks: 1
 Funzzy: clear 
 
 
-Funzzy: task echo finally 
+Funzzy: echo complex | sed s/complex/third/g 
 
-finally
+third
 
-Funzzy: task cat baz/bar/foo 
+Funzzy: echo before 
+
+before
+
+Funzzy: exit 1 
 
 Funzzy results ----------------------------
 Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
+ - Command exit 1 has failed with exit status: 1
 ",
                 "failed to match ouput: {}",
                 output
