@@ -5,6 +5,7 @@
 #  - When running normally with `fzz` it will execute all tasks
 #  and report the failings
 #
+# NOTE: the `--fail-fast` is only available when installing from source
 #  - When running with `fzz --fail-fast` it exits once the first task fails.
 # The execution sequence is top to down and left to right
 #
