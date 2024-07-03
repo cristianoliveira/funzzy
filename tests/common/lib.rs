@@ -18,6 +18,8 @@ pub struct Options {
 
 static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 
+pub const CLEAR_SCREEN: &str = "[2J";
+
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
