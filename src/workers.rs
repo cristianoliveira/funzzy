@@ -63,7 +63,6 @@ impl Worker {
                                             verbose,
                                         );
 
-                                        child.kill().expect("failed to kill child");
                                         if let Err(err) = signal::kill(
                                             Pid::from_raw(child.id() as i32),
                                             // Sends a SIGTERM signal to the process

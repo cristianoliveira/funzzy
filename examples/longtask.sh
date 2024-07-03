@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 
-# Check if a signal is received
-trap "echo '>> SIGINT received'; exit" SIGINT
-trap "echo '>> SIGTERM received'; exit" SIGTERM
+# NOTE: commented because when running on github actions the signals get messed up
+# See: https://github.com/actions/runner/issues/2684
+#
+# Uncomment the following lines to see 
+# the signal handling in action by funzzy when using the `--non-block` flag
+#
+# trap "echo '>> SIGINT received'; exit" SIGINT
+# trap "echo '>> SIGTERM received'; exit" SIGTERM
 
 # Simulate a long task and count time
 count=0
