@@ -110,8 +110,8 @@ macro_rules! wait_until {
 macro_rules! write_to_file {
     ($file_path:expr) => {
         println!("Integration Tests: writting to file {}", $file_path);
-        let mut file = std::fs::File::create($file_path)
-            .expect("Integration Tests: failed to open file");
+        let mut file =
+            std::fs::File::create($file_path).expect("Integration Tests: failed to open file");
         file.write_all(b"test_content\n")
             .expect("Integration Tests: failed to write to file.");
     };
