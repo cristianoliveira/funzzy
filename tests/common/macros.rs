@@ -22,7 +22,7 @@ macro_rules! defer {
         }
         impl<F: FnMut()> Drop for ScopeCall<F> {
             fn drop(&mut self) {
-                println!("Cleaning up...");
+                println!("Integration Tests: cleanup...");
                 (self.c)();
             }
         }
@@ -80,10 +80,12 @@ macro_rules! wait_until {
             if result {
                 break;
             }
-            println!("Waiting for condition to be true...");
+
+            println!("Integration Tests: waiting_until ...");
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
 
+        println!("Integration Tests: waiting_until timed out.");
         assert!($e, $($arg)+);
     };
 
@@ -94,10 +96,11 @@ macro_rules! wait_until {
                 break;
             }
 
+            println!("Integration Tests: waiting_until ...");
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
 
-        assert!($e, "Given contition was never true");
+        assert!($e, "Integration Tests: waiting_until timed out.");
     };
 }
 
@@ -105,9 +108,11 @@ macro_rules! wait_until {
 /// it will write the string `test_content\n` to the given file for testing purposes.
 #[macro_export]
 macro_rules! write_to_file {
-    ($file:expr) => {
-        let mut file = std::fs::File::create($file).expect("failed to open file");
+    ($file_path:expr) => {
+        println!("Integration Tests: writting to file {}", $file_path);
+        let mut file = std::fs::File::create($file_path)
+            .expect("Integration Tests: failed to open file");
         file.write_all(b"test_content\n")
-            .expect("failed to write to file");
+            .expect("Integration Tests: failed to write to file.");
     };
 }
