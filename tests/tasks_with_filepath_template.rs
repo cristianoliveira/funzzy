@@ -80,10 +80,7 @@ Funzzy results ----------------------------
 All tasks finished successfully.
 ";
 
-            assert_eq!(
-                output,
-                expected.replace("$PWD", &dir.to_string_lossy())
-            );
+            assert_eq!(output, expected.replace("$PWD", &dir.to_string_lossy()));
         },
     );
 }
