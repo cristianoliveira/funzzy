@@ -75,9 +75,7 @@ Funzzy: bash examples/longtask.sh long 2
 
 Started task long 2
 Long task running... 0
-Long task running... 1
-Task long 2 finished
-\u{1b}[2J
+[2J
 Funzzy: bash examples/longtask.sh long 1 
 
 Started task long 1
@@ -88,9 +86,7 @@ Funzzy: bash examples/longtask.sh long 2
 
 Started task long 2
 Long task running... 0
-Long task running... 1
-Task long 2 finished
-\u{1b}[2J
+[2J
 Funzzy: bash examples/longtask.sh long 1 
 
 Started task long 1

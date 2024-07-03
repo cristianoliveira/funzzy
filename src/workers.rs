@@ -63,12 +63,15 @@ impl Worker {
                                             verbose,
                                         );
 
+                                        child.kill().expect("failed to kill child");
                                         if let Err(err) = signal::kill(
                                             Pid::from_raw(child.id() as i32),
-                                            Signal::SIGINT,
+                                            // Sends a SIGTERM signal to the process
+                                            // and allows it to exit gracefully.
+                                            Signal::SIGTERM,
                                         ) {
                                             stdout::error(&format!(
-                                                "failed to kill the task {:?}: {:?}",
+                                                "failed to terminate task {:?}: {:?}",
                                                 task, err
                                             ));
                                         }
