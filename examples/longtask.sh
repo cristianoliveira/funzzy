@@ -12,7 +12,7 @@ while true; do
     count=$((count+1))
     sleep 3
 
-    if [[ "$count" -eq "$2" ]]; then
+    if [ $count -eq "$2" ]; then
         echo "Task $1 $2 finished"
         break
     fi

@@ -67,39 +67,40 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output
             );
 
+            let expected = "Funzzy: Running on init commands.
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
+Long task running... 0
+[2J
+Funzzy: bash examples/longtask.sh long 1 
+
+Started task long 1
+Long task running... 0
+Task long 1 finished
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
+Long task running... 0
+[2J
+Funzzy: bash examples/longtask.sh long 1 
+
+Started task long 1
+Long task running... 0
+Task long 1 finished
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
+Long task running... 0
+";
+
             assert_eq!(
-                output,
-                "Funzzy: Running on init commands.
-
-Funzzy: bash examples/longtask.sh long 2 
-
-Started task long 2
-Long task running... 0
-[2J
-Funzzy: bash examples/longtask.sh long 1 
-
-Started task long 1
-Long task running... 0
-Task long 1 finished
-
-Funzzy: bash examples/longtask.sh long 2 
-
-Started task long 2
-Long task running... 0
-[2J
-Funzzy: bash examples/longtask.sh long 1 
-
-Started task long 1
-Long task running... 0
-Task long 1 finished
-
-Funzzy: bash examples/longtask.sh long 2 
-
-Started task long 2
-Long task running... 0
-",
-                "Output does not match expected: \n {}",
-                output
+                output, expected,
+                "Output:\n{} ------ \n\nExpected:\n{}",
+                output, expected,
             );
         },
     );
