@@ -50,7 +50,7 @@
   run_on_init: true
 
 - name: after all checks if no error stage to git (@quick)
-  run: "git add {{filepath}}"
+  run: 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
   change: 
     - "README.md"
     - "src/**"

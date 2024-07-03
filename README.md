@@ -37,7 +37,7 @@ Or more complex workflows like:
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 
 - name: finally stage the changed files in git
-  run: git add {{filepath}}
+  run: 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
   change: 
     - "src/**"
     - "tests/**"
