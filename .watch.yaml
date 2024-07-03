@@ -9,7 +9,6 @@
 # then start making my changes, everytime all the tests pass the changed file
 # is staged to git. Once I'm done with my changes I simply commit. :)
 #
-# NOTE: the `--fail-fast` is only available when installing from source
 # Run all tasks with `fzz --fail-fast`
 # Run quick tasks with `fzz -t @quick --fail-fast`
 #
