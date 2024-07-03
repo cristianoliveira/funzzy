@@ -1,5 +1,7 @@
 use std::io::prelude::*;
 
+use crate::setup::CLEAR_SCREEN;
+
 #[path = "./common/lib.rs"]
 mod setup;
 
@@ -44,10 +46,11 @@ fn test_it_cancel_current_running_task_when_something_change() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    // See it in examples/longtask.sh
-                    output.match_indices("[2J").count() == 1
+                    // See it in `examples/longtask.sh`
+                    // and also in `src/stdout.rs`
+                    output.match_indices(CLEAR_SCREEN).count() == 1
                 },
-                "Failed to find task 1: {}",
+                "Failed to find a clear screen sign: {}",
                 output
             );
 
@@ -59,10 +62,11 @@ fn test_it_cancel_current_running_task_when_something_change() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    // See it in examples/longtask.sh
-                    output.match_indices("[2J").count() == 2
+                    // See it in `examples/longtask.sh`
+                    // and also in `src/stdout.rs`
+                    output.match_indices(CLEAR_SCREEN).count() == 2
                 },
-                "Failed find 3 instances of task list 2: {}",
+                "Failed to find 2 clear screen signs: {}",
                 output
             );
 
