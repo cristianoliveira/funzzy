@@ -194,7 +194,8 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
 }
 
 fn pattern(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**/{}", pattern)).expect("Pattern error.")
+    Pattern::new(&format!("**/{}", pattern))
+        .expect(format!("Invalid glob pattern {}", pattern).as_str())
 }
 
 #[cfg(test)]
