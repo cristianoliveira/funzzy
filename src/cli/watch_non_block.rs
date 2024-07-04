@@ -32,10 +32,25 @@ impl WatchNonBlockCommand {
 }
 
 impl Command for WatchNonBlockCommand {
+    #![allow(unused_assignments)]
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let worker = workers::Worker::new(self.verbose, self.fail_fast);
+        let worker = workers::Worker::new(self.verbose, self.fail_fast, |event, _path| {
+            let mut time_execution_started = std::time::Instant::now();
+            match event {
+                workers::WorkerEvent::InitExecution => {
+                    // Unused assignment?
+                    time_execution_started = std::time::Instant::now();
+                }
+                workers::WorkerEvent::FinishedExecution => {
+                    stdout::info(&format!(
+                        "finished in {:?}",
+                        time_execution_started.elapsed().as_secs_f64()
+                    ));
+                }
+            };
+        });
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");

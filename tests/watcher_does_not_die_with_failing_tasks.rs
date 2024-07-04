@@ -40,7 +40,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             );
 
             assert_eq!(
-                output,
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -89,8 +89,7 @@ Failed tasks: 4
  - Command exit 1 has failed with exit status: 1
  - Command cat foo/bar/baz has failed with exit status: 1
  - Command exit 125 has failed with exit status: 125
- - Command cat baz/bar/foo has failed with exit status: 1
-",
+ - Command cat baz/bar/foo has failed with exit status: 1",
                 "failed to match {}",
                 output
             );

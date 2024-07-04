@@ -77,10 +77,12 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
-All tasks finished successfully.
-";
+All tasks finished successfully.";
 
-            assert_eq!(output, expected.replace("$PWD", &dir.to_string_lossy()));
+            assert_eq!(
+                setup::clean_output(&output),
+                expected.replace("$PWD", &dir.to_string_lossy())
+            )
         },
     );
 }

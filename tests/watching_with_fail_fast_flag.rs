@@ -29,7 +29,7 @@ fn test_when_using_fail_fast_exit_before() {
             });
 
             assert_eq!(
-                &output,
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -40,8 +40,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-"
+ - Command cat baz/bar/foo has failed with exit status: 1"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -55,7 +54,7 @@ Failed tasks: 1
             });
 
             assert_eq!(
-                output,
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -80,8 +79,7 @@ Funzzy: exit 1
 
 Funzzy results ----------------------------
 Failed tasks: 1
- - Command exit 1 has failed with exit status: 1
-",
+ - Command exit 1 has failed with exit status: 1",
                 "failed to match ouput: {}",
                 output
             );
@@ -116,7 +114,7 @@ fn test_fail_fast_with_non_block() {
             });
 
             assert_eq!(
-                output,
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -127,8 +125,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-"
+ - Command cat baz/bar/foo has failed with exit status: 1"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -142,7 +139,7 @@ Failed tasks: 1
             });
 
             assert_eq!(
-                output,
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -167,8 +164,7 @@ Funzzy: exit 1
 
 Funzzy results ----------------------------
 Failed tasks: 1
- - Command exit 1 has failed with exit status: 1
-",
+ - Command exit 1 has failed with exit status: 1",
                 "failed to match ouput: {}",
                 output
             );

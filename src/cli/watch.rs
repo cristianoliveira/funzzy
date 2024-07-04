@@ -57,6 +57,7 @@ impl Command for WatchCommand {
 
         watcher::events(
             |file_changed| {
+                let time_execution_started = std::time::Instant::now();
                 if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::clear_screen();
 
@@ -81,6 +82,10 @@ impl Command for WatchCommand {
                     }
 
                     stdout::present_results(results);
+                    let elapsed = time_execution_started.elapsed();
+
+                    // Print in the format of 0.1234s
+                    stdout::info(&format!("finished in {:.4}s", elapsed.as_secs_f64()));
                 }
             },
             self.verbose,

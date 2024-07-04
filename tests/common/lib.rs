@@ -136,3 +136,13 @@ where
     std::fs::remove_file(dir.join(output_file_path))
         .expect("failed to remove file after running test");
 }
+
+pub fn clean_output(output_file: &str) -> String {
+    output_file
+        .lines()
+        // This line prints the time so is not deterministic
+        .filter(|line| !line.starts_with("Funzzy: finished in"))
+        .collect::<Vec<&str>>()
+        .join("\n")
+        .to_string()
+}
