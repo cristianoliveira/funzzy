@@ -81,6 +81,11 @@ curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-i
 nix-env -iA nixpkgs.funzzy
 ```
 
+Nightly version
+```bash
+nix profile install 'github:cristianoliveira/nixpkgs#funzzy'
+```
+
 or, if you use `shell.nix`:
   
   ```nix
