@@ -140,8 +140,15 @@ where
 pub fn clean_output(output_file: &str) -> String {
     output_file
         .lines()
-        // This line prints the time so is not deterministic
-        .filter(|line| !line.starts_with("Funzzy: finished in"))
+        .map(|line| {
+            // This line prints the time so is not deterministic
+            if line.starts_with("Funzzy: finished in") {
+                return "Funzzy: finished in 0.0s";
+            }
+
+            line
+        })
+        .filter(|line| !line.contains("@@@@"))
         .collect::<Vec<&str>>()
         .join("\n")
         .to_string()

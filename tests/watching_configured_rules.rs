@@ -132,7 +132,8 @@ Funzzy: echo 'something changed in workdir!'
 
 something changed in workdir!
 Funzzy results ----------------------------
-All tasks finished successfully."
+All tasks finished successfully.
+Funzzy: finished in 0.0s"
             );
         },
     );

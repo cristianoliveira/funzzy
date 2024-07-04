@@ -36,18 +36,12 @@ impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let worker = workers::Worker::new(self.verbose, self.fail_fast, |event, _path| {
-            let mut time_execution_started = std::time::Instant::now();
+        let worker = workers::Worker::new(self.verbose, self.fail_fast, |event| {
             match event {
-                workers::WorkerEvent::InitExecution => {
-                    // Unused assignment?
-                    time_execution_started = std::time::Instant::now();
-                }
-                workers::WorkerEvent::FinishedExecution => {
-                    stdout::info(&format!(
-                        "finished in {:?}",
-                        time_execution_started.elapsed().as_secs_f64()
-                    ));
+                workers::WorkerEvent::InitExecution => {}
+                workers::WorkerEvent::Tick => {}
+                workers::WorkerEvent::FinishedExecution(time_elapsed) => {
+                    stdout::info(&format!("finished in {:.4}s", time_elapsed.as_secs_f32()));
                 }
             };
         });

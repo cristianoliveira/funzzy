@@ -31,9 +31,8 @@ fn test_it_executes_tasks_on_init_when_configured() {
                 output
             );
 
-            let clear_noise = "[H[J";
             assert_eq!(
-                output.replace(clear_noise, ""),
+                setup::clean_output(&output),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo 'running on init first' 
@@ -45,7 +44,7 @@ Funzzy: echo \"run on init sencod\"
 run on init sencod
 Funzzy results ----------------------------
 All tasks finished successfully.
-"
+Funzzy: finished in 0.0s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
