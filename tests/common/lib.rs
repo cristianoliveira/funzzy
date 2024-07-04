@@ -136,3 +136,20 @@ where
     std::fs::remove_file(dir.join(output_file_path))
         .expect("failed to remove file after running test");
 }
+
+pub fn clean_output(output_file: &str) -> String {
+    output_file
+        .lines()
+        .map(|line| {
+            // This line prints the time so is not deterministic
+            if line.starts_with("Funzzy: finished in") {
+                return "Funzzy: finished in 0.0s";
+            }
+
+            line
+        })
+        .filter(|line| !line.contains("@@@@"))
+        .collect::<Vec<&str>>()
+        .join("\n")
+        .to_string()
+}

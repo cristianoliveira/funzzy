@@ -64,6 +64,7 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 Funzzy results ----------------------------
 All tasks finished successfully.
+Funzzy: finished in 0.0s
 [2J
 Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -78,9 +79,12 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
 All tasks finished successfully.
-";
+Funzzy: finished in 0.0s";
 
-            assert_eq!(output, expected.replace("$PWD", &dir.to_string_lossy()));
+            assert_eq!(
+                setup::clean_output(&output),
+                expected.replace("$PWD", &dir.to_string_lossy())
+            )
         },
     );
 }

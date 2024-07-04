@@ -49,9 +49,8 @@ fn test_it_filter_tasks_with_target_flag() {
                 output
             );
 
-            let clear_char = "[H[J";
             assert_eq!(
-                output.replace(clear_char, ""),
+                setup::clean_output(&output),
                 "Funzzy: Watching...
 [2J
 Funzzy: echo 'quick tests' 
@@ -67,7 +66,7 @@ Funzzy: echo 'quick lint'
 quick lint
 Funzzy results ----------------------------
 All tasks finished successfully.
-"
+Funzzy: finished in 0.0s"
             );
         },
     );

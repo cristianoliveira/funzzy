@@ -32,10 +32,19 @@ impl WatchNonBlockCommand {
 }
 
 impl Command for WatchNonBlockCommand {
+    #![allow(unused_assignments)]
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let worker = workers::Worker::new(self.verbose, self.fail_fast);
+        let worker = workers::Worker::new(self.verbose, self.fail_fast, |event| {
+            match event {
+                workers::WorkerEvent::InitExecution => {}
+                workers::WorkerEvent::Tick => {}
+                workers::WorkerEvent::FinishedExecution(time_elapsed) => {
+                    stdout::info(&format!("finished in {:.4}s", time_elapsed.as_secs_f32()));
+                }
+            };
+        });
 
         if let Some(rules) = self.watches.run_on_init() {
             stdout::info("Running on init commands.");

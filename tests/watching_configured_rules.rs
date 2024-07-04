@@ -114,7 +114,7 @@ fn test_it_watch_files_and_execute_configured_commands() {
             );
 
             assert_eq!(
-                output,
+                setup::clean_output(&output),
                 "[2J
 Funzzy: echo first 
 
@@ -133,7 +133,7 @@ Funzzy: echo 'something changed in workdir!'
 something changed in workdir!
 Funzzy results ----------------------------
 All tasks finished successfully.
-"
+Funzzy: finished in 0.0s"
             );
         },
     );

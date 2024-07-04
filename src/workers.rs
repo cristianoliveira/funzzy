@@ -8,6 +8,14 @@ use nix::unistd::Pid;
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
+use std::time::Duration;
+
+#[derive(Debug, Clone)]
+pub enum WorkerEvent {
+    InitExecution,
+    FinishedExecution(Duration),
+    Tick,
+}
 
 pub struct Worker {
     canceller: Option<Sender<()>>,
@@ -17,7 +25,7 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(verbose: bool, fail_fast: bool) -> Self {
+    pub fn new(verbose: bool, fail_fast: bool, on_event: fn(WorkerEvent)) -> Self {
         stdout::verbose("Worker in verbose mode.", verbose);
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
@@ -25,12 +33,14 @@ impl Worker {
         let (tcancel, rcancel) = channel::<()>();
 
         let consumer = std::thread::spawn(move || {
-            while let Ok(mut tasks) = rscheduler.recv() {
+            while let Ok(tasks) = rscheduler.recv() {
+                on_event(WorkerEvent::InitExecution);
                 let mut results: Vec<Result<(), String>> = vec![];
                 let ignored = rcancel.try_recv();
                 stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
 
                 let mut has_been_cancelled = false;
+                let mut time_execution_started = std::time::Instant::now();
 
                 for task in tasks {
                     if has_been_cancelled
@@ -107,6 +117,8 @@ impl Worker {
                                             verbose,
                                         );
 
+                                        on_event(WorkerEvent::Tick);
+
                                         std::thread::sleep(std::time::Duration::from_millis(200));
                                     }
                                 }
@@ -139,6 +151,8 @@ impl Worker {
 
                 if !has_been_cancelled {
                     stdout::present_results(results);
+                    let elapsed = time_execution_started.elapsed();
+                    on_event(WorkerEvent::FinishedExecution(elapsed));
                 }
             }
 

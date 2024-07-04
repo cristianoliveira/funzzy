@@ -35,6 +35,8 @@ impl Command for WatchCommand {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
         if let Some(rules) = self.watches.run_on_init() {
+            let time_execution_started = std::time::Instant::now();
+
             stdout::info("Running on init commands.");
 
             let tasks = rules::template(rules::commands(rules), "");
@@ -51,12 +53,17 @@ impl Command for WatchCommand {
             }
 
             stdout::present_results(results);
+
+            let elapsed = time_execution_started.elapsed();
+            // Present elapsed time like 0.1234s
+            stdout::info(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
         } else {
             stdout::info("Watching...");
         }
 
         watcher::events(
             |file_changed| {
+                let time_execution_started = std::time::Instant::now();
                 if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::clear_screen();
 
@@ -81,6 +88,10 @@ impl Command for WatchCommand {
                     }
 
                     stdout::present_results(results);
+                    let elapsed = time_execution_started.elapsed();
+
+                    // Present elapsed time like 0.1234s
+                    stdout::info(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
                 }
             },
             self.verbose,
