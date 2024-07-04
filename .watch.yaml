@@ -36,6 +36,14 @@
   change: "src/**"
   run_on_init: true
 
+- name: nix checks
+  run: 
+    - nix flake check
+    - nix profile install .#funzzy
+  change: 
+    - "**/*.nix"
+  run_on_init: true
+
 - name: run integration
   run: 
     # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
@@ -50,12 +58,18 @@
   run_on_init: true
 
 - name: after all checks if no error stage to git (@quick)
-  run: 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
+  run: 
+    - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
+    - 'git add . -p'
+    # - 'git commit'
   change: 
+    - ".watch.yaml"
     - "README.md"
     - "src/**"
     - "tests/**"
     - "examples/*.yml"
     - "examples/*.yaml"
+    - "**/*.nix"
   ignore: 
     - "examples/workdir/**"
+  run_on_init: true
