@@ -144,6 +144,8 @@ fzz
 
 ### Options
 
+Check all the options with `fzz --help`
+
 Use a different config file:
 
 ```bash
@@ -177,7 +179,7 @@ find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
 ```
 
 Run in "non-block" mode, which cancels the currently running task when there are new change events from files.
-It's super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/2e6b53b8af3c3d85f193ec6abb49bd8450f31c83/tests/watching_with_non_block_flag.rs#L7)
+It's super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
 
 ```bash
 fzz --non-block
@@ -189,7 +191,7 @@ fzz --non-block
 
 This might be due to different causes, the most common issue when using VIM is because of its default backup setting
 which causes changes to multiple files on save. (See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474)).
-For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/long-task.yaml#L5).
+For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/tasks-with-long-running-commands.yaml#L5).
 
 For other cases use the verbose `fzz -V | grep 'Triggered by'` to understand what is triggering a task to be executed.
 
