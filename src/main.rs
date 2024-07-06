@@ -14,6 +14,11 @@ mod workers;
 mod yaml;
 
 use cli::*;
+use nix::{
+    libc::signal,
+    sys::signal::{self, Signal},
+    unistd::Pid,
+};
 use watches::Watches;
 
 use serde_derive::Deserialize;
@@ -109,16 +114,20 @@ fn main() {
 
         _ => {
             let rules = if args.flag_config.is_empty() {
-                let default_filename = cli::watch::DEFAULT_FILENAME;
-                match rules::from_file(default_filename) {
-                    Ok(rules) => rules,
-                    Err(err) => {
-                        match rules::from_file(&default_filename.replace(".yaml", ".yml")) {
-                            Ok(rules) => rules,
-                            Err(_) => error("Failed to read default config file", err),
-                        }
-                    }
-                }
+                rules::from_default_file_config().unwrap_or_else(|err| {
+                    stdout::error(
+                        &vec![
+                            "Missing config file",
+                            "Expected file .watch.yaml or .watch.yml to be present",
+                            "in the current directory",
+                            "Debugging:",
+                            " - Did you forget to run 'fzz init'?",
+                        ]
+                        .join("\n"),
+                    );
+
+                    error("Failed to read default config file", err);
+                })
             } else {
                 match rules::from_file(&args.flag_config) {
                     Ok(rules) => rules,
@@ -157,10 +166,45 @@ fn main() {
                 execute_watch_command(Watches::new(rules), args);
             }
         }
-    }
+    };
 }
 
 pub fn execute_watch_command(watches: Watches, args: Args) {
+    let config_file_paths = if args.flag_config.is_empty() {
+        vec![
+            cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"),
+            cli::watch::DEFAULT_FILENAME.to_string(),
+        ]
+    } else {
+        vec![format!("{}", &args.flag_config)]
+    };
+
+    // This here restarts the watcher if the config file changes
+    let watcher_pid = std::process::id();
+    let th = std::thread::spawn(move || {
+        watcher::events(
+            config_file_paths,
+            |file_changed| {
+                stdout::warn(
+                    &vec![
+                        "The config file has changed while an instance was running.",
+                        "Terminating the current watcher instance...",
+                        &format!("Config file: {}", file_changed),
+                    ]
+                    .join("\n"),
+                );
+
+                println!("Watcher PID: {}", watcher_pid);
+
+                match signal::kill(Pid::from_raw(watcher_pid as i32), Signal::SIGINT) {
+                    Ok(_) => stdout::info("Terminating watcher..."),
+                    Err(err) => panic!("Failed to terminate watcher forcefully.\nCause: {:?}", err),
+                }
+            },
+            false,
+        )
+    });
+
     let verbose = args.flag_V;
     let fail_fast = args.flag_fail_fast;
     if args.flag_non_block {
@@ -168,6 +212,8 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast))
     }
+
+    let _ = th.join().expect("Failed to join config watcher thread");
 }
 
 fn execute<T: Command>(command: T) {

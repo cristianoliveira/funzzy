@@ -8,7 +8,7 @@ fn test_it_filter_tasks_with_target_flag() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_filter_tasks_with_target_flag.log",
-            example_file: "examples/multiple-tasks.yml",
+            example_file: "examples/tasks-with-tags-to-filter.yml",
         },
         |fzz_cmd, mut output_log| {
             let mut child = fzz_cmd
@@ -77,7 +77,7 @@ fn test_it_list_the_available_tasks_when_nothing_matches() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_list_the_available_tasks_when_nothing_matches.log",
-            example_file: "examples/multiple-tasks.yml",
+            example_file: "examples/tasks-with-tags-to-filter.yml",
         },
         |fzz_cmd, mut output_log| {
             let mut child = fzz_cmd
@@ -114,7 +114,9 @@ Available targets:
   run my lint @quick
 
 Finished there is no task to run.
-"
+",
+                "failed to find the expected output: {}",
+                output
             );
         },
     );
