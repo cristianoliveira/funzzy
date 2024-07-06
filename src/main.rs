@@ -15,7 +15,6 @@ mod yaml;
 
 use cli::*;
 use nix::{
-    libc::signal,
     sys::signal::{self, Signal},
     unistd::Pid,
 };
@@ -171,9 +170,16 @@ fn main() {
 
 pub fn execute_watch_command(watches: Watches, args: Args) {
     let config_file_paths = if args.flag_config.is_empty() {
+        let dir = std::env::current_dir().expect("Failed to get current directory");
         vec![
-            cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"),
-            cli::watch::DEFAULT_FILENAME.to_string(),
+            dir.join(cli::watch::DEFAULT_FILENAME)
+                .to_str()
+                .unwrap()
+                .to_string(),
+            dir.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"))
+                .to_str()
+                .unwrap()
+                .to_string(),
         ]
     } else {
         vec![format!("{}", &args.flag_config)]
@@ -188,7 +194,6 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
                 stdout::warn(
                     &vec![
                         "The config file has changed while an instance was running.",
-                        "Terminating the current watcher instance...",
                         &format!("Config file: {}", file_changed),
                     ]
                     .join("\n"),
@@ -196,8 +201,8 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
                 println!("Watcher PID: {}", watcher_pid);
 
-                match signal::kill(Pid::from_raw(watcher_pid as i32), Signal::SIGINT) {
-                    Ok(_) => stdout::info("Terminating watcher..."),
+                match signal::kill(Pid::from_raw(watcher_pid as i32), Signal::SIGTERM) {
+                    Ok(_) => stdout::info("Terminating funzzy..."),
                     Err(err) => panic!("Failed to terminate watcher forcefully.\nCause: {:?}", err),
                 }
             },
