@@ -54,7 +54,9 @@ impl Command for WatchNonBlockCommand {
             stdout::info("Watching...");
         }
 
+        let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
         watcher::events(
+            list_of_watched_paths,
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::clear_screen();
@@ -77,8 +79,6 @@ impl Command for WatchNonBlockCommand {
                 }
             },
             self.verbose,
-        );
-
-        Ok(())
+        )
     }
 }

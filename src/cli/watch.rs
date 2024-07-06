@@ -61,7 +61,10 @@ impl Command for WatchCommand {
             stdout::info("Watching...");
         }
 
+        let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
+
         watcher::events(
+            list_of_watched_paths,
             |file_changed| {
                 let time_execution_started = std::time::Instant::now();
                 if let Some(rules) = self.watches.watch(file_changed) {
@@ -95,7 +98,6 @@ impl Command for WatchCommand {
                 }
             },
             self.verbose,
-        );
-        Ok(())
+        )
     }
 }

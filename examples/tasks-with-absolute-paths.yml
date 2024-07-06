@@ -1,0 +1,35 @@
+# You can use absolute paths to watch also 
+# make them as specific as possible to avoid false triggers in your rules
+#
+- name: task with absolute path @valid
+  run:
+    - "echo 'this file has changed: {{filepath}}'"
+  change: 
+    - "/tmp/accepts_full_or_relativepaths.txt"
+    - "/tmp/accepts_full_or_relativepaths2.txt"
+    - "examples/workdir/**/*"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+
+- name: task with ignored absolute paths
+  run:
+    - "echo 'this file has changed: {{filepath}}'"
+  change: 
+    - "/tmp/accepts_full_or_relativepaths.txt"
+    - "/tmp/accepts_full_or_relativepaths2.txt"
+    - "/tmp/accepts_full_or_relativepaths3.txt"
+  ignore: 
+    - "/tmp/accepts_full_or_relativepaths2.txt"
+    - "/tmp/accepts_full_or_relativepaths3.txt"
+
+# Initial paths validations
+#
+#  - Warns about a given dir or file in path doesn't exist but proceed to watch
+#
+- name: task with invalid path @invalid
+  run:
+    - "echo 'changed: {{filepath}}'"
+  change: 
+    - "examples/workdir/**/*"
+    - "/tmp/unknown.txt"
+    - "/unknown/unknown.txt"

@@ -46,6 +46,27 @@ impl Watches {
             None
         }
     }
+
+    /// Returns the list of rules that contains absolute path
+    ///
+    pub fn paths_to_watch(&self) -> Option<Vec<String>> {
+        let mut paths = self
+            .rules
+            .iter()
+            .map(|r| r.watch_absolute_paths())
+            .flatten()
+            .collect::<Vec<String>>();
+
+        let current_dir = std::env::current_dir().expect("Unable to get current directory");
+
+        paths.push(current_dir.to_str().unwrap().to_string());
+
+        if !paths.is_empty() {
+            Some(paths)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -234,6 +255,40 @@ mod tests {
                 "cat bar".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn it_returns_rules_with_absolute_path_and_current_dir() {
+        let file_content = "
+            - name: my source
+              run: ['cat foo', 'cat bar']
+              change: 'src/**'
+
+            - name: rule with absolute path
+              run: 'cargo build'
+              change: 
+                - 'src/**'
+                - '/tmp/**'
+                - '/User/**'
+
+            - name: it does not consider the ignored rules
+              run: 'cargo test'
+              change: 'test/**'
+              ignored: '/test/**'
+
+            - name: another with absolute path
+              run: echo 'absolute paths'
+              change: 
+                - '/dev/**'
+                - '/usr/**'
+                - '/etc/**'
+            ";
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let results = watches.paths_to_watch().expect("No rules found");
+
+        assert_eq!(results.len(), 6);
+        assert_eq!(results[0], "/tmp/**");
+        assert_eq!(results[4], "/etc/**");
     }
 
     #[test]
