@@ -10,7 +10,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_cancel_current_running_task_when_something_change.log",
-            example_file: "examples/long-task.yaml",
+            example_file: "examples/tasks-with-long-running-commands.yaml",
         },
         |fzz_cmd, mut output_log| {
             let mut child = fzz_cmd

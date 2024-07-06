@@ -1,4 +1,15 @@
-- name: run long task 1
+# Long tasks example
+#
+# This example simulate a workflow with one or more tasks
+# that takes a bit too long to complete for such workflows use:
+# 
+# fzz -n --fail-fast 
+# fzz -nt @quick --fail-fast
+# fzz -nt @slow --fail-fast
+#
+# See tests/watching_with_non_block_flag.rs
+#
+- name: run long task 1 @quick
   run: "bash examples/longtask.sh long 1"
   change: 
     - "examples/workdir/*.txt"
@@ -9,7 +20,7 @@
     - "**/*~"
     - "**/*.sw?"
 
-- name: run long task 2
+- name: run long task 2 @quick
   run: "bash examples/longtask.sh long 2"
   change: 
     - "examples/workdir/*.txt"
@@ -21,7 +32,7 @@
     - "**/*.sw?"
   run_on_init: true
 
-- name: run long task 3
+- name: run long task 3 @quick
   run: "bash examples/longtask.sh short 3"
   change: 
     - "examples/workdir/*.txt"
@@ -32,7 +43,7 @@
     - "**/*~"
     - "**/*.sw?"
 
-- name: run long task 4
+- name: run long task 4 @slow
   run: "bash examples/longtask.sh short 4"
   change: 
     - "examples/workdir/*.txt"
@@ -43,7 +54,7 @@
     - "**/*~"
     - "**/*.sw?"
 
-- name: run long task 5 run on init
+- name: run long task 5 run on init @slow
   run: 
     - "sleep 3"
     - "bash examples/longtask.sh short 5"
