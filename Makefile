@@ -4,7 +4,7 @@ help: ## Lists the available commands. Add a comment with '##' to describe a com
 
 .PHONY: tests
 tests: ## Execute all the tests
-	@cargo test
+	@cargo test $UNIT_TEST --verbose --lib
 
 .PHONY: build
 build: tests ## Execute all the tests and build funzzy binary

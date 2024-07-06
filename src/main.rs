@@ -187,7 +187,14 @@ fn from_stdin() -> Result<String, String> {
 
         let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
-            stdout::info("Timed out waiting for input after 1 seconds");
+            stdout::warn(
+                &vec![
+                    "Timed out waiting for input.".to_string(),
+                    "Did you forget to pipe an output of a command?".to_string(),
+                    "Try: find . | fzz 'echo \"changed: {{filepath}}\"'".to_string(),
+                ]
+                .join("\n"),
+            );
             std::process::exit(0);
         }
     });
@@ -206,7 +213,12 @@ fn from_stdin() -> Result<String, String> {
             if bytes > 0 {
                 Ok(buffer)
             } else {
-                Err(String::from("There was no inputs"))
+                Err(vec![
+                    "Timed out waiting for input.".to_string(),
+                    "Did you forget to pipe an output of a command?".to_string(),
+                    "Try: find . | fzz 'echo \"changed: {{filepath}}\"'".to_string(),
+                ]
+                .join("\n"))
             }
         }
         Err(err) => Err(format!("Error while reading stdin {}", err)),

@@ -127,3 +127,32 @@ fn test_it_allows_templates_in_arbitrary_commands() {
         },
     );
 }
+
+#[test]
+fn it_timesout_after_x_secs_and_inform() {
+    let test_log_file = "it_timesout_after_x_secs_and_inform.log";
+    setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+        let mut child = fzz_cmd
+            .arg("watch")
+            .arg("'echo fooo'")
+            .spawn()
+            .expect("Failed to spawn grep command");
+
+        defer!({
+            child.kill().expect("failed to kill child");
+        });
+
+        let mut output = String::new();
+        wait_until!(
+            {
+                output_log
+                    .read_to_string(&mut output)
+                    .expect("failed to read from file");
+
+                output.contains("Timed out waiting for input")
+            },
+            "Failed waiting to timeout. output: {}",
+            output
+        );
+    });
+}
