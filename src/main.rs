@@ -50,9 +50,9 @@ Options:
   -c --config=<cfgfile>   Use given config file.
   -t --target=<task>      Execute only the given task target.
   -n --non-block          Execute tasks and cancel them if a new event is received.
-  --fail-fast             Quits execution if a task fails (exit code != 0).
-  -h --help               Shows this message.
-  -v --version            Shows version.
+  -b --fail-fast          Bail current execution if a task fails (exit code != 0).
+  -h --help               Show this message.
+  -v --version            Show version.
   -V                      Use verbose output.
 ";
 

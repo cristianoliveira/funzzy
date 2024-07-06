@@ -100,8 +100,7 @@ fn test_fail_fast_with_non_block() {
         |fzz_cmd, mut output_file| {
             let mut output = String::new();
             let mut child = fzz_cmd
-                .arg("--fail-fast")
-                .arg("--non-block")
+                .arg("-nb") // --non-block + --fail-fast
                 .spawn()
                 .expect("failed to spawn sub process");
             defer!({
