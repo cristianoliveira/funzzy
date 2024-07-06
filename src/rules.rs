@@ -184,12 +184,14 @@ pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, Stri
 
     stdout::info(&format!("watching patterns \n {}", watches.join("\n ")));
 
+    let run_on_init = true;
+    let ignore = vec![];
     Ok(vec![Rules::new(
         "unnamed".to_owned(),
         vec![command],
         watches,
-        vec![],
-        false,
+        ignore,
+        run_on_init,
     )])
 }
 

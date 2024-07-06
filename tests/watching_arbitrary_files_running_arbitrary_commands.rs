@@ -33,9 +33,9 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
                     .read_to_string(&mut output)
                     .expect("failed to read from file");
 
-                output.contains("Funzzy: Watching...")
+                output.contains("Running on init commands")
             },
-            "Failed to find Funzzy results"
+            "Failed to find Running on init commands"
         );
 
         write_to_file!("examples/workdir/another_ignored_file.foo");
@@ -99,7 +99,8 @@ fn test_it_allows_templates_in_arbitrary_commands() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy: Watching...")
+                    output.contains("Running on init commands")
+                        && output.contains("echo 'this file changed: '")
                 },
                 "Failed to find Funzzy results"
             );
@@ -126,6 +127,43 @@ fn test_it_allows_templates_in_arbitrary_commands() {
             );
         },
     );
+}
+
+#[test]
+fn it_runs_on_init_by_default_with_stdin() {
+    let test_log_file = "it_runs_on_init_by_default_with_stdin.log";
+    setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+        let files = Command::new("find")
+            .arg(".")
+            .arg("-name")
+            .arg("*.txt")
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to run find");
+        let mut child = fzz_cmd
+            .arg("watch")
+            .arg("echo 'it runs on init by default'")
+            .stdin(files.stdout.expect("failed to open stdin"))
+            .spawn()
+            .expect("Failed to spawn grep command");
+
+        defer!({
+            child.kill().expect("failed to kill child");
+        });
+
+        let mut output = String::new();
+        wait_until!(
+            {
+                output_log
+                    .read_to_string(&mut output)
+                    .expect("failed to read from file");
+
+                output.contains("it runs on init by default")
+            },
+            "Failed waiting to timeout. output: {}",
+            output
+        );
+    });
 }
 
 #[test]
