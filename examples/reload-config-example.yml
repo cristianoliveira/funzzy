@@ -1,0 +1,32 @@
+# This example shows the auto reload feature
+#
+# This workflow efectivelly creates a dependency between tasks with conditionals
+# I don't want to give ideas, but one can create some pretty crazy workflows
+# maybe even turing complete.
+#
+#@#CHANGED#@
+#
+- name: task runs on init (1)
+  run: 
+    - echo 'run me first'
+    - sed  -i '1,7s/#THIS_WILL_CHANGE#@$/#CHANGED#@/' examples/reload-config-example.yml
+    - echo 1 > examples/workdir/trigger-first-task.txt
+  change: 
+    - '__noop__'
+    # LOL! To setup a LOOP uncomment this line
+    # - examples/workdir/trigger-start.txt
+  run_on_init: true
+
+- name: task that run at the end (3)
+  run: 
+    - echo 'then me in third'
+    - cat examples/reload-config-example.yml
+    - echo 1 > examples/workdir/trigger-start.txt
+  change: "examples/workdir/trigger-second-task.txt"
+
+- name: this task runs after on init (2) 
+  run: 
+    - echo 'then me in second'
+    - sed  -i '1,7s/#CHANGED#@$/#THIS_WILL_CHANGE#@/' examples/reload-config-example.yml
+    - echo 1 > examples/workdir/trigger-second-task.txt
+  change: "examples/workdir/trigger-first-task.txt"

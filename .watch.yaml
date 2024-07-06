@@ -53,6 +53,7 @@
     - "examples/*.yaml"
     - "examples/*.yml"
   ignore: 
+    - "examples/reload-config-example.yml"
     - "examples/workdir/ignored/**"
     - "**/*.log"
   run_on_init: true
@@ -72,4 +73,5 @@
     - "**/*.nix"
   ignore: 
     - "examples/workdir/**"
+    - "examples/reload-config-example.yml"
   run_on_init: true

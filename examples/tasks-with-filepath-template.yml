@@ -3,7 +3,9 @@
     - "echo 'this file has changed: {{filepath}}'"
     - "cat '{{filepath}}' || echo 'nothing to run'"
   change: "examples/workdir/**/*"
-  ignore: "examples/workdir/ignored/**/*.txt"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
   run_on_init: true
 
 - name: more advanced usage of {{filepath}}

@@ -218,6 +218,17 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
     }
 }
 
+pub fn from_default_file_config() -> Result<Vec<Rules>, String> {
+    let default_filename = cli::watch::DEFAULT_FILENAME;
+    match from_file(default_filename) {
+        Ok(rules) => Ok(rules),
+        Err(err) => match from_file(&default_filename.replace(".yaml", ".yml")) {
+            Ok(rules) => Ok(rules),
+            Err(_) => Err(format!("Failed to read default config file {}", err)),
+        },
+    }
+}
+
 fn pattern(pattern: &str) -> Pattern {
     Pattern::new(&format!("**{}", pattern))
         .expect(format!("Invalid glob pattern {}", pattern).as_str())
