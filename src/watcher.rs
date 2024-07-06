@@ -1,5 +1,7 @@
 extern crate notify;
 extern crate notify_debouncer_mini;
+use notify_debouncer_mini::notify::ErrorKind;
+
 use self::notify_debouncer_mini::{new_debouncer, notify::RecursiveMode};
 
 use crate::stdout;
@@ -7,16 +9,40 @@ use std::path::Path;
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
-pub fn events(handler: impl Fn(&str), verbose: bool) {
+pub fn events(
+    watch_path_list: Vec<String>,
+    handler: impl Fn(&str),
+    verbose: bool,
+) -> Result<(), String> {
     let (tx, rx) = channel();
     let mut debouncer =
         new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
 
-    let current_dir = std::env::current_dir().expect("Unable to get current directory");
-
-    if let Err(err) = watcher.watch(Path::new(&current_dir), RecursiveMode::Recursive) {
-        println!("Unable to watch current directory {:?}", err);
+    for path in watch_path_list {
+        if let Err(err) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
+            let warning = &vec![
+                format!("unknown file/directory: '{}'", path),
+                format!("Different behaviour depending on the OS."),
+                format!("The watcher may not be triggered for this rule."),
+            ]
+            .join("\n");
+            match err.kind {
+                ErrorKind::PathNotFound => {
+                    stdout::warn(warning);
+                }
+                ErrorKind::Io(err) => {
+                    if err.kind() == std::io::ErrorKind::NotFound {
+                        stdout::warn(warning);
+                    } else {
+                        return Err(format!("failed to watch path: {}\nCause: {:?}", path, err));
+                    }
+                }
+                _ => {
+                    return Err(format!("failed to watch path: {}\nCause: {:?}", path, err));
+                }
+            }
+        }
     }
 
     loop {

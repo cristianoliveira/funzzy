@@ -16,7 +16,7 @@ Or more complex workflows like:
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 # TIP2: List the tasks/steps from quicker to slower for better workflows
 #
-# Run: `fzz` to start this workflow
+# Run: `fzz --fail-fast` to start this workflow
 
 - name: run my tests
   run: make test
@@ -26,7 +26,9 @@ Or more complex workflows like:
 
 - name: Starwars ascii art
   run: telnet towel.blinkenlights.nl
-  change: ".watch.yaml"
+  change: 
+    - "/tmp/starwars.txt"
+    - ".watch.yaml"
 
 # Command templates for custom scripts
 - name: run test & linter for a single file

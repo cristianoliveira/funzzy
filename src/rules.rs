@@ -53,23 +53,46 @@ impl Rules {
     }
 
     pub fn watch(&self, path: &str) -> bool {
-        self.watch_patterns
+        self.watch_relative_paths()
             .iter()
-            .any(|watch| pattern(watch).matches(path))
+            .any(|watch| pattern(&format!("/{}", watch)).matches(path))
+            || self
+                .watch_absolute_paths()
+                .iter()
+                .any(|watch| pattern(watch).matches(path))
     }
 
     pub fn ignore(&self, path: &str) -> bool {
-        self.ignore_patterns
-            .iter()
-            .any(|ignore| pattern(ignore).matches(path))
+        self.ignore_patterns.iter().any(|watch| {
+            pattern(&format!("/{}", watch)).matches(path)
+                || watch.starts_with("/") && pattern(watch).matches(path)
+        })
     }
 
     pub fn commands(&self) -> Vec<String> {
         self.commands.clone()
     }
 
+    pub fn watch_patterns(&self) -> Vec<String> {
+        self.watch_patterns.clone()
+    }
+
     pub fn run_on_init(&self) -> bool {
         self.run_on_init
+    }
+
+    pub fn watch_absolute_paths(&self) -> Vec<String> {
+        self.watch_patterns()
+            .into_iter()
+            .filter(|c| c.starts_with("/"))
+            .collect::<Vec<String>>()
+    }
+
+    pub fn watch_relative_paths(&self) -> Vec<String> {
+        self.watch_patterns()
+            .into_iter()
+            .filter(|c| !c.starts_with("/"))
+            .collect::<Vec<String>>()
     }
 }
 
@@ -194,7 +217,7 @@ pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
 }
 
 fn pattern(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**/{}", pattern))
+    Pattern::new(&format!("**{}", pattern))
         .expect(format!("Invalid glob pattern {}", pattern).as_str())
 }
 
