@@ -40,7 +40,7 @@ impl Worker {
                 stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
 
                 let mut has_been_cancelled = false;
-                let mut time_execution_started = std::time::Instant::now();
+                let time_execution_started = std::time::Instant::now();
 
                 for task in tasks {
                     if has_been_cancelled

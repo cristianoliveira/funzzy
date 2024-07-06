@@ -11,6 +11,7 @@ use std::{
 
 use crate::defer;
 
+#[allow(dead_code)]
 pub struct Options {
     pub output_file: &'static str,
     pub example_file: &'static str,
@@ -18,8 +19,10 @@ pub struct Options {
 
 static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 
+#[allow(dead_code)]
 pub const CLEAR_SCREEN: &str = "[2J";
 
+#[allow(dead_code)]
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -80,6 +83,7 @@ where
         .expect("failed to remove file after running test");
 }
 
+#[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -137,6 +141,7 @@ where
         .expect("failed to remove file after running test");
 }
 
+#[allow(dead_code)]
 pub fn clean_output(output_file: &str) -> String {
     output_file
         .lines()
