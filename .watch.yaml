@@ -31,7 +31,7 @@
 - name: run my test (@quick)
   run: 
     # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
-    - "cargo test $UNIT_TEST --verbose"
+    - "cargo test $UNIT_TEST --verbose --lib"
   change: "src/**"
   run_on_init: true
 
@@ -48,6 +48,7 @@
     # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
     - "cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
   change: 
+    - "src/**"
     - "tests/**/*.rs"
     - "examples/*.yaml"
     - "examples/*.yml"
