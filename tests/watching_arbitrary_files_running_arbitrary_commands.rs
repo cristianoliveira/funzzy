@@ -84,6 +84,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 
             let mut child = fzz_cmd
                 .arg("echo 'this file changed: {{filepath}}'")
+                .arg("-V") // DEBUG
                 .stdin(files.stdout.expect("failed to open stdin"))
                 .spawn()
                 .expect("Failed to spawn grep command");
@@ -108,21 +109,28 @@ fn test_it_allows_templates_in_arbitrary_commands() {
             write_to_file!("examples/workdir/another_ignored_file.foo");
             write_to_file!("examples/workdir/trigger-watcher.txt");
 
+            let dir = std::env::current_dir().expect("failed to get current dir");
+            let expected = &format!(
+                "this file changed: {}",
+                dir.join("examples/workdir/trigger-watcher.txt")
+                    .to_str()
+                    .expect("failed to convert path to string")
+            );
             wait_until!(
                 {
                     output_log
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    let dir = std::env::current_dir().expect("failed to get current dir");
-                    output.contains(&format!(
-                        "this file changed: {}",
-                        dir.join("examples/workdir/trigger-watcher.txt")
-                            .to_str()
-                            .expect("failed to convert path to string")
-                    )) && output.contains("All tasks finished successfully.")
+                    // Wait till the second time the workflow is executed
+                    output
+                        .match_indices("All tasks finished successfully.")
+                        .count()
+                        == 2
+                        && output.contains(expected)
                 },
-                "Could not find the file path in the output: {}",
+                "Could not find {} in the output: {}",
+                "expected",
                 output
             );
         },

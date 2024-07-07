@@ -148,9 +148,12 @@ fn accepts_full_or_relativepaths() {
         },
         |fzz_cmd, mut output_log| {
             // Initialize the files
-            write_to_file!("/tmp/accepts_full_or_relativepaths.txt");
-            write_to_file!("/tmp/accepts_full_or_relativepaths2.txt");
-            write_to_file!("/tmp/accepts_full_or_relativepaths3.txt");
+            // NOTE: To debug if the setup is correct
+            // shell!("ls la /tmp/");
+
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths.txt");
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths2.txt");
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths3.txt");
 
             let mut child = fzz_cmd
                 .arg("-t")
@@ -178,9 +181,9 @@ fn accepts_full_or_relativepaths() {
                 output
             );
 
-            write_to_file!("/tmp/accepts_full_or_relativepaths.txt");
-            write_to_file!("/tmp/accepts_full_or_relativepaths2.txt");
-            write_to_file!("/tmp/accepts_full_or_relativepaths3.txt");
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths.txt");
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths2.txt");
+            write_to_file!("/tmp/fzz/accepts_full_or_relativepaths3.txt");
             write_to_file!("examples/workdir/trigger-watcher.txt");
             write_to_file!("examples/workdir/ignored/modify.txt");
 
@@ -194,8 +197,8 @@ fn accepts_full_or_relativepaths() {
                         .split("\n")
                         .filter(|line| {
                             line.starts_with("Funzzy verbose: Triggered")
-                                && (line.contains("/tmp/accepts_full_or_relativepaths.txt")
-                                    || line.contains("/tmp/accepts_full_or_relativepaths2.txt")
+                                && (line.contains("/tmp/fzz/accepts_full_or_relativepaths.txt")
+                                    || line.contains("/tmp/fzz/accepts_full_or_relativepaths2.txt")
                                     || line.contains("examples/workdir/trigger-watcher.txt"))
                         })
                         .count()
@@ -204,7 +207,8 @@ fn accepts_full_or_relativepaths() {
                             .split("\n")
                             .find(|line| {
                                 line.starts_with("Funzzy verbose: Triggered")
-                                    && (line.contains("/tmp/accepts_full_or_relativepaths3.txt")
+                                    && (line
+                                        .contains("/tmp/fzz/accepts_full_or_relativepaths3.txt")
                                         || line.contains("examples/workdir/ignored/modify.txt"))
                             })
                             .is_none()
@@ -254,7 +258,8 @@ fn fails_with_unkown_paths() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy warning: unknown file/directory: '/tmp/unknown.txt'")
+                    output
+                        .contains("Funzzy warning: unknown file/directory: '/tmp/fzz/unknown.txt'")
                 },
                 "expected output contain error explanation but got {}",
                 output

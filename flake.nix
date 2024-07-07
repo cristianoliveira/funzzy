@@ -17,6 +17,7 @@
               (final: prev: {
                   copkgs = {
                     funzzy = prev.callPackage ./nix/package.nix {};
+                    funzzyNightly = prev.callPackage ./nix/package-from-source.nix {};
                   };
                 }
               )
@@ -24,7 +25,10 @@
           };
         in
         {
-          packages."${system}".funzzy = pkgs.callPackage ./nix/package.nix {};
+          packages."${system}" = {
+            funzzy = pkgs.copkgs.funzzy;
+            funzzyNightly = pkgs.copkgs.funzzyNightly;
+          };
 
           devShells."${system}".default = pkgs.mkShell {
             packages = with pkgs; [
@@ -35,7 +39,7 @@
               libiconv
 
               # For development install latest version of funzzy
-              copkgs.funzzy
+              copkgs.funzzyNightly
 
               # if system contains "darwin" then darwin.apple_sdk.frameworks.CoreServices else null
               # Fix error: `ld: framework not found CoreServices`

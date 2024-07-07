@@ -5,8 +5,8 @@
   run:
     - "echo 'this file has changed: {{filepath}}'"
   change: 
-    - "/tmp/accepts_full_or_relativepaths.txt"
-    - "/tmp/accepts_full_or_relativepaths2.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths2.txt"
     - "examples/workdir/**/*"
   ignore: 
     - "examples/workdir/ignored/**/*.txt"
@@ -15,12 +15,12 @@
   run:
     - "echo 'this file has changed: {{filepath}}'"
   change: 
-    - "/tmp/accepts_full_or_relativepaths.txt"
-    - "/tmp/accepts_full_or_relativepaths2.txt"
-    - "/tmp/accepts_full_or_relativepaths3.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths2.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths3.txt"
   ignore: 
-    - "/tmp/accepts_full_or_relativepaths2.txt"
-    - "/tmp/accepts_full_or_relativepaths3.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths2.txt"
+    - "/tmp/fzz/accepts_full_or_relativepaths3.txt"
 
 # Initial paths validations
 #
@@ -31,5 +31,5 @@
     - "echo 'changed: {{filepath}}'"
   change: 
     - "examples/workdir/**/*"
-    - "/tmp/unknown.txt"
+    - "/tmp/fzz/unknown.txt"
     - "/unknown/unknown.txt"

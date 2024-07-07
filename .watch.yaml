@@ -16,7 +16,7 @@
   run: "make build"
   change: ["Cargo.*"]
 
-- name: run lint and formatter (@quick)
+- name: run lint and formatter @quick
   run: "cargo fmt -- --check {{filepath}}"
   run_on_init: true
   change: 
@@ -28,25 +28,24 @@
     - "examples/*.yaml"
     - "examples/workdir/**"
 
-- name: run my test (@quick)
+- name: run my test @quick
   run: 
     # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
     - "cargo test $UNIT_TEST --verbose --lib"
   change: "src/**"
   run_on_init: true
 
-- name: nix checks
-  run: 
-    - nix flake check
-    - nix profile install .#funzzy
-  change: 
-    - "**/*.nix"
-  run_on_init: true
-
+  # Moved integration to earlier because it is faster than @nixbuild
 - name: run integration
   run: 
+    # NOTE: Create setup for running the integration tests
+    # For integration tests we use some temporary files to check triggers
+    # See: tests/watching_configured_rules.rs
+    - rm -rf /tmp/fzz
+    - mkdir /tmp/fzz
     # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
-    - "cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
+    - cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture
+    - rm -rf /tmp/fzz
   change: 
     - "src/**"
     - "tests/**/*.rs"
@@ -58,7 +57,37 @@
     - "**/*.log"
   run_on_init: true
 
-- name: after all checks if no error stage to git (@quick)
+- name: nix checks @nixbuild
+  run: 
+    - rm -rf /tmp/fzz
+    # This avoids running integration test if the pckg is not even buildin
+    - cargo build --release 
+    # Build and run integration tests
+    - nix flake check
+    - nix build .#funzzyNightly --verbose -L
+    - rm -rf /tmp/fzz
+  change: 
+    # Uncomment these for when having to debug issues with nix builds
+    # when you want to run commands in the integration tests to debug 
+    # directories or the environment where the build is happening
+    #
+    # Eg running 
+    # ```rust
+    # shell!("ls -la");
+    # ```
+    # See: tests/common/macros.rs
+    # And the usage in: tests/common/lib.rs
+    #
+    # To debug use `fzz -nt @nixbuild`
+    #
+    # IN NIGHTLY VERSION `fzz -nbt @nixbuild`
+    # which bails fast
+    - "src/**"
+    - "tests/**"
+    - "**/*.nix"
+  run_on_init: true
+
+- name: after all checks if no error stage to git @quick @nixbuild
   run: 
     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
     - 'git add . -p'

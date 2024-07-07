@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::defer;
+// use crate::shell;
 
 #[allow(dead_code)]
 pub struct Options {
@@ -30,6 +31,11 @@ where
     let dir = env::current_dir().expect("error getting current directory");
 
     let _ = std::fs::remove_file(dir.join(opts.output_file));
+
+    // NOTE: Execute ls command for debug purposes
+    // very usefil to debug the tests that are failing
+    // when building with nix: `nix build .#funzzy --verbose -L`
+    // shell!("ls -la");
 
     // NOTE: OK, this is a bit hacky, but it's a simple way to avoid running
     // the tests from tests/*.rs in parallel.
@@ -68,7 +74,8 @@ where
        dir.join(opts.output_file).display()
     );
 
-    let bin_path = dir.join("target/debug/fzz");
+    let bin_path = env!("CARGO_BIN_EXE_fzz");
+    println!("Integration Tests: fzz bin from {}", bin_path);
     let output_file = File::create(dir.join(opts.output_file)).expect("error log file");
 
     handler(
@@ -98,7 +105,7 @@ where
     // I'm aware of `cargo test -- --test-threads=1` option, but I want to run
     // all tests with `cargo test` in parallel and limit the parallelism only
     // for tests that write to the file system, like the integration tests.
-    let mut is_running = IS_RUNNING_MULTITHREAD.lock().unwrap();
+    let mut is_running = IS_RUNNING_MULTITHREAD.lock().expect("failed to lock mutex");
     println!(
         "SINGLE THREAD: Is there another test running: {}",
         *is_running != 0
@@ -122,6 +129,11 @@ where
         *is_running = 0;
     });
 
+    // NOTE: Execute ls command for debug purposes
+    // very usefil to debug the tests that are failing
+    // when building with nix: `nix build .#funzzy --verbose -L`
+    // shell!("ls -la");
+
     // check if the file exists if so fail
     assert!(
         !std::path::Path::new(&dir.join(output_file_path)).exists(),
@@ -129,7 +141,8 @@ where
        dir.join(output_file_path).display()
     );
 
-    let bin_path = dir.join("target/debug/fzz");
+    let bin_path = env!("CARGO_BIN_EXE_fzz");
+    println!("Integration Tests: fzz bin from {}", bin_path);
     let output_file = File::create(dir.join(output_file_path)).expect("error log file");
 
     handler(

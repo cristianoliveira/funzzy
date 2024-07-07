@@ -23,3 +23,6 @@ funzzy*
 tests/integration/workdir/
 *.log
 tests/integration/release/
+
+# Nix stuff
+result
