@@ -4,6 +4,7 @@
         rustc
         cargo
         rustfmt
+        libiconv
 
         # For development install latest version of funzzy
         copkgs.funzzyNightly
