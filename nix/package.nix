@@ -8,10 +8,15 @@ rustPlatform.buildRustPackage rec {
     owner = "cristianoliveira";
     repo = "funzzy";
     rev = "master";
-    hash = "sha256-YjA/XxVB8gGxyLovxTTatSC/ESBCkgz7Not0qfEPxtw=";
+    hash = "sha256-QX+/IkmSoThGn5HCGKm2g08ZniZRTWLb/Rpi6XXDGJw=";
   };
 
-  cargoHash = "sha256-CN+ZM0AVy4V5vVoI7AS49oEhVXTuJ412fDGC0qjEUKQ=";
+  cargoHash = "sha256-asSWyK1Y/j/O8PTvyUlNsIyoJNUhKwa/K+fhe9XeZQc=";
+
+  # When installing from source only run unit tests
+  checkPhase = ''
+    cargo test $UNIT_TEST --lib
+  '';
 
   buildInputs = lib.optionals stdenv.isDarwin [
     darwin.apple_sdk.frameworks.CoreServices
