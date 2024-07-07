@@ -20,6 +20,8 @@ pub struct Rules {
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
     run_on_init: bool,
+
+    yaml: Option<Yaml>,
 }
 
 impl Rules {
@@ -36,6 +38,7 @@ impl Rules {
             watch_patterns: watches,
             ignore_patterns: ignores,
             run_on_init,
+            yaml: None,
         }
     }
 
@@ -49,6 +52,7 @@ impl Rules {
             watch_patterns: yaml::extract_strings(&yaml["change"]),
             ignore_patterns: yaml::extract_strings(&yaml["ignore"]),
             run_on_init: yaml::extract_bool(&yaml["run_on_init"]),
+            yaml: Some(yaml.clone()),
         }
     }
 
@@ -93,6 +97,48 @@ impl Rules {
             .into_iter()
             .filter(|c| !c.starts_with("/"))
             .collect::<Vec<String>>()
+    }
+
+    pub fn as_string(&self) -> String {
+        if None == self.yaml {
+            return "".to_owned();
+        }
+
+        let yaml = self.yaml.clone().expect("Failed to get yaml as instance");
+
+        let ignore_as_yaml_list = match yaml["ignore"].clone() {
+            Yaml::Array(_) => format!(
+                "  ignore: {}",
+                yaml::extract_strings(&yaml["ignore"]).join("\n")
+            ),
+            _ => "".to_owned(),
+        };
+
+        let run_on_init = match yaml["run_on_init"].clone() {
+            Yaml::Boolean(_) => format!(
+                "  run_on_init: {}",
+                yaml::extract_bool(&yaml["run_on_init"])
+            ),
+            _ => "".to_owned(),
+        };
+
+        vec![
+            format!(
+                "- name: {}",
+                yaml::extract_strings(&yaml["name"]).join("\n")
+            ),
+            format!("  run: {}", yaml::extract_strings(&yaml["run"]).join("\n")),
+            format!(
+                "  change: {}",
+                yaml::extract_strings(&yaml["change"]).join("\n")
+            ),
+            ignore_as_yaml_list,
+            run_on_init,
+        ]
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<String>>()
+        .join("\n")
     }
 }
 
@@ -232,6 +278,16 @@ pub fn from_default_file_config() -> Result<Vec<Rules>, String> {
 fn pattern(pattern: &str) -> Pattern {
     Pattern::new(&format!("**{}", pattern))
         .expect(format!("Invalid glob pattern {}", pattern).as_str())
+}
+
+pub fn format_rules(rule: &Vec<Rules>) -> String {
+    let mut formatted_rules = String::new();
+
+    for rule in rule {
+        formatted_rules.push_str(&format!("{}\n", rule.as_string()));
+    }
+
+    formatted_rules
 }
 
 #[cfg(test)]
@@ -424,6 +480,35 @@ mod tests {
                 "echo tests/foo.rs",
                 "make tests tests/foo.rs"
             ]
+        );
+    }
+
+    #[test]
+    fn it_formats_rule_as_yaml_string() {
+        let file_content = "
+        - name: my tests
+          run: cargo tests {{filepath}}
+          change: 'tests/**'
+          run_on_init: true
+
+        - name: my tests
+          run: ['echo {{filepath}}', 'make tests {{filepath}}']
+          change: 'tests/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        assert_eq!(
+            rules[0].as_string(),
+            vec![
+                "- name: my tests",
+                "  run: cargo tests {{filepath}}",
+                "  change: tests/**",
+                "  run_on_init: true",
+            ]
+            .join("\n"),
+            "Failed to format rule as string {}",
+            rules[0].as_string()
         );
     }
 }

@@ -14,6 +14,10 @@ build: tests ## Execute all the tests and build funzzy binary
 integration:
 	@cargo test --test '*'
 
+.PHONY: ci-integration
+ci-integration:
+	@cargo test --test '*'
+
 .PHONY: lint
 lint:
 	@cargo fmt -- --check

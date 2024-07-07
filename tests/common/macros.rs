@@ -110,9 +110,45 @@ macro_rules! wait_until {
 macro_rules! write_to_file {
     ($file_path:expr) => {
         println!("Integration Tests: writting to file {}", $file_path);
-        let mut file =
-            std::fs::File::create($file_path).expect("Integration Tests: failed to open file");
-        file.write_all(b"test_content\n")
-            .expect("Integration Tests: failed to write to file.");
+        let mut file = match std::fs::File::create($file_path) {
+            Ok(file) => file,
+            Err(err) => {
+                panic!(
+                    "Integration Tests: [ERROR] failed to create file: {}\nCause: {:?}",
+                    $file_path, err
+                );
+            }
+        };
+
+        match file.write_all(b"test_content\n") {
+            Ok(_) => {}
+            Err(err) => {
+                panic!(
+                    "Integration Tests: [ERROR] failed to write to file: {}\nCause: {:?}",
+                    $file_path, err
+                );
+            }
+        };
+    };
+}
+
+/// Function to run commands in the shell
+/// and print the output.
+#[macro_export]
+macro_rules! shell {
+    ($cmd:expr) => {
+        println!("---------FZZ tests log---------");
+        println!("Integration Tests: running command: {}", $cmd);
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg($cmd)
+            .output()
+            .expect("Integration Tests: failed to run command");
+
+        println!(
+            "Integration Tests: command output: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        println!("-------------------------------");
     };
 }

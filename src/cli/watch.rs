@@ -75,7 +75,12 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
+                    let rules_as_yaml = rules::format_rules(&rules);
                     stdout::verbose(&format!("Rules: {:?}", rules), self.verbose);
+                    stdout::verbose(
+                        &format!("Formatted rules:\n{}", rules_as_yaml),
+                        self.verbose,
+                    );
 
                     let tasks = rules::template(rules::commands(rules), file_changed);
                     let mut results: Vec<Result<(), String>> = vec![];

@@ -49,6 +49,7 @@ pub fn events(
         match rx.recv() {
             Ok(debounced_evts) => {
                 stdout::verbose(&format!("Events {:?}", debounced_evts), verbose);
+                stdout::verbose(&format_events(&debounced_evts), verbose);
                 if let Ok(file_change_event) = debounced_evts {
                     file_change_event.iter().for_each(|event| {
                         if let Some(path_string) = event.path.to_str() {
@@ -70,4 +71,20 @@ pub fn events(
 
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
+}
+
+pub fn format_events(
+    events: &Result<
+        Vec<notify_debouncer_mini::DebouncedEvent>,
+        Vec<notify_debouncer_mini::notify::Error>,
+    >,
+) -> String {
+    let events_formatted = events
+        .iter()
+        .flatten()
+        .map(|e| format!("\n--: {}", e.path.display()))
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    format!("Events formatted: {}", events_formatted)
 }

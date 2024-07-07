@@ -1,5 +1,5 @@
 {
-  description = "Funzzy (fzz) - the lightweight watcher";
+  description = "Funzzy (fzz) - the lightweight blazingly fast watcher";
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs";
 
@@ -11,10 +11,24 @@
 
       systemPackages = map (system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = import nixpkgs { 
+            inherit system;
+            overlays = [ 
+              (final: prev: {
+                  copkgs = {
+                    funzzy = prev.callPackage ./nix/package.nix {};
+                    funzzyNightly = prev.callPackage ./nix/package-from-source.nix {};
+                  };
+                }
+              )
+            ];
+          };
         in
         {
-          packages."${system}".funzzy = pkgs.callPackage ./nix/package.nix {};
+          packages."${system}" = {
+            funzzy = pkgs.copkgs.funzzy;
+            funzzyNightly = pkgs.copkgs.funzzyNightly;
+          };
 
           devShells."${system}".default = pkgs.mkShell {
             packages = with pkgs; [
@@ -23,6 +37,9 @@
               rustfmt
 
               libiconv
+
+              # For development install latest version of funzzy
+              copkgs.funzzyNightly
 
               # if system contains "darwin" then darwin.apple_sdk.frameworks.CoreServices else null
               # Fix error: `ld: framework not found CoreServices`
