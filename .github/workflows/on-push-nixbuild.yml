@@ -1,4 +1,4 @@
-name: Building package with nix
+name: nix build
 
 on:
   push:
