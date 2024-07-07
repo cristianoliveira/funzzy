@@ -82,7 +82,7 @@
     #
     # IN NIGHTLY VERSION `fzz -nbt @nixbuild`
     # which bails fast
-    - "src/**"
+    # - "src/**"
     - "tests/**"
     - "**/*.nix"
   run_on_init: true
@@ -92,6 +92,8 @@
     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
     - 'git add . -p'
     # - 'git commit'
+    - git fetch --all
+    - git pull origin/master --rebase
   change: 
     - ".watch.yaml"
     - "README.md"
