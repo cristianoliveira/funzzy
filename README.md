@@ -85,6 +85,8 @@ nix-env -iA nixpkgs.funzzy
 
 Nightly version
 ```bash
+nix profile install 'github:cristianoliveira/funzzy#funzzy'
+# or
 nix profile install 'github:cristianoliveira/nixpkgs#funzzy'
 ```
 
