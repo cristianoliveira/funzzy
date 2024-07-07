@@ -82,9 +82,9 @@ pub fn format_events(
     let events_formatted = events
         .iter()
         .flatten()
-        .map(|e| format!("\n--: {}", e.path.display()))
+        .map(|e| format!("--: {}", e.path.display()))
         .collect::<Vec<String>>()
         .join("\n");
 
-    format!("Events formatted: {}", events_formatted)
+    format!("Events formatted: {}\n", events_formatted)
 }
