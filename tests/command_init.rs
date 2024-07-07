@@ -8,6 +8,13 @@ fn test_it_creates_the_config_file_with_cmd_init() {
     let dir = std::env::current_dir().expect("error getting current directory");
     let bin_path = dir.join("target/debug/fzz");
 
+    let list_of_files_in_workdir = std::fs::read_dir(dir.join("examples/workdir"))
+        .expect("failed to read examples/workdir")
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<std::path::PathBuf>>();
+
+    println!("@@@@@@@@@ list_of_files_in_workdir {:?}", list_of_files_in_workdir);
+
     std::env::set_current_dir(dir.join("examples/workdir/ignored"))
         .expect("failed to change to examples/workdir/ignored");
 
