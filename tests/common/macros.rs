@@ -75,14 +75,17 @@ macro_rules! defer {
 #[macro_export]
 macro_rules! wait_until {
     ($e:expr, $($arg:tt)+) => {
-        for _ in 0..100 {
+        for attempt in 0..200 {
             let result = $e;
             if result {
                 break;
             }
 
-            println!("Integration Tests: waiting_until ...");
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            if attempt % 10 == 0 {
+                println!("Integration Tests: waiting_until ...");
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         println!("Integration Tests: waiting_until timed out.");
@@ -90,14 +93,17 @@ macro_rules! wait_until {
     };
 
     ($e:expr) => {
-        for _ in 0..100 {
+        for attempt in 0..100 {
             let result = $e;
             if result {
                 break;
             }
 
-            println!("Integration Tests: waiting_until ...");
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            if attempt % 10 == 0 {
+                println!("Integration Tests: waiting_until ...");
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
 
         assert!($e, "Integration Tests: waiting_until timed out.");

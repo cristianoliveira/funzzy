@@ -65,6 +65,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
                     // See it in `examples/longtask.sh`
                     // and also in `src/stdout.rs`
                     output.match_indices(CLEAR_SCREEN).count() == 2
+                        && output.match_indices("finished_long_2").count() == 2
                 },
                 "Failed to find 2 clear screen signs: {}",
                 output
@@ -86,6 +87,18 @@ Funzzy: bash examples/longtask.sh long 1
 
 Started task long 1
 Long task running... 0
+Task long 1 finished
+
+Funzzy: bash examples/longtask.sh long 2 
+
+Started task long 2
+Long task running... 0
+Long task running... 1
+Task long 2 finished
+
+Funzzy: echo finished_long_2 
+
+finished_long_2
 ";
 
             assert_eq!(

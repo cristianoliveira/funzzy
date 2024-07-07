@@ -21,7 +21,9 @@
     - "**/*.sw?"
 
 - name: run long task 2 @quick
-  run: "bash examples/longtask.sh long 2"
+  run: 
+    - "bash examples/longtask.sh long 2"
+    - echo finished_long_2
   change: 
     - "examples/workdir/*.txt"
   ignore: 

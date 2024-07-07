@@ -93,7 +93,7 @@
     - 'git add . -p'
     # - 'git commit'
     - git fetch --all
-    - git pull origin/master --rebase
+    - git pull origin master --rebase
   change: 
     - ".watch.yaml"
     - "README.md"
