@@ -34,12 +34,20 @@ impl Command for WatchCommand {
     fn execute(&self) -> Result<(), String> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
+        let current_dir = std::env::current_dir().unwrap();
+
         if let Some(rules) = self.watches.run_on_init() {
             let time_execution_started = std::time::Instant::now();
 
             stdout::info("Running on init commands.");
 
-            let tasks = rules::template(rules::commands(rules), "");
+            let tasks = rules::template(
+                rules::commands(rules),
+                rules::TemplateOptions {
+                    filepath: None,
+                    current_dir: format!("{}", current_dir.display()),
+                },
+            );
             let mut results: Vec<Result<(), String>> = vec![];
             for task in tasks {
                 let result = cmd::execute(&task);
@@ -82,7 +90,13 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
-                    let tasks = rules::template(rules::commands(rules), file_changed);
+                    let tasks = rules::template(
+                        rules::commands(rules),
+                        rules::TemplateOptions {
+                            filepath: Some(file_changed.to_string()),
+                            current_dir: format!("{}", current_dir.display()),
+                        },
+                    );
                     let mut results: Vec<Result<(), String>> = vec![];
                     for task in tasks {
                         let result = cmd::execute(&task);

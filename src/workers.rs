@@ -179,7 +179,14 @@ impl Worker {
 
     pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            if let Err(err) = scheduler.send(rules::template(rules::commands(rules), filepath)) {
+            let current_dir = std::env::current_dir().unwrap();
+            if let Err(err) = scheduler.send(rules::template(
+                rules::commands(rules),
+                rules::TemplateOptions {
+                    filepath: Some(filepath.to_string()),
+                    current_dir: format!("{}", current_dir.display()),
+                },
+            )) {
                 return Err(format!("{:?}", err));
             }
         }

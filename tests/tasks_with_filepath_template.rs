@@ -11,7 +11,11 @@ fn test_it_replaces_filepath_template_with_changed_file() {
             example_file: "examples/tasks-with-filepath-template.yml",
         },
         |fzz_cmd, mut output_log| {
-            let mut child = fzz_cmd.spawn().expect("failed to spawn child");
+            let mut child = fzz_cmd
+                .arg("-t")
+                .arg("@absolute")
+                .spawn()
+                .expect("failed to spawn child");
 
             defer!({
                 child.kill().expect("failed to kill child");
