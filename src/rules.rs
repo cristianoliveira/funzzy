@@ -150,10 +150,26 @@ pub fn commands(rules: Vec<Rules>) -> Vec<String> {
         .collect::<Vec<String>>()
 }
 
-pub fn template(commands: Vec<String>, filepath: &str) -> Vec<String> {
+pub struct TemplateOptions {
+    pub filepath: Option<String>,
+    pub current_dir: String,
+}
+
+pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
+    let filepath = match opts.filepath {
+        Some(val) => val,
+        None => "".to_owned(),
+    };
+
     commands
         .iter()
-        .map(|c| c.replace("{{filepath}}", filepath))
+        .map(|c| c.replace("{{filepath}}", &filepath))
+        .map(|c| {
+            c.replace(
+                "{{relative_filepath}}",
+                &filepath.replace(&format!("{}/", &opts.current_dir), ""),
+            )
+        })
         .collect()
 }
 
@@ -293,6 +309,8 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
 #[cfg(test)]
 mod tests {
     extern crate yaml_rust;
+
+    use crate::rules::TemplateOptions;
 
     use self::yaml_rust::YamlLoader;
     use super::from_string;
@@ -460,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn it_replaces_template_with_filepath() {
+    fn it_replaces_filepath_tpl_with_absolute_filepath() {
         let file_content = "
         - name: my tests
           run: 'cargo tests {{filepath}}'
@@ -474,11 +492,62 @@ mod tests {
         let rules = from_yaml(file_content).expect("Failed to parse yaml");
 
         assert_eq!(
-            template(commands(rules), "tests/foo.rs"),
+            template(
+                commands(rules.clone()),
+                TemplateOptions {
+                    filepath: Some("tests/foo.rs".to_owned()),
+                    current_dir: format!("{}", "/foo/bar"),
+                },
+            ),
             vec![
                 "cargo tests tests/foo.rs",
                 "echo tests/foo.rs",
                 "make tests tests/foo.rs"
+            ]
+        );
+
+        assert_eq!(
+            template(
+                commands(rules.clone()),
+                TemplateOptions {
+                    filepath: Some("/bar/baz/tests/foo.rs".to_owned()),
+                    current_dir: format!("{}", "/foo/bar"),
+                },
+            ),
+            vec![
+                "cargo tests /bar/baz/tests/foo.rs",
+                "echo /bar/baz/tests/foo.rs",
+                "make tests /bar/baz/tests/foo.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn it_replaces_relative_filepath_tpl_with_relative_filepath() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests {{relative_filepath}}'
+          change: 'tests/**'
+
+        - name: my tests
+          run: ['echo {{filepath}}', 'make tests {{filepath}}']
+          change: 'tests/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        assert_eq!(
+            template(
+                commands(rules.clone()),
+                TemplateOptions {
+                    filepath: Some("/foo/bar/tests/foo.rs".to_owned()),
+                    current_dir: format!("{}", "/foo/bar"),
+                },
+            ),
+            vec![
+                "cargo tests tests/foo.rs",
+                "echo /foo/bar/tests/foo.rs",
+                "make tests /foo/bar/tests/foo.rs"
             ]
         );
     }

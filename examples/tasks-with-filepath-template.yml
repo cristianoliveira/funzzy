@@ -1,4 +1,4 @@
-- name: replaces {{filepath}} with changed file path
+- name: replaces {{filepath}} with changed file path @absolute
   run:
     - "echo 'this file has changed: {{filepath}}'"
     - "cat '{{filepath}}' || echo 'nothing to run'"
@@ -8,9 +8,19 @@
     - "examples/workdir/another_ignored_file.foo"
   run_on_init: true
 
-- name: more advanced usage of {{filepath}}
+- name: more advanced usage of {{filepath}} @absolute
   run:
     - "echo '{{filepath}}' | sed -r s/trigger/foobar/"
+  change: "examples/workdir/**/*"
+  ignore: 
+    - "examples/workdir/ignored/**/*.txt"
+    - "examples/workdir/another_ignored_file.foo"
+  run_on_init: true
+
+- name: replaces {{relative_filepath}} with path relative to current dir @relative
+  run:
+    - "echo '{{filepath}}'"
+    - "echo '{{relative_filepath}}'"
   change: "examples/workdir/**/*"
   ignore: 
     - "examples/workdir/ignored/**/*.txt"
