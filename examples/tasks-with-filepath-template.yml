@@ -17,7 +17,7 @@
     - "examples/workdir/another_ignored_file.foo"
   run_on_init: true
 
-- name: more advanced usage of {{relative_filepath}} @relative
+- name: replaces {{relative_filepath}} with path relative to current dir @relative
   run:
     - "echo '{{filepath}}'"
     - "echo '{{relative_filepath}}'"
