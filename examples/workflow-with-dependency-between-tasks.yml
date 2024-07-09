@@ -1,0 +1,35 @@
+# This workflow shows how to create dependency between
+# tasks so one is triggered once another is done. It also
+# include ideas on how to make conditional triggers
+#
+#  run: `fzz -fail-fast`
+- name: task one
+  run_on_init: true
+  run: 
+    - echo 1
+    - touch examples/workdir/ignored/task-one-done
+  change: '__noop__'
+
+- name: task four
+  run: 
+    - echo 'This task run at the end'
+    - if [ 1 -gt 0 ]; then echo "1 is greater than 0"; exit 0; fi 
+    - touch examples/workdir/ignored/task-last-done
+  change: examples/workdir/ignored/task-two-done
+
+- name: task five
+  run: "echo 'This task run at the end'"
+  change: examples/workdir/ignored/task-last-done
+
+- name: task two
+  run: 
+    - echo 'This task run once task-one is done'
+    - sleep 1
+    - touch examples/workdir/ignored/task-two-done
+  change: examples/workdir/ignored/task-one-done
+
+- name: task three
+  run:
+    - echo 'This task run once task-one is done'
+  change: examples/workdir/ignored/task-one-done
+
