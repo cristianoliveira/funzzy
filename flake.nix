@@ -3,7 +3,7 @@
 
   inputs.nixpkgs.url = "github:nixos/nixpkgs";
 
-  outputs = { self, nixpkgs, ... }:
+  outputs = { nixpkgs, ... }:
     let
       lib = nixpkgs.lib;
       recursiveMergeAttrs = listOfAttrsets: lib.fold (attrset: acc: lib.recursiveUpdate attrset acc) {} listOfAttrsets;
