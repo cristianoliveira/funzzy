@@ -16,7 +16,7 @@ Or more complex workflows like:
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 # TIP2: List the tasks/steps from quicker to slower for better workflows
 #
-# Run: `fzz --fail-fast` to start this workflow
+# Run: `fzz --fail-fast --non-block` to start this workflow (min: v1.3.0)
 
 - name: run my tests
   run: make test
