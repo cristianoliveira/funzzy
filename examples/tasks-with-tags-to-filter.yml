@@ -1,3 +1,12 @@
+# This workflow shows how to use fzz -t <tag>
+# to filter tags or limit them
+# 
+# run: fzz -t @quick
+#
+# It will load only those tasks
+# very useful for having different workflows inside of
+# a main one. I like to have tags for quick and slow tasks
+
 - name: run my test @quick
   run: 
     - "echo 'quick tests'"
