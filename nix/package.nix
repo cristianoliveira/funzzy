@@ -8,10 +8,10 @@ rustPlatform.buildRustPackage rec {
     owner = "cristianoliveira";
     repo = "funzzy";
     rev = "master";
-    hash = "sha256-UTwHsMW+xeoQHnzII7Llu54YVPvzhwv627HgeqpENpQ=";
+    hash = "sha256-8O3E2Z4R7xn9Mm/8UWMldd7kztMuXi44v0cMCzKlnlI=";
   };
 
-  cargoHash = "sha256-asSWyK1Y/j/O8PTvyUlNsIyoJNUhKwa/K+fhe9XeZQc=";
+  cargoHash = "sha256-tVgEPB7SPW5QU0cHgok4k93DZagZyQhf44jeUDWxSFg=";
 
   # When installing from source only run unit tests
   checkPhase = ''
