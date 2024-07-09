@@ -28,3 +28,7 @@ linter: lint
 .PHONY: install
 install: tests ## Install funzzy on your machine
 	GITSHA="$(shell git rev-parse --short HEAD)" cargo install --path .
+
+.PHONY: integration-clean
+integration-clean:
+	rm -rf /tmp/fzz || sudo rm -rf /tmp/fzz
