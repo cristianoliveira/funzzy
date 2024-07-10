@@ -703,9 +703,9 @@ dependencies = [
 
 [[package]]
 name = "yaml-rust"
-version = "0.4.1"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe0fad48adbecafa9588846b38af3f015ccaef0a79d92f9b2892dd310aa9f9e1"
+checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
 ]

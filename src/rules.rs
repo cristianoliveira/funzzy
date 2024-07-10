@@ -177,12 +177,37 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
-            return Err(format!("Found an invalid yaml format {}", err));
+            let lines: Vec<&str> = file_content.lines().collect();
+            let marker = err.marker();
+
+            let error_line = if marker.line() > lines.len() {
+                lines[lines.len() - 1]
+            } else {
+                lines[marker.line() - 1]
+            };
+
+            return Err(vec![
+                format!("Failed to load configuration reason: {}", err),
+                "".to_owned(),
+                format!("Error line:\n  {}", error_line.trim()),
+                "".to_owned(),
+                "Debugging:".to_owned(),
+                "  - Is the type correct?".to_owned(),
+                "  - Is there any missing closing quotes, brackets or braces?".to_owned(),
+            ]
+            .join("\n"));
         }
     };
 
     if items.len() == 0 {
-        return Err("There is no rule in the config file.".to_owned());
+        return Err(vec![
+            "The config file is invalid!",
+            "",
+            "Debugging:",
+            "  - Did you forget to run 'fzz init'?",
+            "  - Did you forget to add a rule?",
+        ]
+        .join("\n"));
     }
 
     match items[0] {
@@ -422,6 +447,22 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_loader_returns_empty_for_invalid_content() {
+        let file_content = "
+        - name: this is valid
+          run: 'cargo tests'
+          change: '**/*'
+
+        - name: this is invalid
+          run: 'cargo tests'
+          change: **/*
+        ";
+
+        let content = YamlLoader::load_from_str(file_content);
+        assert!(content.is_err());
+    }
+
+    #[test]
     fn it_loads_from_args() {
         let file_content = "
         - name: my test
@@ -578,6 +619,53 @@ mod tests {
             .join("\n"),
             "Failed to format rule as string {}",
             rules[0].as_string()
+        );
+    }
+
+    #[test]
+    fn it_fails_for_invalid_watch_file_format() {
+        let file_content = "
+        - name: this is valid
+          run: 'cargo tests'
+          change: '**/*'
+
+        - name: this is invalid
+          run: 'cargo tests'
+          change: **/*
+        ";
+
+        let result = from_yaml(file_content);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            vec![
+                "Failed to load configuration reason: while scanning an anchor or alias, did not find expected alphabetic or numeric character at line 8 column 19",
+                "",
+                "Error line:",
+                "  change: **/*",
+                "",
+                "Debugging:",
+                "  - Is the type correct?",
+                "  - Is there any missing closing quotes, brackets or braces?",
+            ]
+            .join("\n")
+        );
+
+        let empty_file = "
+        ";
+
+        let result = from_yaml(empty_file);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            vec![
+                "The config file is invalid!",
+                "",
+                "Debugging:",
+                "  - Did you forget to run 'fzz init'?",
+                "  - Did you forget to add a rule?",
+            ]
+            .join("\n")
         );
     }
 }

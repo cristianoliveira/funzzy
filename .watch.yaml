@@ -93,8 +93,6 @@
     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
     - 'git add . -p'
     # - 'git commit'
-    - git fetch --all
-    - git rebase origin/master
   change: 
     - ".watch.yaml"
     - "README.md"
@@ -107,3 +105,10 @@
     - "examples/workdir/**"
     - "examples/reload-config-example.yml"
   run_on_init: true
+
+- name: after commit attempt to rebase
+  run: 
+    - git fetch --all
+    - git rebase origin/master
+  change: 
+    - ".git/COMMIT_EDITMSG"
