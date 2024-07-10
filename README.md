@@ -15,8 +15,8 @@ Or more complex workflows like:
 # list here all the events and the commands that it should execute
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 # TIP2: List the tasks/steps from quicker to slower for better workflows
-#
-# Run: `fzz --fail-fast --non-block` to start this workflow (min: v1.3.0)
+# 
+# Run: `fzz --fail-fast --non-block` (`fzz -nb`) to start this workflow (min: v1.4.0)
 
 - name: run my tests
   run: make test
@@ -39,7 +39,9 @@ Or more complex workflows like:
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 
 - name: finally stage the changed files in git
-  run: 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
+  run:
+    - git add {{relative_path}}
+    - git commit 
   change: 
     - "src/**"
     - "tests/**"
@@ -158,7 +160,7 @@ Fail fast which bails the execution if any task fails. Useful for workflows that
 depend on all task to be successful. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6)
 
 ```bash
-fzz --fail-fast
+fzz --fail-fast # or fzz -b (bail)
 ```
 
 Filtering tasks by target. 
@@ -184,7 +186,7 @@ Run in "non-block" mode, which cancels the currently running task when there are
 It's super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
 
 ```bash
-fzz --non-block
+fzz --non-block # or fzz -n
 ```
 
 ## Troubleshooting
