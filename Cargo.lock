@@ -124,7 +124,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
 name = "funzzy"
-version = "1.3.0-nightly"
+version = "1.4.0"
 dependencies = [
  "docopt",
  "glob",
