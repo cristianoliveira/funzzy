@@ -160,7 +160,7 @@ pub fn clean_output(output_file: &str) -> String {
         .lines()
         .map(|line| {
             // This line prints the time so is not deterministic
-            if line.starts_with("Funzzy: finished in") {
+            if line.contains("Funzzy: finished in") {
                 return "Funzzy: finished in 0.0s";
             }
 

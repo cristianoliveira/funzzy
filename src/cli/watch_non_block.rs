@@ -40,7 +40,7 @@ impl Command for WatchNonBlockCommand {
                 workers::WorkerEvent::InitExecution => {}
                 workers::WorkerEvent::Tick => {}
                 workers::WorkerEvent::FinishedExecution(time_elapsed) => {
-                    stdout::info(&format!("finished in {:.4}s", time_elapsed.as_secs_f32()));
+                    stdout::pinfo(&format!("finished in {:.4}s", time_elapsed.as_secs_f32()));
                 }
             };
         });
