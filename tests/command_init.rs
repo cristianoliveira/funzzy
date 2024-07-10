@@ -24,16 +24,20 @@ fn test_it_creates_the_config_file_with_cmd_init() {
             let file_content = std::fs::read_to_string(&file).expect("failed to read .watch.yml");
             assert_eq!(
                 file_content,
-                "
-## Funzzy events file
+                "## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
-# list here all the events and the commands that it should execute
+# List here the tasks and the commands for this workflow
+# then run `fzz` to start to work.
 
 - name: run my test
   run: 'ls -a'
-  change: 'src/**'
-"
+  run_on_init: true
+  change: '**/*.txt'
+  ignore: '**/*.log'
+",
+                "file: {}",
+                file_content
             );
 
             std::fs::remove_file(file)

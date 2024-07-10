@@ -3,15 +3,17 @@ use crate::cli::Command;
 use std::fs::File;
 use std::io::Write;
 
-pub const DEFAULT_CONTENT: &str = "
-## Funzzy events file
+pub const DEFAULT_CONTENT: &str = "## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
-# list here all the events and the commands that it should execute
+# List here the tasks and the commands for this workflow
+# then run `fzz` to start to work.
 
 - name: run my test
   run: 'ls -a'
-  change: 'src/**'
+  run_on_init: true
+  change: '**/*.txt'
+  ignore: '**/*.log'
 ";
 
 /// # `InitCommand`
