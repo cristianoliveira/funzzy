@@ -135,6 +135,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
                         .expect("failed to read from file");
 
                     output.contains("echo 'examples/workdir/trigger-watcher.txt'")
+                        && output.match_indices("Funzzy results").count() == 2
                 },
                 "output: {}\nreason: was not possible to echo with relative path",
                 output

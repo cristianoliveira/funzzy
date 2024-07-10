@@ -115,7 +115,8 @@ fn test_it_watch_files_and_execute_configured_commands() {
 
             assert_eq!(
                 setup::clean_output(&output),
-                "[2J
+                "
+[2J
 Funzzy: echo first 
 
 first

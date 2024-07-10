@@ -76,11 +76,13 @@ Funzzy: bash examples/longtask.sh long 2
 
 Started task long 2
 Long task running... 0
+
 [2J
 Funzzy: bash examples/longtask.sh long 1 
 
 Started task long 1
 Long task running... 0
+
 [2J
 Funzzy: bash examples/longtask.sh long 1 
 
