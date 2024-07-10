@@ -41,6 +41,10 @@ nix-gen-patch: ## Generate a patch for the nix derivation
 nix-flake-check: ## Check the nix flake
 	@nix flake check
 
+.PHONY: nix-build-all
+nix-build-all: nix-build nix-build-nightly ## Build the nix derivation with the nightly toolchain
+	echo "Done"
+
 .PHONY: nix-build-nightly
 nix-build-nightly: ## Build the nix derivation with the nightly toolchain
 	@nix build .#funzzyNightly --verbose -L
@@ -48,3 +52,8 @@ nix-build-nightly: ## Build the nix derivation with the nightly toolchain
 .PHONY: nix-build
 nix-build: ## Build the nix derivation with the nightly toolchain
 	@nix build .#funzzy --verbose -L
+
+.PHONY: nix-bump
+nix-bump:
+	@sed -i 's/sha256-.*=//g' nix/package.nix
+	@sed -i 's/sha256-.*=//g' nix/package-from-source.nix
