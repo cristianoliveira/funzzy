@@ -6,6 +6,8 @@
         rustfmt
         libiconv
 
+        gnused # for macos
+
         # For development install latest version of funzzy
         # copkgs.funzzyNightly
 
