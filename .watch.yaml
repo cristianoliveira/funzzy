@@ -45,7 +45,7 @@
     - mkdir /tmp/fzz
     # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
     # if fails open nvim with the failing logs
-    - "cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture || nvim *.log"
+    - "cargo test --test ${INTEGRATION_TEST:-'*'} -- --nocapture || nvim *.log && exit 1"
     - rm -rf /tmp/fzz
   change: 
     - "src/**"
