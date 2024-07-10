@@ -64,7 +64,7 @@ impl Command for WatchCommand {
 
             let elapsed = time_execution_started.elapsed();
             // Present elapsed time like 0.1234s
-            stdout::info(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
+            stdout::pinfo(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
         } else {
             stdout::info("Watching...");
         }
@@ -113,7 +113,7 @@ impl Command for WatchCommand {
                     let elapsed = time_execution_started.elapsed();
 
                     // Present elapsed time like 0.1234s
-                    stdout::info(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
+                    stdout::pinfo(&format!("finished in {:.4}s", elapsed.as_secs_f32()));
                 }
             },
             self.verbose,

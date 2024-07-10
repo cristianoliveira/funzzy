@@ -1,5 +1,12 @@
+use std::io::Write;
+
 pub fn info(msg: &str) {
     println!("Funzzy: {}", msg);
+}
+
+pub fn pinfo(msg: &str) {
+    print!("Funzzy: {}", msg);
+    std::io::stdout().flush().expect("Failed to flush stdout");
 }
 
 pub fn error(msg: &str) {
@@ -35,5 +42,5 @@ pub fn present_results(results: Vec<Result<(), String>>) {
 
 pub fn clear_screen() -> () {
     // See https://archive.ph/d3Z3O
-    print!("{}[2J", 27 as char);
+    print!("\n{}[2J", 27 as char);
 }
