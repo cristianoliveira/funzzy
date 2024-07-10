@@ -91,10 +91,9 @@
   run: 
     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
     - 'git add . -p'
-    # - 'git commit'
-    - git fetch --all
-    - git rebase origin/master
+    - git fetch && git rebase origin/master
   change: 
+    - '.fzz/git-task' # Allow running on demand with `touch .fzz/git-task`
     - ".watch.yaml"
     - "README.md"
     - "src/**"
