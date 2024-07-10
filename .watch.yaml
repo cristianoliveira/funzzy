@@ -64,8 +64,8 @@
     # This avoids running integration test if the pckg is not even buildin
     - cargo build --release 
     # Build and run integration tests
-    - nix flake check
-    - nix build .#funzzyNightly --verbose -L
+    - make nix-flake-check
+    - make nix-build-nightly
     - rm -rf /tmp/fzz
   change: 
     # Uncomment these for when having to debug issues with nix builds
