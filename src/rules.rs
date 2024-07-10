@@ -163,12 +163,14 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
 
     commands
         .iter()
-        .map(|c| c.replace("{{filepath}}", &filepath))
         .map(|c| {
-            c.replace(
-                "{{relative_filepath}}",
-                &filepath.replace(&format!("{}/", &opts.current_dir), ""),
-            )
+            c.replace("{{filepath}}", &filepath)
+                .replace("{{absolute_path}}", &filepath)
+        })
+        .map(|c| {
+            let relative_path = &filepath.replace(&format!("{}/", &opts.current_dir), "");
+            c.replace("{{relative_filepath}}", relative_path)
+                .replace("{{relative_path}}", relative_path)
         })
         .collect()
 }
@@ -567,11 +569,15 @@ mod tests {
     fn it_replaces_relative_filepath_tpl_with_relative_filepath() {
         let file_content = "
         - name: my tests
-          run: 'cargo tests {{relative_filepath}}'
+          run: 
+            - 'cargo tests {{relative_filepath}}'
+            - 'git add {{relative_path}}'
           change: 'tests/**'
 
         - name: my tests
-          run: ['echo {{filepath}}', 'make tests {{filepath}}']
+          run: 
+            - 'echo {{filepath}}'
+            - 'make tests {{absolute_path}}'
           change: 'tests/**'
         ";
 
@@ -587,6 +593,7 @@ mod tests {
             ),
             vec![
                 "cargo tests tests/foo.rs",
+                "git add tests/foo.rs",
                 "echo /foo/bar/tests/foo.rs",
                 "make tests /foo/bar/tests/foo.rs"
             ]
