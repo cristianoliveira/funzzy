@@ -55,5 +55,5 @@ nix-build: ## Build the nix derivation with the nightly toolchain
 
 .PHONY: nix-bump
 nix-bump:
-	@sed -i '' 's/sha256-.*=//g' nix/package.nix
-	@sed -i '' 's/sha256-.*=//g' nix/package-from-source.nix
+	@sed -i 's/sha256-.*=//g' nix/package.nix
+	@sed -i 's/sha256-.*=//g' nix/package-from-source.nix
