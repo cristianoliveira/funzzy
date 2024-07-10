@@ -177,12 +177,21 @@ pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
-            return Err(format!("Found an invalid yaml format {}", err));
+            return Err(format!("Config has an invalid format {}", err));
         }
     };
 
     if items.len() == 0 {
-        return Err("There is no rule in the config file.".to_owned());
+        return Err(vec![
+            "The config file is invalid!",
+            "",
+            "Debugging:",
+            "  - Did you forget to run 'fzz init'?",
+            "  - Did you forget to add a rule?",
+            "  - Are the properties valid? (String|Boolean)",
+            "    Eg: `change: **/*` is invalid, it should be `change: '**/*'`",
+        ]
+        .join("\n"));
     }
 
     match items[0] {
@@ -422,6 +431,22 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_loader_returns_empty_for_invalid_content() {
+        let file_content = "
+        - name: this is valid
+          run: 'cargo tests'
+          change: '**/*'
+
+        - name: this is invalid
+          run: 'cargo tests'
+          change: **/*
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        assert_eq!(content, []);
+    }
+
+    #[test]
     fn it_loads_from_args() {
         let file_content = "
         - name: my test
@@ -578,6 +603,35 @@ mod tests {
             .join("\n"),
             "Failed to format rule as string {}",
             rules[0].as_string()
+        );
+    }
+
+    #[test]
+    fn it_fails_for_invalid_watch_file_format() {
+        let file_content = "
+        - name: this is valid
+          run: 'cargo tests'
+          change: '**/*'
+
+        - name: this is invalid
+          run: 'cargo tests'
+          change: **/*
+        ";
+
+        let result = from_yaml(file_content);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap(),
+            vec![
+                "The config file is invalid!",
+                "",
+                "Debugging:",
+                "  - Did you forget to run 'fzz init'?",
+                "  - Did you forget to add a rule?",
+                "  - Are the properties valid? (String|Boolean)",
+                "    Eg: `change: **/*` is invalid, it should be `change: '**/*'`",
+            ]
+            .join("\n")
         );
     }
 }
