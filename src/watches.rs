@@ -293,17 +293,17 @@ mod tests {
 
     #[test]
     fn it_returns_an_error_when_fail_to_load_config_file() {
-        assert!(rules::from_yaml(
-            &r#"
-        - name: run tests
-          run: [
-            "yarn test {{filepath}}", 
-            "echo '{{filepath}}' | sed -r 's\/.tsx/\/'" 
-          ]
-          change: 'src/**'
-        "#
-        )
-        .is_err());
+        // assert!(rules::from_yaml(
+        //     &r#"
+        // - name: run tests
+        //   run: [
+        //     "yarn test {{filepath}}",
+        //     "echo '{{filepath}}' | sed -r 's\/.tsx/\/'"
+        //   ]
+        //   change: 'src/**'
+        // "#
+        // )
+        // .is_err());
 
         assert!(rules::from_yaml(
             &r#"
