@@ -32,3 +32,19 @@ install: tests ## Install funzzy on your machine
 .PHONY: integration-clean
 integration-clean:
 	rm -rf /tmp/fzz || sudo rm -rf /tmp/fzz
+
+.PHONY: nix-gen-patch
+nix-gen-patch: ## Generate a patch for the nix derivation
+	@git diff origin/master -r -u > nix/gitdiff.patch
+
+.PHONY: nix-flake-check
+nix-flake-check: ## Check the nix flake
+	@nix flake check
+
+.PHONY: nix-build-nightly
+nix-build-nightly: ## Build the nix derivation with the nightly toolchain
+	@nix build .#funzzyNightly --verbose -L
+
+.PHONY: nix-build
+nix-build: ## Build the nix derivation with the nightly toolchain
+	@nix build .#funzzy --verbose -L
