@@ -319,8 +319,25 @@ pub fn from_default_file_config() -> Result<Vec<Rules>, String> {
 }
 
 fn pattern(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**{}", pattern))
-        .expect(format!("Invalid glob pattern {}", pattern).as_str())
+    Pattern::new(&format!("**{}", pattern)).expect(
+        &vec![
+            format!("Invalid glob pattern {}", pattern),
+            vec![
+                "",
+                "Some example of valid patterns: ",
+                " foo/**/* - Matches any file of any subfolder of foo",
+                " *        - Matches any string, of any length",
+                " foo*     - Matches any string beginning with foo",
+                " *x*      - Matches any string containing an x",
+                " *.tar.gz - Matches any string ending with .tar.gz",
+                " *.[ch]   - Matches any string ending with .c or .h",
+                " foo?     - Matches foot or foo$ but not fools",
+            ]
+            .join("\n")
+            .to_string(),
+        ]
+        .join("\n"),
+    )
 }
 
 pub fn format_rules(rule: &Vec<Rules>) -> String {
