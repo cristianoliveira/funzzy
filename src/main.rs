@@ -105,6 +105,10 @@ fn main() {
                         Err(err) => error("Failed to get rules from stdin", err),
                     };
 
+                    if let Err(err) = rules::validate_rules(&watch_rules) {
+                        error("Failed load rules", err);
+                    }
+
                     execute_watch_command(Watches::new(watch_rules), args);
                 }
                 Err(err) => error("Failed to read stdin", err),
@@ -133,6 +137,10 @@ fn main() {
                     Err(err) => error("Failed to read config file", err),
                 }
             };
+
+            if let Err(err) = rules::validate_rules(&rules) {
+                error("Failed load rules", err);
+            }
 
             if !args.flag_target.is_empty() {
                 let filtered = rules

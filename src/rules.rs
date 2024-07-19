@@ -43,9 +43,6 @@ impl Rules {
     }
 
     pub fn from(yaml: &Yaml) -> Self {
-        yaml::validate(yaml, "run");
-        yaml::validate(yaml, "change");
-
         Rules {
             name: yaml::extract_strings(&yaml["name"])[0].clone(),
             commands: yaml::extract_strings(&yaml["run"]),
@@ -139,6 +136,47 @@ impl Rules {
         .filter(|line| !line.is_empty())
         .collect::<Vec<String>>()
         .join("\n")
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let name = if self.name.is_empty() {
+            "_unnamed_".to_owned()
+        } else {
+            self.name.clone()
+        };
+
+        if self.commands().len() == 0 {
+            return Err(format!(
+                "Each watch task must have at least one command and found none in rule '{}'",
+                name
+            ));
+        }
+
+        for watch_pattern in self.watch_patterns() {
+            match Pattern::new(&watch_pattern) {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(format!(
+                        "Invalid glob pattern '{}' in rule '{}'.\nDetails: {}",
+                        watch_pattern, name, err
+                    ));
+                }
+            }
+        }
+
+        for ignore_pattern in self.ignore_patterns.clone() {
+            match Pattern::new(&ignore_pattern) {
+                Ok(_) => (),
+                Err(err) => {
+                    return Err(format!(
+                        "Invalid glob pattern '{}' in rule '{}'.\nDetails: {}",
+                        ignore_pattern, name, err
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -333,6 +371,16 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
     formatted_rules
 }
 
+pub fn validate_rules(rule: &Vec<Rules>) -> Result<(), String> {
+    for rule in rule {
+        if let Err(err) = rule.validate() {
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     extern crate yaml_rust;
@@ -478,30 +526,6 @@ mod tests {
 
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
-    }
-
-    #[test]
-    #[should_panic]
-    fn it_validates_the_run_key() {
-        let file_content = "
-        - name: my source
-          change: 'src/**'
-          ignore: ['src/test/**', 'src/tmp/**']
-        ";
-        let content = YamlLoader::load_from_str(file_content).unwrap();
-        Rules::from(&content[0][0]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn it_validates_the_when_change_key() {
-        let file_content = "
-        - name: my source
-          run: make test
-          ignore: ['src/test/**', 'src/tmp/**']
-        ";
-        let content = YamlLoader::load_from_str(file_content).unwrap();
-        Rules::from(&content[0][0]);
     }
 
     fn get_absolute_path(path: &str) -> String {
@@ -673,6 +697,68 @@ mod tests {
                 "  - Did you forget to add a rule?",
             ]
             .join("\n")
+        );
+    }
+
+    #[test]
+    fn it_validates_the_given_glob_patterns_paths() {
+        let rules_yaml = from_yaml(
+            "
+        - name: this is valid
+          run: 'cargo tests'
+          change: 
+            - '**/*'
+            - '**/*.go'
+          ignore: 
+            - '**/*.log'
+
+        - name: this is an invalid pattern
+          run: 'echo invalid'
+          change: 
+            - '**/foo_**.go'
+          ignore: 
+            - '**/*.log'
+
+        - name: this is an invalid pattern 2
+          run: 'echo invalid'
+          change: 
+            - '**/*.go'
+          ignore: 
+            - '**/**.*'
+
+        - name: rules must have at least one command
+          change: 
+            - '**/*.go'
+        ",
+        );
+        assert!(rules_yaml.is_ok());
+
+        let rules = rules_yaml.unwrap();
+        let first_rule = &rules[0];
+        assert!(first_rule.validate().is_ok());
+
+        // The invalid pattern rules
+        let second_rule = &rules[1];
+        assert!(second_rule.validate().is_err());
+        assert_eq!(
+            second_rule.validate().err().unwrap(),
+            "Invalid glob pattern '**/foo_**.go' in rule 'this is an invalid pattern'.
+Details: Pattern syntax error near position 6: recursive wildcards must form a single path component"
+        );
+
+        let third_rule = &rules[2];
+        assert!(third_rule.validate().is_err());
+        assert_eq!(
+            third_rule.validate().err().unwrap(),
+            "Invalid glob pattern '**/**.*' in rule 'this is an invalid pattern 2'.
+Details: Pattern syntax error near position 5: recursive wildcards must form a single path component"
+        );
+
+        let fourth_rule = &rules[3];
+        assert!(fourth_rule.validate().is_err());
+        assert_eq!(
+            fourth_rule.validate().err().unwrap(),
+            "Each watch task must have at least one command and found none in rule 'rules must have at least one command'"
         );
     }
 }
