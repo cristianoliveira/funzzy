@@ -106,7 +106,7 @@ fn main() {
                     };
 
                     if let Err(err) = rules::validate_rules(&watch_rules) {
-                        error("Failed load rules", err);
+                        error("Invalid config file.", err);
                     }
 
                     execute_watch_command(Watches::new(watch_rules), args);
@@ -139,7 +139,7 @@ fn main() {
             };
 
             if let Err(err) = rules::validate_rules(&rules) {
-                error("Failed load rules", err);
+                error("Invalid config file.", err);
             }
 
             if !args.flag_target.is_empty() {

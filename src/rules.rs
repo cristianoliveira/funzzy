@@ -147,7 +147,7 @@ impl Rules {
 
         if self.commands().len() == 0 {
             return Err(format!(
-                "Each watch task must have at least one command and found none in rule '{}'",
+                "Rule '{}' contains no command to run. Empty 'run' property.",
                 name
             ));
         }
@@ -156,10 +156,15 @@ impl Rules {
             match Pattern::new(&watch_pattern) {
                 Ok(_) => (),
                 Err(err) => {
-                    return Err(format!(
-                        "Invalid glob pattern '{}' in rule '{}'.\nDetails: {}",
-                        watch_pattern, name, err
-                    ));
+                    return Err(vec![
+                        format!(
+                            "Rule '{}' contains an invalid `change` glob pattern '{}'.",
+                            name, watch_pattern
+                        ),
+                        format!("  {}", err),
+                        "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
+                    ]
+                    .join("\n"));
                 }
             }
         }
@@ -168,10 +173,15 @@ impl Rules {
             match Pattern::new(&ignore_pattern) {
                 Ok(_) => (),
                 Err(err) => {
-                    return Err(format!(
-                        "Invalid glob pattern '{}' in rule '{}'.\nDetails: {}",
-                        ignore_pattern, name, err
-                    ));
+                    return Err(vec![
+                        format!(
+                            "Rule '{}' contains an invalid `ignore` glob pattern '{}'.",
+                            name, ignore_pattern
+                        ),
+                        format!("  {}", err),
+                        "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
+                    ]
+                    .join("\n"));
                 }
             }
         }
@@ -742,23 +752,25 @@ mod tests {
         assert!(second_rule.validate().is_err());
         assert_eq!(
             second_rule.validate().err().unwrap(),
-            "Invalid glob pattern '**/foo_**.go' in rule 'this is an invalid pattern'.
-Details: Pattern syntax error near position 6: recursive wildcards must form a single path component"
+            "Rule 'this is an invalid pattern' contains an invalid `change` glob pattern '**/foo_**.go'.
+  Pattern syntax error near position 6: recursive wildcards must form a single path component
+  Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
         );
 
         let third_rule = &rules[2];
         assert!(third_rule.validate().is_err());
         assert_eq!(
             third_rule.validate().err().unwrap(),
-            "Invalid glob pattern '**/**.*' in rule 'this is an invalid pattern 2'.
-Details: Pattern syntax error near position 5: recursive wildcards must form a single path component"
+            "Rule 'this is an invalid pattern 2' contains an invalid `ignore` glob pattern '**/**.*'.
+  Pattern syntax error near position 5: recursive wildcards must form a single path component
+  Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
         );
 
         let fourth_rule = &rules[3];
         assert!(fourth_rule.validate().is_err());
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
-            "Each watch task must have at least one command and found none in rule 'rules must have at least one command'"
+            "Rule 'rules must have at least one command' contains no command to run. Empty 'run' property."
         );
     }
 }
