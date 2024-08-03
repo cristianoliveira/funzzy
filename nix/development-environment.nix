@@ -18,4 +18,8 @@
         then darwin.apple_sdk.frameworks.CoreServices
         else null)
     ];
+
+    shellHook = ''
+      cargo update
+    '';
   }
