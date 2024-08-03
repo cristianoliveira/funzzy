@@ -12,6 +12,11 @@
 # Run all tasks with `fzz -nb`
 # Run quick tasks with `fzz -nbt @quick`
 #
+- name: start by updating deps @quick
+  run: cargo update
+  change: "__noop__"
+  run_on_init: true
+
 - name: run my build
   run: "make build"
   change: ["Cargo.*"]
