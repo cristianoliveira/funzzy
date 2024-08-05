@@ -154,7 +154,7 @@ impl Rules {
 
         if self.watch_patterns().len() == 0 && !self.run_on_init() {
             return Err(format!(
-                "Rule '{}' must contain either a `change` or `run_on_init` property.",
+                "Rule '{}' must contain a `change` and/or `run_on_init` property.",
                 name
             ));
         }
@@ -747,7 +747,7 @@ mod tests {
           change: 
             - '**/*.go'
 
-        - name: rules must contain either `change` or/and `run_on_init`
+        - name: missing trigger property
           run: 'echo invalid'
           ignore: '**/*.go'
         ",
@@ -788,7 +788,7 @@ mod tests {
         assert!(fourth_rule.validate().is_err());
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
-            "Rule 'rules must contain either `change` or/and `run_on_init`' must contain either a `change` or `run_on_init` property."
+            "Rule 'missing trigger property' must contain a `change` and/or `run_on_init` property."
         );
     }
 }
