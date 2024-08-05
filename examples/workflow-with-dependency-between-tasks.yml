@@ -8,7 +8,6 @@
   run: 
     - echo 1
     - touch examples/workdir/ignored/task-one-done
-  change: '__noop__'
 
 - name: task four
   run: 
@@ -32,4 +31,3 @@
   run:
     - echo 'This task run once task-one is done'
   change: examples/workdir/ignored/task-one-done
-

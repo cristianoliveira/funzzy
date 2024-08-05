@@ -152,6 +152,13 @@ impl Rules {
             ));
         }
 
+        if self.watch_patterns().len() == 0 && !self.run_on_init() {
+            return Err(format!(
+                "Rule '{}' must contain a `change` and/or `run_on_init` property.",
+                name
+            ));
+        }
+
         for watch_pattern in self.watch_patterns() {
             match Pattern::new(&watch_pattern) {
                 Ok(_) => (),
@@ -739,6 +746,10 @@ mod tests {
         - name: rules must have at least one command
           change: 
             - '**/*.go'
+
+        - name: missing trigger property
+          run: 'echo invalid'
+          ignore: '**/*.go'
         ",
         );
         assert!(rules_yaml.is_ok());
@@ -771,6 +782,13 @@ mod tests {
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
             "Rule 'rules must have at least one command' contains no command to run. Empty 'run' property."
+        );
+
+        let fourth_rule = &rules[4];
+        assert!(fourth_rule.validate().is_err());
+        assert_eq!(
+            fourth_rule.validate().err().unwrap(),
+            "Rule 'missing trigger property' must contain a `change` and/or `run_on_init` property."
         );
     }
 }

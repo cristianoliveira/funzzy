@@ -42,6 +42,10 @@ running on init first
 Funzzy: echo \"run on init sencod\" 
 
 run on init sencod
+
+Funzzy: echo \"only run on init\" 
+
+only run on init
 Funzzy results ----------------------------
 All tasks finished successfully.
 Funzzy: finished in 0.0s"
