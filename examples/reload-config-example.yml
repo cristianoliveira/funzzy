@@ -9,8 +9,6 @@
     - echo 'run me first'
     - touch examples/reload-config-example.yml
     - echo 1 > examples/workdir/trigger-first-task.txt
-  change: 
-    - '__noop__'
     # LOL! To setup a LOOP uncomment this line
     # - examples/workdir/trigger-start.txt
   run_on_init: true
