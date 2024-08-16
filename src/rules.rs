@@ -434,12 +434,31 @@ mod tests {
         - name: my tests
           run: 'cargo tests'
           change: 'tests/**'
+
+        - name: my tests
+          run: 'cargo tests'
+          change: 
+            - 'src/**/*.rs'
+            - 'src/**/*.rs?'
+            - 'src/**/*.ab[cx]'
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
         let rule = Rules::from(&content[0][0]);
+        let rule2 = Rules::from(&content[0][1]);
 
         assert_eq!(true, rule.watch("tests/foo.rs"));
+
+        // src/**/*.rs
+        assert_eq!(true, rule2.watch("src/foo.rsx"));
+        assert_eq!(true, rule2.watch("src/bar/foo.rs"));
+        assert_eq!(true, rule2.watch("src/bar/foo.rsx"));
+        assert_eq!(true, rule2.watch("src/bar/foo.rs3"));
+        assert_eq!(true, rule2.watch("src/bar/foo.rs&"));
+        assert_eq!(true, rule2.watch("src/bar/foo.abc"));
+        assert_eq!(true, rule2.watch("src/bar/foo.abx"));
+        // but not
+        assert_eq!(false, rule2.watch("src/bar/foo.ab"));
     }
 
     #[test]
