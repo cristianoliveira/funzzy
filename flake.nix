@@ -30,7 +30,7 @@
             funzzyNightly = pkgs.copkgs.funzzyNightly;
           };
 
-          devShells."${system}".default = import ./nix/development-environment.nix { inherit pkgs; };
+          devShells."${system}".default = import ./shell.nix { inherit pkgs; };
         }
       ) systems;
     in
