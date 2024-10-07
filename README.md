@@ -65,10 +65,9 @@ Want more examples?
 
 Funzzy the watcher pairs well with these tools:
 
- - [yq](https://github.com/mikefarah/yq) - A yaml query similar to `jq`
-   For extracting commands from GitHub Actions workflows ([see](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6))
- - [nrr](https://github.com/ryanccn/nrr) - The fastest node task runner
-   Since the watcher runs commands on change, a faster task runner makes a notable difference
+ - _[yq](https://github.com/mikefarah/yq) - A yaml querier cli similar to `jq`_.  Extract commands from GitHub Actions workflows ([see](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6))
+   
+ - _[nrr](https://github.com/ryanccn/nrr) - A fast node task runner_. Since the watcher runs commands on change, a faster task runner makes a notable difference
 
 ## Motivation
 
