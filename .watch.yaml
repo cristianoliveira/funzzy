@@ -35,7 +35,8 @@
 - name: run my test @quick
   run: 
     # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
-    - "cargo test $UNIT_TEST --verbose --lib"
+    # - "cargo test $UNIT_TEST --verbose --lib"
+    - make ci-run-on-push 
   change: "src/**"
   run_on_init: true
 

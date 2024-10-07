@@ -8,6 +8,8 @@
 
         gnused # for macos
 
+        yq-go # jq for yaml
+
         # For development install latest version of funzzy
         # copkgs.funzzyNightly
 

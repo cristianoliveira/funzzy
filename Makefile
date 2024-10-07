@@ -57,3 +57,9 @@ nix-build: ## Build the nix derivation with the nightly toolchain
 nix-bump:
 	@sed -i 's/sha256-.*=//g' nix/package.nix
 	@sed -i 's/sha256-.*=//g' nix/package-from-source.nix
+
+.PHONY: ci-run-on-push
+ci-run-on-push: ## Run checks from .github/workflows/on-push.yml
+	@cat .github/workflows/on-push.yml \
+		| yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
+		| xargs -I {} bash -c {}
