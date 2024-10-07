@@ -33,10 +33,18 @@ Or more complex workflows like:
 # Command templates for custom scripts
 - name: run test & linter for a single file
   run: 
-   - "npm run lint -- {{filepath}}",
+   - "npm run lint -- {{relative_path}}",
    - "npm test -- $(echo '{{filepath}}' | sed -r s/.(j|t)sx?//)"
   change: ["src/**", "libs/**"]
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
+
+- name: run ci checks @quick @ci
+  run: | ## Watch with `fzz -r @ci`
+   cat .github/workflows/on-push.yml \
+    | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
+    | xargs -I {} bash -c {}
+  change: "src/**"
+  run_on_init: true
 
 - name: finally stage the changed files in git
   run:
@@ -52,6 +60,15 @@ Want more examples?
 
  - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
  - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
+
+### Enhancing your workflow
+
+Funzzy the watcher pairs well with these tools:
+
+ - [yq](https://github.com/mikefarah/yq) - A yaml query similar to `jq`
+   For extracting commands from GitHub Actions workflows ([see](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6))
+ - [nrr](https://github.com/ryanccn/nrr) - The fastest node task runner
+   Since the watcher runs commands on change, a faster task runner makes a notable difference
 
 ## Motivation
 

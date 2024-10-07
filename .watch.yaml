@@ -33,10 +33,10 @@
     - "examples/workdir/**"
 
 - name: run my test @quick
-  run: 
-    # Filter with `UNIT_TEST=it_replaces_template_with_filepath fzz -t test`
-    # - "cargo test $UNIT_TEST --verbose --lib"
-    - make ci-run-on-push 
+  run: |
+   cat .github/workflows/on-push.yml \
+    | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
+    | xargs -I {} bash -c {}
   change: "src/**"
   run_on_init: true
 
