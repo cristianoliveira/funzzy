@@ -39,7 +39,7 @@ Or more complex workflows like:
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 
 - name: run ci checks @quick @ci
-  run: | ## Watch with `fzz -r @ci`
+  run: | ## Watch with `fzz -t @ci`
    cat .github/workflows/on-push.yml \
     | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
     | xargs -I {} bash -c {}
@@ -61,13 +61,13 @@ Want more examples?
  - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
  - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 
-### Enhancing your workflow
+### Enhance your workflows
 
-Funzzy the watcher pairs well with these tools:
+Funzzy pairs well with these tools:
 
- - _[yq](https://github.com/mikefarah/yq) - A yaml querier cli similar to `jq`_.  Extract commands from GitHub Actions workflows ([see](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6))
+ - [yq](https://github.com/mikefarah/yq) - A yaml querier similar to `jq` to extract commands from GitHub Actions!
    
- - _[nrr](https://github.com/ryanccn/nrr) - A fast node task runner_. Since the watcher runs commands on change, a faster task runner makes a notable difference
+ - [nrr](https://github.com/ryanccn/nrr) - For JS/TS projects, since Funzzy runs commands on change, a faster task runner makes a difference
 
 ## Motivation
 
