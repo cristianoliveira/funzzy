@@ -8,6 +8,9 @@ repository = "https://github.com/cristianoliveira/funzzy"
 edition = "2021"
 default-run = "funzzy" # the binary to run when `cargo run` is called
 
+[features]
+test-integration = []
+
 [dependencies]
 docopt = "1"
 serde = "1.0" # if you're using `derive(Deserialize)`

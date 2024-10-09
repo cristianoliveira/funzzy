@@ -1,6 +1,6 @@
 { lib , rustPlatform , fetchFromGitHub , stdenv , darwin }:
 
-rustPlatform.buildRustPackage rec {
+rustPlatform.buildRustPackage {
   pname = "funzzy";
   version = "nightly-20240825";
 
@@ -40,7 +40,7 @@ rustPlatform.buildRustPackage rec {
     touch /tmp/fzz/accepts_full_or_relativepaths2.txt
     touch /tmp/fzz/accepts_full_or_relativepaths3.txt
 
-    RUST_BACKTRACE=1 cargo test --test '*' -- --nocapture
+    RUST_BACKTRACE=1 cargo test -- --nocapture
 
     rm -rf /tmp/fzz
   '';
@@ -59,7 +59,7 @@ rustPlatform.buildRustPackage rec {
   meta = with lib; {
     description = "A lightweight watcher";
     homepage = "https://github.com/cristianoliveira/funzzy";
-    changelog = "https://github.com/cristianoliveira/funzzy/releases/tag/${src.rev}";
+    changelog = "https://github.com/cristianoliveira/funzzy/releases";
     license = licenses.mit;
     maintainers = with maintainers; [ cristianoliveira ];
   };
