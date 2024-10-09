@@ -21,4 +21,4 @@ jobs:
 
       - run: mkdir -p /tmp/fzz
       - run: nix flake check
-      - run: nix build .#funzzyNightly --verbose
+      - run: make nix-build-local

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+## Check nix
+echo "Checking nix builds"
+
+make ci-run-on-push
+make ci-integration
+
+echo "All good"

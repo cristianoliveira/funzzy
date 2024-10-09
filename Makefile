@@ -45,9 +45,9 @@ nix-flake-check: ## Check the nix flake
 nix-build-all: nix-build nix-build-nightly ## Build the nix derivation with the nightly toolchain
 	echo "Done"
 
-.PHONY: nix-build-nightly
-nix-build-nightly: ## Build the nix derivation with the nightly toolchain
-	@nix build .#funzzyNightly --verbose -L
+.PHONY: nix-build-local
+nix-build-local: ## Build the nix derivation with the local toolchain
+	@nix build .#local --verbose -L
 
 .PHONY: nix-build
 nix-build: ## Build the nix derivation with the nightly toolchain
