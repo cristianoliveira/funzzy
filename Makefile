@@ -12,11 +12,11 @@ build: tests ## Execute all the tests and build funzzy binary
 
 .PHONY: integration ## Exectute integration tests
 integration:
-	@cargo test --test '*'
+	@cargo test --features test-integration
 
 .PHONY: ci-integration
 ci-integration:
-	@cargo test --test '*'
+	@cargo test --features test-integration
 
 .PHONY: lint
 lint:

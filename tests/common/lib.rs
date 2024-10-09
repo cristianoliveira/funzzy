@@ -23,7 +23,25 @@ static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 #[allow(dead_code)]
 pub const CLEAR_SCREEN: &str = "[2J";
 
-#[allow(dead_code)]
+#[cfg(not(feature = "test-integration"))]
+pub fn with_example<F>(_: Options, _: F) -> ()
+where
+    F: FnOnce(&mut Command, File) -> (),
+{
+    println!("WARNING: Skipping integration tests");
+    ()
+}
+
+#[cfg(not(feature = "test-integration"))]
+pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
+where
+    F: FnOnce(&mut Command, File) -> (),
+{
+    println!("WARNING: Skipping integration tests");
+    ()
+}
+
+#[cfg(feature = "test-integration")]
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -90,6 +108,7 @@ where
         .expect("failed to remove file after running test");
 }
 
+#[cfg(feature = "test-integration")]
 #[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
