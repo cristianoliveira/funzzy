@@ -13,11 +13,6 @@ rustPlatform.buildRustPackage rec {
 
   cargoHash = "sha256-Rs0l7361BtuhV0DsMfeyKe/ryoCZaLWBnrpuVNeRKhU=";
 
-  # When installing from source only run unit tests
-  checkPhase = ''
-    cargo test $UNIT_TEST --lib
-  '';
-
   buildInputs = lib.optionals stdenv.isDarwin [
     darwin.apple_sdk.frameworks.CoreServices
   ];

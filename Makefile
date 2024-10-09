@@ -4,18 +4,22 @@ help: ## Lists the available commands. Add a comment with '##' to describe a com
 
 .PHONY: tests
 tests: ## Execute all the tests
-	@cargo test $UNIT_TEST --verbose --lib
+	@cargo test --verbose
 
 .PHONY: build
 build: tests ## Execute all the tests and build funzzy binary
 	@cargo build --release
 
+.PHONY: prebuild
+prebuild: ## Build the project in non-release mode
+	@cargo build
+
 .PHONY: integration ## Exectute integration tests
-integration:
+integration: integration-clean
 	@cargo test --features test-integration
 
 .PHONY: ci-integration
-ci-integration:
+ci-integration: integration-clean
 	@cargo test --features test-integration
 
 .PHONY: lint
@@ -31,7 +35,9 @@ install: tests ## Install funzzy on your machine
 
 .PHONY: integration-clean
 integration-clean:
-	rm -rf /tmp/fzz || sudo rm -rf /tmp/fzz
+	echo "Creating a temp dir for integration tests in /tmp/fzz"
+	rm -rf /tmp/fzz
+	mkdir -p /tmp/fzz
 
 .PHONY: nix-gen-patch
 nix-gen-patch: ## Generate a patch for the nix derivation

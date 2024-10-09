@@ -15,6 +15,5 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - run: mkdir -p /tmp/fzz
-      - run: nix flake check
-      - run: nix build .#funzzy --verbose
+      - run: make nix-flake-check
+      - run: make nix-build

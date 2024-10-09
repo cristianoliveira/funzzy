@@ -16,8 +16,5 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Setup env
-        run: mkdir /tmp/fzz
-
       - name: Run integration tests
         run: make integration
