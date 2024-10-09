@@ -101,9 +101,9 @@ curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-i
 nix-env -iA nixpkgs.funzzy
 ```
 
-Nightly version
+[Latest release](https://github.com/cristianoliveira/funzzy/releases):
 ```bash
-nix profile install 'github:cristianoliveira/funzzy#funzzy'
+nix profile install 'github:cristianoliveira/funzzy'
 # or
 nix profile install 'github:cristianoliveira/nixpkgs#funzzy'
 ```

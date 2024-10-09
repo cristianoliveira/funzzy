@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage rec {
 #   allowBuiltinFetchGit = true;
 # };
 
-  cargoHash = "sha256-uJTcq16AtW+pae6lRWrSrx3bemVeWp621aWbc9YVbKA=";
+  cargoHash = "sha256-QTOn8de1ihsjEJSoTzOmuNdO6057jTRJ+MlbqHJCZ9Y=";
 
   buildInputs = lib.optionals stdenv.isDarwin [
     darwin.apple_sdk.frameworks.CoreServices

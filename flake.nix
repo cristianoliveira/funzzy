@@ -1,39 +1,19 @@
 {
   description = "Funzzy (fzz) - the lightweight blazingly fast watcher";
 
-  inputs.nixpkgs.url = "github:nixos/nixpkgs";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs";
+    utils.url = "github:numtide/flake-utils";
+  };
 
-  outputs = { nixpkgs, ... }:
-    let
-      lib = nixpkgs.lib;
-      recursiveMergeAttrs = listOfAttrsets: lib.fold (attrset: acc: lib.recursiveUpdate attrset acc) {} listOfAttrsets;
-      systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
+  outputs = { self, nixpkgs, utils, ... }: 
+    utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        srcpkgs = import ./packages.nix { inherit pkgs; };
+      in {
+        packages = srcpkgs;
 
-      systemPackages = map (system:
-        let
-          pkgs = import nixpkgs { 
-            inherit system;
-            overlays = [ 
-              (final: prev: {
-                  copkgs = {
-                    funzzy = prev.callPackage ./nix/package.nix {};
-                    funzzyNightly = prev.callPackage ./nix/package-from-source.nix {};
-                  };
-                }
-              )
-            ];
-          };
-        in
-        {
-          packages."${system}" = {
-            funzzy = pkgs.copkgs.funzzy;
-            funzzyNightly = pkgs.copkgs.funzzyNightly;
-          };
-
-          devShells."${system}".default = import ./shell.nix { inherit pkgs; };
-        }
-      ) systems;
-    in
-      # Reduce the list of packages of packages into a single attribute set
-      recursiveMergeAttrs(systemPackages);
+        devShells.default = pkgs.callPackage ./shell.nix { inherit pkgs srcpkgs; };
+    });
 }

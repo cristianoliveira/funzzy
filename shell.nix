@@ -1,27 +1,33 @@
-{ pkgs ? import <nixpkgs> {} }:
-  pkgs.mkShell {
-    packages = with pkgs; [
-        rustc
-        cargo
-        rustfmt
-        libiconv
+{ 
+  pkgs ? import <nixpkgs> {},
+  srcpkgs ? import ./packages.nix {}
+}:
+pkgs.mkShell {
+  packages = with pkgs; [
+    ## funzzy local
+    srcpkgs.local
 
-        gnused # for macos
+    rustc
+    cargo
+    rustfmt
+    libiconv
 
-        yq-go # jq for yaml
+    gnused # for macos
 
-        # For development install latest version of funzzy
-        # copkgs.funzzyNightly
+    yq-go # jq for yaml
 
-        # if system contains "darwin" then darwin.apple_sdk.frameworks.CoreServices else null
-        # Fix error: `ld: framework not found CoreServices`
-        (if system == "x86_64-darwin" || 
-        system == "aarch64-darwin" 
-        then darwin.apple_sdk.frameworks.CoreServices
-        else null)
-    ];
+    # For development install latest version of funzzy
+    # copkgs.funzzyNightly
 
-    shellHook = ''
-      cargo update
-    '';
-  }
+    # if system contains "darwin" then darwin.apple_sdk.frameworks.CoreServices else null
+    # Fix error: `ld: framework not found CoreServices`
+    (if system == "x86_64-darwin" || 
+    system == "aarch64-darwin" 
+    then darwin.apple_sdk.frameworks.CoreServices
+    else null)
+  ];
+
+  shellHook = ''
+    cargo update
+  '';
+}
