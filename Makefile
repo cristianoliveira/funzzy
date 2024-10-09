@@ -51,7 +51,7 @@ nix-build-local: ## Build the nix derivation with the local toolchain
 
 .PHONY: nix-build
 nix-build: ## Build the nix derivation with the nightly toolchain
-	@nix build .#funzzy --verbose -L
+	@nix build .# --verbose -L
 
 .PHONY: nix-bump
 nix-bump:

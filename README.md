@@ -108,6 +108,11 @@ nix profile install 'github:cristianoliveira/funzzy'
 nix profile install 'github:cristianoliveira/nixpkgs#funzzy'
 ```
 
+Install nightly version:
+```bash
+nix profile install 'github:cristianoliveira/funzzy#nightly'
+```
+
 or, if you use `shell.nix`:
   
   ```nix
