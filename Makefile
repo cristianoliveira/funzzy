@@ -55,6 +55,10 @@ nix-build-all: nix-build nix-build-nightly ## Build the nix derivation with the 
 nix-build-local: ## Build the nix derivation with the local toolchain
 	@nix build .#local --verbose -L
 
+.PHONY: nix-build-nightly
+nix-build-nightly: ## Build the nix derivation with the nightly toolchain
+	@nix build .# --verbose -L
+
 .PHONY: nix-build
 nix-build: ## Build the nix derivation with the nightly toolchain
 	@nix build .# --verbose -L
