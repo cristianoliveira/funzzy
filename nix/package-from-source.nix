@@ -32,17 +32,7 @@ rustPlatform.buildRustPackage {
 # Creating here the temporary directory in order it to be created with
 # the right permissions
   checkPhase = ''
-    mkdir -p /tmp/fzz
-
-    ls -la /tmp/fzz
-
-    touch /tmp/fzz/accepts_full_or_relativepaths.txt
-    touch /tmp/fzz/accepts_full_or_relativepaths2.txt
-    touch /tmp/fzz/accepts_full_or_relativepaths3.txt
-
-    RUST_BACKTRACE=1 cargo test -- --nocapture
-
-    rm -rf /tmp/fzz
+    RUST_BACKTRACE=1 make integration
   '';
 
   # Common commands here
