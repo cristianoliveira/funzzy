@@ -2,6 +2,7 @@
 // #![plugin(clippy)]
 pub mod cli;
 pub mod cmd;
+pub mod errors;
 pub mod rules;
 pub mod stdout;
 pub mod watcher;

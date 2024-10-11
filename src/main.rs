@@ -6,6 +6,7 @@ extern crate serde_derive;
 
 mod cli;
 mod cmd;
+mod errors;
 mod rules;
 mod stdout;
 mod watcher;
@@ -231,7 +232,7 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
 fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
-        stdout::error(err.as_str());
+        error("The command was not able to execute.", err.to_string());
     }
 }
 

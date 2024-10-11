@@ -1,4 +1,5 @@
 use crate::cli::Command;
+use crate::errors::FzzError;
 
 use std::fs::File;
 use std::io::Write;
@@ -33,20 +34,29 @@ impl InitCommand {
 }
 
 impl Command for InitCommand {
-    fn execute(&self) -> Result<(), String> {
-        let res = match File::create(&self.file_name) {
+    fn execute(&self) -> Result<(), FzzError> {
+        if let Ok(_) = File::open(&self.file_name) {
+            return Err(FzzError::IoConfigError(
+                "Configuration file already exists (.watch.yaml)".to_string(),
+                None,
+            ));
+        }
+
+        match File::create(&self.file_name) {
             Ok(mut yaml) => {
                 if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
-                    return Err(err.to_string());
+                    return Err(FzzError::IoConfigError(
+                        "Failed to write into file".to_string(),
+                        Some(err),
+                    ));
                 }
 
                 Ok(())
             }
-            Err(err) => Err(format!("File wasn't created. Cause: {}", err)),
-        };
-
-        res?;
-
-        Ok(())
+            Err(err) => Err(FzzError::IoConfigError(
+                "File wasn't created".to_string(),
+                Some(err),
+            )),
+        }
     }
 }

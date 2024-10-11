@@ -20,7 +20,10 @@ yaml-rust = "0.4.5"
 glob="0.2.11"
 notify-debouncer-mini = "0.3.0"
 nix = "0.26.2"
-#clippy = "*"
+
+[dev-dependencies]
+assert_cmd = "2.0.14"
+predicates = "3.1.0"
 
 [[bin]]
 name = "funzzy"

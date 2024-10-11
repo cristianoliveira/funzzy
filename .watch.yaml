@@ -37,7 +37,9 @@
    cat .github/workflows/on-push.yml \
     | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
     | xargs -I {} bash -c {}
-  change: "src/**"
+  change: 
+    - "src/**"
+    - "tests/**/*.rs"
   run_on_init: true
 
   # Moved integration to earlier because it is faster than @nixbuild
