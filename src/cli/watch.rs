@@ -1,5 +1,6 @@
 use crate::cli::Command;
 use crate::cmd;
+use crate::errors::FzzError;
 use crate::rules;
 use crate::stdout;
 use crate::watcher;
@@ -31,7 +32,7 @@ impl WatchCommand {
 }
 
 impl Command for WatchCommand {
-    fn execute(&self) -> Result<(), String> {
+    fn execute(&self) -> Result<(), FzzError> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
         let current_dir = std::env::current_dir().unwrap();
@@ -71,7 +72,7 @@ impl Command for WatchCommand {
 
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
 
-        watcher::events(
+        match watcher::events(
             list_of_watched_paths,
             |file_changed| {
                 let time_execution_started = std::time::Instant::now();
@@ -117,6 +118,9 @@ impl Command for WatchCommand {
                 }
             },
             self.verbose,
-        )
+        ) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(FzzError::GenericError(err)),
+        }
     }
 }

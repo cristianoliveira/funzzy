@@ -1,6 +1,7 @@
 extern crate notify;
 
 use crate::cli::Command;
+use crate::errors::FzzError;
 use crate::stdout;
 use crate::watcher;
 use crate::watches::Watches;
@@ -32,7 +33,7 @@ impl WatchNonBlockCommand {
 
 impl Command for WatchNonBlockCommand {
     #![allow(unused_assignments)]
-    fn execute(&self) -> Result<(), String> {
+    fn execute(&self) -> Result<(), FzzError> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
         let worker = workers::Worker::new(self.verbose, self.fail_fast, |event| {
@@ -55,7 +56,7 @@ impl Command for WatchNonBlockCommand {
         }
 
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
-        watcher::events(
+        match watcher::events(
             list_of_watched_paths,
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
@@ -79,6 +80,9 @@ impl Command for WatchNonBlockCommand {
                 }
             },
             self.verbose,
-        )
+        ) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(FzzError::GenericError(err)),
+        }
     }
 }
