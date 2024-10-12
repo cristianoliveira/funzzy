@@ -174,6 +174,25 @@ where
 }
 
 #[allow(dead_code)]
+pub fn nonparallel<F>(handler: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+{
+    // NOTE: OK, this is a bit hacky, but it's a simple way to avoid running
+    // the tests from tests/*.rs in parallel.
+    //
+    // I'm aware of `cargo test -- --test-threads=1` option, but I want to run
+    // all tests with `cargo test` in parallel and limit the parallelism only
+    // for tests that write to the file system, like the integration tests.
+    let mut is_running = IS_RUNNING_MULTITHREAD.lock().expect("failed to lock mutex");
+    defer!({
+        *is_running = 0;
+    });
+
+    handler()
+}
+
+#[allow(dead_code)]
 pub fn clean_output(output_file: &str) -> String {
     output_file
         .lines()

@@ -46,7 +46,7 @@ impl Command for InitCommand {
             Ok(mut yaml) => {
                 if let Err(err) = yaml.write_all(DEFAULT_CONTENT.as_ref()) {
                     return Err(FzzError::IoConfigError(
-                        "Failed to write into file".to_string(),
+                        "Failed to write into configuration file".to_string(),
                         Some(err),
                     ));
                 }
@@ -54,7 +54,7 @@ impl Command for InitCommand {
                 Ok(())
             }
             Err(err) => Err(FzzError::IoConfigError(
-                "File wasn't created".to_string(),
+                "Failed to create the configuration file".to_string(),
                 Some(err),
             )),
         }
