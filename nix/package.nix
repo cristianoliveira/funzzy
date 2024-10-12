@@ -2,16 +2,16 @@
 
 rustPlatform.buildRustPackage rec {
   pname = "funzzy";
-  version = "1.4.0";
+  version = "1.4.1";
 
   src = fetchFromGitHub {
     owner = "cristianoliveira";
     repo = "funzzy";
     rev = "v${version}";
-    hash = "sha256-7rCqz7os9N7R7s3+hAqAafJFa/rLsKdddx4crp93Hzo=";
+    hash = "sha256-R1NJM/jZxeFIXfzbmQISw8VhR0KtZGTntqiLpA9Pup8=";
   };
 
-  cargoHash = "sha256-o/Mr3AEYBDzRz4hWjR/Dy9X4PiQ7kc1YaexYnr2AuW4=";
+  cargoHash = "sha256-SigVnhrd52eS1oC6jpovCCpItRQbr8lw4WaSPsuB4Ks=";
 
   # When installing from source only run unit tests
   checkPhase = ''
