@@ -11,12 +11,17 @@ impl fmt::Display for FzzError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FzzError::IoConfigError(msg, Some(err)) => {
-                write!(f, "{} \nReason: {}", msg, err)
+                if err.kind() == std::io::ErrorKind::PermissionDenied {
+                    let hints = "Check if you have permission to write in the current folder";
+                    write!(f, "{}\nReason: {}\nHint: {}", msg, err, hints)
+                } else {
+                    write!(f, "{}\nReason: {}", msg, err)
+                }
             }
             FzzError::IoConfigError(msg, _) => {
-                write!(f, "Reason: {}", msg)
+                write!(f, "{}", msg)
             }
-            FzzError::GenericError(e) => write!(f, "Error: {}", e),
+            FzzError::GenericError(e) => write!(f, "Reason: {}", e),
         }
     }
 }

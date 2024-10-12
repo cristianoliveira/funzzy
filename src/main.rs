@@ -232,7 +232,7 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
 fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
-        error("The command was not able to execute.", err.to_string());
+        error("Command failed to execute", err.to_string());
     }
 }
 
@@ -299,8 +299,7 @@ fn show(text: &str) -> ! {
 }
 
 fn error(text: &str, err: String) -> ! {
-    println!("Execution failed");
-    println!("  {}", text);
-    println!("  {}", err);
+    println!("Error: {}", text);
+    println!("{}", err);
     std::process::exit(1);
 }
