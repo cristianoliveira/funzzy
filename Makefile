@@ -22,6 +22,12 @@ integration: integration-clean
 ci-integration: integration-clean
 	@cargo test --features test-integration
 
+.PHONY: ci-run-on-push
+ci-run-on-push: ## Run checks from .github/workflows/on-push.yml
+	@cat .github/workflows/on-push.yml \
+		| yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
+		| xargs -I {} bash -c {}
+
 .PHONY: lint
 lint:
 	@cargo fmt -- --check
@@ -63,13 +69,16 @@ nix-build-nightly: ## Build the nix derivation with the nightly toolchain
 nix-build: ## Build the nix derivation with the nightly toolchain
 	@nix build .# --verbose -L
 
-.PHONY: nix-bump
-nix-bump:
-	@sed -i 's/sha256-.*=//g' nix/package.nix
-	@sed -i 's/sha256-.*=//g' nix/package-from-source.nix
+.PHONY: nix-bump-default
+nix-bump-default: ##  Bump the version in nix default package and generate a new revision
+	@echo "Bumping the version in nix default"
+	scripts/bump-nix-default
 
-.PHONY: ci-run-on-push
-ci-run-on-push: ## Run checks from .github/workflows/on-push.yml
-	@cat .github/workflows/on-push.yml \
-		| yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
-		| xargs -I {} bash -c {}
+.PHONY: nix-bump-nightly
+nix-bump-nightly: ##  Bump the version in nix nightly package and generate a new revision
+	@echo "Bumping the version in nix packages"
+	scripts/bump-nix-nightly
+
+.PHONY: nix-bump-all
+nix-bump-all: nix-bump-default nix-bump-nightly ## Bump all nix revisions
+	@echo "Bumping all nix packages"

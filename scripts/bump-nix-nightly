@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+VERSION="master"
+NIX_FILE="nix/package-nightly.nix"
+
+echo "Bumping version to $VERSION"
+# replace  version = "local-2024-09-16"; within "$NIX_FILE"
+sed -i "s/version = \".*\";/version = \"$VERSION\";/" "$NIX_FILE"
+sed -i 's/sha256-.*=//g' "$NIX_FILE"
+## nix build and pipe the error to a build.log file
+rm -f build.log
+
+nix build .#nightly 2> build.log
+
+SHA256=$(grep "got:" build.log | grep -o "sha256-.*=" | cut -d'-' -f2)
+
+echo "git hash SHA256: $SHA256"
+sed -i "s# hash = \".*\";# hash = \"sha256-$SHA256\";#" "$NIX_FILE"
+nix build .#nightly 2> build.log
+
+SHA256=$(grep "got:" build.log | grep -o "sha256-.*=" | cut -d'-' -f2)
+echo "cargo hash SHA256: $SHA256"
+sed -i "s#cargoHash = \".*\";#cargoHash = \"sha256-$SHA256\";#" "$NIX_FILE"
+
+echo "Building nix derivation"
+nix build .#nightly
+
+rm -f build.log

@@ -6,4 +6,33 @@ echo "Checking nix builds"
 make ci-run-on-push
 make ci-integration
 
+## If Cargo.lock has changed, generate nix releases
+if git diff --exit-code Cargo.lock; then
+  echo "Cargo.lock has not changed"
+else
+  echo "Cargo.lock has changed"
+  make nix-bump-local
+  make nix-bump-nightly
+
+  echo "Please commit the changes"
+  exit 1
+fi
+
+## If tag differ from Cargo.toml, generate nix releases
+VERSION="$(git describe --tags --abbrev=0)"
+VERSION="${VERSION//v/}"
+CARGO_VERSION=$(grep -oP 'version = "\K[^"]+' Cargo.toml)
+echo "Cargo.toml version: $CARGO_VERSION"
+echo "Git tag version: $VERSION"
+
+if [ "$CARGO_VERSION" == "$VERSION" ]; then
+  echo "Cargo.toml version is the same as git tag"
+else
+  echo "Cargo.toml version is different from git tag"
+  make nix-bump-default
+
+  echo "Please commit the changes"
+  exit 1
+fi
+
 echo "All good"
