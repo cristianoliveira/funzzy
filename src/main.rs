@@ -15,6 +15,7 @@ mod workers;
 mod yaml;
 
 use cli::*;
+use errors::FzzError;
 use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
@@ -85,7 +86,6 @@ fn main() {
         .unwrap_or_else(|e| e.exit());
 
     match args {
-        // Metainfo
         Args { flag_v: true, .. } => show(get_version().as_str()),
         Args { flag_h: true, .. } => show(USAGE),
 
@@ -112,7 +112,7 @@ fn main() {
 
                     execute_watch_command(Watches::new(watch_rules), args);
                 }
-                Err(err) => error("Failed to read stdin", err),
+                Err(err) => error("Failed to read stdin", err.to_string()),
             };
         }
 
@@ -236,7 +236,7 @@ fn execute<T: Command>(command: T) {
     }
 }
 
-fn from_stdin() -> Result<String, String> {
+fn from_stdin() -> errors::Result<String> {
     let stdin = io::stdin();
 
     // Spawn a thread and if there is no input in 5 seconds kills the process
@@ -247,15 +247,14 @@ fn from_stdin() -> Result<String, String> {
 
         let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
-            stdout::warn(
-                &vec![
-                    "Timed out waiting for input.".to_string(),
-                    "Did you forget to pipe an output of a command?".to_string(),
-                    "Try: find . | fzz 'echo \"changed: {{filepath}}\"'".to_string(),
+            error(
+                "Timed out waiting for input.",
+                vec![
+                    "Hint: Did you forget to pipe an output of a command?".to_string(),
+                    "Try `find . | fzz 'echo \"changed: {{filepath}}\"'`".to_string(),
                 ]
                 .join("\n"),
             );
-            std::process::exit(0);
         }
     });
 
@@ -265,7 +264,7 @@ fn from_stdin() -> Result<String, String> {
             let mut has_input_mutex = match has_input.lock() {
                 Ok(mutex) => mutex,
                 Err(err) => {
-                    return Err(format!("Could not lock stdin mutex {}", err));
+                    return Err(FzzError::IoStdinError(err.to_string(), None));
                 }
             };
 
@@ -273,15 +272,19 @@ fn from_stdin() -> Result<String, String> {
             if bytes > 0 {
                 Ok(buffer)
             } else {
-                Err(vec![
+                Err(FzzError::IoStdinError(
                     "Timed out waiting for input.".to_string(),
-                    "Did you forget to pipe an output of a command?".to_string(),
-                    "Try: find . | fzz 'echo \"changed: {{filepath}}\"'".to_string(),
-                ]
-                .join("\n"))
+                    Some(
+                        vec![
+                            "Did you forget to pipe an output of a command?".to_string(),
+                            "Try `find . | fzz 'echo \"changed: {{filepath}}\"'`".to_string(),
+                        ]
+                        .join(" "),
+                    ),
+                ))
             }
         }
-        Err(err) => Err(format!("Error while reading stdin {}", err)),
+        Err(err) => Err(FzzError::IoStdinError(err.to_string(), None)),
     }
 }
 

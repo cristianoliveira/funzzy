@@ -13,8 +13,9 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
             cmd.arg("init").assert().success();
         }
         defer!({
-            // remove .watch.yaml
-            std::fs::remove_file(".watch.yaml").expect("failed to remove file");
+            if std::path::Path::new("delete.txt").exists() {
+                std::fs::remove_file(".watch.yaml").expect("failed to remove file");
+            }
         });
 
         let mut cmd = Command::cargo_bin(BINARY_NAME)?;
