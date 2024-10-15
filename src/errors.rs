@@ -1,9 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
+pub type Hint = Option<String>;
+pub type Result<T> = std::result::Result<T, FzzError>;
+
 #[derive(Debug)]
 pub enum FzzError {
     IoConfigError(String, Option<std::io::Error>),
+    IoStdinError(String, Hint),
     GenericError(String),
 }
 
@@ -20,6 +24,13 @@ impl fmt::Display for FzzError {
             }
             FzzError::IoConfigError(msg, _) => {
                 write!(f, "{}", msg)
+            }
+            FzzError::IoStdinError(err, hints) => {
+                if let Some(hints) = hints {
+                    write!(f, "Reason: {}\nHint: {}", err, hints)
+                } else {
+                    write!(f, "Reason: {}", err)
+                }
             }
             FzzError::GenericError(e) => write!(f, "Reason: {}", e),
         }
