@@ -18,6 +18,11 @@ prebuild: ## Build the project in non-release mode
 integration: integration-clean
 	@cargo test --features test-integration
 
+.PHONY: ci-enable-hook
+ci-enable-hook: ## Enable the pre-push hook
+	@ln -fs "${PWD}/scripts/git-hooks-checks" "${PWD}/.git/hooks/pre-push"
+	@chmod +x "${PWD}/.git/hooks/pre-push"
+
 .PHONY: ci-integration
 ci-integration: integration-clean
 	@cargo test --features test-integration
