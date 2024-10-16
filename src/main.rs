@@ -135,7 +135,7 @@ fn main() {
             } else {
                 match rules::from_file(&args.flag_config) {
                     Ok(rules) => rules,
-                    Err(err) => error("Failed to read config file", err),
+                    Err(err) => error("Failed to read config file", err.to_string()),
                 }
             };
 
