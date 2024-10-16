@@ -2,6 +2,7 @@ extern crate glob;
 extern crate yaml_rust;
 
 use crate::cli;
+use crate::errors;
 use crate::yaml;
 
 use self::glob::Pattern;
@@ -230,46 +231,62 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
         .collect()
 }
 
-pub fn from_yaml(file_content: &str) -> Result<Vec<Rules>, String> {
+pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
             let lines: Vec<&str> = file_content.lines().collect();
             let marker = err.marker();
 
+            let line_before = if marker.line() > 1 {
+                lines[marker.line() - 2]
+            } else {
+                ""
+            };
             let error_line = if marker.line() > lines.len() {
                 lines[lines.len() - 1]
             } else {
                 lines[marker.line() - 1]
             };
+            let line_after = if marker.line() < lines.len() {
+                lines[marker.line()]
+            } else {
+                ""
+            };
 
-            return Err(vec![
-                format!("Failed to load configuration reason: {}", err),
-                "".to_owned(),
-                format!("Error line:\n  {}", error_line.trim()),
-                "".to_owned(),
-                "Debugging:".to_owned(),
-                "  - Is the type correct?".to_owned(),
-                "  - Is there any missing closing quotes, brackets or braces?".to_owned(),
-            ]
-            .join("\n"));
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Failed to load configuration at line:\n| {}\n|>{}\n| {}",
+                    line_before,
+                    error_line,
+                    line_after
+                ),
+                Some(err),
+                Some(
+                    "Check for wrong types, any missing quotes for glob pattern or incorrect identation".to_owned(),
+                ),
+            ));
         }
     };
 
     if items.len() == 0 {
-        return Err(vec![
-            "The config file is invalid!",
-            "",
-            "Debugging:",
-            "  - Did you forget to run 'fzz init'?",
-            "  - Did you forget to add a rule?",
-        ]
-        .join("\n"));
+        return Err(errors::FzzError::InvalidConfigError(
+            "Configuration file is invalid! There are no rules to watch".to_owned(),
+            None,
+            Some("Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch".to_owned()),
+        ));
     }
 
-    match items[0] {
+    match &items[0] {
         Yaml::Array(ref items) => Ok(items.iter().map(Rules::from).collect()),
-        _ => Err("Config file is invalid. At least one rule must be declared.".to_owned()),
+        other => Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Configuration file is invalid. Expected an Array/List of rules got:\n|> {}...",
+                format!("{:?}", other).chars().take(50).collect::<String>()
+            ),
+            None,
+            Some("Make sure to declare the rules as a list without any root property".to_owned()),
+        )),
     }
 }
 
@@ -339,25 +356,24 @@ pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, Stri
     )])
 }
 
-pub fn from_file(filename: &str) -> Result<Vec<Rules>, String> {
+pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
     match File::open(filename) {
         Ok(mut file) => {
             let mut content = String::new();
 
             if let Err(err) = file.read_to_string(&mut content) {
-                return Err(format!(
-                    "Invalid config file format '{}'. Details: {}",
-                    filename, err
+                return Err(errors::FzzError::IoConfigError(
+                    format!("Failed to read configuration file '{}'", filename),
+                    Some(err),
                 ));
             }
 
             return from_yaml(&content);
         }
 
-        Err(err) => Err(format!(
-            "File {} cannot be opened. Cause: {}",
-            cli::watch::DEFAULT_FILENAME,
-            err
+        Err(err) => Err(errors::FzzError::IoConfigError(
+            format!("Failed to open configuration file '{}'", filename),
+            Some(err),
         )),
     }
 }
@@ -721,16 +737,14 @@ mod tests {
         let result = from_yaml(file_content);
         assert!(result.is_err());
         assert_eq!(
-            result.err().unwrap(),
+            result.err().unwrap().to_string(),
             vec![
-                "Failed to load configuration reason: while scanning an anchor or alias, did not find expected alphabetic or numeric character at line 8 column 19",
-                "",
-                "Error line:",
-                "  change: **/*",
-                "",
-                "Debugging:",
-                "  - Is the type correct?",
-                "  - Is there any missing closing quotes, brackets or braces?",
+                "Failed to load configuration at line:",
+                "|           run: 'cargo tests'",
+                "|>          change: **/*",
+                "|         ",
+                "Reason: while scanning an anchor or alias, did not find expected alphabetic or numeric character at line 8 column 19",
+                "Hint: Check for wrong types, any missing quotes for glob pattern or incorrect identation",
             ]
             .join("\n")
         );
@@ -741,13 +755,27 @@ mod tests {
         let result = from_yaml(empty_file);
         assert!(result.is_err());
         assert_eq!(
-            result.err().unwrap(),
+            result.err().unwrap().to_string(),
             vec![
-                "The config file is invalid!",
-                "",
-                "Debugging:",
-                "  - Did you forget to run 'fzz init'?",
-                "  - Did you forget to add a rule?",
+                "Configuration file is invalid! There are no rules to watch",
+                "Hint: Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch"
+            ]
+            .join("\n")
+        );
+
+        let empty_file = "
+        on:
+        - name: foo
+        ";
+
+        let result = from_yaml(empty_file);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            vec![
+                "Configuration file is invalid. Expected an Array/List of rules got:",
+                "|> Hash({String(\"on\"): Array([Hash({String(\"name\"): S...",
+                "Hint: Make sure to declare the rules as a list without any root property",
             ]
             .join("\n")
         );
