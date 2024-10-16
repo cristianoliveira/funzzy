@@ -37,7 +37,7 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
     setup::nonparallel(|| {
         std::env::set_current_dir("examples/workdir/init").expect("failed to change dir");
         //delete files in the folder
-        std::fs::remove_file(".watch.yaml").expect("failed to remove .watch.yaml file");
+        std::fs::remove_file(".watch.yaml").unwrap_or_default();
 
         let folder = std::fs::metadata(".").expect("failed to get metadata");
         let mut readonly = folder.permissions();
