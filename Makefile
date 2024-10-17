@@ -84,6 +84,11 @@ nix-bump-nightly: ##  Bump the version in nix nightly package and generate a new
 	@echo "Bumping the version in nix packages"
 	scripts/bump-nix-nightly
 
+.PHONY: nix-bump-local
+nix-bump-local: ##  Bump the version in nix local package and generate a new revision
+	@echo "Bumping the version in nix packages"
+	scripts/bump-nix-local
+
 .PHONY: nix-bump-all
 nix-bump-all: nix-bump-default nix-bump-nightly ## Bump all nix revisions
 	@echo "Bumping all nix packages"
