@@ -119,18 +119,7 @@ fn main() {
         _ => {
             let rules = if args.flag_config.is_empty() {
                 rules::from_default_file_config().unwrap_or_else(|err| {
-                    stdout::error(
-                        &vec![
-                            "Missing config file",
-                            "Expected file .watch.yaml or .watch.yml to be present",
-                            "in the current directory",
-                            "Debugging:",
-                            " - Did you forget to run 'fzz init'?",
-                        ]
-                        .join("\n"),
-                    );
-
-                    error("Failed to read default config file", err);
+                    error("Failed to read default config file", err.to_string());
                 })
             } else {
                 match rules::from_file(&args.flag_config) {

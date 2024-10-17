@@ -363,7 +363,7 @@ pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
 
             if let Err(err) = file.read_to_string(&mut content) {
                 return Err(errors::FzzError::IoConfigError(
-                    format!("Failed to read configuration file '{}'", filename),
+                    format!("Couldn't read configuration file: '{}'", filename),
                     Some(err),
                 ));
             }
@@ -372,19 +372,19 @@ pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
         }
 
         Err(err) => Err(errors::FzzError::IoConfigError(
-            format!("Failed to open configuration file '{}'", filename),
+            format!("Couldn't open configuration file: '{}'", filename),
             Some(err),
         )),
     }
 }
 
-pub fn from_default_file_config() -> Result<Vec<Rules>, String> {
+pub fn from_default_file_config() -> errors::Result<Vec<Rules>> {
     let default_filename = cli::watch::DEFAULT_FILENAME;
     match from_file(default_filename) {
         Ok(rules) => Ok(rules),
         Err(err) => match from_file(&default_filename.replace(".yaml", ".yml")) {
             Ok(rules) => Ok(rules),
-            Err(_) => Err(format!("Failed to read default config file {}", err)),
+            Err(_) => Err(err),
         },
     }
 }
