@@ -1,0 +1,4 @@
+on:
+  - name: foobar
+    run: echo hello
+    change: hello/*
