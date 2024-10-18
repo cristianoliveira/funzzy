@@ -1,0 +1,10 @@
+- name: correct with run_on_init
+  run: echo hello
+  run_on_init: true
+
+- name: correct with change
+  run: echo hello
+  change: **/hello/*
+
+- foo: bla # "name" is required
+  run: bar

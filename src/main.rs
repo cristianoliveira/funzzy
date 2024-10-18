@@ -56,6 +56,11 @@ Options:
   -h --help               Show this message.
   -v --version            Show version.
   -V                      Use verbose output.
+
+Environment configs:
+
+FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
+FUNZZY_BAIL: Boolean        Same as `--fail-fast`
 ";
 
 #[allow(non_snake_case)]
@@ -209,8 +214,9 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     });
 
     let verbose = args.flag_V;
-    let fail_fast = args.flag_fail_fast;
-    if args.flag_non_block {
+    let fail_fast = args.flag_fail_fast || std::env::var("FUNZZY_BAIL").is_ok();
+    let fail_fast_env = args.flag_non_block || std::env::var("FUNZZY_NON_BLOCK").is_ok();
+    if fail_fast_env {
         execute(WatchNonBlockCommand::new(watches, verbose, fail_fast))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast))
