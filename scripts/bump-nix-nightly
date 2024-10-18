@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-VERSION="master"
+VERSION="$(git rev-parse --short HEAD)"
+
 NIX_FILE="nix/package-nightly.nix"
 
 echo "Bumping version to $VERSION"
