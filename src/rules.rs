@@ -43,17 +43,6 @@ impl Rules {
         }
     }
 
-    pub fn from(yaml: &Yaml) -> Self {
-        Rules {
-            name: yaml::extract_strings(&yaml["name"])[0].clone(),
-            commands: yaml::extract_strings(&yaml["run"]),
-            watch_patterns: yaml::extract_strings(&yaml["change"]),
-            ignore_patterns: yaml::extract_strings(&yaml["ignore"]),
-            run_on_init: yaml::extract_bool(&yaml["run_on_init"]),
-            yaml: Some(yaml.clone()),
-        }
-    }
-
     pub fn watch(&self, path: &str) -> bool {
         self.watch_relative_paths()
             .iter()
@@ -102,41 +91,7 @@ impl Rules {
             return "".to_owned();
         }
 
-        let yaml = self.yaml.clone().expect("Failed to get yaml as instance");
-
-        let ignore_as_yaml_list = match yaml["ignore"].clone() {
-            Yaml::Array(_) => format!(
-                "  ignore: {}",
-                yaml::extract_strings(&yaml["ignore"]).join("\n")
-            ),
-            _ => "".to_owned(),
-        };
-
-        let run_on_init = match yaml["run_on_init"].clone() {
-            Yaml::Boolean(_) => format!(
-                "  run_on_init: {}",
-                yaml::extract_bool(&yaml["run_on_init"])
-            ),
-            _ => "".to_owned(),
-        };
-
-        vec![
-            format!(
-                "- name: {}",
-                yaml::extract_strings(&yaml["name"]).join("\n")
-            ),
-            format!("  run: {}", yaml::extract_strings(&yaml["run"]).join("\n")),
-            format!(
-                "  change: {}",
-                yaml::extract_strings(&yaml["change"]).join("\n")
-            ),
-            ignore_as_yaml_list,
-            run_on_init,
-        ]
-        .into_iter()
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<String>>()
-        .join("\n")
+        yaml::yaml_to_string(self.yaml.as_ref().unwrap(), 0)
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -196,6 +151,23 @@ impl Rules {
 
         Ok(())
     }
+}
+
+pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
+    let name = yaml::extract_string(yaml, "name")?;
+    let commands = yaml::extract_list(yaml, "run")?;
+    let watch_patterns = yaml::extract_list(yaml, "change").unwrap_or_default();
+    let ignore_patterns = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+    let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+
+    Ok(Rules {
+        name,
+        commands,
+        watch_patterns,
+        ignore_patterns,
+        run_on_init,
+        yaml: Some(yaml.clone()),
+    })
 }
 
 pub fn commands(rules: Vec<Rules>) -> Vec<String> {
@@ -278,11 +250,21 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
     }
 
     match &items[0] {
-        Yaml::Array(ref items) => Ok(items.iter().map(Rules::from).collect()),
+        Yaml::Array(ref items) => {
+            let mut rules = vec![];
+            for item in items {
+                match rule_from(item) {
+                    Ok(rule) => rules.push(rule),
+                    Err(err) => return Err(err),
+                }
+            }
+            Ok(rules)
+        },
         other => Err(errors::FzzError::InvalidConfigError(
             format!(
-                "Configuration file is invalid. Expected an Array/List of rules got:\n|> {}...",
-                format!("{:?}", other).chars().take(50).collect::<String>()
+                "Configuration file is invalid. Expected an Array/List of rules got: {}\n```yaml\n{}\n```",
+                yaml::get_type(other),
+                yaml::yaml_to_string(other, 0),
             ),
             None,
             Some("Make sure to declare the rules as a list without any root property".to_owned()),
@@ -440,8 +422,8 @@ mod tests {
     use self::yaml_rust::YamlLoader;
     use super::from_string;
     use super::from_yaml;
-    use super::Rules;
     use super::{commands, template};
+    use super::{rule_from, Rules};
     use std::env::current_dir;
 
     #[test]
@@ -460,8 +442,8 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
-        let rule2 = Rules::from(&content[0][1]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule2 = rule_from(&content[0][1]).expect("Failed to parse rule");
 
         assert_eq!(true, rule.watch("tests/foo.rs"));
 
@@ -486,7 +468,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert_eq!(false, rule.watch("tests/foo.rs"));
     }
@@ -501,7 +483,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert!(rule.run_on_init());
     }
@@ -516,7 +498,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -530,7 +512,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -545,7 +527,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert_eq!(true, rule.ignore("tests/foo.rs"));
     }
@@ -560,7 +542,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
 
         assert_eq!(false, rule.ignore("tests/foo.rs"));
     }
@@ -591,7 +573,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = Rules::from(&content[0][0]);
+        let rule = rule_from(&content[0][0]).unwrap();
 
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
@@ -711,10 +693,10 @@ mod tests {
         assert_eq!(
             rules[0].as_string(),
             vec![
-                "- name: my tests",
-                "  run: cargo tests {{filepath}}",
-                "  change: tests/**",
-                "  run_on_init: true",
+                "name: my tests",
+                "run: cargo tests {{filepath}}",
+                "change: tests/**",
+                "run_on_init: true",
             ]
             .join("\n"),
             "Failed to format rule as string {}",
@@ -765,7 +747,8 @@ mod tests {
 
         let empty_file = "
         on:
-        - name: foo
+            - name: foo
+              run: echo foo
         ";
 
         let result = from_yaml(empty_file);
@@ -773,12 +756,32 @@ mod tests {
         assert_eq!(
             result.err().unwrap().to_string(),
             vec![
-                "Configuration file is invalid. Expected an Array/List of rules got:",
-                "|> Hash({String(\"on\"): Array([Hash({String(\"name\"): S...",
+                "Configuration file is invalid. Expected an Array/List of rules got: Hash",
+                "```yaml",
+                "on:",
+                "  - name: foo",
+                "    run: echo foo",
+                "```",
                 "Hint: Make sure to declare the rules as a list without any root property",
             ]
             .join("\n")
         );
+    }
+
+    #[test]
+    fn it_validates_missing_properties() {
+        let rules_yaml = from_yaml(
+            "
+        - name: rules must have at least one command
+          change: 
+            - '**/*.go'
+
+        - name: missing trigger property
+          run: 'echo invalid'
+          ignore: '**/*.go'
+        ",
+        );
+        assert!(rules_yaml.is_err());
     }
 
     #[test]
@@ -806,10 +809,6 @@ mod tests {
             - '**/*.go'
           ignore: 
             - '**/**.*'
-
-        - name: rules must have at least one command
-          change: 
-            - '**/*.go'
 
         - name: missing trigger property
           run: 'echo invalid'
@@ -842,13 +841,6 @@ mod tests {
         );
 
         let fourth_rule = &rules[3];
-        assert!(fourth_rule.validate().is_err());
-        assert_eq!(
-            fourth_rule.validate().err().unwrap(),
-            "Rule 'rules must have at least one command' contains no command to run. Empty 'run' property."
-        );
-
-        let fourth_rule = &rules[4];
         assert!(fourth_rule.validate().is_err());
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
