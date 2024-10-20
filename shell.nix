@@ -5,7 +5,7 @@
 pkgs.mkShell {
   packages = with pkgs; [
     ## funzzy local
-    srcpkgs.local
+    # srcpkgs.local
 
     rustc
     cargo

@@ -21,7 +21,7 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
         let mut cmd = Command::cargo_bin(BINARY_NAME)?;
         cmd.arg("init").assert().failure().stdout(
             vec![
-                "Error: Command failed to execute",
+                "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
                 "Configuration file already exists (.watch.yaml)",
                 "",
             ]
@@ -53,10 +53,10 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
 
         cmd.arg("init").assert().failure().stdout(
             vec![
-                "Error: Command failed to execute",
+                "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
                 "Failed to create the configuration file",
                 "Reason: Permission denied (os error 13)",
-                "Hint: Check if you have permission to write in the current folder",
+                "\u{1b}[34mHint\u{1b}[0m: Check if you have permission to write in the current folder",
                 "",
             ]
             .join("\n"),

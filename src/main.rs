@@ -293,11 +293,11 @@ fn get_version() -> String {
 
 fn show(text: &str) -> ! {
     println!("{}", text);
-    std::process::exit(0);
+    std::process::exit(0)
 }
 
 fn error(text: &str, err: String) -> ! {
-    println!("Error: {}", text);
+    println!("{}Error{}: {}", stdout::RED, stdout::RESET, text);
     println!("{}", err);
-    std::process::exit(1);
+    std::process::exit(1)
 }

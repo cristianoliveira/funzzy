@@ -3,8 +3,14 @@ use std::fmt;
 
 use yaml_rust::ScanError;
 
+use crate::stdout;
+
 pub type Hint = Option<String>;
 pub type Result<T> = std::result::Result<T, FzzError>;
+
+fn hint_formatter(hint: &str) -> String {
+    format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint)
+}
 
 #[derive(Debug)]
 pub enum FzzError {
@@ -20,11 +26,11 @@ impl fmt::Display for FzzError {
             FzzError::IoConfigError(msg, Some(err)) => match err.kind() {
                 std::io::ErrorKind::NotFound => {
                     let hints = "Check if the file exists and if the path is correct";
-                    write!(f, "{}\nReason: {}\nHint: {}", msg, err, hints)
+                    write!(f, "{}\nReason: {}\n{}", msg, err, hint_formatter(hints))
                 }
                 std::io::ErrorKind::PermissionDenied => {
                     let hints = "Check if you have permission to write in the current folder";
-                    write!(f, "{}\nReason: {}\nHint: {}", msg, err, hints)
+                    write!(f, "{}\nReason: {}\n{}", msg, err, hint_formatter(hints))
                 }
                 _ => write!(f, "{}\nReason: {}", msg, err),
             },
@@ -33,7 +39,7 @@ impl fmt::Display for FzzError {
             }
             FzzError::IoStdinError(err, hints) => {
                 if let Some(hints) = hints {
-                    write!(f, "Reason: {}\nHint: {}", err, hints)
+                    write!(f, "Reason: {}\n{}", err, hint_formatter(hints))
                 } else {
                     write!(f, "Reason: {}", err)
                 }
@@ -45,7 +51,7 @@ impl fmt::Display for FzzError {
                 };
 
                 if let Some(hints) = hints {
-                    write!(f, "{}{}\nHint: {}", msg, err, hints)
+                    write!(f, "{}{}\n{}", msg, err, hint_formatter(hints))
                 } else {
                     write!(f, "{}{}", msg, err)
                 }
