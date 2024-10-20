@@ -15,8 +15,12 @@ prebuild: ## Build the project in non-release mode
 	@cargo build
 
 .PHONY: integration ## Exectute integration tests
-integration: integration-clean
+integration:
 	@cargo test --features test-integration
+
+.PHONY: integration-e2e ## Exectute integration tests
+integration-e2e: integration-clean
+	@cargo test --features test-integration-e2e
 
 .PHONY: ci-enable-hook
 ci-enable-hook: ## Enable the pre-push hook

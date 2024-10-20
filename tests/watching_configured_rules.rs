@@ -141,6 +141,7 @@ Funzzy: finished in 0.0s"
 }
 
 #[test]
+#[cfg(feature = "test-integration-file-system")]
 fn accepts_full_or_relativepaths() {
     setup::with_example(
         setup::Options {
