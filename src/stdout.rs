@@ -21,7 +21,7 @@ pub fn pinfo(msg: &str) {
 }
 
 pub fn error(msg: &str) {
-    println!("{}Funzzy error{}: {}",RED, RESET, msg);
+    println!("{}Funzzy error{}: {}", RED, RESET, msg);
 }
 
 pub fn warn(msg: &str) {
