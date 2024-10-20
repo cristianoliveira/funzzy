@@ -16,5 +16,5 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Run integration tests
-        run: make integration
+      - name: Run integration e2e tests
+        run: make integration-e2e

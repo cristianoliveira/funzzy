@@ -9,6 +9,8 @@ edition = "2021"
 default-run = "funzzy" # the binary to run when `cargo run` is called
 
 [features]
+test-integration-e2e = ["test-integration-file-system", "test-integration"]
+test-integration-file-system = []
 test-integration = []
 
 [dependencies]
