@@ -8,6 +8,9 @@ repository = "https://github.com/cristianoliveira/funzzy"
 edition = "2021"
 default-run = "funzzy" # the binary to run when `cargo run` is called
 
+[profile.release]
+lto = true # See https://doc.rust-lang.org/cargo/reference/profiles.html#lto
+
 [features]
 test-integration-e2e = ["test-integration-file-system", "test-integration"]
 test-integration-file-system = []
