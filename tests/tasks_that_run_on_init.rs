@@ -5,6 +5,10 @@ mod setup;
 
 #[test]
 fn test_it_executes_tasks_on_init_when_configured() {
+    std::env::set_var("FUNZZY_RESULT_COLORED", "1");
+    defer!({
+        std::env::remove_var("FUNZZY_RESULT_COLORED");
+    });
     setup::with_example(
         setup::Options {
             output_file: "test_it_executes_tasks_on_init_when_configured.log",
@@ -47,7 +51,7 @@ Funzzy: echo \"only run on init\"
 
 only run on init
 Funzzy results ----------------------------
-All tasks finished successfully.
+\u{1b}[32mAll tasks finished successfully.
 Funzzy: finished in 0.0s"
             );
 

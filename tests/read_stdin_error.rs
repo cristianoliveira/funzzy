@@ -15,9 +15,9 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
         .failure()
         .stdout(
             vec![
-                "Error: Failed to read stdin",
+                "\u{1b}[31mError\u{1b}[0m: Failed to read stdin",
                 "Reason: Timed out waiting for input.",
-                "Hint: Did you forget to pipe an output of a command? Try `find . | fzz 'echo \"changed: {{filepath}}\"'`",
+                "\u{1b}[34mHint\u{1b}[0m: Did you forget to pipe an output of a command? Try `find . | fzz 'echo \"changed: {{filepath}}\"'`",
                 "",
             ]
             .join("\n"),

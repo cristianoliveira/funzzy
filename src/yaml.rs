@@ -166,6 +166,7 @@ pub fn yaml_to_string(yaml: &Yaml, identation: u8) -> String {
 mod tests {
     use self::yaml_rust::YamlLoader;
     use super::*;
+    use crate::stdout;
 
     fn clean_yaml_str(yaml_str: &str) -> String {
         yaml_str
@@ -219,7 +220,8 @@ fooobar:
             Err(err) => {
                 assert_eq!(
                     format!("{}", err),
-                    "Invalid property 'fooobar' in rule below
+                    format!(
+                        "Invalid property 'fooobar' in rule below
 Expected a list (Array) but got: Hash
 ```yaml
 fooobar:
@@ -232,7 +234,10 @@ fooobar:
     - bar
     - baz
 ```
-Hint: Check if the property is defined, with the right type and identation"
+{}Hint{}: Check if the property is defined, with the right type and identation",
+                        stdout::BLUE,
+                        stdout::RESET
+                    ),
                 );
             }
         }

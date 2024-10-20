@@ -59,8 +59,9 @@ Options:
 
 Environment configs:
 
-FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
-FUNZZY_BAIL: Boolean        Same as `--fail-fast`
+FUNZZY_NON_BLOCK: Boolean        Same as `--non-block`
+FUNZZY_BAIL: Boolean             Same as `--fail-fast`
+FUNZZY_RESULT_COLORED: Boolean   Output results with colors.
 ";
 
 #[allow(non_snake_case)]
@@ -293,11 +294,11 @@ fn get_version() -> String {
 
 fn show(text: &str) -> ! {
     println!("{}", text);
-    std::process::exit(0);
+    std::process::exit(0)
 }
 
 fn error(text: &str, err: String) -> ! {
-    println!("Error: {}", text);
+    println!("{}Error{}: {}", stdout::RED, stdout::RESET, text);
     println!("{}", err);
-    std::process::exit(1);
+    std::process::exit(1)
 }
