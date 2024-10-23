@@ -2,6 +2,7 @@
 mod macros;
 
 use std::{
+    collections::HashMap,
     env,
     fs::File,
     process::{Command, Stdio},
@@ -208,4 +209,26 @@ pub fn clean_output(output_file: &str) -> String {
         .collect::<Vec<&str>>()
         .join("\n")
         .to_string()
+}
+
+#[allow(dead_code)]
+pub fn with_env<F>(
+    envvars: HashMap<String, String>,
+    handler: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<(), Box<dyn std::error::Error>>,
+{
+    for key in envvars.keys() {
+        let value = envvars.get(key).unwrap_or(&"".to_string()).clone();
+        env::set_var(format!("_TEST_{}", key), value);
+    }
+
+    defer!({
+        for key in envvars.keys() {
+            env::remove_var(format!("_TEST_{}", key));
+        }
+    });
+
+    handler()
 }

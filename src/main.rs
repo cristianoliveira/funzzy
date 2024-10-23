@@ -6,6 +6,7 @@ extern crate serde_derive;
 
 mod cli;
 mod cmd;
+mod environment;
 mod errors;
 mod rules;
 mod stdout;
@@ -215,8 +216,8 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     });
 
     let verbose = args.flag_V;
-    let fail_fast = args.flag_fail_fast || std::env::var("FUNZZY_BAIL").is_ok();
-    let fail_fast_env = args.flag_non_block || std::env::var("FUNZZY_NON_BLOCK").is_ok();
+    let fail_fast = args.flag_fail_fast || environment::is_enabled("FUNZZY_BAIL");
+    let fail_fast_env = args.flag_non_block || environment::is_enabled("FUNZZY_NON_BLOCK");
     if fail_fast_env {
         execute(WatchNonBlockCommand::new(watches, verbose, fail_fast))
     } else {
