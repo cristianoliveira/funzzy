@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use crate::environment;
+
 // ANSI color codes for terminal output
 pub const GREEN: &str = "\x1b[32m";
 pub const RED: &str = "\x1b[31m";
@@ -7,8 +9,7 @@ pub const BLUE: &str = "\x1b[34m";
 pub const RESET: &str = "\x1b[0m";
 
 fn is_color_enabled() -> bool {
-    // Colour output is not enabled by default
-    std::env::var("FUNZZY_RESULT_COLORED").is_ok()
+    environment::is_enabled("FUNZZY_RESULT_COLORED")
 }
 
 pub fn info(msg: &str) {
