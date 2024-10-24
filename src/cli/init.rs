@@ -10,9 +10,12 @@ pub const DEFAULT_CONTENT: &str = "## Funzzy events file
 # List here the tasks and the commands for this workflow
 # then run `fzz` to start to work.
 
-- name: run my test
-  run: 'ls -a'
+- name: hello world
+  run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
   run_on_init: true
+
+- name: list files
+  run: 'ls -a'
   change: '**/*.txt'
   ignore: '**/*.log'
 ";

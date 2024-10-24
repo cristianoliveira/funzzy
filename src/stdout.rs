@@ -43,12 +43,23 @@ pub fn verbose(msg: &str, verbose: bool) {
 }
 
 #[cfg(not(feature = "test-integration"))]
+/// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
     print!("Finished in {:.4}s", elapsed.as_secs_f32());
-    std::io::stdout().flush().expect("Failed to flush stdout");
+    let res = std::io::stdout().flush();
+
+    match res {
+        Ok(_) => (),
+        Err(e) => {
+            warn("Failed to flush stdout, but the program will continue.");
+            warn(&format!("Reason: {:?}", e));
+        }
+    };
 }
 
 #[cfg(feature = "test-integration")]
+// NOTE: This is for testing purposes only
+/// Print mocked time elapsed always as: "Finished in 0.0s"
 pub fn print_time_elapsed(_: std::time::Duration) -> () {
     print!("Finished in 0.0s");
     std::io::stdout().flush().expect("Failed to flush stdout");
