@@ -124,7 +124,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 
                     // Wait till the second time the workflow is executed
                     output
-                        .match_indices("All tasks finished successfully.")
+                        .match_indices("Success; Completed: 1; Failed: 0")
                         .count()
                         == 2
                         && output.contains(expected)

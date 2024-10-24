@@ -1,5 +1,7 @@
 use std::io::prelude::*;
 
+use pretty_assertions::assert_eq;
+
 #[path = "./common/lib.rs"]
 mod setup;
 
@@ -46,7 +48,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
 
                     output.contains("this file has changed")
                         && output.contains("foobar-watcher.txt")
-                        && output.contains("All tasks finished successfully")
+                        && output.contains("Success; Completed")
                 },
                 "was not possible to find filepath: {}",
                 output
@@ -67,7 +69,7 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 
 Funzzy results ----------------------------
-All tasks finished successfully. Finished in 0.0s
+Success; Completed: 3; Failed: 0; Durantion: 0.0000s
 [2J
 Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -81,7 +83,7 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
-All tasks finished successfully. Finished in 0.0s";
+Success; Completed: 3; Failed: 0; Durantion: 0.0000s";
 
             assert_eq!(
                 setup::clean_output(&output),
@@ -150,7 +152,7 @@ Funzzy: echo ''
 
 
 Funzzy results ----------------------------
-All tasks finished successfully. Finished in 0.0s
+Success; Completed: 2; Failed: 0; Durantion: 0.0000s
 [2J
 Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -160,7 +162,7 @@ Funzzy: echo 'examples/workdir/trigger-watcher.txt'
 
 examples/workdir/trigger-watcher.txt
 Funzzy results ----------------------------
-All tasks finished successfully. Finished in 0.0s";
+Success; Completed: 2; Failed: 0; Durantion: 0.0000s";
 
             assert_eq!(
                 setup::clean_output(&output),

@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::io::prelude::*;
 
@@ -26,7 +27,7 @@ fn test_when_using_fail_fast_exit_before() {
                     .read_to_string(&mut output)
                     .expect("failed to read test output file");
 
-                output.contains("Funzzy results") && output.contains("Failed tasks: 1")
+                output.contains("Funzzy results") && output.contains("Failed: 1;")
             });
 
             assert_eq!(
@@ -40,9 +41,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s"
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -66,9 +66,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -81,9 +80,8 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command exit 1 has failed with exit status: 1
-Finished in 0.0s",
+- Command exit 1 has failed with exit status: 1
+Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
                 "failed to match ouput: {}",
                 output
             );
@@ -113,7 +111,7 @@ fn test_when_using_fail_fast_exit_before_with_env() {
                             .read_to_string(&mut output)
                             .expect("failed to read test output file");
 
-                        output.contains("Funzzy results") && output.contains("Failed tasks: 1")
+                        output.contains("Funzzy results") && output.contains("Failed: 1;")
                     });
 
                     assert_eq!(
@@ -127,9 +125,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s"
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
                     );
 
                     write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -153,9 +150,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -168,9 +164,8 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command exit 1 has failed with exit status: 1
-Finished in 0.0s",
+- Command exit 1 has failed with exit status: 1
+Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
                         "failed to match ouput: {}",
                         output
                     );
@@ -205,7 +200,7 @@ fn test_fail_fast_with_non_block() {
                     .read_to_string(&mut output)
                     .expect("failed to read test output file");
 
-                output.contains("Funzzy results") && output.contains("Failed tasks: 1")
+                output.contains("Funzzy results") && output.contains("Failed: 1;")
             });
 
             assert_eq!(
@@ -219,9 +214,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s"
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -245,9 +239,8 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -260,9 +253,8 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command exit 1 has failed with exit status: 1
-Finished in 0.0s",
+- Command exit 1 has failed with exit status: 1
+Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
                 "failed to match ouput: {}",
                 output
             );
