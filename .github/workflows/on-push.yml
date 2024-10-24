@@ -22,5 +22,8 @@ jobs:
       - name: Linter 
         run: make lint
 
-      - name: Run tests
+      - name: Run unit tests
         run: make tests
+
+      - name: Run integration
+        run: make integration
