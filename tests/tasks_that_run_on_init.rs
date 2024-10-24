@@ -7,7 +7,7 @@ mod setup;
 #[test]
 fn test_it_executes_tasks_on_init_when_configured() {
     setup::with_env(
-        HashMap::from([("FUNZZY_RESULT_COLORED".to_string(), "1".to_string())]),
+        HashMap::from([("FUNZZY_COLORED".to_string(), "1".to_string())]),
         || {
             setup::with_example(
                 setup::Options {

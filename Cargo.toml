@@ -29,6 +29,7 @@ nix = "0.26.2"
 [dev-dependencies]
 assert_cmd = "2.0.14"
 predicates = "3.1.0"
+pretty_assertions = "1.4.1"
 
 [[bin]]
 name = "funzzy"

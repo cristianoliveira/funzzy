@@ -62,7 +62,7 @@ Environment configs:
 
 FUNZZY_NON_BLOCK: Boolean        Same as `--non-block`
 FUNZZY_BAIL: Boolean             Same as `--fail-fast`
-FUNZZY_RESULT_COLORED: Boolean   Output results with colors.
+FUNZZY_COLORED: Boolean   Output results with colors.
 ";
 
 #[allow(non_snake_case)]
