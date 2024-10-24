@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
@@ -66,7 +67,7 @@ Funzzy: echo 'quick lint'
 
 quick lint
 Funzzy results ----------------------------
-All tasks finished successfully. Finished in 0.0s"
+Success; Completed: 3; Failed: 0; Durantion: 0.0000s"
             );
         },
     );
