@@ -22,7 +22,7 @@ fn it_fails_when_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>>
             "\u{1b}[31mError\u{1b}[0m: Failed to read default config file",
             "Couldn\'t open configuration file: \'.watch.yaml\'",
             "Reason: No such file or directory (os error 2)",
-            "\u{1b}[34mHint\u{1b}[0m: Check if the file exists and if the path is correct",
+            "\u{1b}[34mHint\u{1b}[0m: Check if the file exists and if the path is correct. Try `fzz init` to create a new configuration file",
             "",
         ]
         .join("\n"),

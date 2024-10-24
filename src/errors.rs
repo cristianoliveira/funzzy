@@ -25,7 +25,7 @@ impl fmt::Display for FzzError {
         match self {
             FzzError::IoConfigError(msg, Some(err)) => match err.kind() {
                 std::io::ErrorKind::NotFound => {
-                    let hints = "Check if the file exists and if the path is correct";
+                    let hints = "Check if the file exists and if the path is correct. Try `fzz init` to create a new configuration file";
                     write!(f, "{}\nReason: {}\n{}", msg, err, hint_formatter(hints))
                 }
                 std::io::ErrorKind::PermissionDenied => {

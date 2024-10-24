@@ -1,3 +1,5 @@
+use pretty_assertions::assert_eq;
+
 #[path = "./common/lib.rs"]
 mod setup;
 
@@ -8,10 +10,12 @@ fn test_it_creates_the_config_file_with_cmd_init() {
         |fzz_cmd, _| {
             std::env::set_current_dir("examples/workdir/ignored").expect("failed to change dir");
 
-            fzz_cmd.arg("init").output().expect("failed to run init");
-
             let dir = std::env::current_dir().expect("failed to get current dir");
             let file = dir.join(".watch.yaml");
+            let _ = std::fs::remove_file(&file);
+
+            fzz_cmd.arg("init").output().expect("failed to run init");
+
             wait_until!(
                 {
                     // check if the .watch.yml file exists in examples/workdir
@@ -30,9 +34,12 @@ fn test_it_creates_the_config_file_with_cmd_init() {
 # List here the tasks and the commands for this workflow
 # then run `fzz` to start to work.
 
-- name: run my test
-  run: 'ls -a'
+- name: hello world
+  run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
   run_on_init: true
+
+- name: list files
+  run: 'ls -a'
   change: '**/*.txt'
   ignore: '**/*.log'
 ",
