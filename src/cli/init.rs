@@ -1,6 +1,7 @@
 use crate::cli::Command;
 use crate::errors::FzzError;
 
+use crate::stdout;
 use std::fs::File;
 use std::io::Write;
 
@@ -53,6 +54,8 @@ impl Command for InitCommand {
                         Some(err),
                     ));
                 }
+
+                stdout::info("Configuration file created successfully! To start run `fzz`");
 
                 Ok(())
             }

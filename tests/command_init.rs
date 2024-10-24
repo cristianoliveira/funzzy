@@ -1,4 +1,5 @@
 use pretty_assertions::assert_eq;
+use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -7,7 +8,7 @@ mod setup;
 fn test_it_creates_the_config_file_with_cmd_init() {
     setup::with_output(
         "test_it_creates_the_config_file_with_cmd_init.log",
-        |fzz_cmd, _| {
+        |fzz_cmd, mut output_file| {
             std::env::set_current_dir("examples/workdir/ignored").expect("failed to change dir");
 
             let dir = std::env::current_dir().expect("failed to get current dir");
@@ -15,6 +16,19 @@ fn test_it_creates_the_config_file_with_cmd_init() {
             let _ = std::fs::remove_file(&file);
 
             fzz_cmd.arg("init").output().expect("failed to run init");
+
+            let mut output = String::new();
+            wait_until!(
+                {
+                    output_file
+                        .read_to_string(&mut output)
+                        .expect("failed to read test output file");
+
+                    output.contains("Configuration file created successfully! To start run `fzz`")
+                },
+                "Unexpected outout: {}",
+                output
+            );
 
             wait_until!(
                 {
