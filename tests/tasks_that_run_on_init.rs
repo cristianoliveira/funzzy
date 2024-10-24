@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::io::prelude::*;
 
+use pretty_assertions::assert_eq;
+
 #[path = "./common/lib.rs"]
 mod setup;
 
 #[test]
 fn test_it_executes_tasks_on_init_when_configured() {
     setup::with_env(
-        HashMap::from([("FUNZZY_RESULT_COLORED".to_string(), "1".to_string())]),
+        HashMap::from([("FUNZZY_COLORED".to_string(), "1".to_string())]),
         || {
             setup::with_example(
                 setup::Options {
@@ -37,22 +39,21 @@ fn test_it_executes_tasks_on_init_when_configured() {
 
                     assert_eq!(
                         setup::clean_output(&output),
-                        "Funzzy: Running on init commands.
+                        "\u{1b}[34mFunzzy\u{1b}[0m: Running on init commands.
 
-Funzzy: echo 'running on init first' 
+\u{1b}[34mFunzzy\u{1b}[0m: echo 'running on init first' 
 
 running on init first
 
-Funzzy: echo \"run on init sencod\" 
+\u{1b}[34mFunzzy\u{1b}[0m: echo \"run on init sencod\" 
 
 run on init sencod
 
-Funzzy: echo \"only run on init\" 
+\u{1b}[34mFunzzy\u{1b}[0m: echo \"only run on init\" 
 
 only run on init
 Funzzy results ----------------------------
-\u{1b}[32mAll tasks finished successfully.
-Funzzy: finished in 0.0s"
+\u{1b}[32mAll tasks finished successfully. \u{1b}[0mFinished in 0.0s"
                     );
 
                     write_to_file!("examples/workdir/trigger-watcher.txt");

@@ -8,21 +8,24 @@ pub const RED: &str = "\x1b[31m";
 pub const BLUE: &str = "\x1b[34m";
 pub const RESET: &str = "\x1b[0m";
 
-fn is_color_enabled() -> bool {
-    environment::is_enabled("FUNZZY_RESULT_COLORED")
+fn is_colored() -> bool {
+    environment::is_enabled("FUNZZY_COLORED")
 }
 
 pub fn info(msg: &str) {
-    println!("Funzzy: {}", msg);
-}
-
-pub fn pinfo(msg: &str) {
-    print!("Funzzy: {}", msg);
-    std::io::stdout().flush().expect("Failed to flush stdout");
+    if is_colored() {
+        println!("{}Funzzy{}: {}", BLUE, RESET, msg);
+    } else {
+        println!("Funzzy: {}", msg);
+    }
 }
 
 pub fn error(msg: &str) {
-    println!("{}Funzzy error{}: {}", RED, RESET, msg);
+    if is_colored() {
+        println!("{}Funzzy error{}: {}", RED, RESET, msg);
+    } else {
+        println!("Funzzy error: {}", msg);
+    }
 }
 
 pub fn warn(msg: &str) {
@@ -39,11 +42,23 @@ pub fn verbose(msg: &str, verbose: bool) {
     println!("-----------------------------");
 }
 
-pub fn present_results(results: Vec<Result<(), String>>) {
+#[cfg(not(feature = "test-integration"))]
+pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
+    print!("Finished in {:.4}s", elapsed.as_secs_f32());
+    std::io::stdout().flush().expect("Failed to flush stdout");
+}
+
+#[cfg(feature = "test-integration")]
+pub fn print_time_elapsed(_: std::time::Duration) -> () {
+    print!("Finished in 0.0s");
+    std::io::stdout().flush().expect("Failed to flush stdout");
+}
+
+pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time::Duration) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
     println!("Funzzy results ----------------------------");
     if !errors.is_empty() {
-        if is_color_enabled() {
+        if is_colored() {
             print!("{}", RED);
         }
         println!("Failed tasks: {:?}", errors.len());
@@ -51,15 +66,17 @@ pub fn present_results(results: Vec<Result<(), String>>) {
             println!(" - {}", err.as_ref().unwrap_err());
         });
     } else {
-        if is_color_enabled() {
+        if is_colored() {
             print!("{}", GREEN);
         }
-        println!("All tasks finished successfully.");
+        print!("All tasks finished successfully. ");
     }
 
-    if is_color_enabled() {
+    if is_colored() {
         print!("{}", RESET);
     }
+
+    print_time_elapsed(time_elapsed);
 }
 
 pub fn clear_screen() -> () {

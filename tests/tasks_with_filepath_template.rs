@@ -67,8 +67,7 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 
 Funzzy results ----------------------------
-All tasks finished successfully.
-Funzzy: finished in 0.0s
+All tasks finished successfully. Finished in 0.0s
 [2J
 Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -82,8 +81,7 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
-All tasks finished successfully.
-Funzzy: finished in 0.0s";
+All tasks finished successfully. Finished in 0.0s";
 
             assert_eq!(
                 setup::clean_output(&output),
@@ -152,8 +150,7 @@ Funzzy: echo ''
 
 
 Funzzy results ----------------------------
-All tasks finished successfully.
-Funzzy: finished in 0.0s
+All tasks finished successfully. Finished in 0.0s
 [2J
 Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -163,8 +160,7 @@ Funzzy: echo 'examples/workdir/trigger-watcher.txt'
 
 examples/workdir/trigger-watcher.txt
 Funzzy results ----------------------------
-All tasks finished successfully.
-Funzzy: finished in 0.0s";
+All tasks finished successfully. Finished in 0.0s";
 
             assert_eq!(
                 setup::clean_output(&output),

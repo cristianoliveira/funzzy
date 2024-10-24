@@ -42,7 +42,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s"
+Finished in 0.0s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -68,7 +68,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s
+Finished in 0.0s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -83,7 +83,7 @@ Funzzy: exit 1
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command exit 1 has failed with exit status: 1
-Funzzy: finished in 0.0s",
+Finished in 0.0s",
                 "failed to match ouput: {}",
                 output
             );
@@ -129,7 +129,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s"
+Finished in 0.0s"
                     );
 
                     write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -155,7 +155,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s
+Finished in 0.0s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -170,7 +170,7 @@ Funzzy: exit 1
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command exit 1 has failed with exit status: 1
-Funzzy: finished in 0.0s",
+Finished in 0.0s",
                         "failed to match ouput: {}",
                         output
                     );
@@ -221,7 +221,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s"
+Finished in 0.0s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -247,7 +247,7 @@ Funzzy: cat baz/bar/foo
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command cat baz/bar/foo has failed with exit status: 1
-Funzzy: finished in 0.0s
+Finished in 0.0s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -262,7 +262,7 @@ Funzzy: exit 1
 Funzzy results ----------------------------
 Failed tasks: 1
  - Command exit 1 has failed with exit status: 1
-Funzzy: finished in 0.0s",
+Finished in 0.0s",
                 "failed to match ouput: {}",
                 output
             );

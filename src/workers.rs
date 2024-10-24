@@ -150,8 +150,8 @@ impl Worker {
                 }
 
                 if !has_been_cancelled {
-                    stdout::present_results(results);
                     let elapsed = time_execution_started.elapsed();
+                    stdout::present_results(results, elapsed);
                     on_event(WorkerEvent::FinishedExecution(elapsed));
                 }
             }
