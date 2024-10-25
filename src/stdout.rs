@@ -45,7 +45,7 @@ pub fn verbose(msg: &str, verbose: bool) {
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
-    print!("Finished in {:.4}s", elapsed.as_secs_f32());
+    print!("Durantion: {:.4}s", elapsed.as_secs_f32());
     let res = std::io::stdout().flush();
 
     match res {
@@ -61,32 +61,38 @@ pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
 // NOTE: This is for testing purposes only
 /// Print mocked time elapsed always as: "Finished in 0.0s"
 pub fn print_time_elapsed(_: std::time::Duration) -> () {
-    print!("Finished in 0.0s");
+    let elapsed = std::time::Duration::from_secs(0);
+    print!("Durantion: {:.4}s", elapsed.as_secs_f32());
     std::io::stdout().flush().expect("Failed to flush stdout");
 }
 
 pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time::Duration) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
+    let completed = results.iter().cloned().filter(|r| r.is_ok()).count();
     println!("Funzzy results ----------------------------");
     if !errors.is_empty() {
         if is_colored() {
             print!("{}", RED);
         }
-        println!("Failed tasks: {:?}", errors.len());
+
         errors.iter().for_each(|err| {
-            println!(" - {}", err.as_ref().unwrap_err());
+            println!("- {}", err.as_ref().unwrap_err());
         });
+
+        if is_colored() {
+            print!("Failure{}; ", RESET);
+        } else {
+            print!("Failure; ");
+        }
     } else {
         if is_colored() {
-            print!("{}", GREEN);
+            print!("{}Success{}; ", GREEN, RESET);
+        } else {
+            print!("Success; ");
         }
-        print!("All tasks finished successfully. ");
     }
 
-    if is_colored() {
-        print!("{}", RESET);
-    }
-
+    print!("Completed: {:?}; Failed: {:?}; ", completed, errors.len());
     print_time_elapsed(time_elapsed);
 }
 

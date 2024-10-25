@@ -53,7 +53,7 @@ run on init sencod
 
 only run on init
 Funzzy results ----------------------------
-\u{1b}[32mAll tasks finished successfully. \u{1b}[0mFinished in 0.0s"
+\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Durantion: 0.0000s"
                     );
 
                     write_to_file!("examples/workdir/trigger-watcher.txt");

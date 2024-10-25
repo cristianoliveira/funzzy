@@ -1,3 +1,4 @@
+use pretty_assertions::assert_eq;
 use std::io::prelude::*;
 
 #[path = "./common/lib.rs"]
@@ -33,7 +34,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
                         .read_to_string(&mut output)
                         .expect("failed to read test output file");
 
-                    output.contains("Failed tasks: 4")
+                    output.contains("Failed: 4;")
                 },
                 "failed failed less than 4 tasks {}",
                 output
@@ -54,9 +55,8 @@ Funzzy: echo finally
 
 finally
 Funzzy results ----------------------------
-Failed tasks: 1
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 2; Failed: 1; Durantion: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -86,12 +86,11 @@ Funzzy: echo finally
 
 finally
 Funzzy results ----------------------------
-Failed tasks: 4
- - Command exit 1 has failed with exit status: 1
- - Command cat foo/bar/baz has failed with exit status: 1
- - Command exit 125 has failed with exit status: 125
- - Command cat baz/bar/foo has failed with exit status: 1
-Finished in 0.0s",
+- Command exit 1 has failed with exit status: 1
+- Command cat foo/bar/baz has failed with exit status: 1
+- Command exit 125 has failed with exit status: 125
+- Command cat baz/bar/foo has failed with exit status: 1
+Failure; Completed: 4; Failed: 4; Durantion: 0.0000s",
                 "failed to match {}",
                 output
             );
