@@ -8,10 +8,10 @@ rustPlatform.buildRustPackage rec {
     owner = "cristianoliveira";
     repo = "funzzy";
     rev = "${version}";
-    hash = "sha256-7PcVob9543clrvbMj8QegGB5Xge6a4EbuERomPFt8Y8=";
+    hash = "sha256-BNYlXWyyhSBH5Q0zgmo8G6Wk9LbXdvI1KGYpAP3Oz3o=";
   };
 
-  cargoHash = "sha256-50idg5Y2IcFD4DNfOjSAm6Lvx85k591j1W/IlziBhWM=";
+  cargoHash = "sha256-Uo8YB5ZvtcRJmZFotAI1IIt49yC5gDa8w3XA0ALIdFs=";
 
   buildInputs = lib.optionals stdenv.isDarwin [
     darwin.apple_sdk.frameworks.CoreServices
