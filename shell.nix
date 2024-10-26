@@ -16,6 +16,8 @@ pkgs.mkShell {
 
     yq-go # jq for yaml
 
+    fzf # Used in scripts
+
     # For development install latest version of funzzy
     # copkgs.funzzyNightly
 
@@ -28,6 +30,9 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
+    echo "$@"
+
     cargo update
+    cargo build
   '';
 }

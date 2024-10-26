@@ -1,6 +1,8 @@
 .PHONY: help
 help: ## Lists the available commands. Add a comment with '##' to describe a command.
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST)\
+		| sort\
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: tests
 tests: ## Execute all the tests
@@ -36,6 +38,10 @@ ci-run-on-push: ## Run checks from .github/workflows/on-push.yml
 	@cat .github/workflows/on-push.yml \
 		| yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
 		| xargs -I {} bash -c {}
+
+.PHONY: fmt
+fmt: ## Format the code (with cargo fmt) and add the changes to the git stage
+	@cargo fmt
 
 .PHONY: lint
 lint:
@@ -79,17 +85,17 @@ nix-build: ## Build the nix derivation with the nightly toolchain
 	@nix build .# --verbose -L
 
 .PHONY: nix-bump-default
-nix-bump-default: ##  Bump the version in nix default package and generate a new revision
+nix-bump-default: ## Bump the version in nix default package and generate a new revision
 	@echo "Bumping the version in nix default"
 	scripts/bump-nix-default
 
 .PHONY: nix-bump-nightly
-nix-bump-nightly: ##  Bump the version in nix nightly package and generate a new revision
+nix-bump-nightly: ## Bump the version in nix nightly package and generate a new revision
 	@echo "Bumping the version in nix packages"
 	scripts/bump-nix-nightly
 
 .PHONY: nix-bump-local
-nix-bump-local: ##  Bump the version in nix local package and generate a new revision
+nix-bump-local: ## Bump the version in nix local package and generate a new revision
 	@echo "Bumping the version in nix packages"
 	scripts/bump-nix-local
 

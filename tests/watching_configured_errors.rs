@@ -17,6 +17,7 @@ fn it_fails_when_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>>
     change_dir_if_needed();
 
     let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    cmd.env("FUNZZY_COLORED", "false");
     cmd.assert().failure().stdout(
         vec![
             "Error: Failed to read default config file",
@@ -36,6 +37,7 @@ fn it_fails_using_an_config_with_missing_properties() -> Result<(), Box<dyn std:
     change_dir_if_needed();
 
     let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    cmd.env("FUNZZY_COLORED", "false");
     cmd.arg("--config")
         .arg("./missing-required-property.yml")
         .assert()
@@ -62,6 +64,7 @@ fn it_fails_using_an_config_with_non_list() -> Result<(), Box<dyn std::error::Er
     change_dir_if_needed();
 
     let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    cmd.env("FUNZZY_COLORED", "false");
     cmd.arg("--config")
         .arg("./non-list.yaml")
         .assert()

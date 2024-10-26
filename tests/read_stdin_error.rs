@@ -10,7 +10,8 @@ const BINARY_NAME: &str = "funzzy";
 fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = Command::cargo_bin(BINARY_NAME)?;
 
-    cmd.arg("echo 'foo'")
+    cmd.env("FUNZZY_COLORED", "false")
+        .arg("echo 'foo'")
         .write_stdin("")
         .assert()
         .failure()
@@ -36,7 +37,8 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
         .stdout(Stdio::piped())
         .output()?;
 
-    cmd.arg("echo 'foo'")
+    cmd.env("FUNZZY_COLORED", "false")
+        .arg("echo 'foo'")
         .write_stdin(lsla.stdout)
         .assert()
         .failure()

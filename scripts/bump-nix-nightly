@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VERSION="master"
+VERSION="$(git rev-parse --short origin/master)"
 NIX_FILE="nix/package-nightly.nix"
 
 echo "Bumping version to $VERSION"
@@ -26,3 +26,6 @@ echo "Building nix derivation"
 nix build .#nightly
 
 rm -f build.log
+
+git add "$NIX_FILE"
+git commit -m "chore(nix): bump nightly to origin/master ($VERSION)"
