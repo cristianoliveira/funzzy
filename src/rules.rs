@@ -272,60 +272,91 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
     }
 }
 
-pub fn from_string(patterns: String, command: String) -> Result<Vec<Rules>, String> {
+fn prepare_as_glob_pattern(line: &str) -> errors::Result<String> {
     let current_dir = match std::env::current_dir() {
         Ok(val) => val,
         Err(err) => {
-            return Err(format!("Failed to get current directory {}", err));
+            return Err(errors::FzzError::IoConfigError(
+                "Failed to get current directory".to_owned(),
+                Some(err),
+            ));
         }
     };
 
+    let path = std::path::Path::new(&line);
+
+    let full_path = if path.starts_with(".") {
+        if line.len() == 1 {
+            current_dir.join("")
+        } else {
+            current_dir.join(&line[2..])
+        }
+    } else {
+        current_dir.join(line)
+    };
+
+    if full_path.is_dir() {
+        let full_path_as_str = match full_path.join("**").to_str() {
+            Some(val) => val.to_owned(),
+            _ => {
+                return Err(errors::FzzError::PathPatternError(
+                    format!(
+                        "Failed to convert path '{:?}' to a recursive glob pattern.",
+                        full_path
+                    ),
+                    None,
+                ))
+            }
+        };
+
+        return Ok(full_path_as_str);
+    }
+
+    match full_path.to_str() {
+        Some(val) => Ok(val.to_owned()),
+        _ => Err(errors::FzzError::PathPatternError(
+            format!("Failed to convert path '{:?}' to string.", full_path),
+            None,
+        )),
+    }
+}
+
+pub fn extract_paths(stdinput: String) -> errors::Result<Vec<String>> {
+    let mut watches = vec![];
+    let mut line_number = 0;
+    for pathline in stdinput.lines() {
+        line_number = line_number + 1;
+        let path = std::path::Path::new(&pathline);
+
+        match path.canonicalize() {
+            Ok(val) => {
+                watches.push(val.to_str().unwrap().to_owned());
+            }
+            Err(err) => {
+                return Err(errors::FzzError::PathError(
+                    format!("Unknown path '{}' at line {}", path.to_str().unwrap(), line_number),
+                    Some(errors::UnkownError::from(err)),
+                    Some(
+                        vec![
+                        "When using stdin, make sure to provide a list of valid files or directories.",
+                        "The output of command `find` is a good example",
+                        ].join("\n"),
+                    ),
+                ));
+            }
+        }
+    }
+
+    return Ok(watches);
+}
+
+pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec<Rules>> {
     let watches = patterns
-        .lines()
-        .map(|line| {
-            let path = std::path::Path::new(&line);
+        .iter()
+        .map(|pathline| prepare_as_glob_pattern(pathline))
+        .collect::<errors::Result<Vec<String>>>()?;
 
-            let full_path = if path.starts_with(".") {
-                if line.len() == 1 {
-                    current_dir.join("")
-                } else {
-                    current_dir.join(&line[2..])
-                }
-            } else {
-                current_dir.join(line)
-            };
-
-            if full_path.is_dir() {
-                let full_path_as_str = match full_path.join("**").to_str() {
-                    Some(val) => val.to_owned(),
-                    None => {
-                        println!(
-                            "Warning: Was not possible to convert {} to absolute path",
-                            line
-                        );
-
-                        String::from("")
-                    }
-                };
-
-                return full_path_as_str;
-            }
-
-            match full_path.to_str() {
-                Some(val) => val.to_owned(),
-                None => {
-                    println!(
-                        "Warning: Was not possible to convert {} to absolute path",
-                        line
-                    );
-
-                    String::from("")
-                }
-            }
-        })
-        .collect::<Vec<String>>();
-
-    stdout::info(&format!("watching patterns \n {}", watches.join("\n ")));
+    stdout::info(&format!("watching patterns\r{}", watches.join("\n")));
 
     let run_on_init = true;
     let ignore = vec![];
@@ -589,8 +620,11 @@ mod tests {
 
     #[test]
     fn it_does_not_filters_empty_or_one_character_path() {
-        let content = "./foo\n./bar\n.\n./baz\n";
-        let rules = from_string(String::from(content), String::from("cargo test")).unwrap();
+        let content = "./foo\n./bar\n.\n./baz\n"
+            .lines()
+            .map(|s| s.to_owned())
+            .collect();
+        let rules = from_string(content, String::from("cargo test")).unwrap();
         assert!(rules[0].watch(&get_absolute_path("foo")));
         assert!(rules[0].watch(&get_absolute_path("bar")));
         assert!(rules[0].watch(&get_absolute_path("baz")));

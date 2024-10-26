@@ -12,11 +12,15 @@ fn hint_formatter(hint: &str) -> String {
     format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint)
 }
 
+pub type UnkownError = Box<dyn Error + Send + Sync>;
+
 #[derive(Debug)]
 pub enum FzzError {
     IoConfigError(String, Option<std::io::Error>),
     IoStdinError(String, Hint),
     InvalidConfigError(String, Option<ScanError>, Hint),
+    PathError(String, Option<UnkownError>, Hint),
+    PathPatternError(String, Hint),
     GenericError(String),
 }
 
@@ -54,6 +58,26 @@ impl fmt::Display for FzzError {
                     write!(f, "{}{}\n{}", msg, err, hint_formatter(hints))
                 } else {
                     write!(f, "{}{}", msg, err)
+                }
+            }
+            FzzError::PathPatternError(msg, hints) => {
+                if let Some(hints) = hints {
+                    write!(f, "{}\n{}", msg, hint_formatter(hints))
+                } else {
+                    write!(f, "{}", msg)
+                }
+            }
+            FzzError::PathError(msg, error, hints) => {
+                let info = if let Some(e) = error {
+                    format!("{}\nReason: {}", msg, e)
+                } else {
+                    format!("{}", msg)
+                };
+
+                if let Some(hints) = hints {
+                    write!(f, "{}\n{}", info, hint_formatter(hints))
+                } else {
+                    write!(f, "{}", info)
                 }
             }
             FzzError::GenericError(e) => write!(f, "Reason: {}", e),

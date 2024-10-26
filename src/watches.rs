@@ -88,7 +88,10 @@ mod tests {
     #[test]
     fn it_loads_from_args() {
         let args = String::from("cargo build");
-        let watches = Watches::new(rules::from_string(".".to_owned(), args).unwrap());
+        let watches = Watches::new(
+            rules::from_string(vec![".".to_owned()], args)
+                .expect("Error while parsing rules from string"),
+        );
 
         assert!(watches.watch(&get_absolute_path("src/main.rs")).is_some());
         assert!(watches.watch(&get_absolute_path("test/main.rs")).is_some());

@@ -108,9 +108,14 @@ fn main() {
                         show("The list of files received is empty");
                     }
 
-                    let watch_rules = match rules::from_string(content, arg_command.to_string()) {
+                    let patterns = match rules::extract_paths(content) {
+                        Ok(patterns) => patterns,
+                        Err(err) => error("Failed to get rules from stdin", err.to_string()),
+                    };
+
+                    let watch_rules = match rules::from_string(patterns, arg_command.to_string()) {
                         Ok(rules) => rules,
-                        Err(err) => error("Failed to get rules from stdin", err),
+                        Err(err) => error("Failed to get rules from stdin", err.to_string()),
                     };
 
                     if let Err(err) = rules::validate_rules(&watch_rules) {
