@@ -8,8 +8,14 @@ pub const RED: &str = "\x1b[31m";
 pub const BLUE: &str = "\x1b[34m";
 pub const RESET: &str = "\x1b[0m";
 
-fn is_colored() -> bool {
+#[cfg(not(test))]
+pub fn is_colored() -> bool {
     environment::is_enabled("FUNZZY_COLORED")
+}
+
+#[cfg(test)]
+pub fn is_colored() -> bool {
+    false
 }
 
 pub fn info(msg: &str) {
@@ -30,6 +36,21 @@ pub fn error(msg: &str) {
 
 pub fn warn(msg: &str) {
     println!("Funzzy warning: {}", msg);
+}
+
+pub fn show_and_exit(text: &str) -> ! {
+    println!("{}", text);
+    std::process::exit(0)
+}
+
+pub fn failure(text: &str, err: String) -> ! {
+    if is_colored() {
+        println!("{}Error{}: {}", RED, RESET, text);
+    } else {
+        println!("Error: {}", text);
+    }
+    println!("{}", err);
+    std::process::exit(1)
 }
 
 pub fn verbose(msg: &str, verbose: bool) {

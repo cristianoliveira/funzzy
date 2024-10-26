@@ -9,7 +9,11 @@ pub type Hint = Option<String>;
 pub type Result<T> = std::result::Result<T, FzzError>;
 
 fn hint_formatter(hint: &str) -> String {
-    format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint)
+    if stdout::is_colored() {
+        return format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint);
+    } else {
+        return format!("Hint: {}", hint);
+    }
 }
 
 pub type UnkownError = Box<dyn Error + Send + Sync>;

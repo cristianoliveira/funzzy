@@ -103,15 +103,15 @@ fn main() {
             match err {
                 Error::WithProgramUsage(err, usage) => {
                     match *err {
-                        Error::Help => show(&usage),
-                        Error::Version(_) => show(get_version().as_str()),
+                        Error::Help => stdout::show_and_exit(&usage),
+                        Error::Version(_) => stdout::show_and_exit(get_version().as_str()),
                         Error::Argv(argverr) => {
                             // NOTE: Docopt doesn't support a flag without a value even when
                             // declaring a default value with [default: foobar].
                             // In short, this adds a default value to the flag `--target` if it's empty.
                             // So one can use `fzz -t` and it will list all available tasks.
                             if !argverr.contains("flag '--target' but reached end of arguments") {
-                                error(&argverr, usage);
+                                stdout::failure(&argverr, usage);
                             }
 
                             let argv_with_missing_target = std::env::args()
@@ -127,21 +127,21 @@ fn main() {
                             let newargs: Args = Docopt::new(USAGE)
                                 .and_then(|d| d.argv(argv_with_missing_target).deserialize())
                                 .unwrap_or_else(|err| {
-                                    error("Failed to parse arguments", err.to_string())
+                                    stdout::failure("Failed to parse arguments", err.to_string())
                                 });
 
                             newargs
                         }
-                        _ => error(&usage, err.to_string()),
+                        _ => stdout::failure(&usage, err.to_string()),
                     }
                 }
-                err => error("Failed to parse arguments", err.to_string()),
+                err => stdout::failure("Failed to parse arguments", err.to_string()),
             }
         }
     };
 
     match args {
-        Args { flag_v: true, .. } => show(get_version().as_str()),
+        Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
@@ -151,43 +151,47 @@ fn main() {
             match from_stdin() {
                 Ok(content) => {
                     if content.trim().is_empty() {
-                        show("The list of files received is empty");
+                        stdout::show_and_exit("The list of files received is empty");
                     }
 
                     let patterns = match rules::extract_paths(content) {
                         Ok(patterns) => patterns,
-                        Err(err) => error("Failed to get rules from stdin", err.to_string()),
+                        Err(err) => {
+                            stdout::failure("Failed to get rules from stdin", err.to_string())
+                        }
                     };
 
                     let watch_rules = match rules::from_string(patterns, arg_command.to_string()) {
                         Ok(rules) => rules,
-                        Err(err) => error("Failed to get rules from stdin", err.to_string()),
+                        Err(err) => {
+                            stdout::failure("Failed to get rules from stdin", err.to_string())
+                        }
                     };
 
                     if let Err(err) = rules::validate_rules(&watch_rules) {
-                        error("Invalid config file.", err);
+                        stdout::failure("Invalid config file.", err);
                     }
 
                     execute_watch_command(Watches::new(watch_rules), args);
                 }
-                Err(err) => error("Failed to read stdin", err.to_string()),
+                Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
             };
         }
 
         _ => {
             let rules = if args.flag_config.is_empty() {
                 rules::from_default_file_config().unwrap_or_else(|err| {
-                    error("Failed to read default config file", err.to_string());
+                    stdout::failure("Failed to read default config file", err.to_string());
                 })
             } else {
                 match rules::from_file(&args.flag_config) {
                     Ok(rules) => rules,
-                    Err(err) => error("Failed to read config file", err.to_string()),
+                    Err(err) => stdout::failure("Failed to read config file", err.to_string()),
                 }
             };
 
             if let Err(err) = rules::validate_rules(&rules) {
-                error("Invalid config file.", err);
+                stdout::failure("Invalid config file.", err);
             }
 
             match args.flag_target {
@@ -196,7 +200,7 @@ fn main() {
                         "`--target` help\n{}",
                         rules::available_targets(rules)
                     ));
-                    show("Usage `fzz -t <text_contain_in_task>`");
+                    stdout::show_and_exit("Usage `fzz -t <text_contain_in_task>`");
                 }
                 Some(ref target) => {
                     let filtered = rules
@@ -206,7 +210,7 @@ fn main() {
                         .collect::<Vec<rules::Rules>>();
 
                     if filtered.is_empty() {
-                        error(
+                        stdout::failure(
                             &format!("No target found for '{}'", target),
                             rules::available_targets(rules),
                         );
@@ -276,7 +280,7 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
 fn execute<T: Command>(command: T) {
     if let Err(err) = command.execute() {
-        error("Command failed to execute", err.to_string());
+        stdout::failure("Command failed to execute", err.to_string());
     }
 }
 
@@ -291,7 +295,7 @@ fn from_stdin() -> errors::Result<String> {
 
         let had_input = *clone_has_input.lock().expect("Could not lock has_input");
         if !had_input {
-            error(
+            stdout::failure(
                 "Timed out waiting for input.",
                 vec![
                     "Hint: Did you forget to pipe an output of a command?".to_string(),
@@ -338,15 +342,4 @@ fn get_version() -> String {
     } else {
         VERSION.to_owned()
     }
-}
-
-fn show(text: &str) -> ! {
-    println!("{}", text);
-    std::process::exit(0)
-}
-
-fn error(text: &str, err: String) -> ! {
-    println!("{}Error{}: {}", stdout::RED, stdout::RESET, text);
-    println!("{}", err);
-    std::process::exit(1)
 }

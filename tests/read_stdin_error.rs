@@ -16,9 +16,9 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
         .failure()
         .stdout(
             vec![
-                "\u{1b}[31mError\u{1b}[0m: Failed to read stdin",
+                "Error: Failed to read stdin",
                 "Reason: Timed out waiting for input.",
-                "\u{1b}[34mHint\u{1b}[0m: Did you forget to pipe an output of a command? Try `find . | fzz 'echo \"changed: {{filepath}}\"'`",
+                "Hint: Did you forget to pipe an output of a command? Try `find . | fzz 'echo \"changed: {{filepath}}\"'`",
                 "",
             ]
             .join("\n"),
@@ -42,7 +42,7 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
         .failure()
         .stdout(predicates::str::contains(
             vec![
-                "\u{1b}[31mError\u{1b}[0m: Failed to get rules from stdin",
+                "Error: Failed to get rules from stdin",
                 "Unknown path \'total", //... 8' line 1
             ]
             .join("\n"))
@@ -50,7 +50,7 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
         .stdout(predicates::str::contains(
             vec![
                 "Reason: No such file or directory (os error 2)",
-                "\u{1b}[34mHint\u{1b}[0m: When using stdin, make sure to provide a list of valid files or directories.",
+                "Hint: When using stdin, make sure to provide a list of valid files or directories.",
                 "The output of command `find` is a good example",
                 "",
             ]

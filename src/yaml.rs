@@ -220,8 +220,7 @@ fooobar:
             Err(err) => {
                 assert_eq!(
                     format!("{}", err),
-                    format!(
-                        "Invalid property 'fooobar' in rule below
+                    "Invalid property 'fooobar' in rule below
 Expected a list (Array) but got: Hash
 ```yaml
 fooobar:
@@ -234,10 +233,7 @@ fooobar:
     - bar
     - baz
 ```
-{}Hint{}: Check if the property is defined, with the right type and identation",
-                        stdout::BLUE,
-                        stdout::RESET
-                    ),
+Hint: Check if the property is defined, with the right type and identation",
                 );
             }
         }

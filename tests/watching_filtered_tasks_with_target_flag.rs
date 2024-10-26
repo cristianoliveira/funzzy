@@ -86,7 +86,7 @@ fn test_it_list_the_available_tasks_when_nothing_matches() {
         .assert()
         .failure()
         .stdout(predicate::str::contains(
-            "\u{1b}[31mError\u{1b}[0m: No target found for \'unknown_task_name\'
+            "Error: No target found for \'unknown_task_name\'
 Available tasks
   - run my test @quick
   - run my build

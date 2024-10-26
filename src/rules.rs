@@ -777,7 +777,7 @@ mod tests {
                 "|>          change: **/*",
                 "|         ",
                 "Reason: while scanning an anchor or alias, did not find expected alphabetic or numeric character at line 8 column 19",
-                &format!("{}Hint{}: Check for wrong types, any missing quotes for glob pattern or incorrect identation", stdout::BLUE, stdout::RESET),
+                "Hint: Check for wrong types, any missing quotes for glob pattern or incorrect identation",
             ]
             .join("\n")
         );
@@ -791,7 +791,7 @@ mod tests {
             result.err().unwrap().to_string(),
             vec![
                 "Configuration file is invalid! There are no rules to watch",
-                &format!("{}Hint{}: Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch", stdout::BLUE, stdout::RESET),
+                "Hint: Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch",
             ]
             .join("\n")
         );
@@ -813,11 +813,7 @@ mod tests {
                 "  - name: foo",
                 "    run: echo foo",
                 "```",
-                &format!(
-                    "{}Hint{}: Make sure to declare the rules as a list without any root property",
-                    stdout::BLUE,
-                    stdout::RESET
-                ),
+                "Hint: Make sure to declare the rules as a list without any root property",
             ]
             .join("\n")
         );
