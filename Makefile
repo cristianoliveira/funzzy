@@ -1,6 +1,8 @@
 .PHONY: help
 help: ## Lists the available commands. Add a comment with '##' to describe a command.
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST)\
+		| sort\
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: tests
 tests: ## Execute all the tests
@@ -36,6 +38,10 @@ ci-run-on-push: ## Run checks from .github/workflows/on-push.yml
 	@cat .github/workflows/on-push.yml \
 		| yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
 		| xargs -I {} bash -c {}
+
+.PHONY: fmt
+fmt: ## Format the code (with cargo fmt) and add the changes to the git stage
+	@cargo fmt
 
 .PHONY: lint
 lint:
