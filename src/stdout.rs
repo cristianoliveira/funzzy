@@ -8,8 +8,14 @@ pub const RED: &str = "\x1b[31m";
 pub const BLUE: &str = "\x1b[34m";
 pub const RESET: &str = "\x1b[0m";
 
-fn is_colored() -> bool {
+#[cfg(not(test))]
+pub fn is_colored() -> bool {
     environment::is_enabled("FUNZZY_COLORED")
+}
+
+#[cfg(test)]
+pub fn is_colored() -> bool {
+    false
 }
 
 pub fn info(msg: &str) {
@@ -30,6 +36,21 @@ pub fn error(msg: &str) {
 
 pub fn warn(msg: &str) {
     println!("Funzzy warning: {}", msg);
+}
+
+pub fn show_and_exit(text: &str) -> ! {
+    println!("{}", text);
+    std::process::exit(0)
+}
+
+pub fn failure(text: &str, err: String) -> ! {
+    if is_colored() {
+        println!("{}Error{}: {}", RED, RESET, text);
+    } else {
+        println!("Error: {}", text);
+    }
+    println!("{}", err);
+    std::process::exit(1)
 }
 
 pub fn verbose(msg: &str, verbose: bool) {
@@ -99,4 +120,21 @@ pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time
 pub fn clear_screen() -> () {
     // See https://archive.ph/d3Z3O
     print!("\n{}[2J", 27 as char);
+}
+
+pub fn _clean_color_codes(text: &str) -> String {
+    text
+        .lines()
+        .map(|line| {
+            // This line prints the time so is not deterministic
+            if line.contains("Funzzy: finished in") {
+                return "Funzzy: finished in 0.0s";
+            }
+
+            line
+        })
+        .filter(|line| !line.contains("@@@@"))
+        .collect::<Vec<&str>>()
+        .join("\n")
+        .to_string()
 }

@@ -19,14 +19,19 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
         });
 
         let mut cmd = Command::cargo_bin(BINARY_NAME)?;
-        cmd.arg("init").assert().failure().stdout(
-            vec![
-                "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
-                "Configuration file already exists (.watch.yaml)",
-                "",
-            ]
-            .join("\n"),
-        );
+        cmd.env("FUNZZY_COLORED", "true")
+            .env("_TEST_FUNZZY_COLORED", "true")
+            .arg("init")
+            .assert()
+            .failure()
+            .stdout(
+                vec![
+                    "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
+                    "Configuration file already exists (.watch.yaml)",
+                    "",
+                ]
+                .join("\n"),
+            );
 
         Ok(())
     })
@@ -51,12 +56,15 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut cmd = Command::cargo_bin(BINARY_NAME)?;
 
-        cmd.arg("init").assert().failure().stdout(
+        cmd
+            .env("FUNZZY_COLORED", "false")
+            .env("_TEST_FUNZZY_COLORED", "false")
+            .arg("init").assert().failure().stdout(
             vec![
-                "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
+                "Error: Command failed to execute",
                 "Failed to create the configuration file",
                 "Reason: Permission denied (os error 13)",
-                "\u{1b}[34mHint\u{1b}[0m: Check if you have permission to write in the current folder",
+                "Hint: Check if you have permission to write in the current folder",
                 "",
             ]
             .join("\n"),
