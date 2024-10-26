@@ -444,6 +444,21 @@ pub fn validate_rules(rule: &Vec<Rules>) -> Result<(), String> {
     Ok(())
 }
 
+pub fn available_targets(rules: Vec<Rules>) -> String {
+    let mut output = String::new();
+    output.push_str("Available tasks\n");
+    output.push_str(&format!(
+        "  - {}\n",
+        rules
+            .iter()
+            .cloned()
+            .map(|r| r.name)
+            .collect::<Vec<String>>()
+            .join("\n  - ")
+    ));
+    output
+}
+
 #[cfg(test)]
 mod tests {
     extern crate yaml_rust;

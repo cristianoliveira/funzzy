@@ -89,6 +89,7 @@ impl Error for FzzError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             FzzError::IoConfigError(_, Some(e)) => Some(e),
+            FzzError::PathError(_, Some(e), _) => Some(e.as_ref()),
             _ => None,
         }
     }
