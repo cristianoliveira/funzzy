@@ -17,7 +17,7 @@ test-integration-file-system = []
 test-integration = []
 
 [dependencies]
-docopt = "1"
+docopt = "1.1.1"
 serde = "1.0" # if you're using `derive(Deserialize)`
 serde_derive = "1.0" # if you're using `derive(Deserialize)`
 notify = "4.0.0"

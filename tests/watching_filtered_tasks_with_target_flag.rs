@@ -1,3 +1,5 @@
+use assert_cmd::Command;
+use predicates::prelude::predicate;
 use pretty_assertions::assert_eq;
 use std::io::prelude::*;
 
@@ -75,50 +77,39 @@ Success; Completed: 3; Failed: 0; Durantion: 0.0000s"
 
 #[test]
 fn test_it_list_the_available_tasks_when_nothing_matches() {
-    setup::with_example(
-        setup::Options {
-            output_file: "test_it_list_the_available_tasks_when_nothing_matches.log",
-            example_file: "examples/tasks-with-tags-to-filter.yml",
-        },
-        |fzz_cmd, mut output_log| {
-            let mut child = fzz_cmd
-                .arg("--target")
-                .arg("@something_not_in_the_list")
-                .spawn()
-                .expect("failed to spawn child");
+    let mut cmd = Command::cargo_bin("fzz").expect("failed to get cargo bin");
+    cmd.env("FUNZZY_COLORED", "false")
+        .arg("-t")
+        .arg("unknown_task_name")
+        .arg("-c")
+        .arg("examples/tasks-with-tags-to-filter.yml")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "\u{1b}[31mError\u{1b}[0m: No target found for \'unknown_task_name\'
+Available tasks
+  - run my test @quick
+  - run my build
+  - run my lint @quick",
+        ));
+}
 
-            defer!({
-                child.kill().expect("failed to kill child");
-            });
+#[test]
+fn test_it_list_the_available_tasks_flag_is_empty() {
+    let mut cmd = Command::cargo_bin("fzz").expect("failed to get cargo bin");
+    cmd.env("FUNZZY_COLORED", "false")
+        .arg("-c")
+        .arg("examples/tasks-with-tags-to-filter.yml")
+        .arg("-t")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Funzzy: `--target` help
+Available tasks
+  - run my test @quick
+  - run my build
+  - run my lint @quick
 
-            let mut output = String::new();
-
-            wait_until!(
-                {
-                    output_log
-                        .read_to_string(&mut output)
-                        .expect("failed to read from file");
-
-                    output.contains("Finished there is no task to run")
-                },
-                "Funzzy failed to watch {}",
-                output
-            );
-
-            assert_eq!(
-                output,
-                "Funzzy: No target found for '@something_not_in_the_list'
-
-Available targets:
-  run my test @quick
-  run my build
-  run my lint @quick
-
-Finished there is no task to run.
-",
-                "failed to find the expected output: {}",
-                output
-            );
-        },
-    );
+Usage `fzz -t <text_contain_in_task>`",
+        ));
 }

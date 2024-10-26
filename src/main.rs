@@ -29,6 +29,7 @@ use std::io;
 use std::io::prelude::*;
 
 use docopt::Docopt;
+use docopt::Error;
 
 const SHA: Option<&str> = option_env!("GITSHA");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -50,8 +51,8 @@ Commands:
 
 Options:
   <command>               Run an arbitrary command for current folder.
-  -c --config=<cfgfile>   Use given config file.
-  -t --target=<task>      Execute only the given task target.
+  -c --config <cfgfile>   Use given config file.
+  -t --target <name>      Execute only the given task target (if empty list availables).
   -n --non-block          Execute tasks and cancel them if a new event is received.
   -b --fail-fast          Bail current execution if a task fails (exit code != 0).
   -h --help               Show this message.
@@ -60,9 +61,9 @@ Options:
 
 Environment configs:
 
-FUNZZY_NON_BLOCK: Boolean        Same as `--non-block`
-FUNZZY_BAIL: Boolean             Same as `--fail-fast`
-FUNZZY_COLORED: Boolean   Output results with colors.
+FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
+FUNZZY_BAIL: Boolean        Same as `--fail-fast`
+FUNZZY_COLORED: Boolean     Output with colors.
 ";
 
 #[allow(non_snake_case)]
@@ -76,7 +77,7 @@ pub struct Args {
 
     // options
     pub flag_config: String,
-    pub flag_target: String,
+    pub flag_target: Option<String>,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -88,14 +89,59 @@ pub struct Args {
 }
 
 fn main() {
-    let args: Args = Docopt::new(USAGE)
-        .and_then(|d| d.deserialize())
-        .unwrap_or_else(|e| e.exit());
+    let docopt = Docopt::new(USAGE);
+    let docopt_parser = match docopt {
+        Ok(args) => args,
+        Err(err) => {
+            panic!("Failed to parse arguments: {:?}", err);
+        }
+    };
+
+    let args: Args = match docopt_parser.deserialize() {
+        Ok(args) => args,
+        Err(err) => {
+            match err {
+                Error::WithProgramUsage(err, usage) => {
+                    match *err {
+                        Error::Help => show(&usage),
+                        Error::Version(_) => show(get_version().as_str()),
+                        Error::Argv(argverr) => {
+                            // NOTE: Docopt doesn't support a flag without a value even when
+                            // declaring a default value with [default: foobar].
+                            // In short, this adds a default value to the flag `--target` if it's empty.
+                            // So one can use `fzz -t` and it will list all available tasks.
+                            if !argverr.contains("flag '--target' but reached end of arguments") {
+                                error(&argverr, usage);
+                            }
+
+                            let argv_with_missing_target = std::env::args()
+                                .flat_map(|arg| {
+                                    if arg == "--target" || arg == "-t" {
+                                        vec![arg, "".to_string()]
+                                    } else {
+                                        vec![arg]
+                                    }
+                                })
+                                .collect::<Vec<String>>();
+
+                            let newargs: Args = Docopt::new(USAGE)
+                                .and_then(|d| d.argv(argv_with_missing_target).deserialize())
+                                .unwrap_or_else(|err| {
+                                    error("Failed to parse arguments", err.to_string())
+                                });
+
+                            newargs
+                        }
+                        _ => error(&usage, err.to_string()),
+                    }
+                }
+                err => error("Failed to parse arguments", err.to_string()),
+            }
+        }
+    };
 
     match args {
         Args { flag_v: true, .. } => show(get_version().as_str()),
-        Args { flag_h: true, .. } => show(USAGE),
-
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
@@ -144,35 +190,31 @@ fn main() {
                 error("Invalid config file.", err);
             }
 
-            if !args.flag_target.is_empty() {
-                let filtered = rules
-                    .iter()
-                    .cloned()
-                    .filter(|r| r.name.contains(&args.flag_target))
-                    .collect::<Vec<rules::Rules>>();
-
-                if filtered.is_empty() {
-                    let mut output = String::new();
-                    output.push_str(&format!("No target found for '{}'\n\n", args.flag_target));
-                    output.push_str("Available targets:\n");
-                    output.push_str(&format!(
-                        "  {}\n",
-                        rules
-                            .iter()
-                            .cloned()
-                            .map(|r| r.name)
-                            .collect::<Vec<String>>()
-                            .join("\n  ")
+            match args.flag_target {
+                Some(ref target) if target.trim().is_empty() => {
+                    stdout::info(&format!(
+                        "`--target` help\n{}",
+                        rules::available_targets(rules)
                     ));
-
-                    stdout::info(output.as_str());
-
-                    show("Finished there is no task to run.");
-                } else {
-                    execute_watch_command(Watches::new(filtered), args);
+                    show("Usage `fzz -t <text_contain_in_task>`");
                 }
-            } else {
-                execute_watch_command(Watches::new(rules), args);
+                Some(ref target) => {
+                    let filtered = rules
+                        .iter()
+                        .cloned()
+                        .filter(|r| r.name.contains(target))
+                        .collect::<Vec<rules::Rules>>();
+
+                    if filtered.is_empty() {
+                        error(
+                            &format!("No target found for '{}'", target),
+                            rules::available_targets(rules),
+                        );
+                    } else {
+                        execute_watch_command(Watches::new(filtered), args);
+                    }
+                }
+                _ => execute_watch_command(Watches::new(rules), args),
             }
         }
     };
