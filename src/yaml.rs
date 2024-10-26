@@ -220,7 +220,7 @@ fooobar:
             Err(err) => {
                 assert_eq!(
                     format!("{}", err),
-                        "Invalid property 'fooobar' in rule below
+                    "Invalid property 'fooobar' in rule below
 Expected a list (Array) but got: Hash
 ```yaml
 fooobar:

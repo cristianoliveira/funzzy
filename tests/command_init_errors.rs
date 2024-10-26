@@ -56,19 +56,21 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut cmd = Command::cargo_bin(BINARY_NAME)?;
 
-        cmd
-            .env("FUNZZY_COLORED", "false")
+        cmd.env("FUNZZY_COLORED", "false")
             .env("_TEST_FUNZZY_COLORED", "false")
-            .arg("init").assert().failure().stdout(
-            vec![
-                "Error: Command failed to execute",
-                "Failed to create the configuration file",
-                "Reason: Permission denied (os error 13)",
-                "Hint: Check if you have permission to write in the current folder",
-                "",
-            ]
-            .join("\n"),
-        );
+            .arg("init")
+            .assert()
+            .failure()
+            .stdout(
+                vec![
+                    "Error: Command failed to execute",
+                    "Failed to create the configuration file",
+                    "Reason: Permission denied (os error 13)",
+                    "Hint: Check if you have permission to write in the current folder",
+                    "",
+                ]
+                .join("\n"),
+            );
 
         Ok(())
     })

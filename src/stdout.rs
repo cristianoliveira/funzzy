@@ -121,20 +121,3 @@ pub fn clear_screen() -> () {
     // See https://archive.ph/d3Z3O
     print!("\n{}[2J", 27 as char);
 }
-
-pub fn _clean_color_codes(text: &str) -> String {
-    text
-        .lines()
-        .map(|line| {
-            // This line prints the time so is not deterministic
-            if line.contains("Funzzy: finished in") {
-                return "Funzzy: finished in 0.0s";
-            }
-
-            line
-        })
-        .filter(|line| !line.contains("@@@@"))
-        .collect::<Vec<&str>>()
-        .join("\n")
-        .to_string()
-}
