@@ -85,17 +85,17 @@ nix-build: ## Build the nix derivation with the nightly toolchain
 	@nix build .# --verbose -L
 
 .PHONY: nix-bump-default
-nix-bump-default: ##  Bump the version in nix default package and generate a new revision
+nix-bump-default: ## Bump the version in nix default package and generate a new revision
 	@echo "Bumping the version in nix default"
 	scripts/bump-nix-default
 
 .PHONY: nix-bump-nightly
-nix-bump-nightly: ##  Bump the version in nix nightly package and generate a new revision
+nix-bump-nightly: ## Bump the version in nix nightly package and generate a new revision
 	@echo "Bumping the version in nix packages"
 	scripts/bump-nix-nightly
 
 .PHONY: nix-bump-local
-nix-bump-local: ##  Bump the version in nix local package and generate a new revision
+nix-bump-local: ## Bump the version in nix local package and generate a new revision
 	@echo "Bumping the version in nix packages"
 	scripts/bump-nix-local
 
