@@ -21,7 +21,9 @@
   change: ["Cargo.*"]
 
 - name: run lint and formatter @quick
-  run: "cargo fmt -- --check {{filepath}}"
+  run: 
+    - cargo fmt -- --check {{filepath}}
+    - cargo fmt
   run_on_init: true
   change: 
     - "src/**"
