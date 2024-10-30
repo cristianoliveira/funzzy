@@ -9,15 +9,13 @@ echo "Checking nix builds"
 
 make ci-run-on-push
 
-## If Cargo.lock has changed, generate nix releases
-if git diff --exit-code Cargo.lock; then
-  echo "Cargo.lock has not changed"
-else
+## If Cargo.lock has changed, generate nix releases in the latest commit
+if git diff --name-only HEAD~1 HEAD | grep -q Cargo; then
   echo "Cargo.lock has changed"
   make nix-bump-local
   make nix-bump-nightly
 
-  echo "Please commit the changes"
+  echo "INFO: Nix update to the latest hash. Please commit the changes"
   exit 1
 fi
 
@@ -34,7 +32,7 @@ else
   echo "Cargo.toml version is different from git tag"
   make nix-bump-default
 
-  echo "Please commit the changes"
+  echo "INFO: Nix update to the latest hash. Please commit the changes"
   exit 1
 fi
 
