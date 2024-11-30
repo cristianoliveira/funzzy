@@ -63,7 +63,7 @@
     - "examples/*.yml"
   ignore: 
     - "examples/reload-config-example.yml"
-    - "examples/workdir/ignored/**"
+    - "examples/workdir/**"
     - "**/*.log"
   run_on_init: true
 
