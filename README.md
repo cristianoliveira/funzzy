@@ -79,8 +79,12 @@ Funzzy was built with Rust, which makes it blazingly fast and light.
 ### OSX:
 
 ```bash
-brew tap cristianoliveira/tap
-brew update
+brew install funzzy
+```
+
+[Latest release](https://github.com/cristianoliveira/funzzy/releases):
+```bash
+brew tap cristianoliveira/tap && brew update
 brew install funzzy
 ```
 
