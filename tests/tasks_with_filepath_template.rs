@@ -143,6 +143,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
 
             let dir = std::env::current_dir().expect("failed to get current dir");
             let expected = "Funzzy: Running on init commands.
+Funzzy warning: Unknown template variable 'foobar'.
 
 Funzzy: echo '' 
 
@@ -151,9 +152,18 @@ Funzzy: echo ''
 Funzzy: echo '' 
 
 
+
+Funzzy: echo 'this is also valid:  (nice!)' 
+
+this is also valid:  (nice!)
+
+Funzzy: echo 'this is invalid: {{ foobar }} (no!)' 
+
+this is invalid: {{ foobar }} (no!)
 Funzzy results ----------------------------
-Success; Completed: 2; Failed: 0; Durantion: 0.0000s
-[2J
+Success; Completed: 4; Failed: 0; Durantion: 0.0000s
+[2JFunzzy warning: Unknown template variable 'foobar'.
+
 Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' 
 
 $PWD/examples/workdir/trigger-watcher.txt
@@ -161,8 +171,16 @@ $PWD/examples/workdir/trigger-watcher.txt
 Funzzy: echo 'examples/workdir/trigger-watcher.txt' 
 
 examples/workdir/trigger-watcher.txt
+
+Funzzy: echo 'this is also valid: $PWD/examples/workdir/trigger-watcher.txt (nice!)' 
+
+this is also valid: $PWD/examples/workdir/trigger-watcher.txt (nice!)
+
+Funzzy: echo 'this is invalid: {{ foobar }} (no!)' 
+
+this is invalid: {{ foobar }} (no!)
 Funzzy results ----------------------------
-Success; Completed: 2; Failed: 0; Durantion: 0.0000s";
+Success; Completed: 4; Failed: 0; Durantion: 0.0000s";
 
             assert_eq!(
                 setup::clean_output(&output),

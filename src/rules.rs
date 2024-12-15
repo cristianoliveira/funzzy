@@ -192,13 +192,35 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
     commands
         .iter()
         .map(|c| {
-            c.replace("{{filepath}}", &filepath)
-                .replace("{{absolute_path}}", &filepath)
-        })
-        .map(|c| {
-            let relative_path = &filepath.replace(&format!("{}/", &opts.current_dir), "");
-            c.replace("{{relative_filepath}}", relative_path)
-                .replace("{{relative_path}}", relative_path)
+            if c.contains("{{") {
+                c.split("{{")
+                    .map(|part| {
+                        if part.contains("}}") {
+                            let parts: Vec<&str> = part.split("}}").collect();
+                            let tpl = parts[0].trim();
+                            let rest = parts[1];
+
+                            match tpl {
+                                "filepath" | "absolute_path" => format!("{}{}", &filepath, rest),
+                                "relative_filepath" | "relative_path" => {
+                                    let relative_path =
+                                        &filepath.replace(&format!("{}/", &opts.current_dir), "");
+                                    format!("{}{}", relative_path, rest)
+                                }
+                                _ => {
+                                    stdout::warn(&format!("Unknown template variable '{}'.", tpl));
+                                    format!("{}{}{}{}", "{{", parts[0], "}}", parts[1])
+                                }
+                            }
+                        } else {
+                            part.to_owned()
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join("")
+            } else {
+                c.to_owned()
+            }
         })
         .collect()
 }

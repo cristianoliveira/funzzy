@@ -21,6 +21,8 @@
   run:
     - "echo '{{filepath}}'"
     - "echo '{{relative_filepath}}'"
+    - "echo 'this is also valid: {{ filepath }} (nice!)'"
+    - "echo 'this is invalid: {{ foobar }} (no!)'"
   change: "examples/workdir/**/*"
   ignore: 
     - "examples/workdir/ignored/**/*.txt"
