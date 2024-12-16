@@ -32,6 +32,8 @@ fn it_terminates_the_current_running_watcher_when_config_changes() {
                 "The config file change was not triggered {}",
                 output
             );
+
+            assert!(!output.contains("Funzzy warning: unknown file/directory"));
         },
     );
 }
