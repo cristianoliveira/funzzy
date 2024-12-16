@@ -225,7 +225,7 @@ fn main() {
 }
 
 pub fn execute_watch_command(watches: Watches, args: Args) {
-    let config_file_paths = if args.flag_config.is_empty() {
+    let possible_config_paths = if args.flag_config.is_empty() {
         let dir = std::env::current_dir().expect("Failed to get current directory");
         vec![
             dir.join(cli::watch::DEFAULT_FILENAME)
@@ -240,6 +240,11 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     } else {
         vec![format!("{}", &args.flag_config)]
     };
+
+    let config_file_paths = possible_config_paths
+        .into_iter()
+        .filter(|path| std::path::Path::new(path).exists())
+        .collect::<Vec<String>>();
 
     // This here restarts the watcher if the config file changes
     let watcher_pid = std::process::id();
