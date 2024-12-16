@@ -1,6 +1,6 @@
 # funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![Building package with nix](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-A lightweight watcher inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr). See also: [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
+A lightweight blazingly fast file watcher inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr). See also: [funzzy.nvim](https://github.com/cristianoliveira/funzzy.nvim)
 
 Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
