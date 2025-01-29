@@ -30,11 +30,11 @@ Or more complex workflows like:
     - "/tmp/starwars.txt"
     - ".watch.yaml"
 
-# Command templates for custom scripts
+# Command path templates for custom scripts
 - name: run test & linter for a single file
   run: 
    - "npm run lint -- {{relative_path}}",
-   - "npm test -- $(echo '{{filepath}}' | sed -r s/.(j|t)sx?//)"
+   - "npm test -- $(echo '{{absolute_path}}' | sed -r s/.(j|t)sx?//)"
   change: ["src/**", "libs/**"]
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 
