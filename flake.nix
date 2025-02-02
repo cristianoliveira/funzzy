@@ -10,7 +10,7 @@
     utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        srcpkgs = import ./packages.nix { inherit pkgs; };
+        srcpkgs = import ./default.nix { inherit pkgs; };
       in {
         packages = srcpkgs;
 
