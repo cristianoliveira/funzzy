@@ -234,8 +234,7 @@ fn it_replaces_placeholder_for_multiline_commands() {
                         .expect("failed to read from file");
 
                     result = output.match_indices("Funzzy results").count();
-                    output.contains("bar examples/workdir/trigger-watcher.txt")
-                        && result == 1
+                    output.contains("bar examples/workdir/trigger-watcher.txt") && result == 1
                 },
                 "output: {}\n\n\n Reason: didn't find Funzzy results {}",
                 output,
