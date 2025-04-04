@@ -189,3 +189,80 @@ Success; Completed: 4; Failed: 0; Durantion: 0.0000s";
         },
     );
 }
+
+#[test]
+fn it_replaces_placeholder_for_multiline_commands() {
+    setup::with_example(
+        setup::Options {
+            output_file: "it_replaces_placeholder_for_multiline_commands.log",
+            example_file: "examples/tasks-with-filepath-template.yml",
+        },
+        |fzz_cmd, mut output_log| {
+            let mut child = fzz_cmd
+                .arg("-t")
+                .arg("@multiline")
+                .spawn()
+                .expect("failed to spawn child");
+
+            defer!({
+                child.kill().expect("failed to kill child");
+            });
+
+            let mut output = String::new();
+
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    output.contains("Funzzy: Watching...")
+                },
+                "{}\n\n\n Reason: Funzzy has not been started",
+                output
+            );
+
+            std::thread::sleep(std::time::Duration::from_millis(800));
+
+            write_to_file!("examples/workdir/trigger-watcher.txt");
+
+            let mut result = 0;
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    result = output.match_indices("Funzzy results").count();
+                    output.contains("bar examples/workdir/trigger-watcher.txt")
+                        && result == 1
+                },
+                "output: {}\n\n\n Reason: didn't find Funzzy results {}",
+                output,
+                result
+            );
+
+            let dir = std::env::current_dir().expect("failed to get current dir");
+            let expected = "Funzzy: Watching...
+
+[2J
+Funzzy: echo 'this multiline'
+echo 'bar examples/workdir/trigger-watcher.txt'
+echo 'foo $PWD/examples/workdir/trigger-watcher.txt'
+echo 'finished'
+ 
+
+this multiline
+bar examples/workdir/trigger-watcher.txt
+foo $PWD/examples/workdir/trigger-watcher.txt
+finished
+Funzzy results ----------------------------
+Success; Completed: 1; Failed: 0; Durantion: 0.0000s";
+
+            assert_eq!(
+                setup::clean_output(&output),
+                expected.replace("$PWD", &dir.to_string_lossy())
+            )
+        },
+    );
+}

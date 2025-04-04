@@ -1,30 +1,41 @@
-- name: replaces {{filepath}} with changed file path @absolute
-  run:
-    - "echo 'this file has changed: {{filepath}}'"
-    - "cat '{{filepath}}' || echo 'nothing to run'"
+# - name: replaces {{filepath}} with changed file path @absolute
+#   run:
+#     - "echo 'this file has changed: {{filepath}}'"
+#     - "cat '{{filepath}}' || echo 'nothing to run'"
+#   change: "examples/workdir/**/*"
+#   ignore: 
+#     - "examples/workdir/ignored/**/*.txt"
+#     - "examples/workdir/another_ignored_file.foo"
+#   run_on_init: true
+#
+# - name: more advanced usage of {{filepath}} @absolute
+#   run:
+#     - "echo '{{filepath}}' | sed -r s/trigger/foobar/"
+#   change: "examples/workdir/**/*"
+#   ignore: 
+#     - "examples/workdir/ignored/**/*.txt"
+#     - "examples/workdir/another_ignored_file.foo"
+#   run_on_init: true
+#
+# - name: replaces {{relative_filepath}} with path relative to current dir @relative
+#   run:
+#     - "echo '{{filepath}}'"
+#     - "echo '{{relative_filepath}}'"
+#     - "echo 'this is also valid: {{ filepath }} (nice!)'"
+#     - "echo 'this is invalid: {{ foobar }} (no!)'"
+#   change: "examples/workdir/**/*"
+#   ignore: 
+#     - "examples/workdir/ignored/**/*.txt"
+#     - "examples/workdir/another_ignored_file.foo"
+#   run_on_init: true
+#
+- name: allows {{relative_path}} with @multiline
+  run: |
+    echo 'this multiline'
+    echo 'bar {{relative_path}}'
+    echo 'foo {{filepath}}'
+    echo 'finished'
   change: "examples/workdir/**/*"
   ignore: 
     - "examples/workdir/ignored/**/*.txt"
     - "examples/workdir/another_ignored_file.foo"
-  run_on_init: true
-
-- name: more advanced usage of {{filepath}} @absolute
-  run:
-    - "echo '{{filepath}}' | sed -r s/trigger/foobar/"
-  change: "examples/workdir/**/*"
-  ignore: 
-    - "examples/workdir/ignored/**/*.txt"
-    - "examples/workdir/another_ignored_file.foo"
-  run_on_init: true
-
-- name: replaces {{relative_filepath}} with path relative to current dir @relative
-  run:
-    - "echo '{{filepath}}'"
-    - "echo '{{relative_filepath}}'"
-    - "echo 'this is also valid: {{ filepath }} (nice!)'"
-    - "echo 'this is invalid: {{ foobar }} (no!)'"
-  change: "examples/workdir/**/*"
-  ignore: 
-    - "examples/workdir/ignored/**/*.txt"
-    - "examples/workdir/another_ignored_file.foo"
-  run_on_init: true
