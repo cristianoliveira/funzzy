@@ -60,6 +60,7 @@ Want more examples?
 
  - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
  - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
+ - [Documentation](https://github.com/cristianoliveira/funzzy/tree/master/docs)
 
 ### Enhance your workflows
 
