@@ -35,21 +35,21 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
   run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
   change: "examples/workdir/trigger-watcher.txt"
 
+# Explanation of the fields
+#
+# name: A description of the task.
 - name: task with ignoring rules
+# run: Commands to execute.
   run: "echo 'should not trigger when modifying ignored files'"
+# change: Files or directories to watch for changes.
   change: "examples/workdir/**/*"
+# ignore: Patterns to exclude from triggering the task.
   ignore:
     - "examples/workdir/ignored/**/*.txt"
     - "examples/workdir/another_ignored_file.foo"
+# run_on_init: Boolean to indicate tasks that should execute when the watcher starts.
+  run_on_init: false
 ```
-
-### Key Properties:
-- `name`: A description of the task.
-- `run`: Commands to execute.
-- `change`: Files or directories to watch for changes.
-- `ignore`: Patterns to exclude from triggering the task.
-- `run_on_init`: Boolean to indicate tasks that should execute when the watcher starts.
-
 ---
 
 ## Flags and Options
