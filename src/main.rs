@@ -55,6 +55,7 @@ Options:
   -t --target <name>      Execute only the given task target (if empty list availables).
   -n --non-block          Execute tasks and cancel them if a new event is received.
   -b --fail-fast          Bail current execution if a task fails (exit code != 0).
+  --no-run-on-init        Do not run tasks on initialization.
   -h --help               Show this message.
   -v --version            Show version.
   -V                      Use verbose output.
@@ -85,6 +86,7 @@ pub struct Args {
     pub flag_V: bool,
 
     pub flag_non_block: bool,
+    pub flag_no_run_on_init: bool,
     pub flag_no_run_on_init: bool,
     pub flag_fail_fast: bool,
 }
