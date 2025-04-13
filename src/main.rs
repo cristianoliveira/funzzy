@@ -85,6 +85,7 @@ pub struct Args {
     pub flag_V: bool,
 
     pub flag_non_block: bool,
+    pub flag_no_run_on_init: bool,
     pub flag_fail_fast: bool,
 }
 
@@ -274,10 +275,11 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     let verbose = args.flag_V;
     let fail_fast = args.flag_fail_fast || environment::is_enabled("FUNZZY_BAIL");
     let fail_fast_env = args.flag_non_block || environment::is_enabled("FUNZZY_NON_BLOCK");
+    let run_on_init = !args.flag_no_run_on_init;
     if fail_fast_env {
-        execute(WatchNonBlockCommand::new(watches, verbose, fail_fast))
+        execute(WatchNonBlockCommand::new(watches, verbose, fail_fast, run_on_init))
     } else {
-        execute(WatchCommand::new(watches, verbose, fail_fast))
+        execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");

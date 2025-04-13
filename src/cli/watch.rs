@@ -17,18 +17,21 @@ pub struct WatchCommand {
     watches: Watches,
     verbose: bool,
     fail_fast: bool,
+    run_on_init: bool,
 }
 
 impl WatchCommand {
-    pub fn new(watches: Watches, verbose: bool, fail_fast: bool) -> Self {
+    pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
         stdout::verbose(&format!("watches {:?}", watches), verbose);
 
         WatchCommand {
             watches,
             verbose,
             fail_fast,
+            run_on_init,
         }
     }
+
 }
 
 impl Command for WatchCommand {
@@ -37,32 +40,34 @@ impl Command for WatchCommand {
 
         let current_dir = std::env::current_dir().unwrap();
 
-        if let Some(rules) = self.watches.run_on_init() {
-            let time_execution_started = std::time::Instant::now();
+        if self.run_on_init {
+            if let Some(rules) = self.watches.run_on_init() {
+                let time_execution_started = std::time::Instant::now();
 
-            stdout::info("Running on init commands.");
+                stdout::info("Running on init commands.");
 
-            let tasks = rules::template(
-                rules::commands(rules),
-                rules::TemplateOptions {
-                    filepath: None,
-                    current_dir: format!("{}", current_dir.display()),
-                },
-            );
-            let mut results: Vec<Result<(), String>> = vec![];
-            for task in tasks {
-                let result = cmd::execute(&task);
+                let tasks = rules::template(
+                    rules::commands(rules),
+                    rules::TemplateOptions {
+                        filepath: None,
+                        current_dir: format!("{}", current_dir.display()),
+                    },
+                );
+                let mut results: Vec<Result<(), String>> = vec![];
+                for task in tasks {
+                    let result = cmd::execute(&task);
 
-                if self.fail_fast && result.is_err() {
+                    if self.fail_fast && result.is_err() {
+                        results.push(result);
+                        break;
+                    }
+
                     results.push(result);
-                    break;
                 }
 
-                results.push(result);
+                let time_elapsed = time_execution_started.elapsed();
+                stdout::present_results(results, time_elapsed);
             }
-
-            let time_elapsed = time_execution_started.elapsed();
-            stdout::present_results(results, time_elapsed);
         } else {
             stdout::info("Watching...");
         }
