@@ -87,7 +87,6 @@ pub struct Args {
 
     pub flag_non_block: bool,
     pub flag_no_run_on_init: bool,
-    pub flag_no_run_on_init: bool,
     pub flag_fail_fast: bool,
 }
 
