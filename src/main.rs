@@ -278,7 +278,12 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     let fail_fast_env = args.flag_non_block || environment::is_enabled("FUNZZY_NON_BLOCK");
     let run_on_init = !args.flag_no_run_on_init;
     if fail_fast_env {
-        execute(WatchNonBlockCommand::new(watches, verbose, fail_fast, run_on_init))
+        execute(WatchNonBlockCommand::new(
+            watches,
+            verbose,
+            fail_fast,
+            run_on_init,
+        ))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))
     }

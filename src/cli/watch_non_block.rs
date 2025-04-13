@@ -31,7 +31,6 @@ impl WatchNonBlockCommand {
             run_on_init,
         }
     }
-
 }
 
 impl Command for WatchNonBlockCommand {

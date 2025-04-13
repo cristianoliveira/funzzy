@@ -91,7 +91,8 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                 |fzz_cmd, mut output_log| {
                     let mut child = fzz_cmd
                         .arg("--no-run-on-init")
-                        .spawn().expect("failed to spawn child");
+                        .spawn()
+                        .expect("failed to spawn child");
 
                     defer!({
                         child.kill().expect("failed to kill child");
@@ -105,8 +106,8 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                                 .read_to_string(&mut output)
                                 .expect("failed to read from file");
 
-                            !output.contains("Funzzy: Running on init commands.") &&
-                            output.contains("Funzzy: Watching...")
+                            !output.contains("Funzzy: Running on init commands.")
+                                && output.contains("Funzzy: Watching...")
                         },
                         "No task in the example was configured with run_on_init {}",
                         output

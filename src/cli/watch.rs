@@ -31,7 +31,6 @@ impl WatchCommand {
             run_on_init,
         }
     }
-
 }
 
 impl Command for WatchCommand {
