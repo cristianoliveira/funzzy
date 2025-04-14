@@ -19,7 +19,8 @@ fn test_it_executes_tasks_on_init_when_configured() {
                 |fzz_cmd, mut output_log| {
                     let mut child = fzz_cmd
                         .env("_TEST_FUNZZY_COLORED", "1")
-                        .spawn().expect("failed to spawn child");
+                        .spawn()
+                        .expect("failed to spawn child");
 
                     defer!({
                         child.kill().expect("failed to kill child");
