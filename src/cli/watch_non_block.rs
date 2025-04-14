@@ -17,16 +17,18 @@ pub struct WatchNonBlockCommand {
     watches: Watches,
     verbose: bool,
     fail_fast: bool,
+    run_on_init: bool,
 }
 
 impl WatchNonBlockCommand {
-    pub fn new(watches: Watches, verbose: bool, fail_fast: bool) -> Self {
+    pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
         stdout::verbose(&format!("watches {:?}", watches), verbose);
 
         WatchNonBlockCommand {
             watches,
             verbose,
             fail_fast,
+            run_on_init,
         }
     }
 }
@@ -45,9 +47,13 @@ impl Command for WatchNonBlockCommand {
         });
 
         if let Some(rules) = self.watches.run_on_init() {
-            stdout::info("Running on init commands.");
-            if let Err(err) = worker.schedule(rules, "") {
-                stdout::error(&format!("failed to initiate next run: {:?}", err));
+            if self.run_on_init {
+                stdout::info("Running on init commands.");
+                if let Err(err) = worker.schedule(rules, "") {
+                    stdout::error(&format!("failed to initiate next run: {:?}", err));
+                }
+            } else {
+                stdout::info("Watching...");
             }
         } else {
             stdout::info("Watching...");

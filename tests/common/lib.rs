@@ -100,6 +100,7 @@ where
     handler(
         Command::new(bin_path)
             .arg("-c")
+            .env("_TEST_FUNZZY_COLORED", "0")
             .arg(dir.join(opts.example_file))
             .stdout(Stdio::from(output_file)),
         File::open(dir.join(opts.output_file)).expect("failed to open file"),
