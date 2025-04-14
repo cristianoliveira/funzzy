@@ -28,7 +28,6 @@ When running `fzz` without the `--no-run-on-init` flag, the output will be:
 
 ```bash
 $ fzz
-should run on init
 Funzzy: Running on init commands.
 // run tasks...
 
