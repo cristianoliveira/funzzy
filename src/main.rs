@@ -286,7 +286,7 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
             run_on_init,
         ))
     } else {
-        execute(WatchCommand::new(watches, verbose, fail_fast))
+        execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");
