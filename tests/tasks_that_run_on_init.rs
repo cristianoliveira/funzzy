@@ -85,7 +85,8 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
         || {
             setup::with_example(
                 setup::Options {
-                    output_file: "test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag.log",
+                    output_file:
+                        "test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag.log",
                     example_file: "examples/list-of-tasks-run-on-init.yml",
                 },
                 |fzz_cmd, mut output_log| {
