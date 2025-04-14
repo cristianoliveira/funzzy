@@ -85,7 +85,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
         || {
             setup::with_example(
                 setup::Options {
-                    output_file: "test_it_executes_tasks_on_init_when_configured.log",
+                    output_file: "test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag.log",
                     example_file: "examples/list-of-tasks-run-on-init.yml",
                 },
                 |fzz_cmd, mut output_log| {
@@ -106,32 +106,15 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                                 .read_to_string(&mut output)
                                 .expect("failed to read from file");
 
-                            !output.contains("Funzzy: Running on init commands.")
-                                && output.contains("Funzzy: Watching...")
+                            !output.contains("Running on init commands")
+                                && output.contains("Watching...")
                         },
                         "No task in the example was configured with run_on_init {}",
                         output
                     );
 
-                    assert_eq!(
-                        setup::clean_output(&output),
-                        "\u{1b}[34mFunzzy\u{1b}[0m: Watching...
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo 'running on init first' 
-
-running on init first
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"run on init sencod\" 
-
-run on init sencod
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"only run on init\" 
-
-only run on init
-Funzzy results ----------------------------
-\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Durantion: 0.0000s"
-                    );
-
+                    // FIXME: this should not be needed sleep 5s
+                    std::thread::sleep(std::time::Duration::from_secs(5));
                     write_to_file!("examples/workdir/trigger-watcher.txt");
 
                     wait_until!(
@@ -144,6 +127,26 @@ Funzzy results ----------------------------
                         },
                         "OUTPUT: {}",
                         output
+                    );
+
+                    assert_eq!(
+                        setup::clean_output(&output),
+                        "\u{1b}[34mFunzzy\u{1b}[0m: Watching...
+
+[2J
+\u{1b}[34mFunzzy\u{1b}[0m: echo 'running on init first' 
+
+running on init first
+
+\u{1b}[34mFunzzy\u{1b}[0m: echo \"should not run on init but on change\" 
+
+should not run on init but on change
+
+\u{1b}[34mFunzzy\u{1b}[0m: echo \"run on init sencod\" 
+
+run on init sencod
+Funzzy results ----------------------------
+\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Durantion: 0.0000s"
                     );
                 },
             );
