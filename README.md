@@ -188,7 +188,7 @@ depend on all task to be successful. [See its usage in our workflow](https://git
 fzz --fail-fast # or fzz -b (bail)
 ```
 
-Filtering tasks by target. 
+Filtering tasks by target. (**EXPERIMENTAL**)
 
 ```bash
 fzz -t "@quick"
