@@ -56,11 +56,11 @@ Or more complex workflows like:
   ignore: "**/*.log"
 ```
 
-Want more examples? 
+See more:
 
+ - [Documentation](/docs/USAGE.md)
  - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
  - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
- - [Documentation](https://github.com/cristianoliveira/funzzy/tree/master/docs)
 
 ### Enhance your workflows
 

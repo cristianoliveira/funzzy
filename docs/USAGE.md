@@ -36,18 +36,18 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
   change: "examples/workdir/trigger-watcher.txt"
 
 # Explanation of the fields
-#
-# name: A description of the task.
+# ----
+# A description of the task 
 - name: task with ignoring rules
-# run: Commands to execute.
+# Commands to execute when the task is triggered.
   run: "echo 'should not trigger when modifying ignored files'"
-# change: Files or directories to watch for changes.
+# One or more files or directories to watch for changes. Use glob patterns.
   change: "examples/workdir/**/*"
-# ignore: Patterns to exclude from triggering the task.
+# One or more patterns to exclude from triggering the task. Use glob patterns.
   ignore:
     - "examples/workdir/ignored/**/*.txt"
     - "examples/workdir/another_ignored_file.foo"
-# run_on_init: Boolean to indicate tasks that should execute when the watcher starts.
+# Indicate tasks that should execute when the watcher starts.
   run_on_init: false
 ```
 ---
@@ -75,6 +75,8 @@ fzz --fail-fast
 ```
 **Suggestion**: This is useful for long-running tasks where you want to stop all tasks if one fails. Like e2e tests.
 
+[More details](/docs/FLAG_FAIL_FAST.md)
+
 ---
 
 ### `-t` or `--target`
@@ -88,6 +90,7 @@ fzz -t "@quick"
 
 **Suggestion**: This is useful for running specific tasks without executing the entire workflow.
 
+[More details](/docs/FLAG_TARGET.md)
 ---
 
 ### `-n` or `--non-block`
@@ -100,6 +103,7 @@ fzz --non-block
 **Suggestion**: This is useful for tasks that take a long time to complete and many, allowing you to cancel them when new changes are detected.
 The standard behavior is to wait for the current registered tasks to finish before starting new ones.
 
+[More details](/docs/FLAG_NON_BLOCK.md)
 ---
 
 ### `-V` or `--verbose`
