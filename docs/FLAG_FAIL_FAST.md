@@ -1,5 +1,7 @@
 ## FLAG: `--fail-fast`
 
+**Minimal version**: 1.4.0
+
 The default behavior is to continue executing all tasks, regardless of their success or failure and report.
 
 The `--fail-fast` flag allows you to stop the execution of tasks as soon as one fails. If any task exits with a non-zero status code, all subsequent tasks will be halted immediately. This option is useful when you want to avoid unnecessary task processing if a critical task fails. TIP: Use this to do the red-green-refactor 

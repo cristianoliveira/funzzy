@@ -1,5 +1,7 @@
 ## FLAG: `--non-block`
 
+**Minimal version**: 1.5.0
+
 The `--non-block` flag provides real-time responsiveness by ensuring that tasks are restarted immediately when a file change is detected. This feature prevents blocking or waiting for a current task to complete by sending a SIGTERM to the running process.
 
 ## USAGE
