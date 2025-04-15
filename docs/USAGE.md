@@ -91,6 +91,7 @@ fzz -t "@quick"
 **Suggestion**: This is useful for running specific tasks without executing the entire workflow.
 
 [More details](/docs/FLAG_TARGET.md)
+
 ---
 
 ### `-n` or `--non-block`
@@ -104,6 +105,7 @@ fzz --non-block
 The standard behavior is to wait for the current registered tasks to finish before starting new ones.
 
 [More details](/docs/FLAG_NON_BLOCK.md)
+
 ---
 
 ### `-V` or `--verbose`
