@@ -24,34 +24,71 @@ Running with default settings:
 
 ```bash
 $ fzz
-Funzzy: Watching for changes...
-// Change occurs and lets current task finish before restarting
+Funzzy: Running on init commands.
 
 Funzzy: make all
+
+# (Changes detected)
 ```
+The `make all` command will run and complete before restart.
 
 ### Example with the `--non-block` flag:
+
+To illustrate the effect of `--non-block` let's use a `longtask.sh` script that simply counts from 0 to 5, with a 1 second delay between each number:
+
+```bash
+#!/bin/bash
+TASK_NAME=$1
+ITERATIONS=5
+
+echo "Started task $TASK_NAME"
+i=0
+while [ $i -lt $ITERATIONS ]; do
+  echo "Long task running... $i"
+  sleep 1
+  i=$((i + 1))
+done
+echo "Finished task $TASK_NAME"
+```
+
+And here is a `task-with-long-running-commands.yaml`:
+```yaml
+  - name: long task 2
+    run: bash examples/longtask.sh long 2
+    change: examples/workdir/trigger-watcher.txt
+
+  - name: long task 1
+    run: bash examples/longtask.sh long 1
+    change: examples/workdir/trigger-watcher.txt
+```
 
 Including the `--non-block` flag gives immediate responsiveness:
 
 ```bash
-$ fzz --non-block
-Funzzy: Watching for changes...
-// Change detected and tasks restart immediately, canceling the current process if any
+$ fzz --config examples/tasks-with-long-running-commands.yaml --non-block
+Funzzy: Running on init commands.
 
-Funzzy: make all
+Funzzy: bash examples/longtask.sh long 2
+
+Started task long 2
+Long task running... 0
+Long task running... 1
+Long task running... 2
+Long task running... 3 
+(change detected)
+^C # Simulate a file change by pressing Ctrl+C
+
+Funzzy: bash examples/longtask.sh long 1
+
+Started task long 1
+Long task running... 0
+Long task running... 1
+Long task running... 2
+Long task running... 3
+Long task running... 4
+Long task running... 5
+Finished task long 1
 ```
-
-### Environment Configuration
-
-Alternatively, you can set the environment variable for similar behavior:
-
-```bash
-export FUNZZY_NON_BLOCK=true
-$ fzz
-```
-
-By setting up the environment variable, `FUNZZY_NON_BLOCK`, you enable the non-blocking behavior without adding the flag to each command execution.
 
 ### Tests
 
