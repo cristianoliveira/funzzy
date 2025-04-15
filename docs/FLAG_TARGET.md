@@ -1,5 +1,7 @@
 ## FLAG: `--target <text_to_search>` **EXPERIMENTAL**
 
+**Minimal version**: 1.4.0
+
 The `--target` flag allows you to execute specific tasks based on their names or @tags containing the specified `<text_to_search>`. By providing this flag, you can filter the tasks to be run, ensuring only those matching the target criteria are executed.
 
 ## USAGE

@@ -1,5 +1,7 @@
 ## FLAG: `--no-run-on-init` 
 
+**Minimal version**: nightly
+
 Tasks configured with `run_on_init: true` are executed when the watcher starts. By default, this behavior is enabled.
 By using the `--no-run-on-init` flag, you can disable this behavior and prevent tasks from running on initialization.
 The remaining triggers will still work as expected. It does not filter the tasks.
