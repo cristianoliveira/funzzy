@@ -31,6 +31,7 @@ use std::io::prelude::*;
 use docopt::Docopt;
 use docopt::Error;
 
+// remove this sha AI!
 const SHA: Option<&str> = option_env!("GITSHA");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const USAGE: &str = "
