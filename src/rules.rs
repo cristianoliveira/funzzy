@@ -1,6 +1,8 @@
 extern crate glob;
 extern crate yaml_rust;
 
+use ignore::gitignore::Gitignore;
+
 use crate::cli;
 use crate::errors;
 use crate::yaml;
@@ -55,6 +57,22 @@ impl Rules {
 
     pub fn ignore(&self, path: &str) -> bool {
         self.ignore_patterns.iter().any(|watch| {
+            // FIXME this is clearly slow and can be optimized
+            if watch.starts_with("{{gitignore:") {
+                let gitignore_path = watch.replace("{{gitignore:", "").replace("}}", "");
+                let gitignore = gitignore_path.replace("{{", "");
+                let (gitignore, err) = Gitignore::new(gitignore);
+                if let Some(e) = err {
+                    stdout::error(&format!(
+                        "Failed to load gitignore file: {}. Error: {}",
+                        gitignore_path, e
+                    ));
+                    return false;
+                }
+
+                return gitignore.matched(path, false).is_ignore();
+            }
+
             pattern(&format!("/{}", watch)).matches(path)
                 || watch.starts_with("/") && pattern(watch).matches(path)
         })

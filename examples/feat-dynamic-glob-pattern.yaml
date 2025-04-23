@@ -11,3 +11,19 @@
     - "examples/workdir/*.txt"
   ignore: 
     - "{{file:./examples/workdir/.ignored}}"
+
+## FEATURE: Gitignore dynamic glob pattern
+#
+# To ignore files from a given `.gitignore` file, you can use the dynamic syntax.
+#
+# Sintax: {{gitignore:<pathtofile>}}
+#
+# Example:
+- name: run my test @quick
+  run: 
+    - "echo 'quick tests'"
+    - "echo 'another quick task'"
+  change: 
+    - "examples/workdir/**/*.txt"
+  ignore: 
+    - "{{gitignore:./examples/workdir/.gitignore}}"

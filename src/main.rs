@@ -17,6 +17,7 @@ mod yaml;
 
 use cli::*;
 use errors::FzzError;
+use ignore::gitignore::Gitignore;
 use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
