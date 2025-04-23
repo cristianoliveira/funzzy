@@ -1,0 +1,13 @@
+## FEATURE: Dynamic glob pattern
+# Documentation: docs/FEATURE_DYNAMIC_GLOB.md
+#
+# This example shows how to use dynamic glob patterns in the fzz config.
+# When using the {{
+- name: run my test @quick
+  run: 
+    - "echo 'quick tests'"
+    - "echo 'another quick task'"
+  change: 
+    - "examples/workdir/*.txt"
+  ignore: 
+    - "{{file:./examples/workdir/.ignored}}"

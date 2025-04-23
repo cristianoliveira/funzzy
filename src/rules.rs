@@ -153,12 +153,80 @@ impl Rules {
     }
 }
 
+pub fn load_list_from_dynamic_pattern(dynamic_pattern: Vec<String>) -> Option<Vec<String>> {
+    dynamic_pattern
+        .iter()
+        .filter(|s| s.contains("{{file:")) // Check if the pattern {{file:/filepath/path}} is present
+        .cloned()
+        .collect::<Vec<String>>()
+        .into_iter()
+        .map(|dynamic_pattern| load_list_from_file(dynamic_pattern))
+        .filter(|s| s.is_some())
+        .map(|s| s.unwrap())
+        .next()
+}
+
+pub fn load_list_from_file(dynamic_pattern: String) -> Option<Vec<String>> {
+    if dynamic_pattern.is_empty() {
+        return None;
+    }
+    // Check if the pattern {{file:/filepath/path}} is present
+    if !dynamic_pattern.contains("{{file:") {
+        return None;
+    }
+
+    let filepath = dynamic_pattern
+        .replace("{{file:", "")
+        .replace("}}", "")
+        .replace("{{", "");
+
+    let mut content = String::new();
+    match File::open(filepath.clone()) {
+        Ok(mut file) => {
+            if let Err(err) = file.read_to_string(&mut content) {
+                stdout::error(&format!(
+                    "Couldn't read configuration file: '{}'. Reason: {}",
+                    filepath, err
+                ));
+                return None;
+            }
+
+            Some(
+                content
+                    .lines()
+                    .map(|s| s.to_owned())
+                    .filter(|s| !s.is_empty())
+                    .filter(|s| !s.starts_with("{{file:"))
+                    .collect(),
+            )
+        }
+        Err(err) => {
+            stdout::error(&format!(
+                "Couldn't open configuration file: '{}'. Reason: {}",
+                filepath, err
+            ));
+
+            return None;
+        }
+    }
+}
+
 pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns = yaml::extract_list(yaml, "change").unwrap_or_default();
-    let ignore_patterns = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+    let mut ignore_patterns = yaml::extract_list(yaml, "ignore").unwrap_or_default();
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+
+    if let Some(dynamic_ignore_patterns) = load_list_from_dynamic_pattern(ignore_patterns.clone()) {
+        ignore_patterns.extend(dynamic_ignore_patterns);
+        ignore_patterns = ignore_patterns
+            .iter()
+            .filter(|s| !s.is_empty())
+            .filter(|s| !s.starts_with("{{file:"))
+            .cloned()
+            .collect::<Vec<String>>();
+    }
 
     Ok(Rules {
         name,
@@ -647,6 +715,27 @@ mod tests {
 
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
+    }
+
+    #[test]
+    fn it_loads_() {
+        // FIXME: this isn't much of a unit test
+        // Check the file examples/workdir/.ignored for this
+        let file_content = "
+        - name: my test
+          run: 'cargo tests'
+          change: 'examples/**'
+          ignore: '{{file:examples/workdir/.ignored}}'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = rule_from(&content[0][0]).unwrap();
+
+        println!("@@@@@@@@@ rule.ignores {:?}", rule.ignore_patterns);
+        let result = rule.commands();
+        assert_eq!(vec!["cargo tests"], result);
+        assert_eq!(rule.ignore_patterns.len(), 2); // See the file
+        assert!(rule.ignore("examples/workdir/ignored/test.rs"));
     }
 
     fn get_absolute_path(path: &str) -> String {
