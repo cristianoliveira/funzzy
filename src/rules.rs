@@ -731,11 +731,15 @@ mod tests {
         let content = YamlLoader::load_from_str(file_content).unwrap();
         let rule = rule_from(&content[0][0]).unwrap();
 
-        println!("@@@@@@@@@ rule.ignores {:?}", rule.ignore_patterns);
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
         assert_eq!(rule.ignore_patterns.len(), 2); // See the file
         assert!(rule.ignore("examples/workdir/ignored/test.rs"));
+        assert!(rule.ignore("examples/workdir/ignored/test2.txt"));
+        assert!(
+            rule.ignore("examples/workdir/test.foo"),
+            "examples/workdir/test.foo must be ignored"
+        );
     }
 
     fn get_absolute_path(path: &str) -> String {
