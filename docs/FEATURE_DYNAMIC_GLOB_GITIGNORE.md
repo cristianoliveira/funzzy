@@ -1,5 +1,12 @@
 # FEATURE: Dynamic glob pattern from gitignore
 
+---
+
+minimal-version: nightly
+experimental: true
+
+---
+
 This feature allows one to define a dynamic glob pattern in the `ignore: {{git}}` for a task and it will load the content of `.gitignore` file and use it as a list of glob patterns to ignore. The pattern applied will be a git like ignore.
 
  - By default it will ignore the `.git/` directory.
