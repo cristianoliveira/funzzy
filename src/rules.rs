@@ -60,7 +60,7 @@ impl Rules {
             // FIXME this is clearly slow and can be optimized
             if watch.starts_with("{{git") {
                 // NOTE: not sure if this must be inplicitly ignored
-                if path.starts_with(".git/") {
+                if path.contains("/.git/") {
                     return false;
                 }
                 
