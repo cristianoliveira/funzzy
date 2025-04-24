@@ -1,6 +1,8 @@
 extern crate glob;
 extern crate yaml_rust;
 
+use ignore::gitignore::Gitignore;
+
 use crate::cli;
 use crate::errors;
 use crate::yaml;
@@ -55,6 +57,34 @@ impl Rules {
 
     pub fn ignore(&self, path: &str) -> bool {
         self.ignore_patterns.iter().any(|watch| {
+            // FIXME this is clearly slow and can be optimized
+            if watch.starts_with("{{git") {
+                // NOTE: not sure if this must be inplicitly ignored
+                if path.contains(".git/") {
+                    return true;
+                }
+                
+                let ignore_path = if watch.contains("{{git:") {
+                    watch.replace("{{git:", "").replace("}}", "")
+                } else {
+                    ".gitignore".to_owned()
+                };
+
+                let (gitignore, err) = Gitignore::new(&ignore_path);
+                if let Some(e) = err {
+                    stdout::error(&format!(
+                        "Failed to load gitignore file: {}. Error: {}",
+                        ignore_path, e
+                    ));
+                    return false;
+                }
+
+                let ignored = gitignore
+                    .matched_path_or_any_parents(path_strip_current_dir(path), false)
+                    .is_ignore();
+                return ignored;
+            }
+
             pattern(&format!("/{}", watch)).matches(path)
                 || watch.starts_with("/") && pattern(watch).matches(path)
         })
@@ -547,6 +577,19 @@ pub fn available_targets(rules: Vec<Rules>) -> String {
             .join("\n  - ")
     ));
     output
+}
+
+fn path_strip_current_dir(path: &str) -> String {
+    let current_dir = match std::env::current_dir() {
+        Ok(val) => val,
+        Err(err) => {
+            stdout::error(&format!("Failed to get current directory. Error: {}", err));
+            return path.to_owned();
+        }
+    };
+
+    let path = path.replace(&format!("{}/", current_dir.display()), "");
+    path
 }
 
 #[cfg(test)]

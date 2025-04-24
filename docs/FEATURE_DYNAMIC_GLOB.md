@@ -53,3 +53,4 @@ __coverage__/
 ```
 
 Once you run `fzz`, it will watch for changes in the `dist/**/*.js` files and ignore any changes in the `node_modules/` and `__coverage__/` directories.
+
