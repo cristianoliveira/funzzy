@@ -1,6 +1,9 @@
-# FEATURE: Dynamic glob pattern from .gitignore
+# FEATURE: Dynamic glob pattern from gitignore
 
-This feature allows one to define a dynamic glob pattern in the `ignore` field of a task. Allows you to use external files, like `.gitignore` as pattern for watch rules
+This feature allows one to define a dynamic glob pattern in the `ignore: {{git}}` for a task and it will load the content of `.gitignore` file and use it as a list of glob patterns to ignore. The pattern applied will be a git like ignore.
+
+ - By default it will ignore the `.git/` directory.
+ - You can specify a different path to the `.gitignore` file by using `{{git:path/to/.gitignore}}`.
 
 **Important**  
 It will use git glob like pattern instead of unix glob pattern. 
@@ -25,3 +28,12 @@ Given the following `.watch.yaml` file:
   ignore:
     - "{{git:another/folder/.gitignore}}" # This uses gitignore from another folder to match ignore files
 ```
+
+And the following `.gitignore` file:
+
+```text
+node_modules/
+__coverage__/
+```
+
+When running the watcher it will trigger for any changes in the `dist/**/*.js` files and ignore any changes in the `node_modules/` and `__coverage__/` directories.
