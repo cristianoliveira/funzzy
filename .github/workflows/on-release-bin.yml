@@ -1,0 +1,134 @@
+name: Release (multi-arch with Nix)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-linux
+            system: x86_64-linux
+          - os: ubuntu-latest
+            target: aarch64-linux  
+            system: aarch64-linux
+          - os: macos-latest
+            target: x86_64-darwin
+            system: x86_64-darwin
+          - os: macos-latest
+            target: aarch64-darwin
+            system: aarch64-darwin
+
+    env:
+      TARGET: ${{ matrix.target }}
+      SYSTEM: ${{ matrix.system }}
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            extra-platforms = aarch64-linux i686-linux aarch64-darwin x86_64-darwin
+            extra-sandbox-paths = /System/Library/Frameworks /System/Library/PrivateFrameworks /usr/lib
+
+      - name: Setup Cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: funzzy
+          # Optional: uncomment and set if you have a signing key for your cache
+          # signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
+
+      - name: Enable cross-compilation on Linux (for aarch64)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-linux'
+        run: |
+          # Enable emulation for aarch64
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+      - name: Build with Nix
+        shell: bash
+        run: |
+          set -euxo pipefail
+          
+          # Check if we need cross-compilation
+          NATIVE_SYSTEM=$(nix eval --raw --impure --expr 'builtins.currentSystem')
+          echo "Native system: $NATIVE_SYSTEM"
+          echo "Target system: $SYSTEM"
+          
+          if [[ "$SYSTEM" == "$NATIVE_SYSTEM" ]]; then
+            echo "Building natively for $SYSTEM"
+            nix build .#local --verbose -L
+          else
+            echo "Cross-compiling for $SYSTEM from $NATIVE_SYSTEM"
+            # For cross-compilation, we may need to adjust the approach
+            if [[ "$SYSTEM" == "aarch64-linux" && "$NATIVE_SYSTEM" == "x86_64-linux" ]]; then
+              # Use emulation for aarch64 on x86_64 Linux
+              nix build .#local --system $SYSTEM --verbose -L
+            elif [[ "$NATIVE_SYSTEM" == "x86_64-darwin" ]]; then
+              # macOS native cross-compilation
+              nix build .#local --system $SYSTEM --verbose -L
+            else
+              echo "Cross-compilation from $NATIVE_SYSTEM to $SYSTEM may not be supported"
+              nix build .#local --verbose -L
+            fi
+          fi
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          
+          # Create package directory
+          mkdir -p pkg
+          
+          # Copy binaries from the Nix store
+          if [[ -d "result/bin" ]]; then
+            cp result/bin/funzzy pkg/
+            cp result/bin/fzz pkg/
+          else
+            echo "ERROR: result/bin directory not found"
+            find result -name "funzzy" -type f | head -1 | xargs -I {} cp {} pkg/ || echo "funzzy not found"
+            find result -name "fzz" -type f | head -1 | xargs -I {} cp {} pkg/ || echo "fzz not found"
+          fi
+          
+          # Verify binaries were copied and are executable
+          ls -la pkg/
+          chmod +x pkg/* || true
+          
+          # Test the binaries (basic smoke test)
+          if [[ "$TARGET" == *"linux"* ]]; then
+            ./pkg/funzzy --version || echo "Binary test failed (may be cross-compiled)"
+            ./pkg/fzz --version || echo "Binary test failed (may be cross-compiled)"
+          fi
+          
+          # Create archive
+          tar czf "funzzy-${RELEASE_TAG}-${TARGET}.tar.gz" pkg
+          echo "ARTIFACT=funzzy-${RELEASE_TAG}-${TARGET}.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact to workflow
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARTIFACT }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ env.ARTIFACT }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

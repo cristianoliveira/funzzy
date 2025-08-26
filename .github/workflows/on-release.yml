@@ -1,4 +1,4 @@
-name: Release artifacts
+name: Release publish to crates.io
 
 on:
   workflow_dispatch:
@@ -6,56 +6,6 @@ on:
     types: [created]
 
 jobs:
-  build_release_osx:
-    env:
-      TARGET: x86_64-apple-darwin
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
-
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Create artifacts folder
-        run: mkdir artifacts
-
-      - name: Create artifacts for darwin
-        run: sh ci/script.sh
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
-          asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
-          tag: ${{ github.ref }}
-          overwrite: true
-
-  build_release_linux:
-    env:
-      TARGET: x86_64-unknown-linux-gnu
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Create artifacts folder
-        run: mkdir artifacts
-
-      - name: Create artifacts for linux
-        run: sh ci/script.sh
-
-      - name: Upload binaries to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
-          asset_name: funzzy-${{ env.RELEASE_TAG }}-${{ env.TARGET }}.tar.gz
-          tag: ${{ github.ref }}
-          overwrite: true
-
   publish_crates:
     runs-on: ubuntu-latest
 
