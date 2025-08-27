@@ -6,7 +6,7 @@ Configure auto-execution of different commands using semantic YAML and [Unix she
 
 For a workflow as simple as:
 ```bash
-find . -name '*.ts' | funzzy 'npx eslint .'
+find . -name '*.ts' | funzzy 'npx eslint {{relative_path}}'
 ```
 
 Or more complex workflows like:
