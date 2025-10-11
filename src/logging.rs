@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -39,6 +39,19 @@ pub fn log_line(message: &str) {
 
 pub fn log_plain(message: &str) {
     log_internal(message, false);
+}
+
+pub fn truncate() -> io::Result<()> {
+    let mut logger = LOGGER
+        .lock()
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "logger poisoned"))?;
+
+    if let Some(ref mut logger) = *logger {
+        logger.file.set_len(0)?;
+        logger.file.seek(SeekFrom::Start(0))?;
+    }
+
+    Ok(())
 }
 
 fn log_internal(message: &str, newline: bool) {

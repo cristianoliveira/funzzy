@@ -57,6 +57,7 @@ Options:
   -t --target <name>      Execute only the given task target (if empty list availables).
   -n --non-block          Execute tasks and cancel them if a new event is received.
   -b --fail-fast          Bail current execution if a task fails (exit code != 0).
+  -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
   -l --log-file <file>    Write all output to the specified log file in addition to the console.
   --no-run-on-init        Do not run tasks on initialization.
   -h --help               Show this message.
@@ -83,6 +84,7 @@ pub struct Args {
     pub flag_config: String,
     pub flag_target: Option<String>,
 
+    pub flag_log_truncate_on_change: bool,
     pub flag_log_file: Option<String>,
 
     pub flag_n: bool,
@@ -146,6 +148,13 @@ fn main() {
             }
         }
     };
+
+    if args.flag_log_truncate_on_change && args.flag_log_file.is_none() {
+        stdout::failure(
+            "`--log-truncate-on-change` requires `--log-file`",
+            "Provide a log file path before enabling truncation.".to_string(),
+        );
+    }
 
     if let Some(ref log_file) = args.flag_log_file.clone() {
         if log_file.trim().is_empty() {
@@ -269,6 +278,8 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
         vec![format!("{}", &args.flag_config)]
     };
 
+    let truncate_on_config_change = args.flag_log_truncate_on_change;
+
     let config_file_paths = possible_config_paths
         .into_iter()
         .filter(|path| std::path::Path::new(path).exists())
@@ -279,7 +290,13 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
     let th = std::thread::spawn(move || {
         watcher::events(
             config_file_paths,
-            |file_changed| {
+            move |file_changed| {
+                let truncation_status = if truncate_on_config_change {
+                    Some(logging::truncate())
+                } else {
+                    None
+                };
+
                 stdout::warn(
                     &vec![
                         "The config file has changed while an instance was running.",
@@ -287,6 +304,12 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
                     ]
                     .join("\n"),
                 );
+
+                if let Some(Ok(())) = truncation_status {
+                    stdout::info("Log file truncated before reloading configuration.");
+                } else if let Some(Err(err)) = truncation_status {
+                    stdout::warn(&format!("Failed to truncate log file: {}", err));
+                }
 
                 println!("Watcher PID: {}", watcher_pid);
                 logging::log_line(&format!("Watcher PID: {}", watcher_pid));
