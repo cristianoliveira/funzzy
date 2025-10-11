@@ -8,6 +8,7 @@ mod cli;
 mod cmd;
 mod environment;
 mod errors;
+mod logging;
 mod rules;
 mod stdout;
 mod watcher;
@@ -56,6 +57,7 @@ Options:
   -t --target <name>      Execute only the given task target (if empty list availables).
   -n --non-block          Execute tasks and cancel them if a new event is received.
   -b --fail-fast          Bail current execution if a task fails (exit code != 0).
+  -l --log-file <file>    Write all output to the specified log file in addition to the console.
   --no-run-on-init        Do not run tasks on initialization.
   -h --help               Show this message.
   -v --version            Show version.
@@ -80,6 +82,8 @@ pub struct Args {
     // options
     pub flag_config: String,
     pub flag_target: Option<String>,
+
+    pub flag_log_file: Option<String>,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -142,6 +146,27 @@ fn main() {
             }
         }
     };
+
+    if let Some(ref log_file) = args.flag_log_file.clone() {
+        if log_file.trim().is_empty() {
+            stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
+        }
+
+        let log_path = std::path::PathBuf::from(log_file);
+        if let Some(parent) = log_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                stdout::failure(
+                    "Failed to prepare log file",
+                    format!("directory does not exist: {}", parent.display()),
+                );
+            }
+        }
+
+        logging::init(log_path.clone())
+            .unwrap_or_else(|err| stdout::failure("Failed to prepare log file", err.to_string()));
+
+        stdout::info(&format!("Logging output to {}", log_path.display()));
+    }
 
     match args {
         Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
@@ -264,6 +289,7 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
                 );
 
                 println!("Watcher PID: {}", watcher_pid);
+                logging::log_line(&format!("Watcher PID: {}", watcher_pid));
 
                 match signal::kill(Pid::from_raw(watcher_pid as i32), Signal::SIGTERM) {
                     Ok(_) => stdout::info("Terminating funzzy..."),
