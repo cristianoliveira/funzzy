@@ -156,7 +156,7 @@ fn main() {
         );
     }
 
-    if let Some(ref log_file) = args.flag_log_file.clone() {
+    if let Some(ref log_file) = args.flag_log_file {
         if log_file.trim().is_empty() {
             stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
         }
