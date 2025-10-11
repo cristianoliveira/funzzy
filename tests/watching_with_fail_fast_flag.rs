@@ -42,7 +42,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -67,7 +67,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -81,7 +81,7 @@ Funzzy: exit 1
 
 Funzzy results ----------------------------
 - Command exit 1 has failed with exit status: 1
-Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
+Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                 "failed to match ouput: {}",
                 output
             );
@@ -126,7 +126,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
                     );
 
                     write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -151,7 +151,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -165,7 +165,7 @@ Funzzy: exit 1
 
 Funzzy results ----------------------------
 - Command exit 1 has failed with exit status: 1
-Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
+Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                         "failed to match ouput: {}",
                         output
                     );
@@ -215,7 +215,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s"
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
 
             write_to_file!("examples/workdir/trigger-watcher.txt");
@@ -240,7 +240,7 @@ Funzzy: cat baz/bar/foo
 
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Durantion: 0.0000s
+Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -254,7 +254,7 @@ Funzzy: exit 1
 
 Funzzy results ----------------------------
 - Command exit 1 has failed with exit status: 1
-Failure; Completed: 2; Failed: 1; Durantion: 0.0000s",
+Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                 "failed to match ouput: {}",
                 output
             );
