@@ -134,7 +134,7 @@ Funzzy: echo 'something changed in workdir!'
 
 something changed in workdir!
 Funzzy results ----------------------------
-Success; Completed: 4; Failed: 0; Durantion: 0.0000s"
+Success; Completed: 4; Failed: 0; Duration: 0.0000s"
             );
         },
     );

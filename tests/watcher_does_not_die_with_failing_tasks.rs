@@ -56,7 +56,7 @@ Funzzy: echo finally
 finally
 Funzzy results ----------------------------
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 2; Failed: 1; Durantion: 0.0000s
+Failure; Completed: 2; Failed: 1; Duration: 0.0000s
 [2J
 Funzzy: echo complex | sed s/complex/third/g 
 
@@ -90,7 +90,7 @@ Funzzy results ----------------------------
 - Command cat foo/bar/baz has failed with exit status: 1
 - Command exit 125 has failed with exit status: 125
 - Command cat baz/bar/foo has failed with exit status: 1
-Failure; Completed: 4; Failed: 4; Durantion: 0.0000s",
+Failure; Completed: 4; Failed: 4; Duration: 0.0000s",
                 "failed to match {}",
                 output
             );

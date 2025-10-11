@@ -89,7 +89,8 @@ pub fn verbose(msg: &str, verbose: bool) {
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
-    let message = format!("Durantion: {:.4}s", elapsed.as_secs_f32());
+
+    let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     let res = std::io::stdout().flush();
 
@@ -109,7 +110,7 @@ pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
 /// Print mocked time elapsed always as: "Finished in 0.0s"
 pub fn print_time_elapsed(_: std::time::Duration) -> () {
     let elapsed = std::time::Duration::from_secs(0);
-    let message = format!("Durantion: {:.4}s", elapsed.as_secs_f32());
+    let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     std::io::stdout().flush().expect("Failed to flush stdout");
     logging::log_plain(&message);
