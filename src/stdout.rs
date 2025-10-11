@@ -89,7 +89,6 @@ pub fn verbose(msg: &str, verbose: bool) {
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
-
     let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     let res = std::io::stdout().flush();
