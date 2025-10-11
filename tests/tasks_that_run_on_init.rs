@@ -56,7 +56,7 @@ run on init sencod
 
 only run on init
 Funzzy results ----------------------------
-\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Durantion: 0.0000s"
+\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Duration: 0.0000s"
                     );
 
                     // FIXME: this should not be needed sleep 5s
@@ -153,7 +153,7 @@ should not run on init but on change
 
 run on init sencod
 Funzzy results ----------------------------
-\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Durantion: 0.0000s"
+\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Duration: 0.0000s"
                     );
                 },
             );

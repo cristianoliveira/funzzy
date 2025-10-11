@@ -69,7 +69,7 @@ Funzzy: echo 'quick lint'
 
 quick lint
 Funzzy results ----------------------------
-Success; Completed: 3; Failed: 0; Durantion: 0.0000s"
+Success; Completed: 3; Failed: 0; Duration: 0.0000s"
             );
         },
     );

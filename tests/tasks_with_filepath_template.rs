@@ -69,7 +69,7 @@ Funzzy: echo '' | sed -r s/trigger/foobar/
 
 
 Funzzy results ----------------------------
-Success; Completed: 3; Failed: 0; Durantion: 0.0000s
+Success; Completed: 3; Failed: 0; Duration: 0.0000s
 [2J
 Funzzy: echo 'this file has changed: $PWD/examples/workdir/trigger-watcher.txt' 
 
@@ -83,7 +83,7 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
-Success; Completed: 3; Failed: 0; Durantion: 0.0000s";
+Success; Completed: 3; Failed: 0; Duration: 0.0000s";
 
             assert_eq!(
                 setup::clean_output(&output),
@@ -161,7 +161,7 @@ Funzzy: echo 'this is invalid: {{ foobar }} (no!)'
 
 this is invalid: {{ foobar }} (no!)
 Funzzy results ----------------------------
-Success; Completed: 4; Failed: 0; Durantion: 0.0000s
+Success; Completed: 4; Failed: 0; Duration: 0.0000s
 [2JFunzzy warning: Unknown template variable 'foobar'.
 
 Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' 
@@ -180,7 +180,7 @@ Funzzy: echo 'this is invalid: {{ foobar }} (no!)'
 
 this is invalid: {{ foobar }} (no!)
 Funzzy results ----------------------------
-Success; Completed: 4; Failed: 0; Durantion: 0.0000s";
+Success; Completed: 4; Failed: 0; Duration: 0.0000s";
 
             assert_eq!(
                 setup::clean_output(&output),
