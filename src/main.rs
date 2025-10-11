@@ -52,17 +52,17 @@ Commands:
     watch               Watch for file changes and execute a command.
 
 Options:
-  <command>               Run an arbitrary command for current folder.
-  -c --config <cfgfile>   Use given config file.
-  -t --target <name>      Execute only the given task target (if empty list availables).
-  -n --non-block          Execute tasks and cancel them if a new event is received.
-  -b --fail-fast          Bail current execution if a task fails (exit code != 0).
+  <command>                    Run an arbitrary command for current folder.
+  -c --config <cfgfile>        Use given config file.
+  -t --target <name>           Execute only the given task target (if empty list availables).
+  -n --non-block               Execute tasks and cancel them if a new event is received.
+  -b --fail-fast               Bail current execution if a task fails (exit code != 0).
   -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
-  -l --log-file <file>    Write all output to the specified log file in addition to the console.
-  --no-run-on-init        Do not run tasks on initialization.
-  -h --help               Show this message.
-  -v --version            Show version.
-  -V                      Use verbose output.
+  -l --log-file <file>         Write all output to the specified log file in addition to the console.
+  --no-run-on-init             Do not run tasks on initialization.
+  -h --help                    Show this message.
+  -v --version                 Show version.
+  -V                           Use verbose output.
 
 Environment configs:
 

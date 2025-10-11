@@ -115,9 +115,15 @@
     - "examples/reload-config-example.yml"
   run_on_init: true
 
-- name: after commit attempt to rebase
+- name: install locally @quick
+  # Check if .tmp/install exists then install otherwise skip
   run: 
-    - git fetch --all
-    - git rebase origin/master
+    - if [ -f .tmp/install ]; then 
+        echo "Installing locally"; 
+        cargo install --path . --force; 
+      else 
+        echo "Skipping local install, create the file .tmp/install to enable"; 
+      fi
   change: 
-    - ".git/COMMIT_EDITMSG"
+    - "src/**"
+    - "Cargo.*"
