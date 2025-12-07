@@ -1,6 +1,8 @@
 use std::io::Write;
 
+#[cfg(not(test))]
 use crate::environment;
+use crate::logging;
 
 // ANSI color codes for terminal output
 pub const GREEN: &str = "\x1b[32m";
@@ -19,37 +21,51 @@ pub fn is_colored() -> bool {
 }
 
 pub fn info(msg: &str) {
-    if is_colored() {
-        println!("{}Funzzy{}: {}", BLUE, RESET, msg);
+    let message = if is_colored() {
+        format!("{}Funzzy{}: {}", BLUE, RESET, msg)
     } else {
-        println!("Funzzy: {}", msg);
-    }
+        format!("Funzzy: {}", msg)
+    };
+
+    println!("{}", message);
+    logging::log_line(&message);
 }
 
 pub fn error(msg: &str) {
-    if is_colored() {
-        println!("{}Funzzy error{}: {}", RED, RESET, msg);
+    let message = if is_colored() {
+        format!("{}Funzzy error{}: {}", RED, RESET, msg)
     } else {
-        println!("Funzzy error: {}", msg);
-    }
+        format!("Funzzy error: {}", msg)
+    };
+
+    println!("{}", message);
+    logging::log_line(&message);
 }
 
 pub fn warn(msg: &str) {
-    println!("Funzzy warning: {}", msg);
+    let message = format!("Funzzy warning: {}", msg);
+    println!("{}", message);
+    logging::log_line(&message);
 }
 
 pub fn show_and_exit(text: &str) -> ! {
     println!("{}", text);
+    logging::log_line(text);
     std::process::exit(0)
 }
 
 pub fn failure(text: &str, err: String) -> ! {
-    if is_colored() {
-        println!("{}Error{}: {}", RED, RESET, text);
+    let header = if is_colored() {
+        format!("{}Error{}: {}", RED, RESET, text)
     } else {
-        println!("Error: {}", text);
-    }
+        format!("Error: {}", text)
+    };
+
+    println!("{}", header);
+    logging::log_line(&header);
+
     println!("{}", err);
+    logging::log_line(&err);
     std::process::exit(1)
 }
 
@@ -58,9 +74,16 @@ pub fn verbose(msg: &str, verbose: bool) {
         return;
     }
 
-    println!("-----------------------------");
-    println!("Funzzy verbose: {} ", msg);
-    println!("-----------------------------");
+    let separator = "-----------------------------";
+    println!("{}", separator);
+    logging::log_line(separator);
+
+    let message = format!("Funzzy verbose: {} ", msg);
+    println!("{}", message);
+    logging::log_line(&message);
+
+    println!("{}", separator);
+    logging::log_line(separator);
 }
 
 #[cfg(not(feature = "test-integration"))]
@@ -69,6 +92,8 @@ pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
     let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     let res = std::io::stdout().flush();
+
+    logging::log_plain(&message);
 
     match res {
         Ok(_) => (),
@@ -87,35 +112,51 @@ pub fn print_time_elapsed(_: std::time::Duration) -> () {
     let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     std::io::stdout().flush().expect("Failed to flush stdout");
+    logging::log_plain(&message);
 }
 
 pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time::Duration) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
     let completed = results.iter().cloned().filter(|r| r.is_ok()).count();
-    println!("Funzzy results ----------------------------");
+    let header = "Funzzy results ----------------------------";
+    println!("{}", header);
+    logging::log_line(header);
     if !errors.is_empty() {
         if is_colored() {
             print!("{}", RED);
+            logging::log_plain(RED);
         }
 
         errors.iter().for_each(|err| {
-            println!("- {}", err.as_ref().unwrap_err());
+            let message = format!("- {}", err.as_ref().unwrap_err());
+            println!("{}", message);
+            logging::log_line(&message);
         });
 
         if is_colored() {
-            print!("Failure{}; ", RESET);
+            let message = format!("Failure{}; ", RESET);
+            print!("{}", message);
+            logging::log_plain(&message);
         } else {
-            print!("Failure; ");
+            let message = "Failure; ";
+            print!("{}", message);
+            logging::log_plain(message);
         }
     } else {
         if is_colored() {
-            print!("{}Success{}; ", GREEN, RESET);
+            let message = format!("{}Success{}; ", GREEN, RESET);
+            print!("{}", message);
+            logging::log_plain(&message);
         } else {
-            print!("Success; ");
+            let message = "Success; ";
+            print!("{}", message);
+            logging::log_plain(message);
         }
     }
 
-    print!("Completed: {:?}; Failed: {:?}; ", completed, errors.len());
+    let summary = format!("Completed: {:?}; Failed: {:?}; ", completed, errors.len());
+    print!("{}", summary);
+    logging::log_plain(&summary);
     print_time_elapsed(time_elapsed);
 }
 

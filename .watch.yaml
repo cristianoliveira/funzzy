@@ -22,6 +22,7 @@
 
 - name: run lint and formatter @quick
   run: 
+    - cargo fmt -- {{filepath}}
     - cargo fmt -- --check {{filepath}}
     - cargo fmt
   run_on_init: true
@@ -59,8 +60,6 @@
   change: 
     - "src/**"
     - "tests/**/*.rs"
-    - "examples/*.yaml"
-    - "examples/*.yml"
   ignore: 
     - "examples/reload-config-example.yml"
     - "examples/workdir/**"
@@ -96,6 +95,9 @@
     - "tests/**"
     - "**/*.nix"
   run_on_init: true
+  ignore: 
+    - "**/*.log"
+    - "**/*.txt"
 
 - name: after all checks if no error stage to git @quick @nixbuild
   run: 
@@ -107,17 +109,21 @@
     - "README.md"
     - "src/**"
     - "tests/**"
-    - "examples/*.yml"
-    - "examples/*.yaml"
     - "**/*.nix"
   ignore: 
     - "examples/workdir/**"
     - "examples/reload-config-example.yml"
   run_on_init: true
 
-- name: after commit attempt to rebase
+- name: install locally @quick
+  # Check if .tmp/install exists then install otherwise skip
   run: 
-    - git fetch --all
-    - git rebase origin/master
+    - if [ -f .tmp/install ]; then 
+        echo "Installing locally"; 
+        cargo install --path . --force; 
+      else 
+        echo "Skipping local install, create the file .tmp/install to enable"; 
+      fi
   change: 
-    - ".git/COMMIT_EDITMSG"
+    - "src/**"
+    - "Cargo.*"
