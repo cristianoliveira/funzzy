@@ -1,6 +1,7 @@
 #[path = "./macros.rs"]
 mod macros;
 
+#[allow(unused_imports)]
 use std::{
     collections::HashMap,
     env,
@@ -25,6 +26,7 @@ static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 pub const CLEAR_SCREEN: &str = "[2J";
 
 #[cfg(not(feature = "test-integration"))]
+#[allow(dead_code)]
 pub fn with_example<F>(_: Options, _: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -34,6 +36,7 @@ where
 }
 
 #[cfg(not(feature = "test-integration"))]
+#[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -43,6 +46,7 @@ where
 }
 
 #[cfg(feature = "test-integration")]
+#[allow(dead_code)]
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
