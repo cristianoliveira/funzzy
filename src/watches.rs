@@ -319,7 +319,7 @@ mod tests {
 
             - name: rule with absolute path
               run: 'cargo build'
-              change: 
+              change:
                 - 'src/**'
                 - '/tmp/**'
                 - '/User/**'
@@ -331,7 +331,7 @@ mod tests {
 
             - name: another with absolute path
               run: echo 'absolute paths'
-              change: 
+              change:
                 - '/dev/**'
                 - '/usr/**'
                 - '/etc/**'
@@ -382,7 +382,7 @@ mod tests {
             &r#"
         - name: run tests
           run: [
-            "yarn test {{filepath}}", 
+            "yarn test {{filepath}}",
           change: 'src/**'
         "#
         )
