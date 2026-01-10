@@ -1,0 +1,4 @@
+# Lua-based filter example
+- name: lua filter task
+  run: echo "File contains 'trigger' in path"
+  change: ":lua onchange.lua"

@@ -14,12 +14,18 @@ use std::fs::File;
 use std::io::prelude::*;
 
 #[derive(Debug, Clone)]
+pub enum WatchPattern {
+    Glob(String),
+    LuaScript(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct Rules {
     pub name: String,
 
     commands: Vec<String>,
-    watch_patterns: Vec<String>,
-    ignore_patterns: Vec<String>,
+    watch_patterns: Vec<WatchPattern>,
+    ignore_patterns: Vec<WatchPattern>,
     run_on_init: bool,
 
     yaml: Option<Yaml>,
@@ -29,8 +35,8 @@ impl Rules {
     pub fn new(
         name: String,
         commands: Vec<String>,
-        watches: Vec<String>,
-        ignores: Vec<String>,
+        watches: Vec<WatchPattern>,
+        ignores: Vec<WatchPattern>,
         run_on_init: bool,
     ) -> Self {
         Rules {
@@ -44,28 +50,77 @@ impl Rules {
     }
 
     pub fn watch(&self, path: &str) -> bool {
-        self.watch_relative_paths()
-            .iter()
-            .any(|watch| pattern(&format!("/{}", watch)).matches(path))
-            || self
-                .watch_absolute_paths()
-                .iter()
-                .any(|watch| pattern(watch).matches(path))
+        for watch_pattern in &self.watch_patterns {
+            match watch_pattern {
+                WatchPattern::Glob(glob) => {
+                    let normalized = if glob.starts_with("/") {
+                        glob.clone()
+                    } else {
+                        format!("/{}", glob)
+                    };
+                    if pattern(&normalized).matches(path) {
+                        return true;
+                    }
+                }
+                WatchPattern::LuaScript(_) => {
+                    // TODO: Evaluate Lua predicate
+                    // For now, treat as no match
+                    continue;
+                }
+            }
+        }
+        false
     }
 
     pub fn ignore(&self, path: &str) -> bool {
-        self.ignore_patterns.iter().any(|watch| {
-            pattern(&format!("/{}", watch)).matches(path)
-                || watch.starts_with("/") && pattern(watch).matches(path)
-        })
+        for ignore_pattern in &self.ignore_patterns {
+            match ignore_pattern {
+                WatchPattern::Glob(glob) => {
+                    let normalized = if glob.starts_with("/") {
+                        glob.clone()
+                    } else {
+                        format!("/{}", glob)
+                    };
+                    if pattern(&normalized).matches(path) {
+                        return true;
+                    }
+                }
+                WatchPattern::LuaScript(_) => {
+                    // TODO: Evaluate Lua predicate
+                    // For now, treat as no match
+                    continue;
+                }
+            }
+        }
+        false
     }
 
     pub fn commands(&self) -> Vec<String> {
         self.commands.clone()
     }
 
-    pub fn watch_patterns(&self) -> Vec<String> {
+    pub fn watch_patterns(&self) -> Vec<WatchPattern> {
         self.watch_patterns.clone()
+    }
+
+    pub fn watch_glob_patterns(&self) -> Vec<String> {
+        self.watch_patterns
+            .iter()
+            .filter_map(|p| match p {
+                WatchPattern::Glob(s) => Some(s.clone()),
+                WatchPattern::LuaScript(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn ignore_glob_patterns(&self) -> Vec<String> {
+        self.ignore_patterns
+            .iter()
+            .filter_map(|p| match p {
+                WatchPattern::Glob(s) => Some(s.clone()),
+                WatchPattern::LuaScript(_) => None,
+            })
+            .collect()
     }
 
     pub fn run_on_init(&self) -> bool {
@@ -73,14 +128,14 @@ impl Rules {
     }
 
     pub fn watch_absolute_paths(&self) -> Vec<String> {
-        self.watch_patterns()
+        self.watch_glob_patterns()
             .into_iter()
             .filter(|c| c.starts_with("/"))
             .collect::<Vec<String>>()
     }
 
     pub fn watch_relative_paths(&self) -> Vec<String> {
-        self.watch_patterns()
+        self.watch_glob_patterns()
             .into_iter()
             .filter(|c| !c.starts_with("/"))
             .collect::<Vec<String>>()
@@ -116,36 +171,44 @@ impl Rules {
         }
 
         for watch_pattern in self.watch_patterns() {
-            match Pattern::new(&watch_pattern) {
-                Ok(_) => (),
-                Err(err) => {
-                    return Err(vec![
-                        format!(
-                            "Rule '{}' contains an invalid `change` glob pattern '{}'.",
-                            name, watch_pattern
-                        ),
-                        format!("  {}", err),
-                        "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
-                    ]
-                    .join("\n"));
-                }
+            match watch_pattern {
+                WatchPattern::Glob(ref glob) => match Pattern::new(glob) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(vec![
+                            format!(
+                                "Rule '{}' contains an invalid `change` glob pattern '{}'.",
+                                name, glob
+                            ),
+                            format!("  {}", err),
+                            "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
+                                .to_owned(),
+                        ]
+                        .join("\n"));
+                    }
+                },
+                WatchPattern::LuaScript(_) => continue,
             }
         }
 
         for ignore_pattern in self.ignore_patterns.clone() {
-            match Pattern::new(&ignore_pattern) {
-                Ok(_) => (),
-                Err(err) => {
-                    return Err(vec![
-                        format!(
-                            "Rule '{}' contains an invalid `ignore` glob pattern '{}'.",
-                            name, ignore_pattern
-                        ),
-                        format!("  {}", err),
-                        "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
-                    ]
-                    .join("\n"));
-                }
+            match ignore_pattern {
+                WatchPattern::Glob(ref glob) => match Pattern::new(glob) {
+                    Ok(_) => (),
+                    Err(err) => {
+                        return Err(vec![
+                            format!(
+                                "Rule '{}' contains an invalid `ignore` glob pattern '{}'.",
+                                name, glob
+                            ),
+                            format!("  {}", err),
+                            "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
+                                .to_owned(),
+                        ]
+                        .join("\n"));
+                    }
+                },
+                WatchPattern::LuaScript(_) => continue,
             }
         }
 
@@ -156,9 +219,30 @@ impl Rules {
 pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
-    let watch_patterns = yaml::extract_list(yaml, "change").unwrap_or_default();
-    let ignore_patterns = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+    let watch_patterns_str = yaml::extract_list(yaml, "change").unwrap_or_default();
+    let ignore_patterns_str = yaml::extract_list(yaml, "ignore").unwrap_or_default();
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+
+    let watch_patterns = watch_patterns_str
+        .into_iter()
+        .map(|s| {
+            if s.starts_with(":lua ") {
+                WatchPattern::LuaScript(s[":lua ".len()..].to_string())
+            } else {
+                WatchPattern::Glob(s)
+            }
+        })
+        .collect();
+    let ignore_patterns = ignore_patterns_str
+        .into_iter()
+        .map(|s| {
+            if s.starts_with(":lua ") {
+                WatchPattern::LuaScript(s[":lua ".len()..].to_string())
+            } else {
+                WatchPattern::Glob(s)
+            }
+        })
+        .collect();
 
     Ok(Rules {
         name,
@@ -381,11 +465,12 @@ pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec
     stdout::info(&format!("watching patterns\r{}", watches.join("\n")));
 
     let run_on_init = true;
-    let ignore = vec![];
+    let ignore: Vec<WatchPattern> = vec![];
+    let watch_patterns: Vec<WatchPattern> = watches.into_iter().map(WatchPattern::Glob).collect();
     Ok(vec![Rules::new(
         "unnamed".to_owned(),
         vec![command],
-        watches,
+        watch_patterns,
         ignore,
         run_on_init,
     )])
@@ -917,5 +1002,119 @@ mod tests {
             fourth_rule.validate().err().unwrap(),
             "Rule 'missing trigger property' must contain a `change` and/or `run_on_init` property."
         );
+    }
+
+    #[test]
+    fn it_parses_lua_patterns_in_change_field() {
+        let file_content = "
+        - name: lua task
+          run: 'echo lua'
+          change: ':lua onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+
+        let watch_patterns = rule.watch_patterns();
+        assert_eq!(watch_patterns.len(), 1);
+        match &watch_patterns[0] {
+            super::WatchPattern::LuaScript(path) => assert_eq!(path, "onchange.lua"),
+            _ => panic!("Expected LuaScript variant"),
+        }
+    }
+
+    #[test]
+    fn it_parses_lua_patterns_in_ignore_field() {
+        let file_content = "
+        - name: lua task
+          run: 'echo lua'
+          change: '**/*.txt'
+          ignore: ':lua ignore.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+
+        // Should have one glob watch pattern
+        let watch_globs = rule.watch_glob_patterns();
+        assert_eq!(watch_globs.len(), 1);
+        assert_eq!(watch_globs[0], "**/*.txt");
+
+        // Should have one Lua ignore pattern
+        let ignore_patterns = rule.ignore_patterns.clone();
+        assert_eq!(ignore_patterns.len(), 1);
+        match &ignore_patterns[0] {
+            super::WatchPattern::LuaScript(path) => assert_eq!(path, "ignore.lua"),
+            _ => panic!("Expected LuaScript variant"),
+        }
+    }
+
+    #[test]
+    fn it_handles_mixed_glob_and_lua_patterns() {
+        let file_content = "
+        - name: mixed task
+          run: 'echo mixed'
+          change: 
+            - '**/*.txt'
+            - ':lua script1.lua'
+            - 'src/**/*.rs'
+          ignore:
+            - '**/*.log'
+            - ':lua script2.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+
+        let watch_patterns = rule.watch_patterns();
+        assert_eq!(watch_patterns.len(), 3);
+
+        // Check first is glob
+        match &watch_patterns[0] {
+            super::WatchPattern::Glob(glob) => assert_eq!(glob, "**/*.txt"),
+            _ => panic!("Expected Glob variant"),
+        }
+
+        // Check second is Lua
+        match &watch_patterns[1] {
+            super::WatchPattern::LuaScript(path) => assert_eq!(path, "script1.lua"),
+            _ => panic!("Expected LuaScript variant"),
+        }
+
+        // Check third is glob
+        match &watch_patterns[2] {
+            super::WatchPattern::Glob(glob) => assert_eq!(glob, "src/**/*.rs"),
+            _ => panic!("Expected Glob variant"),
+        }
+
+        let ignore_patterns = rule.ignore_patterns.clone();
+        assert_eq!(ignore_patterns.len(), 2);
+
+        // Check first ignore is glob
+        match &ignore_patterns[0] {
+            super::WatchPattern::Glob(glob) => assert_eq!(glob, "**/*.log"),
+            _ => panic!("Expected Glob variant"),
+        }
+
+        // Check second ignore is Lua
+        match &ignore_patterns[1] {
+            super::WatchPattern::LuaScript(path) => assert_eq!(path, "script2.lua"),
+            _ => panic!("Expected LuaScript variant"),
+        }
+    }
+
+    #[test]
+    fn it_validates_lua_patterns_as_valid() {
+        let file_content = "
+        - name: lua task
+          run: 'echo lua'
+          change: ':lua onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+
+        // Validation should succeed (Lua patterns don't get glob validation)
+        assert!(rule.validate().is_ok());
     }
 }

@@ -97,7 +97,7 @@ impl Watches {
         let mut paths = Vec::new();
 
         for rule in &self.rules {
-            for pattern in rule.watch_patterns() {
+            for pattern in rule.watch_glob_patterns() {
                 let dir = Self::extract_watch_directory(&pattern, &current_dir);
                 if !paths.contains(&dir) {
                     paths.push(dir);
