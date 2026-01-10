@@ -19,7 +19,6 @@ pub fn events(
         new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
 
-
     for path in watch_path_list {
         stdout::verbose(&format!("Watching path: {}", path), verbose);
         if let Err(err) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
@@ -52,11 +51,11 @@ pub fn events(
             Ok(debounced_evts) => {
                 stdout::verbose(&format!("Events {:?}", debounced_evts), verbose);
                 stdout::verbose(&format_events(&debounced_evts), verbose);
-                 if let Ok(file_change_event) = debounced_evts {
-                     file_change_event.iter().for_each(|event| {
-                         if let Some(path_string) = event.path.to_str() {
-                             handler(path_string);
-                         } else {
+                if let Ok(file_change_event) = debounced_evts {
+                    file_change_event.iter().for_each(|event| {
+                        if let Some(path_string) = event.path.to_str() {
+                            handler(path_string);
+                        } else {
                             stdout::error(&format!(
                                 "failed to convert path {:?} to string",
                                 event.path

@@ -64,9 +64,13 @@ impl Watches {
         // Split by '/' and collect segments until we hit a glob metacharacter
         let mut segments = Vec::new();
         let is_absolute = absolute_pattern.starts_with('/');
-        
+
         for segment in absolute_pattern.split('/') {
-            if segment.contains('*') || segment.contains('?') || segment.contains('[') || segment.contains('{') {
+            if segment.contains('*')
+                || segment.contains('?')
+                || segment.contains('[')
+                || segment.contains('{')
+            {
                 break;
             }
             if !segment.is_empty() {
@@ -339,14 +343,7 @@ mod tests {
         // Compute expected directories: all patterns converted to directories, plus current_dir
         let mut expected = Vec::new();
         let patterns = vec![
-            "src/**",
-            "src/**",
-            "/tmp/**",
-            "/User/**",
-            "test/**",
-            "/dev/**",
-            "/usr/**",
-            "/etc/**",
+            "src/**", "src/**", "/tmp/**", "/User/**", "test/**", "/dev/**", "/usr/**", "/etc/**",
         ];
         for pattern in patterns {
             let dir = Watches::extract_watch_directory(pattern, &current_dir);
