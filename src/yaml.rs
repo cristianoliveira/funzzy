@@ -82,6 +82,29 @@ Expected 'String' but got: {:?}
     }
 }
 
+pub fn extract_optional_string(yaml: &Yaml, prop: &str) -> Result<Option<String>> {
+    match &yaml[prop] {
+        Yaml::BadValue => Ok(None),
+        Yaml::String(ref item) => Ok(Some(String::from(item.as_str()))),
+        unknown => Err(FzzError::InvalidConfigError(
+            format!(
+                "Invalid property '{}' in rule below
+Expected 'String' but got: {:?}
+```
+{}
+```",
+                prop,
+                get_type(unknown),
+                yaml_to_string(&yaml, 0),
+            ),
+            None,
+            Some(
+                "Check if the property is defined, with the right type and identation".to_string(),
+            ),
+        )),
+    }
+}
+
 pub fn extract_bool(yaml: &Yaml, prop: &str) -> bool {
     match yaml[prop] {
         Yaml::Boolean(item) => item,

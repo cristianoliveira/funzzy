@@ -3,15 +3,19 @@ extern crate yaml_rust;
 
 use crate::cli;
 use crate::errors;
+use crate::lua;
 use crate::yaml;
 
 use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
 use crate::stdout;
+use std::cell::RefCell;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct Rules {
@@ -20,6 +24,8 @@ pub struct Rules {
     commands: Vec<String>,
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
+    filter_script: Option<PathBuf>,
+    lua_runtime: Rc<RefCell<Option<lua::LuaRuntime>>>,
     run_on_init: bool,
 
     yaml: Option<Yaml>,
@@ -32,32 +38,46 @@ impl Rules {
         watches: Vec<String>,
         ignores: Vec<String>,
         run_on_init: bool,
+        filter_script: Option<PathBuf>,
     ) -> Self {
         Rules {
             name,
             commands,
             watch_patterns: watches,
             ignore_patterns: ignores,
+            filter_script,
+            lua_runtime: Rc::new(RefCell::new(None)),
             run_on_init,
             yaml: None,
         }
     }
 
     pub fn watch(&self, path: &str) -> bool {
-        self.watch_relative_paths()
-            .iter()
-            .any(|watch| pattern(&format!("/{}", watch)).matches(path))
-            || self
-                .watch_absolute_paths()
-                .iter()
-                .any(|watch| pattern(watch).matches(path))
+        for glob in &self.watch_patterns {
+            let normalized = if glob.starts_with("/") {
+                glob.clone()
+            } else {
+                format!("/{}", glob)
+            };
+            if pattern(&normalized).matches(path) {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn ignore(&self, path: &str) -> bool {
-        self.ignore_patterns.iter().any(|watch| {
-            pattern(&format!("/{}", watch)).matches(path)
-                || watch.starts_with("/") && pattern(watch).matches(path)
-        })
+        for glob in &self.ignore_patterns {
+            let normalized = if glob.starts_with("/") {
+                glob.clone()
+            } else {
+                format!("/{}", glob)
+            };
+            if pattern(&normalized).matches(path) {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn commands(&self) -> Vec<String> {
@@ -68,19 +88,66 @@ impl Rules {
         self.watch_patterns.clone()
     }
 
+    pub fn watch_glob_patterns(&self) -> Vec<String> {
+        self.watch_patterns.clone()
+    }
+
+    pub fn ignore_glob_patterns(&self) -> Vec<String> {
+        self.ignore_patterns.clone()
+    }
+
+    pub fn filter_script(&self) -> Option<PathBuf> {
+        self.filter_script.clone()
+    }
+
+    fn get_or_create_lua_runtime(&self) -> std::cell::RefMut<'_, lua::LuaRuntime> {
+        let mut runtime_opt = self.lua_runtime.borrow_mut();
+        if runtime_opt.is_none() {
+            *runtime_opt = Some(lua::LuaRuntime::new().unwrap_or_else(|err| {
+                stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                panic!("Failed to create Lua runtime: {}", err);
+            }));
+        }
+        std::cell::RefMut::map(runtime_opt, |opt| opt.as_mut().unwrap())
+    }
+
+    pub fn passes_filter(&self, path: &str) -> bool {
+        let filter_script = match self.filter_script.as_ref() {
+            Some(path) => path,
+            None => return true, // No filter means always pass
+        };
+
+        let mut runtime = self.get_or_create_lua_runtime();
+        let event = lua::LuaEvent {
+            path: PathBuf::from(path),
+        };
+
+        match runtime.evaluate_predicate(filter_script, &event) {
+            Ok(result) => result,
+            Err(err) => {
+                stdout::error(&format!(
+                    "Lua predicate evaluation failed ({}): {}",
+                    filter_script.display(),
+                    err
+                ));
+                false
+            }
+        }
+    }
+
     pub fn run_on_init(&self) -> bool {
         self.run_on_init
     }
 
     pub fn watch_absolute_paths(&self) -> Vec<String> {
-        self.watch_patterns()
+        self.watch_glob_patterns()
             .into_iter()
             .filter(|c| c.starts_with("/"))
             .collect::<Vec<String>>()
     }
 
     pub fn watch_relative_paths(&self) -> Vec<String> {
-        self.watch_patterns()
+        self.watch_glob_patterns()
             .into_iter()
             .filter(|c| !c.starts_with("/"))
             .collect::<Vec<String>>()
@@ -115,14 +182,14 @@ impl Rules {
             ));
         }
 
-        for watch_pattern in self.watch_patterns() {
-            match Pattern::new(&watch_pattern) {
+        for glob in self.watch_patterns() {
+            match Pattern::new(&glob) {
                 Ok(_) => (),
                 Err(err) => {
                     return Err(vec![
                         format!(
                             "Rule '{}' contains an invalid `change` glob pattern '{}'.",
-                            name, watch_pattern
+                            name, glob
                         ),
                         format!("  {}", err),
                         "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
@@ -132,14 +199,14 @@ impl Rules {
             }
         }
 
-        for ignore_pattern in self.ignore_patterns.clone() {
-            match Pattern::new(&ignore_pattern) {
+        for glob in self.ignore_patterns.clone() {
+            match Pattern::new(&glob) {
                 Ok(_) => (),
                 Err(err) => {
                     return Err(vec![
                         format!(
                             "Rule '{}' contains an invalid `ignore` glob pattern '{}'.",
-                            name, ignore_pattern
+                            name, glob
                         ),
                         format!("  {}", err),
                         "  Read more: https://en.wikipedia.org/wiki/Glob_(programming)".to_owned(),
@@ -153,21 +220,62 @@ impl Rules {
     }
 }
 
-pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
+pub fn rule_from(yaml: &Yaml, config_dir: Option<String>) -> errors::Result<Rules> {
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
-    let watch_patterns = yaml::extract_list(yaml, "change").unwrap_or_default();
-    let ignore_patterns = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+    let watch_patterns_str = yaml::extract_list(yaml, "change").unwrap_or_default();
+    let ignore_patterns_str = yaml::extract_list(yaml, "ignore").unwrap_or_default();
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+
+    let watch_patterns = ensure_glob_only(watch_patterns_str, "change")?;
+    let ignore_patterns = ensure_glob_only(ignore_patterns_str, "ignore")?;
+    let filter_script = yaml::extract_optional_string(yaml, "filter")?
+        .map(|filter_path| resolve_filter_path(config_dir.as_deref(), &filter_path));
 
     Ok(Rules {
         name,
         commands,
         watch_patterns,
         ignore_patterns,
+        filter_script,
+        lua_runtime: Rc::new(RefCell::new(None)),
         run_on_init,
         yaml: Some(yaml.clone()),
     })
+}
+
+fn resolve_filter_path(config_dir: Option<&str>, script_path: &str) -> PathBuf {
+    let path = Path::new(script_path);
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+
+    match config_dir {
+        Some(dir) => {
+            let mut full = PathBuf::from(dir);
+            full.push(script_path);
+            full
+        }
+        None => path.to_path_buf(),
+    }
+}
+
+fn ensure_glob_only(patterns: Vec<String>, field_name: &str) -> errors::Result<Vec<String>> {
+    for pattern in &patterns {
+        let trimmed = pattern.trim_start();
+        if trimmed == ":lua" || trimmed.starts_with(":lua ") {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Property '{}' no longer accepts ':lua' entries. Use the 'filter' field instead.",
+                    field_name
+                ),
+                None,
+                Some("Example: filter: filters/onchange.lua".to_owned()),
+            ));
+        }
+    }
+
+    Ok(patterns)
 }
 
 pub fn commands(rules: Vec<Rules>) -> Vec<String> {
@@ -225,7 +333,13 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
         .collect()
 }
 
-pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
+pub fn from_yaml(file_content: &str, config_path: Option<&str>) -> errors::Result<Vec<Rules>> {
+    let config_dir = config_path.and_then(|p| {
+        Path::new(p)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+    });
+
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
@@ -275,7 +389,7 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
         Yaml::Array(ref items) => {
             let mut rules = vec![];
             for item in items {
-                match rule_from(item) {
+                match rule_from(item, config_dir.clone()) {
                     Ok(rule) => rules.push(rule),
                     Err(err) => return Err(err),
                 }
@@ -381,13 +495,15 @@ pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec
     stdout::info(&format!("watching patterns\r{}", watches.join("\n")));
 
     let run_on_init = true;
-    let ignore = vec![];
+    let ignore: Vec<String> = vec![];
+    let watch_patterns: Vec<String> = watches;
     Ok(vec![Rules::new(
         "unnamed".to_owned(),
         vec![command],
-        watches,
+        watch_patterns,
         ignore,
         run_on_init,
+        None,
     )])
 }
 
@@ -403,7 +519,7 @@ pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
                 ));
             }
 
-            return from_yaml(&content);
+            return from_yaml(&content, Some(filename));
         }
 
         Err(err) => Err(errors::FzzError::IoConfigError(
@@ -493,6 +609,7 @@ mod tests {
     use super::rule_from;
     use super::{commands, template};
     use std::env::current_dir;
+    use std::path::PathBuf;
 
     #[test]
     fn it_is_watching_path_tests() {
@@ -510,8 +627,8 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
-        let rule2 = rule_from(&content[0][1]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
+        let rule2 = rule_from(&content[0][1], None).expect("Failed to parse rule");
 
         assert_eq!(true, rule.watch("tests/foo.rs"));
 
@@ -536,7 +653,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(false, rule.watch("tests/foo.rs"));
     }
@@ -551,7 +668,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(rule.run_on_init());
     }
@@ -566,7 +683,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -580,7 +697,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -595,7 +712,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(true, rule.ignore("tests/foo.rs"));
     }
@@ -610,7 +727,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(false, rule.ignore("tests/foo.rs"));
     }
@@ -641,7 +758,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).unwrap();
+        let rule = rule_from(&content[0][0], None).unwrap();
 
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
@@ -678,7 +795,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             template(
@@ -727,7 +844,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             template(
@@ -759,7 +876,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             rules[0].as_string(),
@@ -787,7 +904,7 @@ mod tests {
           change: **/*
         ";
 
-        let result = from_yaml(file_content);
+        let result = from_yaml(file_content, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -805,7 +922,7 @@ mod tests {
         let empty_file = "
         ";
 
-        let result = from_yaml(empty_file);
+        let result = from_yaml(empty_file, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -822,7 +939,7 @@ mod tests {
               run: echo foo
         ";
 
-        let result = from_yaml(empty_file);
+        let result = from_yaml(empty_file, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -851,6 +968,7 @@ mod tests {
           run: 'echo invalid'
           ignore: '**/*.go'
         ",
+            None,
         );
         assert!(rules_yaml.is_err());
     }
@@ -885,6 +1003,7 @@ mod tests {
           run: 'echo invalid'
           ignore: '**/*.go'
         ",
+            None,
         );
         assert!(rules_yaml.is_ok());
 
@@ -916,6 +1035,107 @@ mod tests {
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
             "Rule 'missing trigger property' must contain a `change` and/or `run_on_init` property."
+        );
+    }
+
+    #[test]
+    fn it_rejects_legacy_lua_entries_in_change() {
+        let file_content = "
+        - name: lua task
+          run: 'echo lua'
+          change: ':lua onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let err =
+            rule_from(&content[0][0], None).expect_err("Expected :lua entries to be rejected");
+        let message = format!("{}", err);
+        assert!(
+            message.contains("Property 'change' no longer accepts ':lua' entries."),
+            "Unexpected error: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn it_rejects_legacy_lua_entries_in_ignore() {
+        let file_content = "
+        - name: lua task
+          run: 'echo lua'
+          change: '**/*.txt'
+          ignore: ':lua ignore.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let err =
+            rule_from(&content[0][0], None).expect_err("Expected :lua entries to be rejected");
+        let message = format!("{}", err);
+        assert!(
+            message.contains("Property 'ignore' no longer accepts ':lua' entries."),
+            "Unexpected error: {}",
+            message
+        );
+    }
+
+    #[test]
+    fn it_parses_filter_relative_to_config_dir() {
+        let file_content = "
+        - name: filtered task
+          run: 'echo lua'
+          change: '**/*.txt'
+          filter: 'filters/onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let examples_dir = current_dir().unwrap().join("examples");
+        let config_dir = examples_dir.to_string_lossy().to_string();
+        let rule =
+            rule_from(&content[0][0], Some(config_dir.clone())).expect("Failed to parse rule");
+
+        let expected_path = PathBuf::from(config_dir).join("filters/onchange.lua");
+        assert_eq!(rule.filter_script().unwrap(), expected_path);
+    }
+
+    #[test]
+    fn it_preserves_absolute_filter_path() {
+        let absolute = current_dir()
+            .unwrap()
+            .join("examples")
+            .join("filters")
+            .join("onchange.lua");
+        let file_content = format!(
+            "
+        - name: filtered task
+          run: 'echo lua'
+          change: '**/*.txt'
+          filter: '{}'
+        ",
+            absolute.display()
+        );
+
+        let content = YamlLoader::load_from_str(&file_content).unwrap();
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
+
+        assert_eq!(rule.filter_script().unwrap(), absolute);
+    }
+
+    #[test]
+    fn it_rejects_non_string_filter_values() {
+        let file_content = "
+        - name: invalid filter
+          run: 'echo lua'
+          change: '**/*.txt'
+          filter:
+            foo: bar
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let err = rule_from(&content[0][0], None).expect_err("Expected filter to require a string");
+        let message = format!("{}", err);
+        assert!(
+            message.contains("Invalid property 'filter' in rule below"),
+            "Unexpected error: {}",
+            message
         );
     }
 }
