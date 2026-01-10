@@ -50,16 +50,45 @@ impl Watches {
     /// Returns the list of rules that contains absolute path
     ///
     pub fn paths_to_watch(&self) -> Option<Vec<String>> {
-        let mut paths = self
-            .rules
-            .iter()
-            .map(|r| r.watch_absolute_paths())
-            .flatten()
-            .collect::<Vec<String>>();
-
         let current_dir = std::env::current_dir().expect("Unable to get current directory");
+        let mut paths = Vec::new();
 
-        paths.push(current_dir.to_str().unwrap().to_string());
+        for rule in &self.rules {
+            for pattern in rule.watch_patterns() {
+                // Convert relative patterns to absolute based on current_dir
+                let absolute_pattern = if pattern.starts_with("/") {
+                    pattern.clone()
+                } else {
+                    let mut abs = current_dir.clone();
+                    abs.push(&pattern);
+                    abs.to_str().unwrap().to_string()
+                };
+                // Extract directory part before any glob metacharacters
+                let mut dir = String::new();
+                for segment in absolute_pattern.split('/') {
+                    if segment.contains('*') || segment.contains('?') || segment.contains('[') || segment.contains('{') {
+                        break;
+                    }
+                    if !dir.is_empty() {
+                        dir.push('/');
+                    }
+                    dir.push_str(segment);
+                }
+                if dir.is_empty() {
+                    dir = current_dir.to_str().unwrap().to_string();
+                }
+                eprintln!("DEBUG: pattern '{}' -> dir '{}'", pattern, dir);
+                if !paths.contains(&dir) {
+                    paths.push(dir);
+                }
+            }
+        }
+
+        // Always watch current directory as fallback
+        let current_dir_str = current_dir.to_str().unwrap().to_string();
+        if !paths.contains(&current_dir_str) {
+            paths.push(current_dir_str);
+        }
 
         if !paths.is_empty() {
             Some(paths)
