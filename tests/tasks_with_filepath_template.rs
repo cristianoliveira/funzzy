@@ -1,4 +1,6 @@
 use std::io::prelude::*;
+use std::thread;
+use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 
@@ -25,19 +27,8 @@ fn test_it_replaces_filepath_template_with_changed_file() {
 
             let mut output = String::new();
 
-            wait_until!(
-                {
-                    output_log
-                        .read_to_string(&mut output)
-                        .expect("failed to read from file");
-
-                    output.contains("Running on init commands.")
-                        && output.contains("Funzzy results")
-                },
-                "Funzzy has not been started with verbose mode {}",
-                output
-            );
-
+            // Give the process and watcher time to start up before triggering a change.
+            thread::sleep(Duration::from_secs(3));
             write_to_file!("examples/workdir/trigger-watcher.txt");
 
             wait_until!(
@@ -77,7 +68,7 @@ this file has changed: $PWD/examples/workdir/trigger-watcher.txt
 
 Funzzy: cat '$PWD/examples/workdir/trigger-watcher.txt' || echo 'nothing to run' 
 
-test_content
+integration_test_content
 
 Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foobar/ 
 

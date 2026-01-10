@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{self, Write};
 
 #[cfg(not(test))]
 use crate::environment;
@@ -29,6 +29,7 @@ pub fn info(msg: &str) {
 
     println!("{}", message);
     logging::log_line(&message);
+    let _ = io::stdout().flush();
 }
 
 pub fn error(msg: &str) {
@@ -40,17 +41,20 @@ pub fn error(msg: &str) {
 
     println!("{}", message);
     logging::log_line(&message);
+    let _ = io::stdout().flush();
 }
 
 pub fn warn(msg: &str) {
     let message = format!("Funzzy warning: {}", msg);
     println!("{}", message);
     logging::log_line(&message);
+    let _ = io::stdout().flush();
 }
 
 pub fn show_and_exit(text: &str) -> ! {
     println!("{}", text);
     logging::log_line(text);
+    let _ = io::stdout().flush();
     std::process::exit(0)
 }
 
@@ -66,6 +70,7 @@ pub fn failure(text: &str, err: String) -> ! {
 
     println!("{}", err);
     logging::log_line(&err);
+    let _ = io::stdout().flush();
     std::process::exit(1)
 }
 
@@ -84,6 +89,7 @@ pub fn verbose(msg: &str, verbose: bool) {
 
     println!("{}", separator);
     logging::log_line(separator);
+    let _ = io::stdout().flush();
 }
 
 #[cfg(not(feature = "test-integration"))]
@@ -163,4 +169,5 @@ pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time
 pub fn clear_screen() -> () {
     // See https://archive.ph/d3Z3O
     print!("\n{}[2J", 27 as char);
+    let _ = io::stdout().flush();
 }

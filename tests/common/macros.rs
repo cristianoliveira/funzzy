@@ -105,11 +105,20 @@ macro_rules! wait_until {
 }
 
 /// Write to a file.
-/// it will write the string `test_content\n` to the given file for testing purposes.
+/// it will write the string `integration_test_content\n` to the given file for testing purposes.
 #[macro_export]
 macro_rules! write_to_file {
     ($file_path:expr) => {
         println!("Integration Tests: writting to file {}", $file_path);
+        if let Err(err) = std::fs::remove_file($file_path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                panic!(
+                    "Integration Tests: [ERROR] failed to cleanup file before writing: {}\nCause: {:?}",
+                    $file_path, err
+                );
+            }
+        }
+
         let mut file = match std::fs::File::create($file_path) {
             Ok(file) => file,
             Err(err) => {
@@ -120,7 +129,7 @@ macro_rules! write_to_file {
             }
         };
 
-        match file.write_all(b"test_content\n") {
+        match file.write_all(b"integration_test_content\n") {
             Ok(_) => {}
             Err(err) => {
                 panic!(
