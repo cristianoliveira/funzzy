@@ -41,7 +41,7 @@ fn test_it_loads_lua_based_filter_config() {
 }
 
 #[test]
-#[ignore = "Lua evaluation not yet implemented"]
+#[ignore]
 fn test_it_runs_task_when_lua_predicate_matches() {
     // This test documents the expected behavior when Lua evaluation is implemented
     // It will run the task when a file containing "trigger" in its path changes

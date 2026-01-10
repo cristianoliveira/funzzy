@@ -1,6 +1,7 @@
 extern crate glob;
 extern crate yaml_rust;
 
+use super::lua;
 use crate::cli;
 use crate::errors;
 use crate::yaml;
@@ -12,6 +13,7 @@ use crate::stdout;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub enum WatchPattern {
@@ -27,6 +29,7 @@ pub struct Rules {
     watch_patterns: Vec<WatchPattern>,
     ignore_patterns: Vec<WatchPattern>,
     run_on_init: bool,
+    config_dir: Option<String>,
 
     yaml: Option<Yaml>,
 }
@@ -38,6 +41,7 @@ impl Rules {
         watches: Vec<WatchPattern>,
         ignores: Vec<WatchPattern>,
         run_on_init: bool,
+        config_dir: Option<String>,
     ) -> Self {
         Rules {
             name,
@@ -45,7 +49,23 @@ impl Rules {
             watch_patterns: watches,
             ignore_patterns: ignores,
             run_on_init,
+            config_dir,
             yaml: None,
+        }
+    }
+
+    fn resolve_script_path(&self, script_path: &str) -> std::path::PathBuf {
+        let path = std::path::Path::new(script_path);
+        if path.is_absolute() {
+            return path.to_path_buf();
+        }
+        match &self.config_dir {
+            Some(config_dir) => {
+                let mut full = std::path::PathBuf::from(config_dir);
+                full.push(script_path);
+                full
+            }
+            None => path.to_path_buf(),
         }
     }
 
@@ -62,10 +82,33 @@ impl Rules {
                         return true;
                     }
                 }
-                WatchPattern::LuaScript(_) => {
-                    // TODO: Evaluate Lua predicate
-                    // For now, treat as no match
-                    continue;
+                WatchPattern::LuaScript(script_path) => {
+                    // Resolve script path relative to config directory
+                    let script_path = self.resolve_script_path(script_path);
+
+                    // Create Lua runtime and evaluate predicate
+                    match lua::LuaRuntime::new() {
+                        Ok(runtime) => {
+                            let event = lua::LuaEvent {
+                                path: std::path::PathBuf::from(path),
+                            };
+                            match runtime.evaluate_predicate(&script_path, &event) {
+                                Ok(true) => return true,
+                                Ok(false) => continue,
+                                Err(err) => {
+                                    stdout::error(&format!(
+                                        "Lua predicate evaluation failed: {}",
+                                        err
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -85,10 +128,33 @@ impl Rules {
                         return true;
                     }
                 }
-                WatchPattern::LuaScript(_) => {
-                    // TODO: Evaluate Lua predicate
-                    // For now, treat as no match
-                    continue;
+                WatchPattern::LuaScript(script_path) => {
+                    // Resolve script path relative to config directory
+                    let script_path = self.resolve_script_path(script_path);
+
+                    // Create Lua runtime and evaluate predicate
+                    match lua::LuaRuntime::new() {
+                        Ok(runtime) => {
+                            let event = lua::LuaEvent {
+                                path: std::path::PathBuf::from(path),
+                            };
+                            match runtime.evaluate_predicate(&script_path, &event) {
+                                Ok(true) => return true,
+                                Ok(false) => continue,
+                                Err(err) => {
+                                    stdout::error(&format!(
+                                        "Lua predicate evaluation failed: {}",
+                                        err
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -216,7 +282,7 @@ impl Rules {
     }
 }
 
-pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
+pub fn rule_from(yaml: &Yaml, config_dir: Option<String>) -> errors::Result<Rules> {
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns_str = yaml::extract_list(yaml, "change").unwrap_or_default();
@@ -250,6 +316,7 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
         watch_patterns,
         ignore_patterns,
         run_on_init,
+        config_dir,
         yaml: Some(yaml.clone()),
     })
 }
@@ -309,7 +376,13 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> Vec<String> {
         .collect()
 }
 
-pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
+pub fn from_yaml(file_content: &str, config_path: Option<&str>) -> errors::Result<Vec<Rules>> {
+    let config_dir = config_path.and_then(|p| {
+        Path::new(p)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+    });
+
     let items = match YamlLoader::load_from_str(file_content) {
         Ok(val) => val,
         Err(err) => {
@@ -359,7 +432,7 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
         Yaml::Array(ref items) => {
             let mut rules = vec![];
             for item in items {
-                match rule_from(item) {
+                match rule_from(item, config_dir.clone()) {
                     Ok(rule) => rules.push(rule),
                     Err(err) => return Err(err),
                 }
@@ -473,6 +546,7 @@ pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec
         watch_patterns,
         ignore,
         run_on_init,
+        None,
     )])
 }
 
@@ -488,7 +562,7 @@ pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
                 ));
             }
 
-            return from_yaml(&content);
+            return from_yaml(&content, Some(filename));
         }
 
         Err(err) => Err(errors::FzzError::IoConfigError(
@@ -595,8 +669,8 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
-        let rule2 = rule_from(&content[0][1]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
+        let rule2 = rule_from(&content[0][1], None).expect("Failed to parse rule");
 
         assert_eq!(true, rule.watch("tests/foo.rs"));
 
@@ -621,7 +695,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(false, rule.watch("tests/foo.rs"));
     }
@@ -636,7 +710,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(rule.run_on_init());
     }
@@ -651,7 +725,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -665,7 +739,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert!(!rule.run_on_init());
     }
@@ -680,7 +754,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(true, rule.ignore("tests/foo.rs"));
     }
@@ -695,7 +769,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         assert_eq!(false, rule.ignore("tests/foo.rs"));
     }
@@ -726,7 +800,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).unwrap();
+        let rule = rule_from(&content[0][0], None).unwrap();
 
         let result = rule.commands();
         assert_eq!(vec!["cargo tests"], result);
@@ -763,7 +837,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             template(
@@ -812,7 +886,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             template(
@@ -844,7 +918,7 @@ mod tests {
           change: 'tests/**'
         ";
 
-        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
 
         assert_eq!(
             rules[0].as_string(),
@@ -872,7 +946,7 @@ mod tests {
           change: **/*
         ";
 
-        let result = from_yaml(file_content);
+        let result = from_yaml(file_content, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -890,7 +964,7 @@ mod tests {
         let empty_file = "
         ";
 
-        let result = from_yaml(empty_file);
+        let result = from_yaml(empty_file, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -907,7 +981,7 @@ mod tests {
               run: echo foo
         ";
 
-        let result = from_yaml(empty_file);
+        let result = from_yaml(empty_file, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
@@ -936,6 +1010,7 @@ mod tests {
           run: 'echo invalid'
           ignore: '**/*.go'
         ",
+            None,
         );
         assert!(rules_yaml.is_err());
     }
@@ -970,6 +1045,7 @@ mod tests {
           run: 'echo invalid'
           ignore: '**/*.go'
         ",
+            None,
         );
         assert!(rules_yaml.is_ok());
 
@@ -1013,7 +1089,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         let watch_patterns = rule.watch_patterns();
         assert_eq!(watch_patterns.len(), 1);
@@ -1033,7 +1109,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         // Should have one glob watch pattern
         let watch_globs = rule.watch_glob_patterns();
@@ -1064,7 +1140,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         let watch_patterns = rule.watch_patterns();
         assert_eq!(watch_patterns.len(), 3);
@@ -1112,7 +1188,7 @@ mod tests {
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
-        let rule = rule_from(&content[0][0]).expect("Failed to parse rule");
+        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
 
         // Validation should succeed (Lua patterns don't get glob validation)
         assert!(rule.validate().is_ok());
