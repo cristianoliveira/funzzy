@@ -18,7 +18,7 @@ pub fn events(
     let mut debouncer =
         new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
-    eprintln!("DEBUG: watch_path_list: {:?}", watch_path_list);
+
 
     for path in watch_path_list {
         stdout::verbose(&format!("Watching path: {}", path), verbose);

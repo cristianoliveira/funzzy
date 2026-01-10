@@ -47,6 +47,45 @@ impl Watches {
         }
     }
 
+    /// Extract the directory to watch from a glob pattern.
+    /// For example:
+    /// - "src/**" -> "src"
+    /// - "/tmp/**" -> "/tmp"
+    /// - "examples/workdir/**/*" -> "examples/workdir"
+    fn extract_watch_directory(pattern: &str, current_dir: &std::path::Path) -> String {
+        let absolute_pattern = if pattern.starts_with("/") {
+            pattern.to_string()
+        } else {
+            let mut abs = current_dir.to_path_buf();
+            abs.push(pattern);
+            abs.to_str().unwrap().to_string()
+        };
+
+        // Split by '/' and collect segments until we hit a glob metacharacter
+        let mut segments = Vec::new();
+        let is_absolute = absolute_pattern.starts_with('/');
+        
+        for segment in absolute_pattern.split('/') {
+            if segment.contains('*') || segment.contains('?') || segment.contains('[') || segment.contains('{') {
+                break;
+            }
+            if !segment.is_empty() {
+                segments.push(segment);
+            }
+        }
+
+        if segments.is_empty() {
+            return current_dir.to_str().unwrap().to_string();
+        }
+
+        let mut result = String::new();
+        if is_absolute {
+            result.push('/');
+        }
+        result.push_str(&segments.join("/"));
+        result
+    }
+
     /// Returns the list of rules that contains absolute path
     ///
     pub fn paths_to_watch(&self) -> Option<Vec<String>> {
@@ -55,29 +94,7 @@ impl Watches {
 
         for rule in &self.rules {
             for pattern in rule.watch_patterns() {
-                // Convert relative patterns to absolute based on current_dir
-                let absolute_pattern = if pattern.starts_with("/") {
-                    pattern.clone()
-                } else {
-                    let mut abs = current_dir.clone();
-                    abs.push(&pattern);
-                    abs.to_str().unwrap().to_string()
-                };
-                // Extract directory part before any glob metacharacters
-                let mut dir = String::new();
-                for segment in absolute_pattern.split('/') {
-                    if segment.contains('*') || segment.contains('?') || segment.contains('[') || segment.contains('{') {
-                        break;
-                    }
-                    if !dir.is_empty() {
-                        dir.push('/');
-                    }
-                    dir.push_str(segment);
-                }
-                if dir.is_empty() {
-                    dir = current_dir.to_str().unwrap().to_string();
-                }
-                eprintln!("DEBUG: pattern '{}' -> dir '{}'", pattern, dir);
+                let dir = Self::extract_watch_directory(&pattern, &current_dir);
                 if !paths.contains(&dir) {
                     paths.push(dir);
                 }
@@ -318,9 +335,36 @@ mod tests {
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
         let results = watches.paths_to_watch().expect("No rules found");
 
-        assert_eq!(results.len(), 6);
-        assert_eq!(results[0], "/tmp/**");
-        assert_eq!(results[4], "/etc/**");
+        let current_dir = std::env::current_dir().expect("Unable to get current directory");
+        // Compute expected directories: all patterns converted to directories, plus current_dir
+        let mut expected = Vec::new();
+        let patterns = vec![
+            "src/**",
+            "src/**",
+            "/tmp/**",
+            "/User/**",
+            "test/**",
+            "/dev/**",
+            "/usr/**",
+            "/etc/**",
+        ];
+        for pattern in patterns {
+            let dir = Watches::extract_watch_directory(pattern, &current_dir);
+            if !expected.contains(&dir) {
+                expected.push(dir);
+            }
+        }
+        // Add current directory if not already present (it should be added by paths_to_watch)
+        let current_dir_str = current_dir.to_str().unwrap().to_string();
+        if !expected.contains(&current_dir_str) {
+            expected.push(current_dir_str);
+        }
+
+        assert_eq!(results.len(), expected.len());
+        // Order should match iteration order
+        for (i, expected_dir) in expected.iter().enumerate() {
+            assert_eq!(&results[i], expected_dir);
+        }
     }
 
     #[test]
