@@ -1,15 +1,13 @@
-use assert_cmd::Command;
+use assert_cmd::cargo;
 
 #[path = "./common/lib.rs"]
 mod setup;
-
-const BINARY_NAME: &str = "funzzy";
 
 #[test]
 fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::Error>> {
     setup::nonparallel(|| {
         if !std::path::Path::new(".watch.yaml").exists() {
-            let mut cmd = Command::cargo_bin(BINARY_NAME).expect("failed to get cargo bin");
+            let mut cmd = cargo::cargo_bin_cmd!("funzzy");
             cmd.arg("init").assert().success();
         }
         defer!({
@@ -18,7 +16,7 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
             }
         });
 
-        let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+        let mut cmd = cargo::cargo_bin_cmd!("funzzy");
         cmd.env("FUNZZY_COLORED", "true")
             .env("_TEST_FUNZZY_COLORED", "true")
             .arg("init")
@@ -54,7 +52,7 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
             std::fs::set_permissions(".", perms).expect("failed to set read only");
         });
 
-        let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+        let mut cmd = cargo::cargo_bin_cmd!("funzzy");
 
         cmd.env("FUNZZY_COLORED", "false")
             .env("_TEST_FUNZZY_COLORED", "false")

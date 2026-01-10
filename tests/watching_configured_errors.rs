@@ -1,9 +1,7 @@
-use assert_cmd::Command;
+use assert_cmd::cargo;
 
 #[path = "./common/lib.rs"]
 mod setup;
-
-const BINARY_NAME: &str = "funzzy";
 
 fn change_dir_if_needed() {
     let current_dir = std::env::current_dir().expect("failed to get current dir");
@@ -16,7 +14,7 @@ fn change_dir_if_needed() {
 fn it_fails_when_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
     change_dir_if_needed();
 
-    let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    let mut cmd = cargo::cargo_bin_cmd!("funzzy");
     cmd.env("FUNZZY_COLORED", "false");
     cmd.assert().failure().stdout(
         vec![
@@ -36,7 +34,7 @@ fn it_fails_when_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>>
 fn it_fails_using_an_config_with_missing_properties() -> Result<(), Box<dyn std::error::Error>> {
     change_dir_if_needed();
 
-    let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    let mut cmd = cargo::cargo_bin_cmd!("funzzy");
     cmd.env("FUNZZY_COLORED", "false");
     cmd.arg("--config")
         .arg("./missing-required-property.yml")
@@ -63,7 +61,7 @@ fn it_fails_using_an_config_with_missing_properties() -> Result<(), Box<dyn std:
 fn it_fails_using_an_config_with_non_list() -> Result<(), Box<dyn std::error::Error>> {
     change_dir_if_needed();
 
-    let mut cmd = Command::cargo_bin(BINARY_NAME)?;
+    let mut cmd = cargo::cargo_bin_cmd!("funzzy");
     cmd.env("FUNZZY_COLORED", "false");
     cmd.arg("--config")
         .arg("./non-list.yaml")
