@@ -166,8 +166,6 @@ pub fn yaml_to_string(yaml: &Yaml, identation: u8) -> String {
 mod tests {
     use self::yaml_rust::YamlLoader;
     use super::*;
-    use crate::stdout;
-
     fn clean_yaml_str(yaml_str: &str) -> String {
         yaml_str
             .split("\n")

@@ -97,12 +97,22 @@ where
     println!("Integration Tests: fzz bin from {}", bin_path);
     let output_file = File::create(dir.join(opts.output_file)).expect("error log file");
 
+    let mut cmd = Command::new(bin_path);
+    cmd.arg("-c");
+    if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
+        cmd.env("_TEST_FUNZZY_COLORED", "0");
+    }
+    if std::env::var("_TEST_FUNZZY_BAIL").is_err() {
+        cmd.env("_TEST_FUNZZY_BAIL", "0");
+    }
+    if std::env::var("_TEST_FUNZZY_NON_BLOCK").is_err() {
+        cmd.env("_TEST_FUNZZY_NON_BLOCK", "0");
+    }
+    cmd.arg(dir.join(opts.example_file))
+        .stdout(Stdio::from(output_file));
+
     handler(
-        Command::new(bin_path)
-            .arg("-c")
-            .env("_TEST_FUNZZY_COLORED", "0")
-            .arg(dir.join(opts.example_file))
-            .stdout(Stdio::from(output_file)),
+        &mut cmd,
         File::open(dir.join(opts.output_file)).expect("failed to open file"),
     );
 
@@ -166,8 +176,20 @@ where
     println!("Integration Tests: fzz bin from {}", bin_path);
     let output_file = File::create(dir.join(output_file_path)).expect("error log file");
 
+    let mut cmd = Command::new(bin_path);
+    if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
+        cmd.env("_TEST_FUNZZY_COLORED", "0");
+    }
+    if std::env::var("_TEST_FUNZZY_BAIL").is_err() {
+        cmd.env("_TEST_FUNZZY_BAIL", "0");
+    }
+    if std::env::var("_TEST_FUNZZY_NON_BLOCK").is_err() {
+        cmd.env("_TEST_FUNZZY_NON_BLOCK", "0");
+    }
+    cmd.stdout(Stdio::from(output_file));
+
     handler(
-        Command::new(bin_path).stdout(Stdio::from(output_file)),
+        &mut cmd,
         File::open(dir.join(output_file_path)).expect("failed to open file"),
     );
 

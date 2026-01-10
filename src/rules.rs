@@ -492,8 +492,6 @@ mod tests {
     use super::from_yaml;
     use super::rule_from;
     use super::{commands, template};
-
-    use crate::stdout;
     use std::env::current_dir;
 
     #[test]

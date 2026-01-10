@@ -20,6 +20,7 @@ pub fn events(
     let watcher = debouncer.watcher();
 
     for path in watch_path_list {
+        stdout::verbose(&format!("Watching path: {}", path), verbose);
         if let Err(err) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
             let warning = &vec![
                 format!("unknown file/directory: '{}'", path),
