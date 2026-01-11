@@ -28,7 +28,7 @@ use serde_derive::Deserialize;
 #[warn(unused_imports)]
 use std::io::prelude::*;
 use std::io::{self, IsTerminal};
-use std::path::Path;
+
 use std::process;
 
 use docopt::Docopt;
@@ -73,6 +73,7 @@ Environment configs:
 FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
 FUNZZY_BAIL: Boolean        Same as `--fail-fast`
 FUNZZY_COLORED: Boolean     Output with colors.
+FUNZZY_STDIN_TIMEOUT_MS: Number   Timeout in milliseconds waiting for stdin data (default: 2000)
 ";
 
 #[allow(non_snake_case)]
@@ -181,23 +182,13 @@ fn main() {
         stdout::info(&format!("Logging output to {}", log_path.display()));
     }
 
-    // Determine if a config file exists (explicit or default)
-    let config_exists = if !args.flag_config.is_empty() {
-        true
-    } else {
-        let default_yaml = Path::new(cli::watch::DEFAULT_FILENAME).exists();
-        let default_yml =
-            Path::new(&cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml")).exists();
-        default_yaml || default_yml
-    };
-
     match args {
         Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        // If config exists OR no command argument provided, use config branch
-        _ if config_exists || args.arg_command.is_empty() => {
+        // If no command argument provided, use config branch (if config exists, else error)
+        _ if args.arg_command.is_empty() => {
             let rules = if args.flag_config.is_empty() {
                 rules::from_default_file_config().unwrap_or_else(|err| {
                     stdout::failure("Failed to read default config file", err.to_string());
@@ -241,10 +232,10 @@ fn main() {
             }
         }
 
-        // Otherwise, command argument provided and config does not exist, use stdin branch
+        // Otherwise, command argument provided, use stdin branch (arbitrary command mode)
         Args {
             ref arg_command, ..
-        } if !arg_command.is_empty() && !config_exists => {
+        } if !arg_command.is_empty() => {
             match from_stdin() {
                 Ok(StdinRead::NoPipe) => {
                     // No stdin and no config -> help and exit 1
