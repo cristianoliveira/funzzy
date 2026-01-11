@@ -1,4 +1,4 @@
-use assert_cmd::Command;
+use assert_cmd::cargo;
 use predicates::prelude::predicate;
 use pretty_assertions::assert_eq;
 use std::io::prelude::*;
@@ -77,7 +77,7 @@ Success; Completed: 3; Failed: 0; Duration: 0.0000s"
 
 #[test]
 fn test_it_list_the_available_tasks_when_nothing_matches() {
-    let mut cmd = Command::cargo_bin("fzz").expect("failed to get cargo bin");
+    let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
         .arg("-t")
         .arg("unknown_task_name")
@@ -96,7 +96,7 @@ Available tasks
 
 #[test]
 fn test_it_list_the_available_tasks_flag_is_empty() {
-    let mut cmd = Command::cargo_bin("fzz").expect("failed to get cargo bin");
+    let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
         .arg("-c")
         .arg("examples/tasks-with-tags-to-filter.yml")

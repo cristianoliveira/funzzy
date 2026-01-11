@@ -83,6 +83,7 @@ impl LoggedChild {
         status
     }
 
+    #[allow(dead_code)]
     pub fn kill(&mut self) -> std::io::Result<()> {
         self.child.kill()
     }
