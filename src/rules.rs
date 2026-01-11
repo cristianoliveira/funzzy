@@ -13,7 +13,7 @@ use crate::stdout;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub enum WatchPattern {
@@ -55,17 +55,43 @@ impl Rules {
     }
 
     fn resolve_script_path(&self, script_path: &str) -> std::path::PathBuf {
-        let path = std::path::Path::new(script_path);
+        let path = Path::new(script_path);
         if path.is_absolute() {
             return path.to_path_buf();
         }
         match &self.config_dir {
             Some(config_dir) => {
-                let mut full = std::path::PathBuf::from(config_dir);
+                let mut full = PathBuf::from(config_dir);
                 full.push(script_path);
                 full
             }
             None => path.to_path_buf(),
+        }
+    }
+
+    fn matches_lua_script(&self, script_path: &str, path: &str) -> bool {
+        let resolved_path = self.resolve_script_path(script_path);
+        match lua::LuaRuntime::new() {
+            Ok(runtime) => {
+                let event = lua::LuaEvent {
+                    path: PathBuf::from(path),
+                };
+                match runtime.evaluate_predicate(&resolved_path, &event) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        stdout::error(&format!(
+                            "Lua predicate evaluation failed ({}): {}",
+                            resolved_path.display(),
+                            err
+                        ));
+                        false
+                    }
+                }
+            }
+            Err(err) => {
+                stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                false
+            }
         }
     }
 
@@ -83,31 +109,8 @@ impl Rules {
                     }
                 }
                 WatchPattern::LuaScript(script_path) => {
-                    // Resolve script path relative to config directory
-                    let script_path = self.resolve_script_path(script_path);
-
-                    // Create Lua runtime and evaluate predicate
-                    match lua::LuaRuntime::new() {
-                        Ok(runtime) => {
-                            let event = lua::LuaEvent {
-                                path: std::path::PathBuf::from(path),
-                            };
-                            match runtime.evaluate_predicate(&script_path, &event) {
-                                Ok(true) => return true,
-                                Ok(false) => continue,
-                                Err(err) => {
-                                    stdout::error(&format!(
-                                        "Lua predicate evaluation failed: {}",
-                                        err
-                                    ));
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            stdout::error(&format!("Failed to create Lua runtime: {}", err));
-                            continue;
-                        }
+                    if self.matches_lua_script(script_path, path) {
+                        return true;
                     }
                 }
             }
@@ -129,31 +132,8 @@ impl Rules {
                     }
                 }
                 WatchPattern::LuaScript(script_path) => {
-                    // Resolve script path relative to config directory
-                    let script_path = self.resolve_script_path(script_path);
-
-                    // Create Lua runtime and evaluate predicate
-                    match lua::LuaRuntime::new() {
-                        Ok(runtime) => {
-                            let event = lua::LuaEvent {
-                                path: std::path::PathBuf::from(path),
-                            };
-                            match runtime.evaluate_predicate(&script_path, &event) {
-                                Ok(true) => return true,
-                                Ok(false) => continue,
-                                Err(err) => {
-                                    stdout::error(&format!(
-                                        "Lua predicate evaluation failed: {}",
-                                        err
-                                    ));
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            stdout::error(&format!("Failed to create Lua runtime: {}", err));
-                            continue;
-                        }
+                    if self.matches_lua_script(script_path, path) {
+                        return true;
                     }
                 }
             }
@@ -1192,5 +1172,40 @@ mod tests {
 
         // Validation should succeed (Lua patterns don't get glob validation)
         assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn it_evaluates_lua_watch_predicate() {
+        let file_content = "
+        - name: lua watch
+          run: 'echo lua'
+          change: ':lua onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let examples_dir = current_dir().unwrap().join("examples");
+        let config_dir = examples_dir.to_string_lossy().to_string();
+        let rule = rule_from(&content[0][0], Some(config_dir)).expect("Failed to parse rule");
+
+        assert!(rule.watch("/tmp/trigger-lua-file.txt"));
+        assert!(!rule.watch("/tmp/regular-file.txt"));
+    }
+
+    #[test]
+    fn it_evaluates_lua_ignore_predicate() {
+        let file_content = "
+        - name: lua ignore
+          run: 'echo lua'
+          change: '**/*.txt'
+          ignore: ':lua onchange.lua'
+        ";
+
+        let content = YamlLoader::load_from_str(file_content).unwrap();
+        let examples_dir = current_dir().unwrap().join("examples");
+        let config_dir = examples_dir.to_string_lossy().to_string();
+        let rule = rule_from(&content[0][0], Some(config_dir)).expect("Failed to parse rule");
+
+        assert!(rule.ignore("/tmp/foo-trigger-file.txt"));
+        assert!(!rule.ignore("/tmp/foo.txt"));
     }
 }
