@@ -10,15 +10,16 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
     let mut cmd = cargo::cargo_bin_cmd!("funzzy");
 
     cmd.env("FUNZZY_COLORED", "false")
+        .env("FUNZZY_STDIN_TIMEOUT_MS", "10")
+        .current_dir("examples/workdir")
         .arg("echo 'foo'")
         .write_stdin("")
         .assert()
         .failure()
         .stdout(
             vec![
-                "Error: Failed to read stdin",
-                "Reason: Timed out waiting for input.",
-                "Hint: Did you forget to pipe an output of a command? Try `find . | fzz 'echo \"changed: {{filepath}}\"'`",
+                "Error: No files provided via stdin.",
+                "Provide a list of files or directories via stdin, e.g., `find . | fzz 'echo {{filepath}}'`.",
                 "",
             ]
             .join("\n"),
@@ -37,6 +38,8 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
         .output()?;
 
     cmd.env("FUNZZY_COLORED", "false")
+        .env("FUNZZY_STDIN_TIMEOUT_MS", "10")
+        .current_dir("examples/workdir")
         .arg("echo 'foo'")
         .write_stdin(lsla.stdout)
         .assert()
