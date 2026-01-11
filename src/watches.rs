@@ -352,14 +352,7 @@ mod tests {
         // Compute expected directories: all patterns converted to directories, plus current_dir
         let mut expected = Vec::new();
         let patterns = vec![
-            "src/**",
-            "src/**",
-            "/tmp/**",
-            "/User/**",
-            "test/**",
-            "/dev/**",
-            "/usr/**",
-            "/etc/**",
+            "src/**", "src/**", "/tmp/**", "/User/**", "test/**", "/dev/**", "/usr/**", "/etc/**",
         ];
         for pattern in patterns {
             let dir = Watches::extract_watch_directory(pattern, &current_dir);
