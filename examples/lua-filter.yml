@@ -1,0 +1,7 @@
+# Example configuration demonstrating glob change triggers with a Lua filter
+- name: lua-filtered-task
+  run:
+    - echo "Lua filter matched {{filepath}}"
+  change:
+    - "workdir/**/*"
+  filter: lua/handler.lua

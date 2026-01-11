@@ -9,6 +9,7 @@ mod cmd;
 mod environment;
 mod errors;
 mod logging;
+mod lua;
 mod rules;
 mod stdout;
 mod watcher;

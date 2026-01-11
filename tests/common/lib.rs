@@ -37,7 +37,7 @@ where
 
 #[cfg(not(feature = "test-integration"))]
 #[allow(dead_code)]
-pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
+pub fn with_output<F>(_output_file_path: &str, _handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
 {
