@@ -66,11 +66,17 @@ where
     // I'm aware of `cargo test -- --test-threads=1` option, but I want to run
     // all tests with `cargo test` in parallel and limit the parallelism only
     // for tests that write to the file system, like the integration tests.
-    let mut is_running = IS_RUNNING_MULTITHREAD.lock().unwrap();
+    let mut is_running = IS_RUNNING_MULTITHREAD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     println!(
         "SINGLE THREAD: Is there another test running: {}",
         *is_running != 0
     );
+    // If recovering from poisoned mutex, reset since test panicked
+    if *is_running == 1 {
+        *is_running = 0;
+    }
     loop {
         // This here isn't really necessary, I noticed that since there is a
         // mutex lock, the test will run in sequence, but I'm leaving it here
@@ -140,11 +146,17 @@ where
     // I'm aware of `cargo test -- --test-threads=1` option, but I want to run
     // all tests with `cargo test` in parallel and limit the parallelism only
     // for tests that write to the file system, like the integration tests.
-    let mut is_running = IS_RUNNING_MULTITHREAD.lock().expect("failed to lock mutex");
+    let mut is_running = IS_RUNNING_MULTITHREAD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     println!(
         "SINGLE THREAD: Is there another test running: {}",
         *is_running != 0
     );
+    // If recovering from poisoned mutex, reset since test panicked
+    if *is_running == 1 {
+        *is_running = 0;
+    }
     loop {
         // This here isn't really necessary, I noticed that since there is a
         // mutex lock, the test will run in sequence, but I'm leaving it here
@@ -212,7 +224,13 @@ where
     // I'm aware of `cargo test -- --test-threads=1` option, but I want to run
     // all tests with `cargo test` in parallel and limit the parallelism only
     // for tests that write to the file system, like the integration tests.
-    let mut is_running = IS_RUNNING_MULTITHREAD.lock().expect("failed to lock mutex");
+    let mut is_running = IS_RUNNING_MULTITHREAD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // If recovering from poisoned mutex, reset since test panicked
+    if *is_running == 1 {
+        *is_running = 0;
+    }
     defer!({
         *is_running = 0;
     });
@@ -227,15 +245,20 @@ pub fn clean_output(output_file: &str) -> String {
         .map(|line| {
             // This line prints the time so is not deterministic
             if line.contains("Funzzy: finished in") {
-                return "Funzzy: finished in 0.0s";
+                return "Funzzy: finished in 0.0s".to_string();
             }
 
-            line
+            if line.contains("Duration: ") {
+                if let Some(idx) = line.find("Duration: ") {
+                    return format!("{}Duration: 0.0000s", &line[..idx]);
+                }
+            }
+
+            line.to_string()
         })
         .filter(|line| !line.contains("@@@@"))
-        .collect::<Vec<&str>>()
+        .collect::<Vec<String>>()
         .join("\n")
-        .to_string()
 }
 
 #[allow(dead_code)]
