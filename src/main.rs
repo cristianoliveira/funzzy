@@ -25,12 +25,16 @@ use nix::{
 use watches::Watches;
 
 use serde_derive::Deserialize;
-use std::io;
 #[warn(unused_imports)]
 use std::io::prelude::*;
+use std::io::{self, IsTerminal};
+
+use std::process;
 
 use docopt::Docopt;
 use docopt::Error;
+use std::sync::mpsc;
+use std::sync::mpsc::TryRecvError;
 
 // remove this sha AI!
 const SHA: Option<&str> = option_env!("GITSHA");
@@ -69,6 +73,7 @@ Environment configs:
 FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
 FUNZZY_BAIL: Boolean        Same as `--fail-fast`
 FUNZZY_COLORED: Boolean     Output with colors.
+FUNZZY_STDIN_TIMEOUT_MS: Number   Timeout in milliseconds waiting for stdin data (default: 2000)
 ";
 
 #[allow(non_snake_case)]
@@ -182,40 +187,8 @@ fn main() {
         // Commands
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        Args {
-            ref arg_command, ..
-        } if !arg_command.is_empty() => {
-            match from_stdin() {
-                Ok(content) => {
-                    if content.trim().is_empty() {
-                        stdout::show_and_exit("The list of files received is empty");
-                    }
-
-                    let patterns = match rules::extract_paths(content) {
-                        Ok(patterns) => patterns,
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    let watch_rules = match rules::from_string(patterns, arg_command.to_string()) {
-                        Ok(rules) => rules,
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    if let Err(err) = rules::validate_rules(&watch_rules) {
-                        stdout::failure("Invalid config file.", err);
-                    }
-
-                    execute_watch_command(Watches::new(watch_rules), args);
-                }
-                Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
-            };
-        }
-
-        _ => {
+        // If no command argument provided, use config branch (if config exists, else error)
+        _ if args.arg_command.is_empty() => {
             let rules = if args.flag_config.is_empty() {
                 rules::from_default_file_config().unwrap_or_else(|err| {
                     stdout::failure("Failed to read default config file", err.to_string());
@@ -257,6 +230,50 @@ fn main() {
                 }
                 _ => execute_watch_command(Watches::new(rules), args),
             }
+        }
+
+        // Otherwise, command argument provided, use stdin branch (arbitrary command mode)
+        Args {
+            ref arg_command, ..
+        } if !arg_command.is_empty() => {
+            match from_stdin() {
+                Ok(StdinRead::NoPipe) => {
+                    // No stdin and no config -> help and exit 1
+                    println!("{}", USAGE);
+                    process::exit(1);
+                }
+                Ok(StdinRead::PipeEmpty) => {
+                    stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz 'echo {{filepath}}'`.".to_string());
+                }
+                Ok(StdinRead::Data(content)) => {
+                    let patterns = match rules::extract_paths(content) {
+                        Ok(patterns) => patterns,
+                        Err(err) => {
+                            stdout::failure("Failed to get rules from stdin", err.to_string())
+                        }
+                    };
+
+                    let watch_rules = match rules::from_string(patterns, arg_command.to_string()) {
+                        Ok(rules) => rules,
+                        Err(err) => {
+                            stdout::failure("Failed to get rules from stdin", err.to_string())
+                        }
+                    };
+
+                    if let Err(err) = rules::validate_rules(&watch_rules) {
+                        stdout::failure("Invalid config file.", err);
+                    }
+
+                    execute_watch_command(Watches::new(watch_rules), args);
+                }
+                Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
+            };
+        }
+
+        // Fallback: no config, no command argument -> show help
+        _ => {
+            println!("{}", USAGE);
+            process::exit(1);
         }
     };
 }
@@ -348,55 +365,98 @@ fn execute<T: Command>(command: T) {
     }
 }
 
-fn from_stdin() -> errors::Result<String> {
+enum StdinRead {
+    NoPipe,
+    PipeEmpty,
+    Data(String),
+}
+
+fn from_stdin() -> errors::Result<StdinRead> {
     let stdin = io::stdin();
 
-    // Spawn a thread and if there is no input in 5 seconds kills the process
-    let has_input = std::sync::Arc::new(std::sync::Mutex::new(false));
-    let clone_has_input = has_input.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+    // Check if stdin is a tty (interactive) - no pipe
+    if stdin.is_terminal() {
+        // No pipe
+        return Ok(StdinRead::NoPipe);
+    }
 
-        let had_input = *clone_has_input.lock().expect("Could not lock has_input");
-        if !had_input {
-            stdout::failure(
-                "Timed out waiting for input.",
-                vec![
-                    "Hint: Did you forget to pipe an output of a command?".to_string(),
-                    "Try `find . | fzz 'echo \"changed: {{filepath}}\"'`".to_string(),
-                ]
-                .join("\n"),
-            );
-        }
+    // There is a pipe, read with patience
+    let (tx, rx) = mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let mut buffer = String::new();
+        let result = stdin.lock().read_to_string(&mut buffer);
+        tx.send((buffer, result)).unwrap();
     });
 
-    let mut buffer = String::new();
-    match stdin.lock().read_to_string(&mut buffer) {
-        Ok(bytes) => {
-            let mut has_input_mutex = match has_input.lock() {
-                Ok(mutex) => mutex,
-                Err(err) => {
-                    return Err(FzzError::IoStdinError(err.to_string(), None));
-                }
-            };
+    // Give the thread a chance to run (especially for immediate data)
+    std::thread::yield_now();
 
-            *has_input_mutex = bytes > 0;
-            if bytes > 0 {
-                Ok(buffer)
-            } else {
-                Err(FzzError::IoStdinError(
-                    "Timed out waiting for input.".to_string(),
-                    Some(
-                        vec![
-                            "Did you forget to pipe an output of a command?".to_string(),
-                            "Try `find . | fzz 'echo \"changed: {{filepath}}\"'`".to_string(),
-                        ]
-                        .join(" "),
-                    ),
-                ))
+    // Check if data is already available without waiting
+    match rx.try_recv() {
+        Ok((buffer, result)) => {
+            // Thread finished reading already (fast)
+            let _ = handle.join();
+            match result {
+                Ok(bytes) => {
+                    if bytes > 0 {
+                        Ok(StdinRead::Data(buffer))
+                    } else {
+                        // EOF with no data
+                        Ok(StdinRead::PipeEmpty)
+                    }
+                }
+                Err(err) => Err(FzzError::IoStdinError(err.to_string(), None)),
             }
         }
-        Err(err) => Err(FzzError::IoStdinError(err.to_string(), None)),
+        Err(TryRecvError::Empty) => {
+            // No data yet, wait with grace period for first data
+            // Configurable via FUNZZY_STDIN_TIMEOUT_MS environment variable (default 2000 ms)
+            let grace_period = std::env::var("FUNZZY_STDIN_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(std::time::Duration::from_millis)
+                .unwrap_or_else(|| std::time::Duration::from_secs(2));
+            match rx.recv_timeout(grace_period) {
+                Ok((buffer, result)) => {
+                    // Thread finished reading within grace period
+                    let _ = handle.join();
+                    match result {
+                        Ok(bytes) => {
+                            if bytes > 0 {
+                                Ok(StdinRead::Data(buffer))
+                            } else {
+                                // EOF with no data
+                                Ok(StdinRead::PipeEmpty)
+                            }
+                        }
+                        Err(err) => Err(FzzError::IoStdinError(err.to_string(), None)),
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // No data received within grace period, treat as empty pipe
+                    // (thread will be blocked indefinitely; we detach it)
+                    stdout::warn("Waiting for stdin...");
+                    drop(handle); // detach thread, it will be killed when process exits
+                    Ok(StdinRead::PipeEmpty)
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // Thread finished before timeout but channel disconnected? Should not happen.
+                    let _ = handle.join();
+                    Err(FzzError::IoStdinError(
+                        "Failed to read stdin".to_string(),
+                        None,
+                    ))
+                }
+            }
+        }
+        Err(TryRecvError::Disconnected) => {
+            // Thread panicked before sending
+            let _ = handle.join();
+            Err(FzzError::IoStdinError(
+                "Failed to read stdin".to_string(),
+                None,
+            ))
+        }
     }
 }
 

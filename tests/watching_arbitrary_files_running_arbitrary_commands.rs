@@ -178,9 +178,11 @@ fn it_runs_on_init_by_default_with_stdin() {
 fn it_timesout_after_x_secs_and_inform() {
     let test_log_file = "it_timesout_after_x_secs_and_inform.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+        fzz_cmd.env("FUNZZY_STDIN_TIMEOUT_MS", "10");
         let mut child = fzz_cmd
             .arg("watch")
             .arg("'echo fooo'")
+            .stdin(Stdio::null())
             .spawn()
             .expect("Failed to spawn grep command");
 
@@ -195,7 +197,7 @@ fn it_timesout_after_x_secs_and_inform() {
                     .read_to_string(&mut output)
                     .expect("failed to read from file");
 
-                output.contains("Timed out waiting for input")
+                output.contains("No files provided via stdin")
             },
             "Failed waiting to timeout. output: {}",
             output
