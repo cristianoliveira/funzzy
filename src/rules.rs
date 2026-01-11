@@ -10,10 +10,12 @@ use self::glob::Pattern;
 use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
 use crate::stdout;
+use std::cell::RefCell;
 use std::fs::File;
 #[warn(unused_imports)]
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct Rules {
@@ -23,6 +25,7 @@ pub struct Rules {
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
     filter_script: Option<PathBuf>,
+    lua_runtime: Rc<RefCell<Option<lua::LuaRuntime>>>,
     run_on_init: bool,
 
     yaml: Option<Yaml>,
@@ -43,6 +46,7 @@ impl Rules {
             watch_patterns: watches,
             ignore_patterns: ignores,
             filter_script,
+            lua_runtime: Rc::new(RefCell::new(None)),
             run_on_init,
             yaml: None,
         }
@@ -96,31 +100,36 @@ impl Rules {
         self.filter_script.clone()
     }
 
+    fn get_or_create_lua_runtime(&self) -> std::cell::RefMut<'_, lua::LuaRuntime> {
+        let mut runtime_opt = self.lua_runtime.borrow_mut();
+        if runtime_opt.is_none() {
+            *runtime_opt = Some(lua::LuaRuntime::new().unwrap_or_else(|err| {
+                stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                panic!("Failed to create Lua runtime: {}", err);
+            }));
+        }
+        std::cell::RefMut::map(runtime_opt, |opt| opt.as_mut().unwrap())
+    }
+
     pub fn passes_filter(&self, path: &str) -> bool {
         let filter_script = match self.filter_script.as_ref() {
             Some(path) => path,
             None => return true, // No filter means always pass
         };
 
-        match lua::LuaRuntime::new() {
-            Ok(runtime) => {
-                let event = lua::LuaEvent {
-                    path: PathBuf::from(path),
-                };
-                match runtime.evaluate_predicate(filter_script, &event) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        stdout::error(&format!(
-                            "Lua predicate evaluation failed ({}): {}",
-                            filter_script.display(),
-                            err
-                        ));
-                        false
-                    }
-                }
-            }
+        let mut runtime = self.get_or_create_lua_runtime();
+        let event = lua::LuaEvent {
+            path: PathBuf::from(path),
+        };
+
+        match runtime.evaluate_predicate(filter_script, &event) {
+            Ok(result) => result,
             Err(err) => {
-                stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                stdout::error(&format!(
+                    "Lua predicate evaluation failed ({}): {}",
+                    filter_script.display(),
+                    err
+                ));
                 false
             }
         }
@@ -229,6 +238,7 @@ pub fn rule_from(yaml: &Yaml, config_dir: Option<String>) -> errors::Result<Rule
         watch_patterns,
         ignore_patterns,
         filter_script,
+        lua_runtime: Rc::new(RefCell::new(None)),
         run_on_init,
         yaml: Some(yaml.clone()),
     })
