@@ -64,7 +64,6 @@ impl Watches {
         // Split by '/' and collect segments until we hit a glob metacharacter
         let mut segments = Vec::new();
         let is_absolute = absolute_pattern.starts_with('/');
-
         for segment in absolute_pattern.split('/') {
             if segment.contains('*')
                 || segment.contains('?')
