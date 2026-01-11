@@ -20,7 +20,7 @@ impl Watches {
             .rules
             .iter()
             .cloned()
-            .filter(|r| !r.ignore(path) && r.watch(path))
+            .filter(|r| !r.ignore(path) && r.watch(path) && r.passes_filter(path))
             .collect::<Vec<Rules>>();
 
         if !cmds.is_empty() {

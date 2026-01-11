@@ -41,7 +41,6 @@ fn test_it_loads_lua_based_filter_config() {
 }
 
 #[test]
-#[ignore]
 fn test_it_runs_task_when_lua_predicate_matches() {
     // This test documents the expected behavior when Lua evaluation is implemented
     // It will run the task when a file containing "trigger" in its path changes
@@ -90,12 +89,17 @@ fn test_it_runs_task_when_lua_predicate_matches() {
             write_to_file!("examples/workdir/other-file.txt");
 
             // Give it a moment, then check task didn't run
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            use std::io::Seek;
+            output_log.seek(std::io::SeekFrom::Start(0)).unwrap();
+            output.clear();
             output_log
                 .read_to_string(&mut output)
                 .expect("failed to read from file");
-
-            let task_run_count = output.matches("File contains 'trigger' in path").count();
+            let task_run_count = output
+                .lines()
+                .filter(|line| line.trim() == "File contains 'trigger' in path")
+                .count();
             assert_eq!(
                 task_run_count, 1,
                 "Task should have run only once (for trigger file), but ran {} times. Output: {}",

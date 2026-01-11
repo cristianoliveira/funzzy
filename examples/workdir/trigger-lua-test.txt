@@ -1,1 +1,1 @@
-test_content
+integration_test_content

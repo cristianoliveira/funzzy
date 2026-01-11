@@ -1,4 +1,5 @@
-# Lua-based filter example
+# Lua-based filter example (uses filter field)
 - name: lua filter task
   run: echo "File contains 'trigger' in path"
-  change: ":lua onchange.lua"
+  change: "examples/workdir/**/*"
+  filter: lua/handler.lua

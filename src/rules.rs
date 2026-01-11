@@ -3,6 +3,7 @@ extern crate yaml_rust;
 
 use crate::cli;
 use crate::errors;
+use crate::lua;
 use crate::yaml;
 
 use self::glob::Pattern;
@@ -93,6 +94,36 @@ impl Rules {
 
     pub fn filter_script(&self) -> Option<PathBuf> {
         self.filter_script.clone()
+    }
+
+    pub fn passes_filter(&self, path: &str) -> bool {
+        let filter_script = match self.filter_script.as_ref() {
+            Some(path) => path,
+            None => return true, // No filter means always pass
+        };
+
+        match lua::LuaRuntime::new() {
+            Ok(runtime) => {
+                let event = lua::LuaEvent {
+                    path: PathBuf::from(path),
+                };
+                match runtime.evaluate_predicate(filter_script, &event) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        stdout::error(&format!(
+                            "Lua predicate evaluation failed ({}): {}",
+                            filter_script.display(),
+                            err
+                        ));
+                        false
+                    }
+                }
+            }
+            Err(err) => {
+                stdout::error(&format!("Failed to create Lua runtime: {}", err));
+                false
+            }
+        }
     }
 
     pub fn run_on_init(&self) -> bool {
