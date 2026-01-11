@@ -1,10 +1,12 @@
 use mlua::Lua;
 use std::path::Path;
 
+#[allow(dead_code)]
 pub struct LuaRuntime {
     lua: Lua,
 }
 
+#[allow(dead_code)]
 impl LuaRuntime {
     pub fn new() -> mlua::Result<Self> {
         let lua = Lua::new();
@@ -26,11 +28,13 @@ impl LuaRuntime {
     }
 }
 
+#[allow(dead_code)]
 pub struct LuaEvent {
     pub path: std::path::PathBuf,
     // Add more fields as needed: event type, metadata, etc.
 }
 
+#[allow(dead_code)]
 impl LuaEvent {
     fn to_lua<'lua>(&self, lua: &'lua Lua) -> mlua::Result<mlua::Table<'lua>> {
         let table = lua.create_table()?;
