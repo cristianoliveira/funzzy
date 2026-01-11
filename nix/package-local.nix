@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "funzzy";
-  version = "b7963e1";
+  version = "b3cf3c9";
 
   ## build with local source
   src = ../.;
@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage {
 #   allowBuiltinFetchGit = true;
 # };
 
-  cargoHash = "sha256-M8VJ6KlAejUIqRkaWESlzLcl5R3nPrMrm4nAR9BAOa0=";
+  cargoHash = "sha256-iJrnrNfUsJtkIZPFBYRELkpF1I2JogrcPyLDOFPR690=";
 
   buildInputs = lib.optionals stdenv.isDarwin [
     darwin.apple_sdk.frameworks.CoreServices
