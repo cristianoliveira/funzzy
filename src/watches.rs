@@ -4,7 +4,7 @@ use crate::rules::Rules;
 ///
 /// Represents all rules in the yaml config loaded.
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Watches {
     rules: Vec<Rules>,
 }
