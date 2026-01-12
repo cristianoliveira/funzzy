@@ -56,6 +56,21 @@ Or more complex workflows like:
   ignore: "**/*.log"
 ```
 
+**New in v1.7.0**: Common rules format to reduce duplication!
+```yaml
+# Share common watch patterns across tasks
+on:
+  change: ["src/**", "lib/**"]
+  ignore: ["**/*.log"]
+
+tasks:
+  - name: build
+    run: cargo build
+  - name: test
+    run: cargo test
+    change: "tests/**"  # Override for specific task
+```
+
 See more:
 
  - [Documentation](/docs/USAGE.md)

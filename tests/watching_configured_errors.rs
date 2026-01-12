@@ -70,14 +70,13 @@ fn it_fails_using_an_config_with_non_list() -> Result<(), Box<dyn std::error::Er
         .stdout(
             vec![
                 "Error: Failed to read config file",
-                "Configuration file is invalid. Expected an Array/List of rules got: Hash",
-                "```yaml",
+                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array",
+                "Hint: Example:",
                 "on:",
-                "  - name: foobar",
-                "    run: echo hello",
-                "    change: hello/*",
-                "```",
-                "Hint: Make sure to declare the rules as a list without any root property",
+                "  change: [\"src/**\"]",
+                "tasks:",
+                "  - name: build",
+                "    run: cargo build",
                 "",
             ]
             .join("\n"),
