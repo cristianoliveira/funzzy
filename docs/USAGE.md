@@ -91,6 +91,57 @@ tasks:
 
 See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
 
+### Nested Groups Format (New in v1.7.0)
+
+When you have distinct areas of your project that watch different files (e.g., frontend, backend, docs), you can use nested groups to organize related tasks together. Each group can have its own set of common rules:
+
+```yaml
+# Frontend tasks watching frontend-specific files
+- on:
+    change:
+      - "src/frontend/**"
+      - "public/**"
+    ignore:
+      - "**/*.log"
+  tasks:
+    - name: frontend-build
+      run: npm run build
+    - name: frontend-test
+      run: npm test
+
+# Backend tasks watching backend-specific files
+- on:
+    change:
+      - "src/backend/**"
+      - "api/**"
+    ignore:
+      - "target/**"
+  tasks:
+    - name: backend-build
+      run: cargo build
+    - name: backend-test
+      run: cargo test
+
+# You can still mix in regular tasks
+- name: regular-task
+  run: echo "I'm not in a group"
+  change: "docs/**"
+```
+
+**When to use nested groups:**
+- You have distinct areas (frontend/backend/docs/config) that watch different files
+- Different task groups need different ignore patterns
+- You want better organization and separation of concerns
+- Each group has multiple tasks that share the same watch patterns
+
+**Key Points:**
+- Each group is isolated - changes in one group don't affect others
+- Tasks within a group can still override group-level `change` and `ignore` patterns
+- You can mix groups and regular tasks in the same configuration
+- Full backward compatibility maintained
+
+See [examples/nested-groups.yml](../examples/nested-groups.yml) for a complete example.
+
 ---
 
 ## Flags and Options

@@ -71,6 +71,23 @@ tasks:
     change: "tests/**"  # Override for specific task
 ```
 
+**Also in v1.7.0**: Nested groups for organizing tasks by domain!
+```yaml
+# Frontend tasks
+- on:
+    change: ["src/frontend/**"]
+  tasks:
+    - name: frontend-build
+      run: npm run build
+
+# Backend tasks
+- on:
+    change: ["src/backend/**"]
+  tasks:
+    - name: backend-build
+      run: cargo build
+```
+
 See more:
 
  - [Documentation](/docs/USAGE.md)

@@ -289,9 +289,22 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
         Yaml::Array(ref items) => {
             let mut rules = vec![];
             for item in items {
-                match rule_from(item) {
-                    Ok(rule) => rules.push(rule),
-                    Err(err) => return Err(err),
+                // Check if this item is a group (hash with 'tasks' key)
+                match item {
+                    Yaml::Hash(_) if item["tasks"] != Yaml::BadValue => {
+                        // This is a group with on/tasks format
+                        match parse_hash_format(item) {
+                            Ok(group_rules) => rules.extend(group_rules),
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    _ => {
+                        // This is a regular task
+                        match rule_from(item) {
+                            Ok(rule) => rules.push(rule),
+                            Err(err) => return Err(err),
+                        }
+                    }
                 }
             }
             Ok(rules)
@@ -1432,5 +1445,235 @@ tasks:
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].name, "build");
         assert_eq!(rules[1].name, "test");
+    }
+
+    #[test]
+    fn it_parses_multiple_nested_groups_with_different_common_rules() {
+        let file_content = "
+        - on:
+            change:
+              - 'src/frontend/**'
+              - 'public/**'
+            ignore:
+              - '**/*.log'
+          tasks:
+            - name: frontend-build
+              run: npm run build
+            - name: frontend-test
+              run: npm test
+
+        - on:
+            change:
+              - 'src/backend/**'
+              - 'api/**'
+            ignore:
+              - 'target/**'
+          tasks:
+            - name: backend-build
+              run: cargo build
+            - name: backend-test
+              run: cargo test
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        // Should have 4 rules total (2 from each group)
+        assert_eq!(rules.len(), 4);
+
+        // Frontend tasks should have frontend patterns
+        assert_eq!(rules[0].name, "frontend-build");
+        assert!(rules[0]
+            .watch_patterns()
+            .contains(&"src/frontend/**".to_string()));
+        assert!(rules[0].watch_patterns().contains(&"public/**".to_string()));
+        assert!(rules[0].ignore_patterns.contains(&"**/*.log".to_string()));
+
+        assert_eq!(rules[1].name, "frontend-test");
+        assert!(rules[1]
+            .watch_patterns()
+            .contains(&"src/frontend/**".to_string()));
+
+        // Backend tasks should have backend patterns
+        assert_eq!(rules[2].name, "backend-build");
+        assert!(rules[2]
+            .watch_patterns()
+            .contains(&"src/backend/**".to_string()));
+        assert!(rules[2].watch_patterns().contains(&"api/**".to_string()));
+        assert!(rules[2].ignore_patterns.contains(&"target/**".to_string()));
+
+        assert_eq!(rules[3].name, "backend-test");
+        assert!(rules[3]
+            .watch_patterns()
+            .contains(&"src/backend/**".to_string()));
+    }
+
+    #[test]
+    fn it_mixes_regular_tasks_and_nested_groups_in_same_array() {
+        let file_content = "
+        - name: regular-task
+          run: echo 'regular'
+          change: 'regular/**'
+
+        - on:
+            change: 'grouped/**'
+          tasks:
+            - name: group-task-1
+              run: echo 'group1'
+            - name: group-task-2
+              run: echo 'group2'
+
+        - name: another-regular
+          run: echo 'another'
+          change: 'another/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        // Should have 4 rules: 1 regular + 2 grouped + 1 regular
+        assert_eq!(rules.len(), 4);
+
+        assert_eq!(rules[0].name, "regular-task");
+        assert!(rules[0]
+            .watch_patterns()
+            .contains(&"regular/**".to_string()));
+
+        assert_eq!(rules[1].name, "group-task-1");
+        assert!(rules[1]
+            .watch_patterns()
+            .contains(&"grouped/**".to_string()));
+
+        assert_eq!(rules[2].name, "group-task-2");
+        assert!(rules[2]
+            .watch_patterns()
+            .contains(&"grouped/**".to_string()));
+
+        assert_eq!(rules[3].name, "another-regular");
+        assert!(rules[3]
+            .watch_patterns()
+            .contains(&"another/**".to_string()));
+    }
+
+    #[test]
+    fn it_allows_task_overrides_in_nested_group() {
+        let file_content = "
+        - on:
+            change: 'src/**'
+            ignore: '**/*.log'
+          tasks:
+            - name: inherits-all
+              run: echo 'inherit'
+
+            - name: overrides-change
+              run: echo 'override'
+              change: 'custom/**'
+
+            - name: overrides-ignore
+              run: echo 'override'
+              ignore: '**/*.tmp'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 3);
+
+        // First task inherits common rules
+        assert_eq!(rules[0].name, "inherits-all");
+        assert!(rules[0].watch_patterns().contains(&"src/**".to_string()));
+        assert!(rules[0].ignore_patterns.contains(&"**/*.log".to_string()));
+
+        // Second task overrides change
+        assert_eq!(rules[1].name, "overrides-change");
+        assert!(rules[1].watch_patterns().contains(&"custom/**".to_string()));
+        assert!(!rules[1].watch_patterns().contains(&"src/**".to_string()));
+        assert!(rules[1].ignore_patterns.contains(&"**/*.log".to_string()));
+
+        // Third task overrides ignore
+        assert_eq!(rules[2].name, "overrides-ignore");
+        assert!(rules[2].watch_patterns().contains(&"src/**".to_string()));
+        assert!(rules[2].ignore_patterns.contains(&"**/*.tmp".to_string()));
+        assert!(!rules[2].ignore_patterns.contains(&"**/*.log".to_string()));
+    }
+
+    #[test]
+    fn it_parses_empty_tasks_array_in_nested_group() {
+        let file_content = "
+        - on:
+            change: 'src/**'
+          tasks: []
+
+        - name: regular-task
+          run: echo 'regular'
+          change: 'other/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        // Should only have 1 rule (the regular task)
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "regular-task");
+    }
+
+    #[test]
+    fn it_handles_multiple_groups_watching_same_files() {
+        let file_content = "
+        - on:
+            change: 'src/**'
+          tasks:
+            - name: group1-task
+              run: echo 'group1'
+
+        - on:
+            change: 'src/**'
+          tasks:
+            - name: group2-task
+              run: echo 'group2'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        // Both groups should coexist
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].name, "group1-task");
+        assert_eq!(rules[1].name, "group2-task");
+
+        // Both should watch the same pattern
+        assert!(rules[0].watch_patterns().contains(&"src/**".to_string()));
+        assert!(rules[1].watch_patterns().contains(&"src/**".to_string()));
+    }
+
+    #[test]
+    fn it_maintains_backward_compatibility_with_all_formats() {
+        // Test 1: Classic array format
+        let classic = "
+        - name: task1
+          run: echo 'classic'
+          change: 'src/**'
+        ";
+        let rules1 = from_yaml(classic).expect("Failed to parse classic format");
+        assert_eq!(rules1.len(), 1);
+        assert_eq!(rules1[0].name, "task1");
+
+        // Test 2: Single group format
+        let single_group = "
+        on:
+          change: 'src/**'
+        tasks:
+          - name: task2
+            run: echo 'single'
+        ";
+        let rules2 = from_yaml(single_group).expect("Failed to parse single group format");
+        assert_eq!(rules2.len(), 1);
+        assert_eq!(rules2[0].name, "task2");
+
+        // Test 3: Nested groups format
+        let nested = "
+        - on:
+            change: 'src/**'
+          tasks:
+            - name: task3
+              run: echo 'nested'
+        ";
+        let rules3 = from_yaml(nested).expect("Failed to parse nested groups format");
+        assert_eq!(rules3.len(), 1);
+        assert_eq!(rules3[0].name, "task3");
     }
 }

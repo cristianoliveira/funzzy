@@ -1,12 +1,15 @@
 # Example: Common Rules Among Tasks
 #
-# This example demonstrates the new `on` format that allows sharing common
+# This example demonstrates the `on` format that allows sharing common
 # change and ignore patterns across multiple tasks.
 #
 # Benefits:
 # - Reduces duplication of watch patterns
 # - Makes configuration more maintainable
 # - Individual tasks can still override common rules
+#
+# Note: For organizing tasks into multiple groups with different common rules,
+# see examples/nested-groups.yml
 
 # Common rules shared by all tasks (unless overridden)
 on:
