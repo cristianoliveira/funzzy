@@ -396,6 +396,10 @@ pub fn from_yaml(file_content: &str, config_path: Option<&str>) -> errors::Resul
             }
             Ok(rules)
         },
+        Yaml::Hash(ref _hash) => {
+            // New format: { on: {...}, tasks: [...] }
+            parse_hash_format(&items[0], config_dir)
+        },
         other => Err(errors::FzzError::InvalidConfigError(
             format!(
                 "Configuration file is invalid. Expected an Array/List of rules got: {}\n```yaml\n{}\n```",
@@ -406,6 +410,147 @@ pub fn from_yaml(file_content: &str, config_path: Option<&str>) -> errors::Resul
             Some("Make sure to declare the rules as a list without any root property".to_owned()),
         )),
     }
+}
+
+/// Represents common rules that can be shared across tasks
+struct CommonRules {
+    change: Vec<String>,
+    ignore: Vec<String>,
+}
+
+/// Parse the new hash format: { on: {...}, tasks: [...] }
+fn parse_hash_format(yaml: &Yaml, config_dir: Option<String>) -> errors::Result<Vec<Rules>> {
+    // Extract the 'tasks' array
+    let tasks_yaml = &yaml["tasks"];
+    let tasks_array = match tasks_yaml {
+        Yaml::Array(ref items) => items,
+        Yaml::BadValue => {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array".to_owned(),
+                None,
+                Some("Example:\non:\n  change: [\"src/**\"]\ntasks:\n  - name: build\n    run: cargo build".to_owned()),
+            ));
+        }
+        _ => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Configuration file is invalid. 'tasks' must be an Array/List, got: {}\n```yaml\n{}\n```",
+                    yaml::get_type(tasks_yaml),
+                    yaml::yaml_to_string(tasks_yaml, 0),
+                ),
+                None,
+                Some("Make sure 'tasks' is defined as a list of task objects".to_owned()),
+            ));
+        }
+    };
+
+    // Extract common rules from the 'on' section (optional)
+    let common_rules = extract_common_rules(&yaml["on"])?;
+
+    // Parse each task and merge with common rules
+    let mut rules = vec![];
+    for task_yaml in tasks_array {
+        match rule_from_with_common(task_yaml, config_dir.clone(), &common_rules) {
+            Ok(rule) => rules.push(rule),
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(rules)
+}
+
+/// Extract common change and ignore patterns from the 'on' section
+fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
+    match yaml {
+        Yaml::BadValue => {
+            // No 'on' section, return empty common rules
+            Ok(CommonRules {
+                change: vec![],
+                ignore: vec![],
+            })
+        }
+        Yaml::Hash(_) => {
+            let change = yaml::extract_list(yaml, "change").unwrap_or_default();
+            let ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+
+            // Validate that only allowed properties are present
+            if let Yaml::Hash(ref hash) = yaml {
+                for (key, _) in hash {
+                    if let Yaml::String(ref key_str) = key {
+                        if key_str != "change" && key_str != "ignore" {
+                            return Err(errors::FzzError::InvalidConfigError(
+                                format!(
+                                    "Invalid property '{}' in 'on' section. Only 'change' and 'ignore' are allowed.",
+                                    key_str
+                                ),
+                                None,
+                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]".to_owned()),
+                            ));
+                        }
+                    }
+                }
+            }
+
+            Ok(CommonRules {
+                change: ensure_glob_only(change, "on.change")?,
+                ignore: ensure_glob_only(ignore, "on.ignore")?,
+            })
+        }
+        _ => Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Configuration file is invalid. 'on' must be a Hash/Object, got: {}\n```yaml\n{}\n```",
+                yaml::get_type(yaml),
+                yaml::yaml_to_string(yaml, 0),
+            ),
+            None,
+            Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]".to_owned()),
+        )),
+    }
+}
+
+/// Parse a rule from YAML and merge with common rules
+fn rule_from_with_common(
+    yaml: &Yaml,
+    config_dir: Option<String>,
+    common: &CommonRules,
+) -> errors::Result<Rules> {
+    let name = yaml::extract_string(yaml, "name")?;
+    let commands = yaml::extract_list(yaml, "run")?;
+
+    // Extract task-specific patterns, or use common rules if not specified
+    let watch_patterns_str = match yaml::extract_list(yaml, "change") {
+        Ok(patterns) => patterns,
+        Err(_) => {
+            // Task doesn't define 'change', inherit from common rules
+            common.change.clone()
+        }
+    };
+
+    let ignore_patterns_str = match yaml::extract_list(yaml, "ignore") {
+        Ok(patterns) => patterns,
+        Err(_) => {
+            // Task doesn't define 'ignore', inherit from common rules
+            common.ignore.clone()
+        }
+    };
+
+    let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+
+    let watch_patterns = ensure_glob_only(watch_patterns_str, "change")?;
+    let ignore_patterns = ensure_glob_only(ignore_patterns_str, "ignore")?;
+    let filter_script = yaml::extract_optional_string(yaml, "filter")?
+        .map(|filter_path| resolve_filter_path(config_dir.as_deref(), &filter_path));
+
+    Ok(Rules {
+        name,
+        commands,
+        watch_patterns,
+        ignore_patterns,
+        filter_script,
+        lua_runtime: Rc::new(RefCell::new(None)),
+        run_on_init,
+        yaml: Some(yaml.clone()),
+    })
 }
 
 fn prepare_as_glob_pattern(line: &str) -> errors::Result<String> {
@@ -933,24 +1078,24 @@ mod tests {
             .join("\n")
         );
 
-        let empty_file = "
+        let invalid_hash_file = "
         on:
             - name: foo
               run: echo foo
         ";
 
-        let result = from_yaml(empty_file, None);
+        let result = from_yaml(invalid_hash_file, None);
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
             vec![
-                "Configuration file is invalid. Expected an Array/List of rules got: Hash",
-                "```yaml",
+                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array",
+                "Hint: Example:",
                 "on:",
-                "  - name: foo",
-                "    run: echo foo",
-                "```",
-                "Hint: Make sure to declare the rules as a list without any root property",
+                "  change: [\"src/**\"]",
+                "tasks:",
+                "  - name: build",
+                "    run: cargo build",
             ]
             .join("\n")
         );
@@ -1137,5 +1282,311 @@ mod tests {
             "Unexpected error: {}",
             message
         );
+    }
+
+    // Tests for common rules format (on + tasks)
+
+    #[test]
+    fn it_parses_common_rules_with_on_and_tasks() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+    - 'tests/**'
+  ignore:
+    - '**/*.log'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+
+  - name: test
+    run: 'cargo test'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 2);
+
+        // Both tasks should inherit the common change and ignore patterns
+        assert_eq!(rules[0].name, "build");
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**", "tests/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.log"]);
+
+        assert_eq!(rules[1].name, "test");
+        assert_eq!(rules[1].watch_patterns(), vec!["src/**", "tests/**"]);
+        assert_eq!(rules[1].ignore_glob_patterns(), vec!["**/*.log"]);
+    }
+
+    #[test]
+    fn it_allows_tasks_to_override_common_change() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+  ignore:
+    - '**/*.log'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+
+  - name: test
+    run: 'cargo test'
+    change: 'tests/**'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 2);
+
+        // First task inherits common change
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.log"]);
+
+        // Second task overrides change but inherits ignore
+        assert_eq!(rules[1].watch_patterns(), vec!["tests/**"]);
+        assert_eq!(rules[1].ignore_glob_patterns(), vec!["**/*.log"]);
+    }
+
+    #[test]
+    fn it_allows_tasks_to_override_common_ignore() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+  ignore:
+    - '**/*.log'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+    ignore:
+      - '**/*.tmp'
+      - 'target/**'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+
+        // Task overrides ignore but inherits change
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.tmp", "target/**"]);
+    }
+
+    #[test]
+    fn it_allows_on_without_change() {
+        let file_content = "
+on:
+  ignore:
+    - '**/*.log'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+    change: 'src/**'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.log"]);
+    }
+
+    #[test]
+    fn it_allows_on_without_ignore() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns().len(), 0);
+    }
+
+    #[test]
+    fn it_allows_empty_on_section() {
+        let file_content = "
+on: {}
+
+tasks:
+  - name: build
+    run: 'cargo build'
+    change: 'src/**'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+    }
+
+    #[test]
+    fn it_allows_missing_on_section() {
+        let file_content = "
+tasks:
+  - name: build
+    run: 'cargo build'
+    change: 'src/**'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+    }
+
+    #[test]
+    fn it_fails_when_tasks_is_missing() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+        ";
+
+        let result = from_yaml(file_content, None);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("must provide a 'tasks' array"));
+    }
+
+    #[test]
+    fn it_fails_when_tasks_is_not_array() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+tasks:
+  name: build
+  run: cargo build
+        ";
+
+        let result = from_yaml(file_content, None);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("'tasks' must be an Array/List"));
+    }
+
+    #[test]
+    fn it_fails_when_on_has_invalid_properties() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+  invalid_prop: foo
+
+tasks:
+  - name: build
+    run: cargo build
+        ";
+
+        let result = from_yaml(file_content, None);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("Invalid property 'invalid_prop' in 'on' section"));
+    }
+
+    #[test]
+    fn it_validates_glob_patterns_in_common_rules() {
+        let file_content = "
+on:
+  change:
+    - '**/foo_**.go'
+
+tasks:
+  - name: build
+    run: cargo build
+        ";
+
+        let rules = from_yaml(file_content, None);
+        assert!(rules.is_ok());
+
+        let rules = rules.unwrap();
+        let validation = rules[0].validate();
+        assert!(validation.is_err());
+        assert!(validation
+            .err()
+            .unwrap()
+            .contains("invalid `change` glob pattern"));
+    }
+
+    #[test]
+    fn it_supports_run_on_init_with_common_rules() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+
+tasks:
+  - name: init_task
+    run: 'echo init'
+    run_on_init: true
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].run_on_init());
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+    }
+
+    #[test]
+    fn it_allows_task_with_only_run_on_init_no_change() {
+        let file_content = "
+tasks:
+  - name: init_only
+    run: 'echo startup'
+    run_on_init: true
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].run_on_init());
+        assert_eq!(rules[0].watch_patterns().len(), 0);
+        assert!(rules[0].validate().is_ok());
+    }
+
+    #[test]
+    fn it_watches_paths_correctly_with_common_rules() {
+        let file_content = "
+on:
+  change: 'src/**'
+  ignore: 'src/test/**'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+        ";
+
+        let rules = from_yaml(file_content, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+
+        // Should watch src files
+        assert!(rules[0].watch("src/main.rs"));
+        assert!(rules[0].watch("src/lib.rs"));
+
+        // Should ignore test files
+        assert!(rules[0].ignore("src/test/foo.rs"));
+    }
+
+    #[test]
+    fn it_maintains_backward_compatibility_with_array_format() {
+        let old_format = "
+        - name: build
+          run: 'cargo build'
+          change: 'src/**'
+          ignore: '**/*.log'
+
+        - name: test
+          run: 'cargo test'
+          change: 'tests/**'
+        ";
+
+        let rules = from_yaml(old_format, None).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].name, "build");
+        assert_eq!(rules[1].name, "test");
     }
 }

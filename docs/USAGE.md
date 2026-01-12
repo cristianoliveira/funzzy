@@ -50,6 +50,47 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
 # Indicate tasks that should execute when the watcher starts.
   run_on_init: false
 ```
+
+### Common Rules Format (New in v1.7.0)
+
+You can reduce duplication by using the `on` section to define common `change` and `ignore` patterns shared across multiple tasks:
+
+```yaml
+# Common rules shared by all tasks
+on:
+  change:
+    - "src/**"
+    - "lib/**"
+  ignore:
+    - "**/*.log"
+    - "**/*.tmp"
+
+# Individual tasks that inherit common rules
+tasks:
+  # This task inherits all common rules
+  - name: build
+    run: cargo build
+
+  # This task overrides the 'change' pattern but inherits 'ignore'
+  - name: test
+    run: cargo test
+    change: "tests/**"
+
+  # This task overrides both 'change' and 'ignore'
+  - name: lint
+    run: cargo clippy
+    change: "src/**/*.rs"
+    ignore: "**/*.bak"
+```
+
+**Key Points:**
+- **Backward Compatible**: The classic array format still works perfectly
+- **Optional `on` Section**: You can omit it if you don't need common rules
+- **Override Semantics**: Task-specific patterns completely replace common ones (not merged)
+- **Flexible**: Each task can inherit, override, or ignore common rules
+
+See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
+
 ---
 
 ## Flags and Options
