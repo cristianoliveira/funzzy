@@ -1,0 +1,51 @@
+# Example: Common Rules Among Tasks
+#
+# This example demonstrates the `on` format that allows sharing common
+# change and ignore patterns across multiple tasks.
+#
+# Benefits:
+# - Reduces duplication of watch patterns
+# - Makes configuration more maintainable
+# - Individual tasks can still override common rules
+#
+# Note: For organizing tasks into multiple groups with different common rules,
+# see examples/nested-groups.yml
+
+# Common rules shared by all tasks (unless overridden)
+on:
+  change:
+    - "src/**"
+    - "lib/**"
+  ignore:
+    - "**/*.log"
+    - "**/*.tmp"
+    - "**/node_modules/"
+
+# Individual tasks that inherit or override common rules
+tasks:
+  # This task inherits all common rules
+  - name: build
+    run: cargo build
+
+  # This task inherits all common rules and runs on startup
+  - name: typecheck
+    run: cargo check
+    run_on_init: true
+
+  # This task overrides the 'change' pattern but inherits 'ignore'
+  - name: test
+    run: cargo test
+    change: "tests/**"
+
+  # This task overrides both 'change' and 'ignore'
+  - name: lint
+    run: cargo clippy
+    change: "src/**/*.rs"
+    ignore:
+      - "src/generated/**"
+      - "**/*.bak"
+
+  # This task inherits common rules and has a custom filter
+  - name: format
+    run: cargo fmt
+    filter: "filters/rust_files.lua"
