@@ -1,0 +1,101 @@
+# Example: Nested Groups with Different Common Rules
+#
+# This example demonstrates nested groups format where you can define multiple
+# groups, each with their own set of common rules (on:) and tasks.
+#
+# Benefits:
+# - Organize tasks by domain/feature area (frontend, backend, docs, etc.)
+# - Each group can watch different file patterns
+# - Reduces duplication within each group
+# - Better separation of concerns
+# - Individual tasks can still override group-level rules
+#
+# Use this format when:
+# - You have distinct areas of your project that watch different files
+# - You want to organize related tasks together
+# - Different task groups need different ignore patterns
+
+# Frontend tasks - watch frontend-specific files
+- on:
+    change:
+      - "src/frontend/**"
+      - "src/components/**"
+      - "public/**"
+      - "index.html"
+    ignore:
+      - "**/*.log"
+      - "**/*.tmp"
+      - "**/node_modules/"
+  tasks:
+    # This task inherits the frontend watch patterns
+    - name: frontend-build
+      run: npm run build
+
+    # This task also inherits frontend patterns
+    - name: frontend-test
+      run: npm test
+
+    # This task runs on startup to ensure initial build
+    - name: frontend-typecheck
+      run: npm run typecheck
+      run_on_init: true
+
+    # This task overrides the watch pattern to only watch specific files
+    - name: frontend-lint-styles
+      run: npm run lint:css
+      change: "src/**/*.css"
+
+# Backend tasks - watch backend-specific files
+- on:
+    change:
+      - "src/backend/**"
+      - "src/api/**"
+      - "Cargo.toml"
+    ignore:
+      - "**/*.log"
+      - "target/**"
+      - "**/*.bak"
+  tasks:
+    # These tasks inherit backend watch patterns
+    - name: backend-build
+      run: cargo build
+
+    - name: backend-test
+      run: cargo test
+
+    - name: backend-clippy
+      run: cargo clippy
+
+    # This task overrides the change pattern to watch only Rust files
+    - name: backend-format-check
+      run: cargo fmt -- --check
+      change: "src/**/*.rs"
+
+# Documentation tasks - watch docs-specific files
+- on:
+    change:
+      - "docs/**"
+      - "*.md"
+      - "README.md"
+      - "CHANGELOG.md"
+    ignore:
+      - "**/*.tmp"
+  tasks:
+    - name: docs-build
+      run: echo "Building documentation..."
+
+    - name: docs-lint
+      run: echo "Linting markdown files..."
+
+# Configuration tasks - watch config files
+- on:
+    change:
+      - "*.yml"
+      - "*.yaml"
+      - "*.toml"
+      - ".github/**"
+    ignore:
+      - ".watch.yaml"  # Don't watch the funzzy config itself
+  tasks:
+    - name: config-validate
+      run: echo "Validating configuration files..."

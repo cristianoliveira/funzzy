@@ -37,7 +37,7 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
 
 # Explanation of the fields
 # ----
-# A description of the task 
+# A description of the task
 - name: task with ignoring rules
 # Commands to execute when the task is triggered.
   run: "echo 'should not trigger when modifying ignored files'"
@@ -50,6 +50,102 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
 # Indicate tasks that should execute when the watcher starts.
   run_on_init: false
 ```
+
+### Common Rules Format
+
+**Minimal version**: v1.6.0
+
+You can reduce duplication by using the `on` section to define common `change` and `ignore` patterns shared across multiple tasks:
+
+```yaml
+# Common rules shared by all tasks
+on:
+  change:
+    - "src/**"
+    - "lib/**"
+  ignore:
+    - "**/*.log"
+    - "**/*.tmp"
+
+# Individual tasks that inherit common rules
+tasks:
+  # This task inherits all common rules
+  - name: build
+    run: cargo build
+
+  # This task overrides the 'change' pattern but inherits 'ignore'
+  - name: test
+    run: cargo test
+    change: "tests/**"
+
+  # This task overrides both 'change' and 'ignore'
+  - name: lint
+    run: cargo clippy
+    change: "src/**/*.rs"
+    ignore: "**/*.bak"
+```
+
+**Key Points:**
+- **Backward Compatible**: The classic array format still works perfectly
+- **Optional `on` Section**: You can omit it if you don't need common rules
+- **Override Semantics**: Task-specific patterns completely replace common ones (not merged)
+- **Flexible**: Each task can inherit, override, or ignore common rules
+
+See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
+
+### Nested Groups Format
+
+**Minimal version**: v1.6.0
+
+When you have distinct areas of your project that watch different files (e.g., frontend, backend, docs), you can use nested groups to organize related tasks together. Each group can have its own set of common rules:
+
+```yaml
+# Frontend tasks watching frontend-specific files
+- on:
+    change:
+      - "src/frontend/**"
+      - "public/**"
+    ignore:
+      - "**/*.log"
+  tasks:
+    - name: frontend-build
+      run: npm run build
+    - name: frontend-test
+      run: npm test
+
+# Backend tasks watching backend-specific files
+- on:
+    change:
+      - "src/backend/**"
+      - "api/**"
+    ignore:
+      - "target/**"
+  tasks:
+    - name: backend-build
+      run: cargo build
+    - name: backend-test
+      run: cargo test
+
+# You can still mix in regular tasks
+- name: regular-task
+  run: echo "I'm not in a group"
+  change: "docs/**"
+```
+
+**When to use nested groups:**
+- You have distinct areas (frontend/backend/docs/config) that watch different files
+- Different task groups need different ignore patterns
+- You want better organization and separation of concerns
+- Each group has multiple tasks that share the same watch patterns
+
+**Key Points:**
+- Each group is isolated - changes in one group don't affect others
+- Tasks within a group can still override group-level `change` and `ignore` patterns
+- You can mix groups and regular tasks in the same configuration
+- Full backward compatibility maintained
+
+See [examples/nested-groups.yml](../examples/nested-groups.yml) for a complete example.
+
 ---
 
 ## Flags and Options
