@@ -37,7 +37,7 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
 
 # Explanation of the fields
 # ----
-# A description of the task 
+# A description of the task
 - name: task with ignoring rules
 # Commands to execute when the task is triggered.
   run: "echo 'should not trigger when modifying ignored files'"
@@ -51,7 +51,9 @@ The `.watch.yaml` file defines tasks and their triggers. Below is a sample confi
   run_on_init: false
 ```
 
-### Common Rules Format (New in v1.7.0)
+### Common Rules Format
+
+**Minimal version**: v1.6.0
 
 You can reduce duplication by using the `on` section to define common `change` and `ignore` patterns shared across multiple tasks:
 
@@ -91,7 +93,9 @@ tasks:
 
 See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
 
-### Nested Groups Format (New in v1.7.0)
+### Nested Groups Format
+
+**Minimal version**: v1.6.0
 
 When you have distinct areas of your project that watch different files (e.g., frontend, backend, docs), you can use nested groups to organize related tasks together. Each group can have its own set of common rules:
 

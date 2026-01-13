@@ -15,7 +15,7 @@ Or more complex workflows like:
 # list here all the events and the commands that it should execute
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 # TIP2: List the tasks/steps from quicker to slower for better workflows
-# 
+#
 # Run: `fzz --fail-fast --non-block` (`fzz -nb`) to start this workflow (min: v1.4.0)
 
 - name: run my tests
@@ -26,13 +26,13 @@ Or more complex workflows like:
 
 - name: Starwars ascii art
   run: telnet towel.blinkenlights.nl
-  change: 
+  change:
     - "/tmp/starwars.txt"
     - ".watch.yaml"
 
 # Command path templates for custom scripts
 - name: run test & linter for a single file
-  run: 
+  run:
    - "npm run lint -- {{relative_path}}",
    - "npm test -- $(echo '{{absolute_path}}' | sed -r s/.(j|t)sx?//)"
   change: ["src/**", "libs/**"]
@@ -49,14 +49,14 @@ Or more complex workflows like:
 - name: finally stage the changed files in git
   run:
     - git add {{relative_path}}
-    - git commit 
-  change: 
+    - git commit
+  change:
     - "src/**"
     - "tests/**"
   ignore: "**/*.log"
 ```
 
-**New in v1.7.0**: Common rules format to reduce duplication!
+**New in v1.6.0**: Common rules format to reduce duplication!
 ```yaml
 # Share common watch patterns across tasks
 on:
@@ -71,7 +71,7 @@ tasks:
     change: "tests/**"  # Override for specific task
 ```
 
-**Also in v1.7.0**: Nested groups for organizing tasks by domain!
+** Nested groups for organizing tasks by domain!
 ```yaml
 # Frontend tasks
 - on:
@@ -99,12 +99,12 @@ See more:
 Funzzy pairs well with these tools:
 
  - [yq](https://github.com/mikefarah/yq) - A yaml querier similar to `jq` to extract commands from GitHub Actions!
-   
+
  - [nrr](https://github.com/ryanccn/nrr) - For JS/TS projects, since Funzzy runs commands on change, a faster task runner makes a difference
 
 ## Motivation
 
-To create a lightweight watcher that **allows me to set up personal local workflows with specific automated checks and steps, similar to GitHub Actions**. 
+To create a lightweight watcher that **allows me to set up personal local workflows with specific automated checks and steps, similar to GitHub Actions**.
 Funzzy was built with Rust, which makes it blazingly fast and light.
 
 ## Installing
@@ -132,7 +132,7 @@ curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-i
 ```
 
 ### Nix
-  
+
 ```bash
 nix-env -iA nixpkgs.funzzy
 ```
@@ -150,7 +150,7 @@ nix profile install 'github:cristianoliveira/funzzy#nightly'
 ```
 
 or, if you use `shell.nix`:
-  
+
   ```nix
 { pkgs ? import <nixpkgs> {} }:
   pkgs.mkShell {
