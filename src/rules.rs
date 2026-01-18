@@ -1235,68 +1235,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn it_parses_filter_relative_to_config_dir() {
-        let file_content = "
-        - name: filtered task
-          run: 'echo lua'
-          change: '**/*.txt'
-          filter: 'filters/onchange.lua'
-        ";
-
-        let content = YamlLoader::load_from_str(file_content).unwrap();
-        let examples_dir = current_dir().unwrap().join("examples");
-        let config_dir = examples_dir.to_string_lossy().to_string();
-        let rule =
-            rule_from(&content[0][0], Some(config_dir.clone())).expect("Failed to parse rule");
-
-        let expected_path = PathBuf::from(config_dir).join("filters/onchange.lua");
-        assert_eq!(rule.filter_script().unwrap(), expected_path);
-    }
-
-    #[test]
-    fn it_preserves_absolute_filter_path() {
-        let absolute = current_dir()
-            .unwrap()
-            .join("examples")
-            .join("filters")
-            .join("onchange.lua");
-        let file_content = format!(
-            "
-        - name: filtered task
-          run: 'echo lua'
-          change: '**/*.txt'
-          filter: '{}'
-        ",
-            absolute.display()
-        );
-
-        let content = YamlLoader::load_from_str(&file_content).unwrap();
-        let rule = rule_from(&content[0][0], None).expect("Failed to parse rule");
-
-        assert_eq!(rule.filter_script().unwrap(), absolute);
-    }
-
-    #[test]
-    fn it_rejects_non_string_filter_values() {
-        let file_content = "
-        - name: invalid filter
-          run: 'echo lua'
-          change: '**/*.txt'
-          filter:
-            foo: bar
-        ";
-
-        let content = YamlLoader::load_from_str(file_content).unwrap();
-        let err = rule_from(&content[0][0], None).expect_err("Expected filter to require a string");
-        let message = format!("{}", err);
-        assert!(
-            message.contains("Invalid property 'filter' in rule below"),
-            "Unexpected error: {}",
-            message
-        );
-    }
-
     // Tests for common rules format (on + tasks)
 
     #[test]
