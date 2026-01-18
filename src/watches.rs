@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::rules::Rules;
 
 /// # Watches
@@ -7,20 +9,59 @@ use crate::rules::Rules;
 #[derive(Debug)]
 pub struct Watches {
     rules: Vec<Rules>,
+    root: PathBuf,
 }
 impl Watches {
     pub fn new(rules: Vec<Rules>) -> Self {
-        Watches { rules }
+        let root = std::env::current_dir().expect("Unable to get current directory");
+        Watches { rules, root }
+    }
+
+    fn normalize_paths<'a>(&'a self, path: &'a str) -> (PathBuf, Option<String>) {
+        let provided_path = Path::new(path);
+        let absolute_path = if provided_path.is_absolute() {
+            provided_path.to_path_buf()
+        } else {
+            self.root.join(provided_path)
+        };
+
+        let relative_path = match absolute_path.strip_prefix(&self.root) {
+            Ok(rel) => Some(format!("/{}", rel.display())),
+            Err(_) => None,
+        };
+
+        (absolute_path, relative_path)
     }
 
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<Rules>> {
+        let (absolute_path, relative_path) = self.normalize_paths(path);
+        let absolute_path_str = absolute_path.to_str().unwrap_or_default();
+
         let cmds = self
             .rules
             .iter()
             .cloned()
-            .filter(|r| !r.ignore(path) && r.watch(path))
+            .filter(|r| {
+                let ignored_by_absolute = r.ignore_absolute(absolute_path_str);
+                let ignored_by_relative = relative_path
+                    .as_ref()
+                    .map(|rel| r.ignore_relative(rel))
+                    .unwrap_or(false);
+
+                if ignored_by_absolute || ignored_by_relative {
+                    return false;
+                }
+
+                let watched_by_absolute = r.watch_absolute(absolute_path_str);
+                let watched_by_relative = relative_path
+                    .as_ref()
+                    .map(|rel| r.watch_relative(rel))
+                    .unwrap_or(false);
+
+                watched_by_absolute || watched_by_relative
+            })
             .collect::<Vec<Rules>>();
 
         if !cmds.is_empty() {
@@ -92,12 +133,11 @@ impl Watches {
     /// Returns the list of rules that contains absolute path
     ///
     pub fn paths_to_watch(&self) -> Option<Vec<String>> {
-        let current_dir = std::env::current_dir().expect("Unable to get current directory");
         let mut paths = Vec::new();
 
         for rule in &self.rules {
             for pattern in rule.watch_patterns() {
-                let dir = Self::extract_watch_directory(&pattern, &current_dir);
+                let dir = Self::extract_watch_directory(&pattern, &self.root);
                 if !paths.contains(&dir) {
                     paths.push(dir);
                 }
@@ -105,7 +145,7 @@ impl Watches {
         }
 
         // Always watch current directory as fallback
-        let current_dir_str = current_dir.to_str().unwrap().to_string();
+        let current_dir_str = self.root.to_str().unwrap().to_string();
         if !paths.contains(&current_dir_str) {
             paths.push(current_dir_str);
         }
@@ -158,9 +198,7 @@ mod tests {
           change: 'tests/**'
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
-        assert!(watches
-            .watch("/Users/crosa/others/funzzy/tests/test.rs")
-            .is_some());
+        assert!(watches.watch(&get_absolute_path("tests/test.rs")).is_some());
         assert!(watches.watch("tests/tests.rs").is_some());
         assert!(watches.watch("tests/ruby.rb").is_some());
         assert!(watches.watch("tests/folder/other.rs").is_some())
@@ -178,6 +216,23 @@ mod tests {
     }
 
     #[test]
+    fn it_anchors_relative_patterns_to_root() {
+        let file_content = "
+        - name: txt files
+          run: 'echo txt'
+          change: 'src/*.txt'
+        ";
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+
+        let root = std::env::current_dir().unwrap();
+        let inside = root.join("src/foo.txt");
+        let outside = root.join(".tmp/src/foo.txt");
+
+        assert!(watches.watch(inside.to_str().unwrap()).is_some());
+        assert!(watches.watch(outside.to_str().unwrap()).is_none());
+    }
+
+    #[test]
     fn it_doesnot_watch_test_path() {
         let file_content = "
         - name: my source
@@ -186,9 +241,7 @@ mod tests {
         ";
         let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
 
-        assert!(watches
-            .watch("/Users/crosa/others/funzzy/events.yaml")
-            .is_none());
+        assert!(watches.watch(&get_absolute_path("events.yaml")).is_none());
         assert!(watches.watch("tests/").is_none());
         assert!(watches.watch("tests/test.rs").is_none());
         assert!(watches.watch("tests/folder/other.rs").is_none());
