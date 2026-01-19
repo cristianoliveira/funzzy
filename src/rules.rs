@@ -44,20 +44,53 @@ impl Rules {
     }
 
     pub fn watch(&self, path: &str) -> bool {
-        self.watch_relative_paths()
+        self.watch_relative(path) || self.watch_absolute(path)
+    }
+
+    pub fn watch_relative(&self, path: &str) -> bool {
+        let normalized_path = if path.starts_with('/') {
+            path.to_owned()
+        } else {
+            format!("/{}", path)
+        };
+
+        self.watch_relative_paths().iter().any(|watch| {
+            let normalized = watch.trim_start_matches("./");
+            anchored_pattern(&format!("/{}", normalized)).matches(&normalized_path)
+        })
+    }
+
+    pub fn watch_absolute(&self, path: &str) -> bool {
+        self.watch_absolute_paths()
             .iter()
-            .any(|watch| pattern(&format!("/{}", watch)).matches(path))
-            || self
-                .watch_absolute_paths()
-                .iter()
-                .any(|watch| pattern(watch).matches(path))
+            .any(|watch| anchored_pattern(watch).matches(path))
     }
 
     pub fn ignore(&self, path: &str) -> bool {
-        self.ignore_patterns.iter().any(|watch| {
-            pattern(&format!("/{}", watch)).matches(path)
-                || watch.starts_with("/") && pattern(watch).matches(path)
-        })
+        self.ignore_relative(path) || self.ignore_absolute(path)
+    }
+
+    pub fn ignore_relative(&self, path: &str) -> bool {
+        let normalized_path = if path.starts_with('/') {
+            path.to_owned()
+        } else {
+            format!("/{}", path)
+        };
+
+        self.ignore_patterns
+            .iter()
+            .filter(|pattern| !pattern.starts_with("/"))
+            .any(|ignore| {
+                let normalized = ignore.trim_start_matches("./");
+                anchored_pattern(&format!("/{}", normalized)).matches(&normalized_path)
+            })
+    }
+
+    pub fn ignore_absolute(&self, path: &str) -> bool {
+        self.ignore_patterns
+            .iter()
+            .filter(|pattern| pattern.starts_with("/"))
+            .any(|ignore| anchored_pattern(ignore).matches(path))
     }
 
     pub fn commands(&self) -> Vec<String> {
@@ -606,8 +639,14 @@ pub fn from_default_file_config() -> errors::Result<Vec<Rules>> {
     }
 }
 
-fn pattern(pattern: &str) -> Pattern {
-    Pattern::new(&format!("**{}", pattern)).expect(
+fn create_pattern(pattern: &str, anchored: bool) -> Pattern {
+    let compiled_pattern = if anchored {
+        pattern.to_owned()
+    } else {
+        format!("**{}", pattern)
+    };
+
+    Pattern::new(&compiled_pattern).expect(
         &vec![
             format!("Invalid glob pattern {}", pattern),
             vec![
@@ -626,6 +665,10 @@ fn pattern(pattern: &str) -> Pattern {
         ]
         .join("\n"),
     )
+}
+
+fn anchored_pattern(pattern: &str) -> Pattern {
+    create_pattern(pattern, true)
 }
 
 pub fn format_rules(rule: &Vec<Rules>) -> String {
