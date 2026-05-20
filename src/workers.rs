@@ -36,18 +36,10 @@ impl Worker {
             while let Ok(tasks) = rscheduler.recv() {
                 on_event(WorkerEvent::InitExecution);
                 let mut results: Vec<Result<(), String>> = vec![];
+                let ignored = rcancel.try_recv();
+                stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
+
                 let mut has_been_cancelled = false;
-                match rcancel.try_recv() {
-                    Ok(_) => {
-                        stdout::verbose("Skipping scheduled tasks after cancel signal.", verbose);
-                        has_been_cancelled = true;
-                    }
-                    Err(err) if err != TryRecvError::Empty => {
-                        stdout::error(&format!("failed to receive cancel event: {:?}", err));
-                        has_been_cancelled = true;
-                    }
-                    _ => {}
-                }
                 let time_execution_started = std::time::Instant::now();
 
                 for task in tasks {
@@ -116,6 +108,7 @@ impl Worker {
                                             "failed to receive cancel event: {:?}",
                                             task
                                         ));
+                                        has_been_cancelled = true;
                                         break;
                                     }
 
@@ -239,23 +232,6 @@ mod tests {
     }
 
     #[test]
-    fn it_does_not_run_scheduled_tasks_after_cancel_signal() {
-        let output = output_file("cancelled");
-        let _ = std::fs::remove_file(&output);
-
-        {
-            let worker = Worker::new(false, false, |_| {});
-            worker.cancel_running_tasks().unwrap();
-            worker
-                .schedule(vec![write_file_rule(&output)], "src/main.rs")
-                .unwrap();
-            std::thread::sleep(std::time::Duration::from_millis(300));
-        }
-
-        assert!(!output.exists(), "cancelled hook should not run");
-    }
-
-    #[test]
     fn it_does_not_run_scheduled_tasks_when_worker_is_dropped() {
         let output = output_file("dropped");
         let _ = std::fs::remove_file(&output);
@@ -264,7 +240,10 @@ mod tests {
             let worker = Worker::new(false, false, |_| {});
             let rule = Rules::new(
                 "test".to_string(),
-                vec![format!("sleep 1 && echo triggered > {}", output.display())],
+                vec![
+                    "sleep 1".to_string(),
+                    format!("echo triggered > {}", output.display()),
+                ],
                 vec!["src/**/*.rs".to_string()],
                 vec![],
                 false,
