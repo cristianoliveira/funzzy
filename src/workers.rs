@@ -108,6 +108,7 @@ impl Worker {
                                             "failed to receive cancel event: {:?}",
                                             task
                                         ));
+                                        has_been_cancelled = true;
                                         break;
                                     }
 
@@ -197,6 +198,10 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
+        if let Some(canceller) = self.canceller.as_ref() {
+            let _ = canceller.send(());
+        }
+
         let tc = self.canceller.take();
         drop(tc);
         let ts = self.scheduler.take();
@@ -204,5 +209,66 @@ impl Drop for Worker {
         if let Some(th) = self.consumer.take() {
             th.join().expect("failed to join consumer thread");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn output_file(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("funzzy-worker-{}-{}", std::process::id(), name))
+    }
+
+    fn write_file_rule(path: &PathBuf) -> Rules {
+        Rules::new(
+            "test".to_string(),
+            vec![format!("echo triggered > {}", path.display())],
+            vec!["src/**/*.rs".to_string()],
+            vec![],
+            false,
+        )
+    }
+
+    #[test]
+    fn it_does_not_run_scheduled_tasks_when_worker_is_dropped() {
+        let output = output_file("dropped");
+        let _ = std::fs::remove_file(&output);
+
+        {
+            let worker = Worker::new(false, false, |_| {});
+            let rule = Rules::new(
+                "test".to_string(),
+                vec![
+                    "sleep 1".to_string(),
+                    format!("echo triggered > {}", output.display()),
+                ],
+                vec!["src/**/*.rs".to_string()],
+                vec![],
+                false,
+            );
+            worker.schedule(vec![rule], "src/main.rs").unwrap();
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert!(!output.exists(), "dropped worker should not run hooks");
+    }
+
+    #[test]
+    fn it_runs_scheduled_tasks_without_cancel_signal() {
+        let output = output_file("scheduled");
+        let _ = std::fs::remove_file(&output);
+
+        {
+            let worker = Worker::new(false, false, |_| {});
+            worker
+                .schedule(vec![write_file_rule(&output)], "src/main.rs")
+                .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+
+        assert!(output.exists(), "scheduled hook should run");
+        let _ = std::fs::remove_file(&output);
     }
 }
