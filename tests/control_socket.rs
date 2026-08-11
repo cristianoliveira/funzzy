@@ -97,6 +97,21 @@ mod unix {
     }
 
     #[test]
+    fn it_creates_the_socket_parent_directory() {
+        let directory =
+            std::env::temp_dir().join(format!("funzzy-control-{}-nested", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let path = directory.join("control.sock");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+
+        let server = ControlServer::start(&path, state).unwrap();
+
+        assert!(path.exists());
+        drop(server);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn it_removes_the_socket_when_the_server_stops() {
         let path = socket_path("cleanup");
         let state = Arc::new(Mutex::new(ControlState::default()));

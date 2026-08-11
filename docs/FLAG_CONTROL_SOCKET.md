@@ -2,13 +2,27 @@
 
 Expose compact watcher state and named-target execution over a Unix domain socket. This mode implies `--non-block` so a newer filesystem event or control request can cancel an obsolete run.
 
-```bash
-mkdir -p .tmp/funzzy
-fzz --control-socket .tmp/funzzy/control.sock \
-  --log-file .tmp/funzzy/tests.log
+Prefer one shared project configuration in `.watch.yaml`:
+
+```yaml
+control:
+  socket: .tmp/funzzy/control.sock
+
+tasks:
+  - name: final checks @agent-final
+    run: cargo test
+    change: ["src/**", "tests/**"]
 ```
 
-The parent directory must already exist. Funzzy creates the socket with permissions `0600` and removes it on graceful shutdown. A live socket at the same path prevents a second server from starting; stale socket files are replaced.
+Then start Funzzy without repeating the socket path:
+
+```bash
+fzz --log-file .tmp/funzzy/tests.log
+```
+
+`--control-socket <path>` remains an explicit override and takes precedence over `.watch.yaml`. Configuring either form implies `--non-block`.
+
+Funzzy creates missing parent directories and creates the socket with permissions `0600`. It removes the socket on graceful shutdown. A live socket at the same path prevents a second server from starting; stale socket files are replaced.
 
 The protocol is versioned NDJSON: one JSON request and one JSON response per connection.
 

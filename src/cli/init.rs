@@ -11,14 +11,18 @@ pub const DEFAULT_CONTENT: &str = "## Funzzy events file
 # List here the tasks and the commands for this workflow
 # then run `fzz` to start to work.
 
-- name: hello world
-  run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
-  run_on_init: true
+control:
+  socket: .tmp/funzzy/control.sock
 
-- name: list files
-  run: 'ls -a'
-  change: '**/*.txt'
-  ignore: '**/*.log'
+tasks:
+  - name: hello world
+    run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
+    run_on_init: true
+
+  - name: list files
+    run: 'ls -a'
+    change: '**/*.txt'
+    ignore: '**/*.log'
 ";
 
 /// # `InitCommand`

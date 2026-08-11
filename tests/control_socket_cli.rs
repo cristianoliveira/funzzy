@@ -23,17 +23,20 @@ impl Drop for TestProcess {
 fn it_runs_a_named_target_over_the_control_socket() {
     let directory = std::env::temp_dir().join(format!("funzzy-control-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(directory.join(".tmp")).unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join(".watch.yaml"),
         r#"
-- name: fast tests @agent-fast
-  run: "true"
-  change: "*.txt"
-  run_on_init: true
-- name: full tests @agent-final
-  run: "true"
-  change: ".funzzy-final-never"
+control:
+  socket: .tmp/control.sock
+tasks:
+  - name: fast tests @agent-fast
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+  - name: full tests @agent-final
+    run: "true"
+    change: ".funzzy-final-never"
 "#,
     )
     .unwrap();
@@ -41,7 +44,6 @@ fn it_runs_a_named_target_over_the_control_socket() {
     let socket_path = directory.join(".tmp/control.sock");
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
-        .args(["--control-socket", ".tmp/control.sock"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

@@ -281,7 +281,7 @@ fn main() {
     };
 }
 
-pub fn execute_watch_command(watches: Watches, args: Args) {
+pub fn execute_watch_command(watches: Watches, mut args: Args) {
     let possible_config_paths = if args.flag_config.is_empty() {
         let dir = std::env::current_dir().expect("Failed to get current directory");
         vec![
@@ -304,6 +304,15 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
         .into_iter()
         .filter(|path| std::path::Path::new(path).exists())
         .collect::<Vec<String>>();
+
+    if args.flag_control_socket.is_none() {
+        args.flag_control_socket = config_file_paths
+            .first()
+            .map(|path| rules::control_socket_from_file(path))
+            .transpose()
+            .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
+            .flatten();
+    }
 
     // This here restarts the watcher if the config file changes
     let watcher_pid = std::process::id();
