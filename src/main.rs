@@ -48,12 +48,12 @@ Alias:
 
 Usage:
   funzzy [options]
-  funzzy init
+  funzzy init [--migrate]
   funzzy watch [<command>] [options]
   funzzy <command> [options]
 
 Commands:
-    init                Create a new '.watch.yaml' file.
+    init                Create or migrate a '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
 
 Options:
@@ -65,6 +65,7 @@ Options:
   -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
   -l --log-file <file>         Write all output to the specified log file in addition to the console.
   --control-socket <path>      Expose watcher status over a Unix socket (implies --non-block).
+  --migrate                    Migrate legacy root task list to current format.
   --no-run-on-init             Do not run tasks on initialization.
   -h --help                    Show this message.
   -v --version                 Show version.
@@ -94,6 +95,7 @@ pub struct Args {
     pub flag_log_truncate_on_change: bool,
     pub flag_log_file: Option<String>,
     pub flag_control_socket: Option<String>,
+    pub flag_migrate: bool,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -188,6 +190,11 @@ fn main() {
     match args {
         Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
         // Commands
+        Args {
+            cmd_init: true,
+            flag_migrate: true,
+            ..
+        } => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
         // If no command argument provided, use config branch (if config exists, else error)
