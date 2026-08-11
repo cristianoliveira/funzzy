@@ -16,14 +16,23 @@ mod unix {
         ))
     }
 
-    fn status(path: &std::path::Path) -> Value {
+    fn call(path: &std::path::Path, request: Value) -> Value {
+        raw_call(path, &request.to_string())
+    }
+
+    fn raw_call(path: &std::path::Path, request: &str) -> Value {
         let mut stream = UnixStream::connect(path).expect("control socket should accept clients");
-        stream
-            .write_all(b"{\"v\":1,\"id\":\"test\",\"method\":\"status\"}\n")
-            .unwrap();
+        writeln!(stream, "{}", request).unwrap();
         let mut response = String::new();
         BufReader::new(stream).read_line(&mut response).unwrap();
         serde_json::from_str(&response).unwrap()
+    }
+
+    fn status(path: &std::path::Path) -> Value {
+        call(
+            path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "test", "method": "status"}),
+        )
     }
 
     #[test]
@@ -43,7 +52,7 @@ mod unix {
         });
 
         let response = status(&path);
-        assert_eq!(response["v"], 1);
+        assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["id"], "test");
         assert_eq!(response["result"]["generation"], 1);
         assert_eq!(response["result"]["state"], "passed");
@@ -84,14 +93,17 @@ mod unix {
         })
         .unwrap();
 
-        let mut stream = UnixStream::connect(&path).unwrap();
-        stream
-            .write_all(b"{\"v\":1,\"id\":\"run\",\"method\":\"run\",\"params\":{\"target\":\"@agent-final\"}}\n")
-            .unwrap();
-        let mut response = String::new();
-        BufReader::new(stream).read_line(&mut response).unwrap();
-        let response: Value = serde_json::from_str(&response).unwrap();
+        let response = call(
+            &path,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "run",
+                "method": "run",
+                "params": {"target": "@agent-final"}
+            }),
+        );
 
+        assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["result"]["runId"], 7);
         assert_eq!(*requested.lock().unwrap(), vec!["@agent-final"]);
     }
@@ -106,16 +118,74 @@ mod unix {
         }];
         let _server = ControlServer::start_with_runner(&path, state, targets, |_| Ok(1)).unwrap();
 
-        let mut stream = UnixStream::connect(&path).unwrap();
-        stream
-            .write_all(b"{\"v\":1,\"id\":\"targets\",\"method\":\"targets\"}\n")
-            .unwrap();
-        let mut response = String::new();
-        BufReader::new(stream).read_line(&mut response).unwrap();
-        let response: Value = serde_json::from_str(&response).unwrap();
+        let response = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "targets", "method": "targets"}),
+        );
 
+        assert_eq!(response["jsonrpc"], "2.0");
         assert_eq!(response["result"][0]["name"], "final checks @agent-final");
         assert_eq!(response["result"][0]["commands"][0], "cargo test");
+    }
+
+    #[test]
+    fn it_returns_standard_json_rpc_errors() {
+        let path = socket_path("errors");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start(&path, state).unwrap();
+
+        let parse_error = raw_call(&path, "{");
+        assert_eq!(parse_error["jsonrpc"], "2.0");
+        assert_eq!(parse_error["id"], Value::Null);
+        assert_eq!(parse_error["error"]["code"], -32700);
+        assert_eq!(parse_error["error"]["message"], "Parse error");
+
+        let invalid_request = call(
+            &path,
+            serde_json::json!({"v": 1, "id": "old", "method": "status"}),
+        );
+        assert_eq!(invalid_request["id"], "old");
+        assert_eq!(invalid_request["error"]["code"], -32600);
+        assert_eq!(invalid_request["error"]["message"], "Invalid Request");
+
+        let missing_method = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "missing"}),
+        );
+        assert_eq!(missing_method["id"], 3);
+        assert_eq!(missing_method["error"]["code"], -32601);
+        assert_eq!(missing_method["error"]["message"], "Method not found");
+
+        let invalid_params = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "run", "params": {}}),
+        );
+        assert_eq!(invalid_params["error"]["code"], -32602);
+        assert_eq!(invalid_params["error"]["message"], "Invalid params");
+    }
+
+    #[test]
+    fn it_handles_json_rpc_batches() {
+        let path = socket_path("batch");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let targets = vec![ControlTarget {
+            name: "checks".to_owned(),
+            commands: vec!["cargo test".to_owned()],
+        }];
+        let _server = ControlServer::start_with_runner(&path, state, targets, |_| Ok(1)).unwrap();
+
+        let response = call(
+            &path,
+            serde_json::json!([
+                {"jsonrpc": "2.0", "id": "status", "method": "status"},
+                {"jsonrpc": "2.0", "method": "status"},
+                {"jsonrpc": "2.0", "id": "targets", "method": "targets"}
+            ]),
+        );
+
+        assert_eq!(response.as_array().unwrap().len(), 2);
+        assert_eq!(response[0]["id"], "status");
+        assert_eq!(response[1]["id"], "targets");
     }
 
     #[test]

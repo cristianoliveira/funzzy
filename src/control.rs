@@ -188,90 +188,147 @@ fn handle_client(
     run_target: Option<&RunTarget>,
 ) {
     let mut request = String::new();
-    let read_result = BufReader::new(&stream).read_line(&mut request);
-    if read_result.is_err() {
+    if BufReader::new(&stream).read_line(&mut request).is_err() {
         return;
     }
 
-    let request: serde_json::Value = match serde_json::from_str(&request) {
+    let request = match serde_json::from_str(&request) {
         Ok(request) => request,
-        Err(err) => {
+        Err(error) => {
             write_response(
                 &mut stream,
-                serde_json::json!({"v": 1, "error": format!("invalid request: {}", err)}),
+                rpc_error(
+                    serde_json::Value::Null,
+                    -32700,
+                    "Parse error",
+                    Some(serde_json::json!(error.to_string())),
+                ),
             );
             return;
         }
     };
 
-    let id = request
-        .get("id")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    if request.get("v") != Some(&serde_json::json!(1)) {
-        write_response(
-            &mut stream,
-            serde_json::json!({"v": 1, "id": id, "error": "unsupported protocol version"}),
-        );
-        return;
-    }
-
-    match request.get("method").and_then(|method| method.as_str()) {
-        Some("status") => {
-            let snapshot = state.lock().unwrap().clone();
-            write_response(
-                &mut stream,
-                serde_json::json!({"v": 1, "id": id, "result": snapshot}),
-            );
-        }
-        Some("targets") => write_response(
-            &mut stream,
-            serde_json::json!({"v": 1, "id": id, "result": targets}),
-        ),
-        Some("run") => run_requested_target(&mut stream, id, &request, run_target),
-        _ => write_response(
-            &mut stream,
-            serde_json::json!({"v": 1, "id": id, "error": "unsupported request"}),
-        ),
+    if let Some(response) = process_payload(request, state, targets, run_target) {
+        write_response(&mut stream, response);
     }
 }
 
+fn process_payload(
+    request: serde_json::Value,
+    state: &Arc<Mutex<ControlState>>,
+    targets: &[ControlTarget],
+    run_target: Option<&RunTarget>,
+) -> Option<serde_json::Value> {
+    let serde_json::Value::Array(requests) = request else {
+        return process_request(request, state, targets, run_target);
+    };
+
+    if requests.is_empty() {
+        return Some(rpc_error(
+            serde_json::Value::Null,
+            -32600,
+            "Invalid Request",
+            None,
+        ));
+    }
+
+    let responses: Vec<_> = requests
+        .into_iter()
+        .filter_map(|request| process_request(request, state, targets, run_target))
+        .collect();
+    if responses.is_empty() {
+        return None;
+    }
+    Some(serde_json::Value::Array(responses))
+}
+
+fn process_request(
+    request: serde_json::Value,
+    state: &Arc<Mutex<ControlState>>,
+    targets: &[ControlTarget],
+    run_target: Option<&RunTarget>,
+) -> Option<serde_json::Value> {
+    let id = request_id(&request);
+    let Some(object) = request.as_object() else {
+        return Some(rpc_error(id, -32600, "Invalid Request", None));
+    };
+    let Some(method) = object.get("method").and_then(|method| method.as_str()) else {
+        return Some(rpc_error(id, -32600, "Invalid Request", None));
+    };
+    if object.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
+        return Some(rpc_error(id, -32600, "Invalid Request", None));
+    }
+    if object
+        .get("params")
+        .is_some_and(|params| !params.is_object() && !params.is_array())
+    {
+        return Some(rpc_error(id, -32602, "Invalid params", None));
+    }
+
+    let result = match method {
+        "status" => Ok(serde_json::json!(state.lock().unwrap().clone())),
+        "targets" => Ok(serde_json::json!(targets)),
+        "run" => run_requested_target(&request, run_target),
+        _ => Err((-32601, "Method not found", None)),
+    };
+
+    if !object.contains_key("id") {
+        return None;
+    }
+    Some(match result {
+        Ok(result) => serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Err((code, message, data)) => rpc_error(id, code, message, data),
+    })
+}
+
+fn request_id(request: &serde_json::Value) -> serde_json::Value {
+    request
+        .get("id")
+        .filter(|id| id.is_null() || id.is_string() || id.is_number())
+        .cloned()
+        .unwrap_or(serde_json::Value::Null)
+}
+
 fn run_requested_target(
-    stream: &mut UnixStream,
-    id: serde_json::Value,
     request: &serde_json::Value,
     run_target: Option<&RunTarget>,
-) {
-    let Some(run_target) = run_target else {
-        write_response(
-            stream,
-            serde_json::json!({"v": 1, "id": id, "error": "target execution is unavailable"}),
-        );
-        return;
-    };
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let Some(target) = request
         .get("params")
         .and_then(|params| params.get("target"))
         .and_then(|target| target.as_str())
         .filter(|target| !target.trim().is_empty())
     else {
-        write_response(
-            stream,
-            serde_json::json!({"v": 1, "id": id, "error": "run requires a target"}),
-        );
-        return;
+        return Err((
+            -32602,
+            "Invalid params",
+            Some(serde_json::json!("run requires a non-empty params.target")),
+        ));
+    };
+    let Some(run_target) = run_target else {
+        return Err((
+            -32000,
+            "Server error",
+            Some(serde_json::json!("target execution is unavailable")),
+        ));
     };
 
-    match run_target(target.to_string()) {
-        Ok(run_id) => write_response(
-            stream,
-            serde_json::json!({"v": 1, "id": id, "result": {"runId": run_id}}),
-        ),
-        Err(error) => write_response(
-            stream,
-            serde_json::json!({"v": 1, "id": id, "error": error}),
-        ),
+    run_target(target.to_string())
+        .map(|run_id| serde_json::json!({"runId": run_id}))
+        .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
+}
+
+fn rpc_error(
+    id: serde_json::Value,
+    code: i64,
+    message: &str,
+    data: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut error = serde_json::json!({"code": code, "message": message});
+    if let Some(data) = data {
+        error["data"] = data;
     }
+    serde_json::json!({"jsonrpc": "2.0", "id": id, "error": error})
 }
 
 fn write_response(stream: &mut UnixStream, response: serde_json::Value) {

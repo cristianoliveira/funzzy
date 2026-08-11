@@ -53,7 +53,7 @@ tasks:
     wait_until(Duration::from_secs(3), || socket_path.exists());
     let targets = call(
         &socket_path,
-        serde_json::json!({"v": 1, "id": "targets", "method": "targets"}),
+        serde_json::json!({"jsonrpc": "2.0", "id": "targets", "method": "targets"}),
     );
     assert_eq!(targets["result"][1]["name"], "full tests @agent-final");
     assert_eq!(targets["result"][1]["commands"][0], "true");
@@ -61,7 +61,7 @@ tasks:
     let run = call(
         &socket_path,
         serde_json::json!({
-            "v": 1,
+            "jsonrpc": "2.0",
             "id": "run",
             "method": "run",
             "params": {"target": "@agent-final"}
@@ -73,7 +73,7 @@ tasks:
     wait_until(Duration::from_secs(3), || {
         let status = call(
             &socket_path,
-            serde_json::json!({"v": 1, "id": "status", "method": "status"}),
+            serde_json::json!({"jsonrpc": "2.0", "id": "status", "method": "status"}),
         );
         let result = &status["result"];
         if result["generation"] == run_id && result["state"] == "passed" {

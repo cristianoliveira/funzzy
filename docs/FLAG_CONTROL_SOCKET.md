@@ -24,16 +24,16 @@ fzz --log-file .tmp/funzzy/tests.log
 
 Funzzy creates missing parent directories and creates the socket with permissions `0600`. It removes the socket on graceful shutdown. A live socket at the same path prevents a second server from starting; stale socket files are replaced.
 
-The protocol is versioned NDJSON: one JSON request and one JSON response per connection.
+The socket uses JSON-RPC 2.0 framed as NDJSON: send one newline-terminated JSON-RPC request or batch per connection. Funzzy returns one newline-terminated response; notifications do not receive responses.
 
 ### Status
 
 ```json
-{"v":1,"id":"status","method":"status"}
+{"jsonrpc":"2.0","id":"status","method":"status"}
 ```
 
 ```json
-{"v":1,"id":"status","result":{"generation":4,"state":"passed","trigger":"src/main.rs","commands":["cargo test"],"durationMs":42,"failures":[]}}
+{"jsonrpc":"2.0","id":"status","result":{"generation":4,"state":"passed","trigger":"src/main.rs","commands":["cargo test"],"durationMs":42,"failures":[]}}
 ```
 
 States are `idle`, `running`, `passed`, `failed`, and `cancelled`.
@@ -41,11 +41,11 @@ States are `idle`, `running`, `passed`, `failed`, and `cancelled`.
 ### List targets
 
 ```json
-{"v":1,"id":"targets","method":"targets"}
+{"jsonrpc":"2.0","id":"targets","method":"targets"}
 ```
 
 ```json
-{"v":1,"id":"targets","result":[{"name":"final checks @agent-final","commands":["cargo test"]}]}
+{"jsonrpc":"2.0","id":"targets","result":[{"name":"final checks @agent-final","commands":["cargo test"]}]}
 ```
 
 ### Run named target
@@ -53,11 +53,11 @@ States are `idle`, `running`, `passed`, `failed`, and `cancelled`.
 The target uses the same task-name substring matching as `--target`:
 
 ```json
-{"v":1,"id":"run","method":"run","params":{"target":"@agent-final"}}
+{"jsonrpc":"2.0","id":"run","method":"run","params":{"target":"@agent-final"}}
 ```
 
 ```json
-{"v":1,"id":"run","result":{"runId":5}}
+{"jsonrpc":"2.0","id":"run","result":{"runId":5}}
 ```
 
 Poll `status` until `generation` equals `runId` and state is terminal. If generation becomes greater than `runId`, that run was superseded.
