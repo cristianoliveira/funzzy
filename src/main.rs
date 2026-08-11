@@ -6,6 +6,7 @@ extern crate serde_derive;
 
 mod cli;
 mod cmd;
+mod control;
 mod environment;
 mod errors;
 mod logging;
@@ -63,6 +64,7 @@ Options:
   -b --fail-fast               Bail current execution if a task fails (exit code != 0).
   -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
   -l --log-file <file>         Write all output to the specified log file in addition to the console.
+  --control-socket <path>      Expose watcher status over a Unix socket (implies --non-block).
   --no-run-on-init             Do not run tasks on initialization.
   -h --help                    Show this message.
   -v --version                 Show version.
@@ -91,6 +93,7 @@ pub struct Args {
 
     pub flag_log_truncate_on_change: bool,
     pub flag_log_file: Option<String>,
+    pub flag_control_socket: Option<String>,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -342,15 +345,18 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
     let verbose = args.flag_V;
     let fail_fast = args.flag_fail_fast || environment::is_enabled("FUNZZY_BAIL");
-    let fail_fast_env = args.flag_non_block || environment::is_enabled("FUNZZY_NON_BLOCK");
+    let non_block = args.flag_non_block
+        || environment::is_enabled("FUNZZY_NON_BLOCK")
+        || args.flag_control_socket.is_some();
 
     let run_on_init = !args.flag_no_run_on_init;
-    if fail_fast_env {
+    if non_block {
         execute(WatchNonBlockCommand::new(
             watches,
             verbose,
             fail_fast,
             run_on_init,
+            args.flag_control_socket.map(std::path::PathBuf::from),
         ))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))

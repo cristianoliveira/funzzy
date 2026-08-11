@@ -1,11 +1,14 @@
 extern crate notify;
 
 use crate::cli::Command;
+use crate::control::{ControlServer, ControlState};
 use crate::errors::FzzError;
 use crate::stdout;
 use crate::watcher;
 use crate::watches::Watches;
 use crate::workers;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// # `WatchNonBlockCommand`
 ///
@@ -18,10 +21,17 @@ pub struct WatchNonBlockCommand {
     verbose: bool,
     fail_fast: bool,
     run_on_init: bool,
+    control_socket: Option<PathBuf>,
 }
 
 impl WatchNonBlockCommand {
-    pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
+    pub fn new(
+        watches: Watches,
+        verbose: bool,
+        fail_fast: bool,
+        run_on_init: bool,
+        control_socket: Option<PathBuf>,
+    ) -> Self {
         stdout::verbose(&format!("watches {:?}", watches), verbose);
 
         WatchNonBlockCommand {
@@ -29,6 +39,7 @@ impl WatchNonBlockCommand {
             verbose,
             fail_fast,
             run_on_init,
+            control_socket,
         }
     }
 }
@@ -38,13 +49,31 @@ impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), FzzError> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let worker = workers::Worker::new(self.verbose, self.fail_fast, |event| {
-            match event {
-                workers::WorkerEvent::InitExecution => {}
-                workers::WorkerEvent::Tick => {}
-                workers::WorkerEvent::FinishedExecution(_) => {}
-            };
-        });
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let worker_state = Arc::clone(&control_state);
+        let worker = Arc::new(workers::Worker::new(
+            self.verbose,
+            self.fail_fast,
+            move |event| {
+                worker_state.lock().unwrap().apply(event);
+            },
+        ));
+        let _control_server = if let Some(path) = self.control_socket.as_ref() {
+            let runner_worker = Arc::clone(&worker);
+            let runner_watches = self.watches.clone();
+            Some(
+                ControlServer::start_with_runner(path, Arc::clone(&control_state), move |target| {
+                    let rules = runner_watches
+                        .target(&target)
+                        .ok_or_else(|| format!("No target found for '{}'", target))?;
+                    runner_worker.cancel_running_tasks()?;
+                    runner_worker.schedule(rules, &format!("control:{}", target))
+                })
+                .map_err(|err| FzzError::GenericError(err.to_string()))?,
+            )
+        } else {
+            None
+        };
 
         if let Some(rules) = self.watches.run_on_init() {
             if self.run_on_init {
