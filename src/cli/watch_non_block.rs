@@ -1,7 +1,7 @@
 extern crate notify;
 
 use crate::cli::Command;
-use crate::control::{ControlServer, ControlState};
+use crate::control::{ControlServer, ControlState, ControlTarget};
 use crate::errors::FzzError;
 use crate::stdout;
 use crate::watcher;
@@ -61,14 +61,31 @@ impl Command for WatchNonBlockCommand {
         let _control_server = if let Some(path) = self.control_socket.as_ref() {
             let runner_worker = Arc::clone(&worker);
             let runner_watches = self.watches.clone();
-            Some(
-                ControlServer::start_with_runner(path, Arc::clone(&control_state), move |target| {
-                    let rules = runner_watches
-                        .target(&target)
-                        .ok_or_else(|| format!("No target found for '{}'", target))?;
-                    runner_worker.cancel_running_tasks()?;
-                    runner_worker.schedule(rules, &format!("control:{}", target))
+            let targets = self
+                .watches
+                .targets()
+                .into_iter()
+                .map(|rule| {
+                    let commands = rule.commands();
+                    ControlTarget {
+                        name: rule.name,
+                        commands,
+                    }
                 })
+                .collect();
+            Some(
+                ControlServer::start_with_runner(
+                    path,
+                    Arc::clone(&control_state),
+                    targets,
+                    move |target| {
+                        let rules = runner_watches
+                            .target(&target)
+                            .ok_or_else(|| format!("No target found for '{}'", target))?;
+                        runner_worker.cancel_running_tasks()?;
+                        runner_worker.schedule(rules, &format!("control:{}", target))
+                    },
+                )
                 .map_err(|err| FzzError::GenericError(err.to_string()))?,
             )
         } else {

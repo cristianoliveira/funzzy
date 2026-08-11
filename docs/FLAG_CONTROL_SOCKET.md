@@ -38,6 +38,16 @@ The protocol is versioned NDJSON: one JSON request and one JSON response per con
 
 States are `idle`, `running`, `passed`, `failed`, and `cancelled`.
 
+### List targets
+
+```json
+{"v":1,"id":"targets","method":"targets"}
+```
+
+```json
+{"v":1,"id":"targets","result":[{"name":"final checks @agent-final","commands":["cargo test"]}]}
+```
+
 ### Run named target
 
 The target uses the same task-name substring matching as `--target`:

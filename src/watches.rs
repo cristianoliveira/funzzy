@@ -33,6 +33,11 @@ impl Watches {
         (absolute_path, relative_path)
     }
 
+    /// Returns all configured targets.
+    pub fn targets(&self) -> Vec<Rules> {
+        self.rules.clone()
+    }
+
     /// Returns rules whose names contain the requested target.
     pub fn target(&self, target: &str) -> Option<Vec<Rules>> {
         let rules = self

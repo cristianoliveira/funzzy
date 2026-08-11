@@ -22,6 +22,13 @@ pub enum ExecutionState {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ControlTarget {
+    pub name: String,
+    pub commands: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ControlState {
     generation: u64,
     state: ExecutionState,
@@ -88,23 +95,25 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, None)
+        Self::start_internal(path, state, vec![], None)
     }
 
     pub fn start_with_runner<F>(
         path: &Path,
         state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
         run_target: F,
     ) -> io::Result<Self>
     where
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
     {
-        Self::start_internal(path, state, Some(Arc::new(run_target)))
+        Self::start_internal(path, state, targets, Some(Arc::new(run_target)))
     }
 
     fn start_internal(
         path: &Path,
         state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
         run_target: Option<RunTarget>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
@@ -117,7 +126,7 @@ impl ControlServer {
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_client(stream, &state, run_target.as_ref()),
+                    Ok((stream, _)) => handle_client(stream, &state, &targets, run_target.as_ref()),
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
@@ -168,6 +177,7 @@ fn prepare_socket_path(path: &Path) -> io::Result<()> {
 fn handle_client(
     mut stream: UnixStream,
     state: &Arc<Mutex<ControlState>>,
+    targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
 ) {
     let mut request = String::new();
@@ -207,6 +217,10 @@ fn handle_client(
                 serde_json::json!({"v": 1, "id": id, "result": snapshot}),
             );
         }
+        Some("targets") => write_response(
+            &mut stream,
+            serde_json::json!({"v": 1, "id": id, "result": targets}),
+        ),
         Some("run") => run_requested_target(&mut stream, id, &request, run_target),
         _ => write_response(
             &mut stream,

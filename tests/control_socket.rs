@@ -1,6 +1,6 @@
 #[cfg(unix)]
 mod unix {
-    use funzzy::control::{ControlServer, ControlState};
+    use funzzy::control::{ControlServer, ControlState, ControlTarget};
     use funzzy::workers::WorkerEvent;
     use serde_json::Value;
     use std::io::{BufRead, BufReader, Write};
@@ -78,7 +78,7 @@ mod unix {
         let state = Arc::new(Mutex::new(ControlState::default()));
         let requested = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&requested);
-        let _server = ControlServer::start_with_runner(&path, state, move |target| {
+        let _server = ControlServer::start_with_runner(&path, state, vec![], move |target| {
             captured.lock().unwrap().push(target);
             Ok(7)
         })
@@ -94,6 +94,28 @@ mod unix {
 
         assert_eq!(response["result"]["runId"], 7);
         assert_eq!(*requested.lock().unwrap(), vec!["@agent-final"]);
+    }
+
+    #[test]
+    fn it_lists_available_targets() {
+        let path = socket_path("targets");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let targets = vec![ControlTarget {
+            name: "final checks @agent-final".to_owned(),
+            commands: vec!["cargo test".to_owned()],
+        }];
+        let _server = ControlServer::start_with_runner(&path, state, targets, |_| Ok(1)).unwrap();
+
+        let mut stream = UnixStream::connect(&path).unwrap();
+        stream
+            .write_all(b"{\"v\":1,\"id\":\"targets\",\"method\":\"targets\"}\n")
+            .unwrap();
+        let mut response = String::new();
+        BufReader::new(stream).read_line(&mut response).unwrap();
+        let response: Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"][0]["name"], "final checks @agent-final");
+        assert_eq!(response["result"][0]["commands"][0], "cargo test");
     }
 
     #[test]

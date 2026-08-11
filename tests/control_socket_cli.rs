@@ -51,6 +51,13 @@ tasks:
     let _process = TestProcess { child, directory };
 
     wait_until(Duration::from_secs(3), || socket_path.exists());
+    let targets = call(
+        &socket_path,
+        serde_json::json!({"v": 1, "id": "targets", "method": "targets"}),
+    );
+    assert_eq!(targets["result"][1]["name"], "full tests @agent-final");
+    assert_eq!(targets["result"][1]["commands"][0], "true");
+
     let run = call(
         &socket_path,
         serde_json::json!({
