@@ -12,7 +12,7 @@
 # Run all tasks with `fzz -nb`
 # Run quick tasks with `fzz -nbt @quick`
 #
-control:
+on:
   socket: .tmp/funzzy/control.sock
 
 tasks:

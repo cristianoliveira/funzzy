@@ -48,7 +48,7 @@ fn test_it_creates_the_config_file_with_cmd_init() {
 # List here the tasks and the commands for this workflow
 # then run `fzz` to start to work.
 
-control:
+on:
   socket: .tmp/funzzy/control.sock
 
 tasks:

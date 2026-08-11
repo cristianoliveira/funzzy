@@ -423,14 +423,14 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             if let Yaml::Hash(ref hash) = yaml {
                 for (key, _) in hash {
                     if let Yaml::String(ref key_str) = key {
-                        if key_str != "change" && key_str != "ignore" {
+                        if key_str != "change" && key_str != "ignore" && key_str != "socket" {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change' and 'ignore' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', and 'socket' are allowed.",
                                     key_str
                                 ),
                                 None,
-                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]".to_owned()),
+                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock".to_owned()),
                             ));
                         }
                     }
@@ -611,21 +611,21 @@ pub fn control_socket_from_yaml(content: &str) -> Result<Option<String>, String>
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let control = &root["control"];
+    let on = &root["on"];
 
-    if control == &Yaml::BadValue {
+    if on == &Yaml::BadValue {
         return Ok(None);
     }
 
-    if !matches!(control, Yaml::Hash(_)) {
-        return Err("Property 'control' must be an object".to_owned());
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
     }
 
-    match &control["socket"] {
+    match &on["socket"] {
         Yaml::BadValue => Ok(None),
         Yaml::String(path) if !path.trim().is_empty() => Ok(Some(path.to_owned())),
-        Yaml::String(_) => Err("Property 'control.socket' cannot be empty".to_owned()),
-        _ => Err("Property 'control.socket' must be a string".to_owned()),
+        Yaml::String(_) => Err("Property 'on.socket' cannot be empty".to_owned()),
+        _ => Err("Property 'on.socket' must be a string".to_owned()),
     }
 }
 
@@ -752,9 +752,9 @@ mod tests {
     use std::env::current_dir;
 
     #[test]
-    fn it_reads_control_socket_from_root_config() {
+    fn it_reads_control_socket_from_on_config() {
         let file_content = r#"
-control:
+on:
   socket: .tmp/funzzy/control.sock
 tasks:
   - name: my tests
@@ -766,6 +766,7 @@ tasks:
             control_socket_from_yaml(file_content).unwrap(),
             Some(".tmp/funzzy/control.sock".to_owned())
         );
+        assert!(from_yaml(file_content).is_ok());
     }
 
     #[test]
@@ -782,7 +783,7 @@ tasks:
     #[test]
     fn it_rejects_non_string_control_socket() {
         let file_content = r#"
-control:
+on:
   socket: 42
 tasks:
   - name: my tests
@@ -790,7 +791,9 @@ tasks:
     run_on_init: true
 "#;
 
-        assert!(control_socket_from_yaml(file_content).is_err());
+        assert!(control_socket_from_yaml(file_content)
+            .unwrap_err()
+            .contains("on.socket"));
     }
 
     #[test]

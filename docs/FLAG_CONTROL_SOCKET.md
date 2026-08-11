@@ -5,7 +5,7 @@ Expose compact watcher state and named-target execution over a Unix domain socke
 Prefer one shared project configuration in `.watch.yaml`:
 
 ```yaml
-control:
+on:
   socket: .tmp/funzzy/control.sock
 
 tasks:
@@ -20,7 +20,7 @@ Then start Funzzy without repeating the socket path:
 fzz --log-file .tmp/funzzy/tests.log
 ```
 
-`--control-socket <path>` remains an explicit override and takes precedence over `.watch.yaml`. Configuring either form implies `--non-block`.
+`--control-socket <path>` remains an explicit override and takes precedence over `on.socket` in `.watch.yaml`. Configuring either form implies `--non-block`.
 
 Funzzy creates missing parent directories and creates the socket with permissions `0600`. It removes the socket on graceful shutdown. A live socket at the same path prevents a second server from starting; stale socket files are replaced.
 

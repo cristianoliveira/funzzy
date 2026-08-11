@@ -27,7 +27,7 @@ fn it_runs_a_named_target_over_the_control_socket() {
     std::fs::write(
         directory.join(".watch.yaml"),
         r#"
-control:
+on:
   socket: .tmp/control.sock
 tasks:
   - name: fast tests @agent-fast

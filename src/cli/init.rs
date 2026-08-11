@@ -12,7 +12,7 @@ pub const DEFAULT_CONTENT: &str = "## Funzzy events file
 # List here the tasks and the commands for this workflow
 # then run `fzz` to start to work.
 
-control:
+on:
   socket: .tmp/funzzy/control.sock
 
 tasks:
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn it_rejects_config_already_using_new_format() {
-        let current = "control:\n  socket: .tmp/funzzy.sock\ntasks:\n  - name: test\n    run: cargo test\n    run_on_init: true\n";
+        let current = "on:\n  socket: .tmp/funzzy.sock\ntasks:\n  - name: test\n    run: cargo test\n    run_on_init: true\n";
 
         let error = migrate_content(current).unwrap_err();
 
