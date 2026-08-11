@@ -1,3 +1,4 @@
+use crate::stdout;
 use crate::workers::WorkerEvent;
 use serde_derive::Serialize;
 use std::fs;
@@ -130,7 +131,13 @@ impl ControlServer {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
-                    Err(_) => break,
+                    Err(err) => {
+                        stdout::error(&format!(
+                            "Control socket stopped accepting clients: {}",
+                            err
+                        ));
+                        break;
+                    }
                 }
             }
         });

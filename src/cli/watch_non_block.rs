@@ -73,21 +73,22 @@ impl Command for WatchNonBlockCommand {
                     }
                 })
                 .collect();
-            Some(
-                ControlServer::start_with_runner(
-                    path,
-                    Arc::clone(&control_state),
-                    targets,
-                    move |target| {
-                        let rules = runner_watches
-                            .target(&target)
-                            .ok_or_else(|| format!("No target found for '{}'", target))?;
-                        runner_worker.cancel_running_tasks()?;
-                        runner_worker.schedule(rules, &format!("control:{}", target))
-                    },
-                )
-                .map_err(|err| FzzError::GenericError(err.to_string()))?,
+            let server = ControlServer::start_with_runner(
+                path,
+                Arc::clone(&control_state),
+                targets,
+                move |target| {
+                    stdout::info(&format!("Control requested target: {}", target));
+                    let rules = runner_watches
+                        .target(&target)
+                        .ok_or_else(|| format!("No target found for '{}'", target))?;
+                    runner_worker.cancel_running_tasks()?;
+                    runner_worker.schedule(rules, &format!("control:{}", target))
+                },
             )
+            .map_err(|err| FzzError::GenericError(err.to_string()))?;
+            stdout::info(&format!("Control socket listening at {}", path.display()));
+            Some(server)
         } else {
             None
         };
