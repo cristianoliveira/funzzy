@@ -47,14 +47,9 @@ impl Command for WatchNonBlockCommand {
         });
 
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
-        let mut _control_server = None;
         match watcher::events(
             list_of_watched_paths,
             || {
-                // Publish the control socket and start initial work only after
-                // filesystem watches are registered, so readiness is truthful.
-                _control_server = self.start_control_server(&worker, &control_state);
-
                 if let Some(rules) = self.watches.run_on_init() {
                     if self.run_on_init {
                         stdout::info("Running on init commands.");
