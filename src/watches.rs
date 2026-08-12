@@ -354,6 +354,43 @@ mod tests {
     }
 
     #[test]
+    fn it_ignores_nested_tooling_cache_dirs() {
+        // Regression: tooling (e.g. agent AST indexers) writes cache files under
+        // watched dirs like tests/.pi/ast-index.sqlite. A task with its own
+        // `ignore` block must be able to exclude nested `.pi` dirs using a
+        // `**/.pi/**` glob, otherwise non-Rust files reach `cargo fmt`.
+        let file_content = "
+            - name: lint
+              run: 'cargo fmt'
+              change: 'tests/**'
+              ignore: '**/.pi/**'
+        ";
+        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        assert!(watches.watch("tests/foo.rs").is_some());
+        assert!(watches.watch("tests/.pi/ast-index.sqlite").is_none());
+    }
+
+    #[test]
+    fn it_ignores_tooling_cache_in_real_watch_config() {
+        // End-to-end guard against the real .watch.yaml: the lint task has its
+        // own `ignore` (which overrides `on.ignore`), so it must list `**/.pi/**`
+        // explicitly to keep agent cache files away from `cargo fmt`.
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let config =
+            std::fs::read_to_string(here.join(".watch.yaml")).expect("missing .watch.yaml");
+        let watches = Watches::new(rules::from_yaml(&config).expect("Error parsing yaml"));
+        let matched: Vec<String> = watches
+            .watch("tests/.pi/ast-index.sqlite")
+            .map(|rules| rules.into_iter().map(|r| r.name).collect())
+            .unwrap_or_default();
+        assert!(
+            matched.is_empty(),
+            "tooling cache must not trigger any task, got: {:?}",
+            matched
+        );
+    }
+
+    #[test]
     fn it_returns_on_init_rules() {
         let file_content = "
             - name: my source

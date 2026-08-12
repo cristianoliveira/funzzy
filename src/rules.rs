@@ -459,27 +459,16 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
 
-    // Extract task-specific patterns, or use common rules if not specified
-    let watch_patterns_str = match yaml::extract_list(yaml, "change") {
-        Ok(patterns) => patterns,
-        Err(_) => {
-            // Task doesn't define 'change', inherit from common rules
-            common.change.clone()
-        }
-    };
+    // Tasks EXTEND the shared `on` rules; they never replace them. A task's
+    // own `change` and `ignore` are appended to (and deduped against) the
+    // common patterns, so root-level scope and safety rails always apply.
+    let task_change = yaml::extract_list(yaml, "change").unwrap_or_default();
+    let task_ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
 
-    let ignore_patterns_str = match yaml::extract_list(yaml, "ignore") {
-        Ok(patterns) => patterns,
-        Err(_) => {
-            // Task doesn't define 'ignore', inherit from common rules
-            common.ignore.clone()
-        }
-    };
+    let watch_patterns = ensure_glob_only(merge_patterns(&common.change, task_change), "change")?;
+    let ignore_patterns = ensure_glob_only(merge_patterns(&common.ignore, task_ignore), "ignore")?;
 
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
-
-    let watch_patterns = ensure_glob_only(watch_patterns_str, "change")?;
-    let ignore_patterns = ensure_glob_only(ignore_patterns_str, "ignore")?;
 
     Ok(Rules {
         name,
@@ -489,6 +478,18 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         run_on_init,
         yaml: Some(yaml.clone()),
     })
+}
+
+/// Append task-specific patterns to the common ones, dropping duplicates.
+/// Common patterns keep their position so merged output stays stable.
+fn merge_patterns(common: &[String], task: Vec<String>) -> Vec<String> {
+    let mut merged: Vec<String> = common.to_vec();
+    for pattern in task {
+        if !merged.contains(&pattern) {
+            merged.push(pattern);
+        }
+    }
+    merged
 }
 
 fn ensure_glob_only(patterns: Vec<String>, field_name: &str) -> errors::Result<Vec<String>> {
@@ -1292,7 +1293,7 @@ tasks:
     }
 
     #[test]
-    fn it_allows_tasks_to_override_common_change() {
+    fn it_merges_common_change_with_task_change() {
         let file_content = "
 on:
   change:
@@ -1312,17 +1313,17 @@ tasks:
         let rules = from_yaml(file_content).expect("Failed to parse yaml");
         assert_eq!(rules.len(), 2);
 
-        // First task inherits common change
+        // First task has only the common patterns
         assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
         assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.log"]);
 
-        // Second task overrides change but inherits ignore
-        assert_eq!(rules[1].watch_patterns(), vec!["tests/**"]);
+        // Second task EXTENDS common change; root scope always applies
+        assert_eq!(rules[1].watch_patterns(), vec!["src/**", "tests/**"]);
         assert_eq!(rules[1].ignore_glob_patterns(), vec!["**/*.log"]);
     }
 
     #[test]
-    fn it_allows_tasks_to_override_common_ignore() {
+    fn it_merges_common_ignore_with_task_ignore() {
         let file_content = "
 on:
   change:
@@ -1341,11 +1342,40 @@ tasks:
         let rules = from_yaml(file_content).expect("Failed to parse yaml");
         assert_eq!(rules.len(), 1);
 
-        // Task overrides ignore but inherits change
+        // Task extends common ignore; root safety rails always apply
         assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
         assert_eq!(
             rules[0].ignore_glob_patterns(),
-            vec!["**/*.tmp", "target/**"]
+            vec!["**/*.log", "**/*.tmp", "target/**"]
+        );
+    }
+
+    #[test]
+    fn it_dedupes_common_and_task_patterns() {
+        let file_content = "
+on:
+  change:
+    - 'src/**'
+  ignore:
+    - '**/*.log'
+
+tasks:
+  - name: build
+    run: 'cargo build'
+    change:
+      - 'src/**'
+      - 'tests/**'
+    ignore:
+      - '**/*.log'
+      - '**/*.tmp'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**", "tests/**"]);
+        assert_eq!(
+            rules[0].ignore_glob_patterns(),
+            vec!["**/*.log", "**/*.tmp"]
         );
     }
 
@@ -1674,7 +1704,7 @@ tasks:
     }
 
     #[test]
-    fn it_allows_task_overrides_in_nested_group() {
+    fn it_merges_common_rules_in_nested_group() {
         let file_content = "
         - on:
             change: 'src/**'
@@ -1683,34 +1713,34 @@ tasks:
             - name: inherits-all
               run: echo 'inherit'
 
-            - name: overrides-change
-              run: echo 'override'
+            - name: extends-change
+              run: echo 'extend'
               change: 'custom/**'
 
-            - name: overrides-ignore
-              run: echo 'override'
+            - name: extends-ignore
+              run: echo 'extend'
               ignore: '**/*.tmp'
         ";
 
         let rules = from_yaml(file_content).expect("Failed to parse yaml");
         assert_eq!(rules.len(), 3);
 
-        // First task inherits common rules
+        // First task has only the common rules
         assert_eq!(rules[0].name, "inherits-all");
         assert!(rules[0].watch_patterns().contains(&"src/**".to_string()));
         assert!(rules[0].ignore_patterns.contains(&"**/*.log".to_string()));
 
-        // Second task overrides change
-        assert_eq!(rules[1].name, "overrides-change");
+        // Second task extends change; common scope always applies
+        assert_eq!(rules[1].name, "extends-change");
         assert!(rules[1].watch_patterns().contains(&"custom/**".to_string()));
-        assert!(!rules[1].watch_patterns().contains(&"src/**".to_string()));
+        assert!(rules[1].watch_patterns().contains(&"src/**".to_string()));
         assert!(rules[1].ignore_patterns.contains(&"**/*.log".to_string()));
 
-        // Third task overrides ignore
-        assert_eq!(rules[2].name, "overrides-ignore");
+        // Third task extends ignore; common safety rails always apply
+        assert_eq!(rules[2].name, "extends-ignore");
         assert!(rules[2].watch_patterns().contains(&"src/**".to_string()));
         assert!(rules[2].ignore_patterns.contains(&"**/*.tmp".to_string()));
-        assert!(!rules[2].ignore_patterns.contains(&"**/*.log".to_string()));
+        assert!(rules[2].ignore_patterns.contains(&"**/*.log".to_string()));
     }
 
     #[test]

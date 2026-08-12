@@ -8,7 +8,7 @@
 # - Each group can watch different file patterns
 # - Reduces duplication within each group
 # - Better separation of concerns
-# - Individual tasks can still override group-level rules
+# - Individual tasks extend the group-level rules
 #
 # Use this format when:
 # - You have distinct areas of your project that watch different files
@@ -40,7 +40,7 @@
       run: npm run typecheck
       run_on_init: true
 
-    # This task overrides the watch pattern to only watch specific files
+    # This task extends the group watch patterns with additional files
     - name: frontend-lint-styles
       run: npm run lint:css
       change: "src/**/*.css"
@@ -66,7 +66,7 @@
     - name: backend-clippy
       run: cargo clippy
 
-    # This task overrides the change pattern to watch only Rust files
+    # This task extends the group change patterns with Rust files
     - name: backend-format-check
       run: cargo fmt -- --check
       change: "src/**/*.rs"
