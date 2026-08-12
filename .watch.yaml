@@ -14,6 +14,12 @@
 #
 on:
   socket: .tmp/funzzy/control.sock
+  change:
+    - "src/**"
+    - "tests/**"
+  ignore:
+    - "src/**/*log*"
+    - '.pi/'
 
 tasks:
   - name: start by updating deps @quick
@@ -30,11 +36,7 @@ tasks:
       - cargo fmt -- --check {{filepath}}
       - cargo fmt
     run_on_init: true
-    change:
-      - "src/**"
-      - "tests/**"
     ignore:
-      - "src/**/*log*"
       - "examples/*.yml"
       - "examples/*.yaml"
       - "examples/workdir/**"
@@ -44,9 +46,6 @@ tasks:
      cat .github/workflows/on-push.yml \
       | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
       | xargs -I {} bash -c {}
-    change:
-      - "src/**"
-      - "tests/**/*.rs"
     run_on_init: true
 
     # Moved integration to earlier because it is faster than @nixbuild
@@ -61,13 +60,9 @@ tasks:
       # if fails open nvim with the failing logs
       - "cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
       - rm -rf /tmp/fzz
-    change:
-      - "src/**"
-      - "tests/**/*.rs"
     ignore:
       - "examples/reload-config-example.yml"
       - "examples/workdir/**"
-      - "**/*.log"
     run_on_init: true
 
   - name: nix checks @nixbuild
@@ -100,7 +95,6 @@ tasks:
       - "**/*.nix"
     run_on_init: true
     ignore:
-      - "**/*.log"
       - "**/*.txt"
 
   - name: after all checks if no error stage to git @quick @nixbuild
