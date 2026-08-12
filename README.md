@@ -4,6 +4,8 @@ A lightweight blazingly fast file watcher inspired by [antr](https://github.com/
 
 Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
+## Version 2
+You are looking for instruction of the new V2 version yet to be released, check [V1](https://github.com/cristianoliveira/funzzy/tree/v1) if you are using v1.5.0
 For a workflow as simple as:
 ```bash
 find . -name '*.ts' | funzzy 'npx eslint {{relative_path}}'
