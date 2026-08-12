@@ -19,7 +19,7 @@ on:
     - "tests/**"
   ignore:
     - "src/**/*log*"
-    - '.pi/'
+    - "**/.pi/**"
 
 tasks:
   - name: start by updating deps @quick
@@ -40,6 +40,7 @@ tasks:
       - "examples/*.yml"
       - "examples/*.yaml"
       - "examples/workdir/**"
+      - "**/.pi/**"
 
   - name: run my test @quick @agent-final
     run: |
@@ -63,6 +64,7 @@ tasks:
     ignore:
       - "examples/reload-config-example.yml"
       - "examples/workdir/**"
+      - "**/.pi/**"
     run_on_init: true
 
   - name: nix checks @nixbuild
@@ -96,6 +98,7 @@ tasks:
     run_on_init: true
     ignore:
       - "**/*.txt"
+      - "**/.pi/**"
 
   - name: after all checks if no error stage to git @quick @nixbuild
     run:
@@ -111,6 +114,7 @@ tasks:
     ignore:
       - "examples/workdir/**"
       - "examples/reload-config-example.yml"
+      - "**/.pi/**"
     run_on_init: true
 
   - name: install locally @quick

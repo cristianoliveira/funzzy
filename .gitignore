@@ -24,6 +24,9 @@ tests/integration/workdir/
 *.log
 tests/integration/release/
 
+# Agent tooling caches (e.g. AST index)
+.pi/
+
 # Nix stuff
 result
 .beads
