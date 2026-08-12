@@ -195,7 +195,13 @@ Initializing with boilerplate:
 funzzy init
 ```
 
-Change the config file `.watch.yaml` as you want. Then run:
+Migrate a legacy `.watch.yaml` whose root is a task list to the current `tasks:` format:
+
+```bash
+fzz init --migrate
+```
+
+The migration preserves existing task content and comments. Change the config file `.watch.yaml` as you want. Then run:
 
 ```bash
 funzzy

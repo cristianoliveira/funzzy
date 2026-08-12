@@ -13,7 +13,13 @@ Create a boilerplate configuration file with:
 ```bash
 fzz init
 ```
-This will create a `.watch.yaml` file in the current directory. Customize this file to define your Suggestion tasks.
+This will create a `.watch.yaml` file in the current directory. Customize this file to define your tasks.
+
+To migrate a legacy configuration whose root is a task list:
+```bash
+fzz init --migrate
+```
+This wraps the existing list under `tasks:` while preserving task content and comments.
 
 ### 2. Running the Watcher
 Start watching files and executing tasks with:

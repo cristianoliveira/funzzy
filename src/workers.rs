@@ -5,6 +5,7 @@ use crate::rules::{self, Rules};
 use crate::stdout;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::mpsc::{Sender, TryRecvError};
 use std::thread::JoinHandle;
@@ -12,29 +13,45 @@ use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
-    InitExecution,
-    FinishedExecution(Duration),
+    Started {
+        run_id: u64,
+        trigger: String,
+        commands: Vec<String>,
+    },
+    Finished {
+        elapsed: Duration,
+        failures: Vec<String>,
+    },
+    Cancelled,
     Tick,
 }
 
 pub struct Worker {
     canceller: Option<Sender<()>>,
-    scheduler: Option<Sender<Vec<String>>>,
+    scheduler: Option<Sender<(u64, Vec<String>, String)>>,
+    next_run_id: AtomicU64,
 
     consumer: Option<JoinHandle<()>>,
 }
 
 impl Worker {
-    pub fn new(verbose: bool, fail_fast: bool, on_event: fn(WorkerEvent)) -> Self {
+    pub fn new<F>(verbose: bool, fail_fast: bool, on_event: F) -> Self
+    where
+        F: Fn(WorkerEvent) + Send + 'static,
+    {
         stdout::verbose("Worker in verbose mode.", verbose);
         // Unfortunatelly channels can't have multiple receiver so we need to
         // create a channel for each kind of event.
-        let (tscheduler, rscheduler) = channel::<Vec<String>>();
+        let (tscheduler, rscheduler) = channel::<(u64, Vec<String>, String)>();
         let (tcancel, rcancel) = channel::<()>();
 
         let consumer = std::thread::spawn(move || {
-            while let Ok(tasks) = rscheduler.recv() {
-                on_event(WorkerEvent::InitExecution);
+            while let Ok((run_id, tasks, trigger)) = rscheduler.recv() {
+                on_event(WorkerEvent::Started {
+                    run_id,
+                    trigger,
+                    commands: tasks.clone(),
+                });
                 let mut results: Vec<Result<(), String>> = vec![];
                 let ignored = rcancel.try_recv();
                 stdout::verbose(&format!("ignored kill: {:?}", ignored), verbose);
@@ -53,7 +70,9 @@ impl Worker {
                     let mut child = match spawn(&task) {
                         Ok(child) => child,
                         Err(err) => {
-                            stdout::error(&format!("failed to create command: {:?}", err));
+                            let failure = format!("Command {} failed to start: {}", task, err);
+                            stdout::error(&failure);
+                            results.push(Err(failure));
                             continue;
                         }
                     };
@@ -100,6 +119,7 @@ impl Worker {
                                             ));
                                         }
                                         has_been_cancelled = true;
+                                        on_event(WorkerEvent::Cancelled);
                                         break;
                                     }
 
@@ -109,6 +129,7 @@ impl Worker {
                                             task
                                         ));
                                         has_been_cancelled = true;
+                                        on_event(WorkerEvent::Cancelled);
                                         break;
                                     }
 
@@ -152,8 +173,12 @@ impl Worker {
 
                 if !has_been_cancelled {
                     let elapsed = time_execution_started.elapsed();
+                    let failures = results
+                        .iter()
+                        .filter_map(|result| result.as_ref().err().cloned())
+                        .collect();
                     stdout::present_results(results, elapsed);
-                    on_event(WorkerEvent::FinishedExecution(elapsed));
+                    on_event(WorkerEvent::Finished { elapsed, failures });
                 }
             }
 
@@ -163,6 +188,7 @@ impl Worker {
         Worker {
             canceller: Some(tcancel),
             scheduler: Some(tscheduler),
+            next_run_id: AtomicU64::new(0),
             consumer: Some(consumer),
         }
     }
@@ -178,21 +204,24 @@ impl Worker {
         Ok(())
     }
 
-    pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<(), String> {
+    pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
             let current_dir = std::env::current_dir().unwrap();
-            if let Err(err) = scheduler.send(rules::template(
+            let commands = rules::template(
                 rules::commands(rules),
                 rules::TemplateOptions {
                     filepath: Some(filepath.to_string()),
                     current_dir: format!("{}", current_dir.display()),
                 },
-            )) {
+            );
+            let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Err(err) = scheduler.send((run_id, commands, filepath.to_string())) {
                 return Err(format!("{:?}", err));
             }
+            return Ok(run_id);
         }
 
-        Ok(())
+        Err("worker scheduler is unavailable".to_string())
     }
 }
 

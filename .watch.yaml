@@ -5,125 +5,129 @@
 #
 # HOWTO: use in a workflow
 #
-# My current workflow is very simple I start by spining up funzzy and 
+# My current workflow is very simple I start by spining up funzzy and
 # then start making my changes, everytime all the tests pass the changed file
 # is staged to git. Once I'm done with my changes I simply commit. :)
 #
 # Run all tasks with `fzz -nb`
 # Run quick tasks with `fzz -nbt @quick`
 #
-- name: start by updating deps @quick
-  run: cargo update
-  run_on_init: true
+on:
+  socket: .tmp/funzzy/control.sock
 
-- name: run my build
-  run: "make build"
-  change: ["Cargo.*"]
+tasks:
+  - name: start by updating deps @quick
+    run: cargo update
+    run_on_init: true
 
-- name: run lint and formatter @quick
-  run: 
-    - cargo fmt -- {{filepath}}
-    - cargo fmt -- --check {{filepath}}
-    - cargo fmt
-  run_on_init: true
-  change: 
-    - "src/**"
-    - "tests/**"
-  ignore: 
-    - "src/**/*log*"
-    - "examples/*.yml"
-    - "examples/*.yaml"
-    - "examples/workdir/**"
+  - name: run my build
+    run: "make build"
+    change: ["Cargo.*"]
 
-- name: run my test @quick
-  run: |
-   cat .github/workflows/on-push.yml \
-    | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
-    | xargs -I {} bash -c {}
-  change: 
-    - "src/**"
-    - "tests/**/*.rs"
-  run_on_init: true
+  - name: run lint and formatter @quick @agent-final
+    run:
+      - cargo fmt -- {{filepath}}
+      - cargo fmt -- --check {{filepath}}
+      - cargo fmt
+    run_on_init: true
+    change:
+      - "src/**"
+      - "tests/**"
+    ignore:
+      - "src/**/*log*"
+      - "examples/*.yml"
+      - "examples/*.yaml"
+      - "examples/workdir/**"
 
-  # Moved integration to earlier because it is faster than @nixbuild
-- name: run integration
-  run: 
-    # NOTE: Create setup for running the integration tests
-    # For integration tests we use some temporary files to check triggers
-    # See: tests/watching_configured_rules.rs
-    - rm -rf /tmp/fzz
-    - mkdir -p /tmp/fzz
-    # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
-    # if fails open nvim with the failing logs
-    - "cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
-    - rm -rf /tmp/fzz
-  change: 
-    - "src/**"
-    - "tests/**/*.rs"
-  ignore: 
-    - "examples/reload-config-example.yml"
-    - "examples/workdir/**"
-    - "**/*.log"
-  run_on_init: true
+  - name: run my test @quick @agent-final
+    run: |
+     cat .github/workflows/on-push.yml \
+      | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
+      | xargs -I {} bash -c {}
+    change:
+      - "src/**"
+      - "tests/**/*.rs"
+    run_on_init: true
 
-- name: nix checks @nixbuild
-  run: 
-    - rm -rf /tmp/fzz
-    # This avoids running integration test if the pckg is not even buildin
-    - cargo build --release 
-    # Build and run integration tests
-    - make nix-flake-check
-    - make nix-build-nightly
-    - rm -rf /tmp/fzz
-  change: 
-    # Uncomment these for when having to debug issues with nix builds
-    # when you want to run commands in the integration tests to debug 
-    # directories or the environment where the build is happening
-    #
-    # Eg running 
-    # ```rust
-    # shell!("ls -la");
-    # ```
-    # See: tests/common/macros.rs
-    # And the usage in: tests/common/lib.rs
-    #
-    # To debug use `fzz -nt @nixbuild`
-    #
-    # IN NIGHTLY VERSION `fzz -nbt @nixbuild`
-    # which bails fast
-    # - "src/**"
-    - "tests/**"
-    - "**/*.nix"
-  run_on_init: true
-  ignore: 
-    - "**/*.log"
-    - "**/*.txt"
+    # Moved integration to earlier because it is faster than @nixbuild
+  - name: run integration @agent-final
+    run:
+      # NOTE: Create setup for running the integration tests
+      # For integration tests we use some temporary files to check triggers
+      # See: tests/watching_configured_rules.rs
+      - rm -rf /tmp/fzz
+      - mkdir -p /tmp/fzz
+      # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
+      # if fails open nvim with the failing logs
+      - "cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture"
+      - rm -rf /tmp/fzz
+    change:
+      - "src/**"
+      - "tests/**/*.rs"
+    ignore:
+      - "examples/reload-config-example.yml"
+      - "examples/workdir/**"
+      - "**/*.log"
+    run_on_init: true
 
-- name: after all checks if no error stage to git @quick @nixbuild
-  run: 
-    - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
-    - 'git add . -p'
-    # - 'git commit'
-  change: 
-    - ".watch.yaml"
-    - "README.md"
-    - "src/**"
-    - "tests/**"
-    - "**/*.nix"
-  ignore: 
-    - "examples/workdir/**"
-    - "examples/reload-config-example.yml"
-  run_on_init: true
+  - name: nix checks @nixbuild
+    run:
+      - rm -rf /tmp/fzz
+      # This avoids running integration test if the pckg is not even buildin
+      - cargo build --release
+      # Build and run integration tests
+      - make nix-flake-check
+      - make nix-build-nightly
+      - rm -rf /tmp/fzz
+    change:
+      # Uncomment these for when having to debug issues with nix builds
+      # when you want to run commands in the integration tests to debug
+      # directories or the environment where the build is happening
+      #
+      # Eg running
+      # ```rust
+      # shell!("ls -la");
+      # ```
+      # See: tests/common/macros.rs
+      # And the usage in: tests/common/lib.rs
+      #
+      # To debug use `fzz -nt @nixbuild`
+      #
+      # IN NIGHTLY VERSION `fzz -nbt @nixbuild`
+      # which bails fast
+      # - "src/**"
+      - "tests/**"
+      - "**/*.nix"
+    run_on_init: true
+    ignore:
+      - "**/*.log"
+      - "**/*.txt"
 
-- name: install locally @quick
-  # Check if .tmp/install exists then install otherwise skip
-  run: 
-    - if [ -f .tmp/install ]; then 
-        echo "Installing locally"; 
-        cargo install --path . --force; 
-      else 
-        echo "Skipping local install, create the file .tmp/install to enable"; 
-      fi
-  change: 
-    - "src/**"
-    - "Cargo.*"
+  - name: after all checks if no error stage to git @quick @nixbuild
+    run:
+      - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
+      - 'git add . -p'
+      # - 'git commit'
+    change:
+      - ".watch.yaml"
+      - "README.md"
+      - "src/**"
+      - "tests/**"
+      - "**/*.nix"
+    ignore:
+      - "examples/workdir/**"
+      - "examples/reload-config-example.yml"
+    run_on_init: true
+
+  - name: install locally @quick
+    # Check if .tmp/install exists then install otherwise skip
+    run:
+      - if [ -f .tmp/install ]; then
+          echo "Installing locally";
+          cargo install --path . --force;
+        else
+          echo "Skipping local install, create the file .tmp/install to enable";
+        fi
+    change:
+      - "src/**"
+      - "Cargo.*"
