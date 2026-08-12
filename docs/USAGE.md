@@ -79,12 +79,12 @@ tasks:
   - name: build
     run: cargo build
 
-  # This task overrides the 'change' pattern but inherits 'ignore'
+  # This task extends the common 'change' patterns
   - name: test
     run: cargo test
     change: "tests/**"
 
-  # This task overrides both 'change' and 'ignore'
+  # This task extends both 'change' and 'ignore'
   - name: lint
     run: cargo clippy
     change: "src/**/*.rs"
@@ -94,8 +94,8 @@ tasks:
 **Key Points:**
 - **Backward Compatible**: The classic array format still works perfectly
 - **Optional `on` Section**: You can omit it if you don't need common rules
-- **Override Semantics**: Task-specific patterns completely replace common ones (not merged)
-- **Flexible**: Each task can inherit, override, or ignore common rules
+- **Merge Semantics**: Task-specific patterns are merged with (added to) the common ones, so root-level scope and safety rails always apply
+- **Flexible**: Each task inherits the common rules and can extend them
 
 See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
 
@@ -146,7 +146,7 @@ When you have distinct areas of your project that watch different files (e.g., f
 
 **Key Points:**
 - Each group is isolated - changes in one group don't affect others
-- Tasks within a group can still override group-level `change` and `ignore` patterns
+- Tasks within a group extend the group-level `change` and `ignore` patterns
 - You can mix groups and regular tasks in the same configuration
 - Full backward compatibility maintained
 
