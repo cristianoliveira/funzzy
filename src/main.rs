@@ -326,6 +326,7 @@ pub fn execute_watch_command(watches: Watches, mut args: Args) {
     let th = std::thread::spawn(move || {
         watcher::events(
             config_file_paths,
+            || {},
             move |file_changed| {
                 let truncation_status = if truncate_on_config_change {
                     Some(logging::truncate())
