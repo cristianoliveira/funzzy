@@ -6,6 +6,7 @@ extern crate serde_derive;
 
 mod cli;
 mod cmd;
+mod control;
 mod environment;
 mod errors;
 mod logging;
@@ -47,12 +48,12 @@ Alias:
 
 Usage:
   funzzy [options]
-  funzzy init
+  funzzy init [--migrate]
   funzzy watch [<command>] [options]
   funzzy <command> [options]
 
 Commands:
-    init                Create a new '.watch.yaml' file.
+    init                Create or migrate a '.watch.yaml' file.
     watch               Watch for file changes and execute a command.
 
 Options:
@@ -63,6 +64,8 @@ Options:
   -b --fail-fast               Bail current execution if a task fails (exit code != 0).
   -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
   -l --log-file <file>         Write all output to the specified log file in addition to the console.
+  --control-socket <path>      Expose watcher status over a Unix socket (implies --non-block).
+  --migrate                    Migrate legacy root task list to current format.
   --no-run-on-init             Do not run tasks on initialization.
   -h --help                    Show this message.
   -v --version                 Show version.
@@ -91,6 +94,8 @@ pub struct Args {
 
     pub flag_log_truncate_on_change: bool,
     pub flag_log_file: Option<String>,
+    pub flag_control_socket: Option<String>,
+    pub flag_migrate: bool,
 
     pub flag_n: bool,
     pub flag_h: bool,
@@ -185,6 +190,11 @@ fn main() {
     match args {
         Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
         // Commands
+        Args {
+            cmd_init: true,
+            flag_migrate: true,
+            ..
+        } => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
         // If no command argument provided, use config branch (if config exists, else error)
@@ -278,7 +288,7 @@ fn main() {
     };
 }
 
-pub fn execute_watch_command(watches: Watches, args: Args) {
+pub fn execute_watch_command(watches: Watches, mut args: Args) {
     let possible_config_paths = if args.flag_config.is_empty() {
         let dir = std::env::current_dir().expect("Failed to get current directory");
         vec![
@@ -301,6 +311,15 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
         .into_iter()
         .filter(|path| std::path::Path::new(path).exists())
         .collect::<Vec<String>>();
+
+    if args.flag_control_socket.is_none() {
+        args.flag_control_socket = config_file_paths
+            .first()
+            .map(|path| rules::control_socket_from_file(path))
+            .transpose()
+            .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
+            .flatten();
+    }
 
     // This here restarts the watcher if the config file changes
     let watcher_pid = std::process::id();
@@ -343,15 +362,18 @@ pub fn execute_watch_command(watches: Watches, args: Args) {
 
     let verbose = args.flag_V;
     let fail_fast = args.flag_fail_fast || environment::is_enabled("FUNZZY_BAIL");
-    let fail_fast_env = args.flag_non_block || environment::is_enabled("FUNZZY_NON_BLOCK");
+    let non_block = args.flag_non_block
+        || environment::is_enabled("FUNZZY_NON_BLOCK")
+        || args.flag_control_socket.is_some();
 
     let run_on_init = !args.flag_no_run_on_init;
-    if fail_fast_env {
+    if non_block {
         execute(WatchNonBlockCommand::new(
             watches,
             verbose,
             fail_fast,
             run_on_init,
+            args.flag_control_socket.map(std::path::PathBuf::from),
         ))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))

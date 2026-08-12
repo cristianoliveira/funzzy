@@ -423,14 +423,14 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             if let Yaml::Hash(ref hash) = yaml {
                 for (key, _) in hash {
                     if let Yaml::String(ref key_str) = key {
-                        if key_str != "change" && key_str != "ignore" {
+                        if key_str != "change" && key_str != "ignore" && key_str != "socket" {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change' and 'ignore' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', and 'socket' are allowed.",
                                     key_str
                                 ),
                                 None,
-                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]".to_owned()),
+                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock".to_owned()),
                             ));
                         }
                     }
@@ -606,6 +606,37 @@ pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec
     )])
 }
 
+pub fn control_socket_from_yaml(content: &str) -> Result<Option<String>, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+
+    if on == &Yaml::BadValue {
+        return Ok(None);
+    }
+
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+
+    match &on["socket"] {
+        Yaml::BadValue => Ok(None),
+        Yaml::String(path) if !path.trim().is_empty() => Ok(Some(path.to_owned())),
+        Yaml::String(_) => Err("Property 'on.socket' cannot be empty".to_owned()),
+        _ => Err("Property 'on.socket' must be a string".to_owned()),
+    }
+}
+
+pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    control_socket_from_yaml(&content)
+}
+
 pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
     match File::open(filename) {
         Ok(mut file) => {
@@ -713,11 +744,57 @@ mod tests {
     use crate::rules::TemplateOptions;
 
     use self::yaml_rust::YamlLoader;
+    use super::control_socket_from_yaml;
     use super::from_string;
     use super::from_yaml;
     use super::rule_from;
     use super::{commands, template};
     use std::env::current_dir;
+
+    #[test]
+    fn it_reads_control_socket_from_on_config() {
+        let file_content = r#"
+on:
+  socket: .tmp/funzzy/control.sock
+tasks:
+  - name: my tests
+    run: cargo test
+    run_on_init: true
+"#;
+
+        assert_eq!(
+            control_socket_from_yaml(file_content).unwrap(),
+            Some(".tmp/funzzy/control.sock".to_owned())
+        );
+        assert!(from_yaml(file_content).is_ok());
+    }
+
+    #[test]
+    fn it_keeps_control_socket_optional_for_legacy_config() {
+        let file_content = r#"
+- name: my tests
+  run: cargo test
+  run_on_init: true
+"#;
+
+        assert_eq!(control_socket_from_yaml(file_content).unwrap(), None);
+    }
+
+    #[test]
+    fn it_rejects_non_string_control_socket() {
+        let file_content = r#"
+on:
+  socket: 42
+tasks:
+  - name: my tests
+    run: cargo test
+    run_on_init: true
+"#;
+
+        assert!(control_socket_from_yaml(file_content)
+            .unwrap_err()
+            .contains("on.socket"));
+    }
 
     #[test]
     fn it_is_watching_path_tests() {

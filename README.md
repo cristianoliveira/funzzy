@@ -4,6 +4,10 @@ A lightweight blazingly fast file watcher inspired by [antr](https://github.com/
 
 Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
 
+> [!WARNING]
+> ### Version 2.0.0
+> These are instructions of the new V2 version yet to be released, check [V1](https://github.com/cristianoliveira/funzzy/tree/v1) if you are using v1.5.0
+
 For a workflow as simple as:
 ```bash
 find . -name '*.ts' | funzzy 'npx eslint {{relative_path}}'
@@ -195,7 +199,13 @@ Initializing with boilerplate:
 funzzy init
 ```
 
-Change the config file `.watch.yaml` as you want. Then run:
+Migrate a legacy `.watch.yaml` whose root is a task list to the current `tasks:` format:
+
+```bash
+fzz init --migrate
+```
+
+The migration preserves existing task content and comments. Change the config file `.watch.yaml` as you want. Then run:
 
 ```bash
 funzzy

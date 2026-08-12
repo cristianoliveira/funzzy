@@ -6,7 +6,7 @@ use crate::rules::Rules;
 ///
 /// Represents all rules in the yaml config loaded.
 ///
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Watches {
     rules: Vec<Rules>,
     root: PathBuf,
@@ -31,6 +31,27 @@ impl Watches {
         };
 
         (absolute_path, relative_path)
+    }
+
+    /// Returns all configured targets.
+    pub fn targets(&self) -> Vec<Rules> {
+        self.rules.clone()
+    }
+
+    /// Returns rules whose names contain the requested target.
+    pub fn target(&self, target: &str) -> Option<Vec<Rules>> {
+        let rules = self
+            .rules
+            .iter()
+            .filter(|rule| rule.name.contains(target))
+            .cloned()
+            .collect::<Vec<Rules>>();
+
+        if rules.is_empty() {
+            return None;
+        }
+
+        Some(rules)
     }
 
     /// Returns the commands for first rule found for the given path
