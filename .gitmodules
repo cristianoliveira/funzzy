@@ -1,0 +1,3 @@
+[submodule "pi-watcher"]
+	path = pi-watcher
+	url = git@github.com:carbon-ni/pi-watcher.git
