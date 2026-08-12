@@ -11,6 +11,7 @@ use std::time::Duration;
 
 pub fn events(
     watch_path_list: Vec<String>,
+    on_ready: impl FnOnce(),
     handler: impl Fn(&str),
     verbose: bool,
 ) -> Result<(), String> {
@@ -45,6 +46,11 @@ pub fn events(
             }
         }
     }
+
+    // Run initialization only after every path has been registered. Otherwise a
+    // fast init command can finish before the watcher is ready, allowing callers
+    // to change a file in the gap and lose the first event.
+    on_ready();
 
     loop {
         match rx.recv() {

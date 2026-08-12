@@ -39,44 +39,45 @@ impl Command for WatchCommand {
 
         let current_dir = std::env::current_dir().unwrap();
 
-        if self.run_on_init {
-            if let Some(rules) = self.watches.run_on_init() {
-                let time_execution_started = std::time::Instant::now();
-
-                stdout::info("Running on init commands.");
-
-                let tasks = rules::template(
-                    rules::commands(rules),
-                    rules::TemplateOptions {
-                        filepath: None,
-                        current_dir: format!("{}", current_dir.display()),
-                    },
-                );
-                let mut results: Vec<Result<(), String>> = vec![];
-                for task in tasks {
-                    let result = cmd::execute(&task);
-
-                    if self.fail_fast && result.is_err() {
-                        results.push(result);
-                        break;
-                    }
-
-                    results.push(result);
-                }
-
-                let time_elapsed = time_execution_started.elapsed();
-                stdout::present_results(results, time_elapsed);
-            } else {
-                stdout::info("Watching...");
-            }
-        } else {
-            stdout::info("Watching...");
-        }
-
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
 
         match watcher::events(
             list_of_watched_paths,
+            || {
+                if self.run_on_init {
+                    if let Some(rules) = self.watches.run_on_init() {
+                        let time_execution_started = std::time::Instant::now();
+
+                        stdout::info("Running on init commands.");
+
+                        let tasks = rules::template(
+                            rules::commands(rules),
+                            rules::TemplateOptions {
+                                filepath: None,
+                                current_dir: format!("{}", current_dir.display()),
+                            },
+                        );
+                        let mut results: Vec<Result<(), String>> = vec![];
+                        for task in tasks {
+                            let result = cmd::execute(&task);
+
+                            if self.fail_fast && result.is_err() {
+                                results.push(result);
+                                break;
+                            }
+
+                            results.push(result);
+                        }
+
+                        let time_elapsed = time_execution_started.elapsed();
+                        stdout::present_results(results, time_elapsed);
+                    } else {
+                        stdout::info("Watching...");
+                    }
+                } else {
+                    stdout::info("Watching...");
+                }
+            },
             |file_changed| {
                 let time_execution_started = std::time::Instant::now();
                 if let Some(rules) = self.watches.watch(file_changed) {

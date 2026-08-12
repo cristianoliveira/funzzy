@@ -46,22 +46,28 @@ impl Command for WatchNonBlockCommand {
             };
         });
 
-        if let Some(rules) = self.watches.run_on_init() {
-            if self.run_on_init {
-                stdout::info("Running on init commands.");
-                if let Err(err) = worker.schedule(rules, "") {
-                    stdout::error(&format!("failed to initiate next run: {:?}", err));
-                }
-            } else {
-                stdout::info("Watching...");
-            }
-        } else {
-            stdout::info("Watching...");
-        }
-
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
+        let mut _control_server = None;
         match watcher::events(
             list_of_watched_paths,
+            || {
+                // Publish the control socket and start initial work only after
+                // filesystem watches are registered, so readiness is truthful.
+                _control_server = self.start_control_server(&worker, &control_state);
+
+                if let Some(rules) = self.watches.run_on_init() {
+                    if self.run_on_init {
+                        stdout::info("Running on init commands.");
+                        if let Err(err) = worker.schedule(rules, "") {
+                            stdout::error(&format!("failed to initiate next run: {:?}", err));
+                        }
+                    } else {
+                        stdout::info("Watching...");
+                    }
+                } else {
+                    stdout::info("Watching...");
+                }
+            },
             |file_changed| {
                 if let Some(rules) = self.watches.watch(file_changed) {
                     stdout::clear_screen();
