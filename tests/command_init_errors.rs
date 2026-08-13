@@ -38,8 +38,19 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
 #[test]
 fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
     setup::nonparallel(|| {
+        // Use a per-process temp dir instead of the shared
+        // `examples/workdir/init` fixture: overlapping `cargo test`
+        // invocations (watcher generations) run this binary concurrently in
+        // separate processes, and the in-process mutex cannot serialize
+        // them. A shared dir let one process's cleanup (restoring write
+        // permissions, or creating `.watch.yaml`) land between the other's
+        // `set_readonly` and `init` spawn, making `init` succeed or report
+        // the wrong error.
+        let dir = std::env::temp_dir().join(format!("funzzy-init-readonly-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("failed to create test dir");
         let original_dir = std::env::current_dir().expect("failed to get current dir");
-        std::env::set_current_dir("examples/workdir/init").expect("failed to change dir");
+        std::env::set_current_dir(&dir).expect("failed to change dir");
         //delete files in the folder
         std::fs::remove_file(".watch.yaml").unwrap_or_default();
 
@@ -48,14 +59,13 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
         readonly.set_readonly(true);
         std::fs::set_permissions(".", readonly).expect("failed to set read only");
         defer!({
-            // Restore the folder permissions first (while still inside it),
-            // then the process cwd: sibling tests in this binary rely on
-            // running from the repo root. Leaking `examples/workdir/init`
-            // made `it_fails_when_config_file_alredy_exists` race against
-            // the wrong directory's `.watch.yaml` state.
+            // Restore the folder permissions first (so it can be removed),
+            // then remove it, then restore the process cwd: sibling tests
+            // in this binary rely on running from the repo root.
             let mut perms = folder.permissions();
             perms.set_readonly(false);
             std::fs::set_permissions(".", perms).expect("failed to set read only");
+            let _ = std::fs::remove_dir_all(&dir);
             std::env::set_current_dir(&original_dir).expect("failed to restore dir");
         });
 
