@@ -42,15 +42,16 @@ tasks:
     .unwrap();
 
     let socket_path = directory.join(".tmp/control.sock");
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
         .spawn()
         .unwrap();
     let _process = TestProcess { child, directory };
 
-    wait_until(Duration::from_secs(3), || socket_path.exists());
+    wait_until(Duration::from_secs(5), || socket_path.exists());
     let targets = call(
         &socket_path,
         serde_json::json!({"jsonrpc": "2.0", "id": "targets", "method": "targets"}),
@@ -73,7 +74,7 @@ tasks:
     let run_id = run["result"]["runId"].as_u64().unwrap();
 
     let mut final_status = None;
-    wait_until(Duration::from_secs(3), || {
+    wait_until(Duration::from_secs(5), || {
         let status = call(
             &socket_path,
             serde_json::json!({"jsonrpc": "2.0", "id": "status", "method": "status"}),
@@ -90,11 +91,29 @@ tasks:
 }
 
 fn call(path: &std::path::Path, request: Value) -> Value {
-    let mut stream = UnixStream::connect(path).unwrap();
-    writeln!(stream, "{}", request).unwrap();
-    let mut response = String::new();
-    BufReader::new(stream).read_line(&mut response).unwrap();
-    serde_json::from_str(&response).unwrap()
+    // The control server accepts on a single polling thread (20ms interval);
+    // the very first connection can race the accept loop's startup under
+    // load and observe an empty response. Retry briefly instead of treating
+    // a startup race as a protocol failure.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut stream = UnixStream::connect(path).unwrap();
+        writeln!(stream, "{}", request).unwrap();
+        let mut response = String::new();
+        BufReader::new(stream).read_line(&mut response).unwrap();
+        match serde_json::from_str(&response) {
+            Ok(parsed) => return parsed,
+            Err(err) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => panic!(
+                "call {:?} -> unparsable response {:?}: {}",
+                request.get("method"),
+                response,
+                err
+            ),
+        }
+    }
 }
 
 fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {

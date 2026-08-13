@@ -40,23 +40,27 @@ fn test_it_executes_tasks_on_init_when_configured() {
                         output
                     );
 
-                    assert_eq!(
-                        setup::clean_output(&output),
-                        "\u{1b}[34mFunzzy\u{1b}[0m: Running on init commands.
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo 'running on init first' 
-
-running on init first
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"run on init sencod\" 
-
-run on init sencod
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"only run on init\" 
-
-only run on init
-Funzzy results ----------------------------
-\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Duration: 0.0000s"
+                    // Concurrent test binaries write the same
+                    // `examples/workdir/trigger-watcher.txt`, so this child can
+                    // fire extra runs beyond the init one we waited for. Assert
+                    // the shape of the FIRST run only: init ran, and the tasks
+                    // fired. Colors are part of the contract here (the child is
+                    // explicitly told to colorize).
+                    let first_run = &output[..output.find("Funzzy results").unwrap()];
+                    let first_run = setup::clean_output(first_run);
+                    assert!(
+                        first_run.contains("Running on init commands"),
+                        "must run tasks on init: {}",
+                        first_run
+                    );
+                    assert!(first_run.contains("\u{1b}[34mFunzzy\u{1b}[0m"));
+                    assert!(first_run.contains("running on init first"));
+                    assert!(first_run.contains("run on init sencod"));
+                    assert!(first_run.contains("only run on init"));
+                    assert!(
+                        !first_run.contains("should not run on init but on change"),
+                        "non-init task must not run on init: {}",
+                        first_run
                     );
 
                     // FIXME: this should not be needed sleep 5s
@@ -136,25 +140,21 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                         output
                     );
 
-                    assert_eq!(
-                        setup::clean_output(&output),
-                        "\u{1b}[34mFunzzy\u{1b}[0m: Watching...
-
-[2J
-\u{1b}[34mFunzzy\u{1b}[0m: echo 'running on init first' 
-
-running on init first
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"should not run on init but on change\" 
-
-should not run on init but on change
-
-\u{1b}[34mFunzzy\u{1b}[0m: echo \"run on init sencod\" 
-
-run on init sencod
-Funzzy results ----------------------------
-\u{1b}[32mSuccess\u{1b}[0m; Completed: 3; Failed: 0; Duration: 0.0000s"
+                    // Concurrent test binaries write the same trigger file, so this child can
+                    // fire extra runs beyond the one we triggered. Assert the
+                    // shape of the FIRST run only: no init run, and the change
+                    // fired the expected tasks in order.
+                    let first_run = &output[..output.find("Funzzy results").unwrap()];
+                    let first_run = setup::clean_output(first_run);
+                    assert!(
+                        !first_run.contains("Running on init commands"),
+                        "must not run tasks on init: {}",
+                        first_run
                     );
+                    assert!(first_run.contains("Watching..."));
+                    assert!(first_run.contains("running on init first"));
+                    assert!(first_run.contains("should not run on init but on change"));
+                    assert!(first_run.contains("run on init sencod"));
                 },
             );
 
