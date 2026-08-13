@@ -32,7 +32,7 @@ pub enum WorkerEvent {
 /// A run requested through the worker's command stream.
 struct RunRequest {
     run_id: u64,
-    commands: Vec<String>,
+    commands: Vec<rules::CommandLine>,
     trigger: String,
 }
 
@@ -48,7 +48,7 @@ enum WorkerCommand {
 /// active child; `cancel` gracefully terminates the current child and discards
 /// the remaining commands.
 struct ActiveRun {
-    commands: VecDeque<String>,
+    commands: VecDeque<rules::CommandLine>,
     results: Vec<Result<(), String>>,
     started: Instant,
     child: Option<LoggedChild>,
@@ -83,14 +83,19 @@ impl ActiveRun {
                 let Some(task) = self.commands.pop_front() else {
                     return Step::Finished;
                 };
-                self.current_task = Some(task.clone());
-                match spawn(&task) {
+                let display = task.display();
+                self.current_task = Some(display.clone());
+                let spawn_result = match task {
+                    rules::CommandLine::Shell(command) => spawn(&command),
+                    rules::CommandLine::Argv(argv) => crate::cmd::spawn_argv(&argv),
+                };
+                match spawn_result {
                     Ok(child) => {
                         self.child = Some(child);
                         return Step::Running;
                     }
                     Err(err) => {
-                        let failure = format!("Command {} failed to start: {}", task, err);
+                        let failure = format!("Command {} failed to start: {}", display, err);
                         stdout::error(&failure);
                         self.results.push(Err(failure));
                         if self.fail_fast {
@@ -215,7 +220,11 @@ impl Worker {
                         on_event(WorkerEvent::Started {
                             run_id: req.run_id,
                             trigger: req.trigger.clone(),
-                            commands: req.commands.clone(),
+                            commands: req
+                                .commands
+                                .iter()
+                                .map(|command| command.display())
+                                .collect(),
                         });
                         active = Some(ActiveRun::new(req, fail_fast));
                         continue;
@@ -226,7 +235,11 @@ impl Worker {
                             on_event(WorkerEvent::Started {
                                 run_id: req.run_id,
                                 trigger: req.trigger.clone(),
-                                commands: req.commands.clone(),
+                                commands: req
+                                    .commands
+                                    .iter()
+                                    .map(|command| command.display())
+                                    .collect(),
                             });
                             active = Some(ActiveRun::new(req, fail_fast));
                         }
@@ -310,20 +323,26 @@ impl Worker {
         filepath: Option<&str>,
     ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let expanded = template::template(
-                rules::commands(rules),
-                template::TemplateOptions {
-                    filepath: filepath.map(str::to_string),
-                    current_dir: format!("{}", self.root.display()),
-                },
-            );
-            for variable in &expanded.unknown_variables {
-                stdout::warn(&format!("Unknown template variable '{}'.", variable));
-            }
+            let expanded: Vec<rules::CommandLine> = rules::command_lines(rules)
+                .into_iter()
+                .map(|command| {
+                    let expanded = template::template_line(
+                        command,
+                        template::TemplateOptions {
+                            filepath: filepath.map(str::to_string),
+                            current_dir: format!("{}", self.root.display()),
+                        },
+                    );
+                    for variable in &expanded.unknown_variables {
+                        stdout::warn(&format!("Unknown template variable '{}'.", variable));
+                    }
+                    expanded.command
+                })
+                .collect();
             let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
             let request = RunRequest {
                 run_id,
-                commands: expanded.commands,
+                commands: expanded,
                 trigger: trigger.to_string(),
             };
             if let Err(err) = scheduler.send(WorkerCommand::Run(request)) {

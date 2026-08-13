@@ -18,7 +18,7 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
             .expect("failed to run find");
 
         let mut child = fzz_cmd
-            .args(["exec", "--", "echo 'running arbitrary command'"])
+            .args(["exec", "--", "echo", "running arbitrary command"])
             .stdin(files.stdout.expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn grep command");
@@ -86,7 +86,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 
             let mut child = fzz_cmd
                 .arg("-v") // DEBUG
-                .args(["exec", "--", "echo 'this file changed: {{filepath}}'"])
+                .args(["exec", "--", "echo", "this file changed: {{filepath}}"])
                 .stdin(files.stdout.expect("failed to open stdin"))
                 .spawn()
                 .expect("Failed to spawn grep command");
@@ -104,7 +104,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 
                     let output = setup::strip_ansi_codes(&output);
                     output.contains("Running on init commands")
-                        && output.contains("echo 'this file changed: '")
+                        && output.contains("echo this file changed: ")
                 },
                 "Failed to find Funzzy results"
             );
@@ -157,7 +157,7 @@ fn it_runs_on_init_by_default_with_stdin() {
             .spawn()
             .expect("failed to run find");
         let mut child = fzz_cmd
-            .args(["exec", "--", "echo 'it runs on init by default'"])
+            .args(["exec", "--", "echo", "it runs on init by default"])
             .stdin(files.stdout.expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn grep command");
@@ -187,7 +187,7 @@ fn it_timesout_after_x_secs_and_inform() {
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, _fixture| {
         fzz_cmd.env("FUNZZY_STDIN_TIMEOUT_MS", "10");
         let mut child = fzz_cmd
-            .args(["exec", "--", "echo fooo"])
+            .args(["exec", "--", "echo", "fooo"])
             .stdin(Stdio::null())
             .spawn()
             .expect("Failed to spawn grep command");

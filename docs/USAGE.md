@@ -195,6 +195,23 @@ fzz watch "@quick"
 
 ---
 
+### `exec`
+
+**Description**: Watch stdin-supplied paths and run an ad-hoc program on each change. The child program and its arguments cross the CLI boundary without being joined and re-parsed through a shell.
+
+**Usage**:
+```bash
+find . -name '*.rs' | fzz exec -- cargo fmt {{filepath}}
+```
+
+**Notes**:
+- `--` marks the boundary between Funzzy options and the child command, so flag-like child arguments work (`fzz exec -- echo --help`).
+- Arguments are preserved exactly: `fzz exec -- printf '<%s>\n' 'a b' c` passes `a b` as one argument.
+- Shell operators (`|`, `&&`, globs) are not interpreted unless you explicitly invoke a shell: `fzz exec -- sh -c '...'`.
+- A missing program is a usage error; a child non-zero exit is reported as a run failure while the watcher keeps watching.
+
+---
+
 ### `-n` or `--non-block`
 **Description**: Cancels currently running tasks when new changes are detected. Useful for workflows with long-running tasks.
 

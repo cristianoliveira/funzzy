@@ -15,6 +15,10 @@ pub struct Rules {
     pub name: String,
 
     commands: Vec<String>,
+    /// When present, the rule is an ad-hoc `exec` command: this exact argv
+    /// is spawned directly without a shell. Mutually exclusive with
+    /// `commands` (an argv rule has no shell command list).
+    argv: Option<Vec<String>>,
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
     run_on_init: bool,
@@ -31,6 +35,27 @@ impl Rules {
         Rules {
             name,
             commands,
+            argv: None,
+            watch_patterns: watches,
+            ignore_patterns: ignores,
+            run_on_init,
+        }
+    }
+
+    /// Creates an ad-hoc `exec` rule whose single command is an exact argv
+    /// vector. The program and its arguments cross parser/runtime boundaries
+    /// without being joined and re-parsed through a shell.
+    pub fn from_argv(
+        name: String,
+        argv: Vec<String>,
+        watches: Vec<String>,
+        ignores: Vec<String>,
+        run_on_init: bool,
+    ) -> Self {
+        Rules {
+            name,
+            commands: vec![],
+            argv: Some(argv),
             watch_patterns: watches,
             ignore_patterns: ignores,
             run_on_init,
@@ -88,7 +113,32 @@ impl Rules {
     }
 
     pub fn commands(&self) -> Vec<String> {
-        self.commands.clone()
+        match &self.argv {
+            // Display/wire form for ad-hoc exec rules: the exact argv joined
+            // for presentation. Execution uses `command_lines()` so argv is
+            // never re-parsed through a shell.
+            Some(argv) => vec![argv.join(" ")],
+            None => self.commands.clone(),
+        }
+    }
+
+    /// Returns the exact argv for ad-hoc `exec` rules, or `None` for
+    /// configured shell-command rules.
+    pub fn argv(&self) -> Option<Vec<String>> {
+        self.argv.clone()
+    }
+
+    /// Returns the commands this rule executes: configured shell commands, or
+    /// the single exact argv for ad-hoc `exec` rules.
+    pub fn command_lines(&self) -> Vec<CommandLine> {
+        match &self.argv {
+            Some(argv) => vec![CommandLine::Argv(argv.clone())],
+            None => self
+                .commands
+                .iter()
+                .map(|command| CommandLine::Shell(command.clone()))
+                .collect(),
+        }
     }
 
     pub fn watch_patterns(&self) -> Vec<String> {
@@ -128,7 +178,7 @@ impl Rules {
             self.name.clone()
         };
 
-        if self.commands().len() == 0 {
+        if self.command_lines().len() == 0 {
             return Err(format!(
                 "Rule '{}' contains no command to run. Empty 'run' property.",
                 name
@@ -186,6 +236,36 @@ pub fn commands(rules: Vec<Rules>) -> Vec<String> {
         .map(|rule| rule.commands())
         .flat_map(|rule| rule.to_vec())
         .collect::<Vec<String>>()
+}
+
+/// One command selected for execution: either a configured shell command
+/// string or an exact argv vector from ad-hoc `exec` mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandLine {
+    /// Configured task command, run through the user's shell (`$SHELL -c`).
+    Shell(String),
+    /// Ad-hoc `exec` command: program plus arguments, spawned directly
+    /// without joining or re-parsing through a shell.
+    Argv(Vec<String>),
+}
+
+impl CommandLine {
+    /// Human-readable form used in logs, control payloads, and summaries.
+    pub fn display(&self) -> String {
+        match self {
+            CommandLine::Shell(command) => command.clone(),
+            CommandLine::Argv(argv) => argv.join(" "),
+        }
+    }
+}
+
+/// Flattens all rules into their execution command lines, preserving argv
+/// for ad-hoc `exec` rules instead of joining and re-parsing them.
+pub fn command_lines(rules: Vec<Rules>) -> Vec<CommandLine> {
+    rules
+        .iter()
+        .flat_map(|rule| rule.command_lines())
+        .collect::<Vec<CommandLine>>()
 }
 
 fn create_pattern(pattern: &str, anchored: bool) -> Pattern {
@@ -294,6 +374,79 @@ mod tests {
     #[test]
     fn available_targets_handles_empty_config() {
         assert_eq!(super::available_targets(&[]), "Available tasks\n  (none)\n");
+    }
+
+    #[test]
+    fn argv_rule_keeps_exact_argv_and_never_splits_it() {
+        let rule = Rules::from_argv(
+            "unnamed".to_owned(),
+            vec!["echo".to_owned(), "hello world".to_owned()],
+            vec!["**/*.txt".to_owned()],
+            vec![],
+            true,
+        );
+
+        assert_eq!(
+            rule.argv(),
+            Some(vec!["echo".to_owned(), "hello world".to_owned()])
+        );
+        assert_eq!(
+            rule.command_lines(),
+            vec![super::CommandLine::Argv(vec![
+                "echo".to_owned(),
+                "hello world".to_owned()
+            ])]
+        );
+        // Display form joins for presentation only; execution keeps argv.
+        assert_eq!(rule.commands(), vec!["echo hello world"]);
+    }
+
+    #[test]
+    fn shell_rule_keeps_each_command_as_shell_line() {
+        let rule = rule("my tests", &["cargo test", "make lint"], &[], &[], false);
+
+        assert_eq!(rule.argv(), None);
+        assert_eq!(
+            rule.command_lines(),
+            vec![
+                super::CommandLine::Shell("cargo test".to_owned()),
+                super::CommandLine::Shell("make lint".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn command_lines_flatten_preserves_each_rules_boundary() {
+        let rules = vec![
+            rule("one", &["echo a"], &[], &[], false),
+            Rules::from_argv(
+                "two".to_owned(),
+                vec!["printf".to_owned(), "%s".to_owned()],
+                vec![],
+                vec![],
+                false,
+            ),
+        ];
+
+        assert_eq!(
+            super::command_lines(rules),
+            vec![
+                super::CommandLine::Shell("echo a".to_owned()),
+                super::CommandLine::Argv(vec!["printf".to_owned(), "%s".to_owned()]),
+            ]
+        );
+    }
+
+    #[test]
+    fn argv_rule_passes_validation_without_run_property() {
+        let rule = Rules::from_argv(
+            "unnamed".to_owned(),
+            vec!["echo".to_owned()],
+            vec!["**/*.txt".to_owned()],
+            vec![],
+            true,
+        );
+        assert!(rule.validate().is_ok());
     }
 
     #[test]

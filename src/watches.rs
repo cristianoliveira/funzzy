@@ -212,9 +212,8 @@ mod tests {
 
     #[test]
     fn it_loads_from_args() {
-        let args = String::from("cargo build");
         let watches = Watches::new(
-            config::from_string(vec![".".to_owned()], args)
+            config::from_argv(vec![".".to_owned()], vec!["cargo build".to_owned()])
                 .expect("Error while parsing rules from string"),
         );
 

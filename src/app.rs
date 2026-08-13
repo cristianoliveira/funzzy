@@ -101,11 +101,11 @@ pub fn run() {
             stdout::info(&rules::available_targets(&rules));
         }
 
-        // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`: join the
-        // argv into one shell command string for the existing stdin runner.
-        // (Proper argv preservation without re-joining is TASK-0016.)
+        // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
+        // is preserved end to end: it is never joined and re-parsed through a
+        // shell. Shell operators only work when the caller explicitly invokes
+        // a shell (e.g. `fzz exec -- sh -c '...'`).
         Action::Exec { command: ref cmd } => {
-            let command = cmd.join(" ");
             match from_stdin() {
                 Ok(StdinRead::NoPipe) => {
                     // No stdin and no config -> help and exit 1
@@ -123,7 +123,7 @@ pub fn run() {
                         }
                     };
 
-                    let watch_rules = match config::from_string(patterns, command) {
+                    let watch_rules = match config::from_argv(patterns, cmd.clone()) {
                         Ok(rules) => {
                             stdout::info(&format!(
                                 "watching patterns\r{}",

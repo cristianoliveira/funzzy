@@ -115,13 +115,31 @@ pub fn execute(command: &String) -> Result<(), String> {
 
     let mut cmd = prepare_command(command);
 
+    run_to_completion(&mut cmd, command)
+}
+
+/// Executes an exact argv (program plus arguments) directly, without a
+/// shell. Spawn failures are Funzzy-side errors; non-zero exits are child
+/// failures. Used by ad-hoc `exec` mode so argv never gets joined/re-parsed.
+pub fn execute_argv(argv: &[String]) -> Result<(), String> {
+    let display = argv.join(" ");
+    println!();
+    logging::log_line("");
+    stdout::info(&format!("{} \n", display));
+
+    let mut cmd = prepare_argv_command(argv);
+
+    run_to_completion(&mut cmd, &display)
+}
+
+fn run_to_completion(cmd: &mut Command, display: &str) -> Result<(), String> {
     if logging::is_enabled() {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
         let mut child = cmd
             .spawn()
-            .map_err(|error| format!("Command {} has errored with {}", command, error))?;
+            .map_err(|error| format!("Command {} has errored with {}", display, error))?;
 
         let mut handles = forward_child_output(&mut child);
 
@@ -132,21 +150,21 @@ pub fn execute(command: &String) -> Result<(), String> {
             }
             Ok(status) => {
                 handles.join();
-                Err(format!("Command {} has failed with {}", command, status))
+                Err(format!("Command {} has failed with {}", display, status))
             }
             Err(error) => {
                 handles.discard();
-                Err(format!("Command {} has errored with {}", command, error))
+                Err(format!("Command {} has errored with {}", display, error))
             }
         }
     } else {
         match cmd.status() {
-            Err(error) => Err(format!("Command {} has errored with {}", command, error)),
+            Err(error) => Err(format!("Command {} has errored with {}", display, error)),
             Ok(status) => {
                 if status.success() {
                     Ok(())
                 } else {
-                    Err(format!("Command {} has failed with {}", command, status))
+                    Err(format!("Command {} has failed with {}", display, status))
                 }
             }
         }
@@ -160,19 +178,31 @@ pub fn spawn(command: &String) -> Result<LoggedChild, String> {
 
     let mut cmd = prepare_command(command);
 
+    spawn_configured(&mut cmd, command)
+}
+
+/// Spawns an exact argv (program plus arguments) directly, without a shell.
+/// Returns a child that can be cancelled; used by ad-hoc `exec` mode.
+pub fn spawn_argv(argv: &[String]) -> Result<LoggedChild, String> {
+    let display = argv.join(" ");
+    println!();
+    logging::log_line("");
+    stdout::info(&format!("{} \n", display));
+
+    let mut cmd = prepare_argv_command(argv);
+
+    spawn_configured(&mut cmd, &display)
+}
+
+fn spawn_configured(cmd: &mut Command, display: &str) -> Result<LoggedChild, String> {
     if logging::is_enabled() {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+    }
 
-        match cmd.spawn() {
-            Ok(child) => Ok(LoggedChild::new(child)),
-            Err(error) => Err(format!("Command {} has errored with {}", command, error)),
-        }
-    } else {
-        match cmd.spawn() {
-            Ok(child) => Ok(LoggedChild::new(child)),
-            Err(error) => Err(format!("Command {} has errored with {}", command, error)),
-        }
+    match cmd.spawn() {
+        Ok(child) => Ok(LoggedChild::new(child)),
+        Err(error) => Err(format!("Command {} has errored with {}", display, error)),
     }
 }
 
@@ -184,6 +214,40 @@ fn it_spawn_a_command_returning_a_child_ref() {
     };
 
     assert_eq!(format!("{}", result), "exit status: 0")
+}
+
+#[test]
+fn it_executes_argv_directly_without_a_shell() {
+    // `printf '<%s>' 'a b'` must print one arg `a b`; if the argv were joined
+    // and re-parsed through a shell, `a b` would become two arguments.
+    let result = execute_argv(&["printf".to_owned(), "<%s>".to_owned(), "a b".to_owned()]);
+    assert!(
+        result.is_ok(),
+        "argv execution should succeed: {:?}",
+        result
+    );
+}
+
+#[test]
+fn it_reports_child_failure_for_non_zero_argv_exit() {
+    let result = execute_argv(&["sh".to_owned(), "-c".to_owned(), "exit 3".to_owned()]);
+    let err = result.expect_err("non-zero exit must fail");
+    assert!(
+        err.contains("Command sh -c exit 3 has failed with"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[test]
+fn it_reports_spawn_failure_as_funzzy_side_error() {
+    let result = execute_argv(&["definitely-not-a-real-program-xyz".to_owned()]);
+    let err = result.expect_err("missing program must fail to start");
+    assert!(
+        err.contains("has errored with"),
+        "spawn failure must be reported: {}",
+        err
+    );
 }
 
 #[test]
@@ -200,6 +264,12 @@ fn prepare_command(command: &String) -> Command {
     let shell = std::env::var("SHELL").unwrap_or(String::from("/bin/sh"));
     let mut cmd = Command::new(shell);
     cmd.arg("-c").arg(command);
+    cmd
+}
+
+fn prepare_argv_command(argv: &[String]) -> Command {
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
     cmd
 }
 

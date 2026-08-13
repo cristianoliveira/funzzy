@@ -360,7 +360,9 @@ pub fn extract_paths(stdinput: String) -> errors::Result<Vec<String>> {
     return Ok(watches);
 }
 
-pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec<Rules>> {
+/// Builds an ad-hoc `exec` rule from stdin patterns and an exact argv. The
+/// argv crosses the parser/runtime boundary without being joined/re-parsed.
+pub fn from_argv(patterns: Vec<String>, argv: Vec<String>) -> errors::Result<Vec<Rules>> {
     let watches = patterns
         .iter()
         .map(|pathline| prepare_as_glob_pattern(pathline))
@@ -368,9 +370,9 @@ pub fn from_string(patterns: Vec<String>, command: String) -> errors::Result<Vec
 
     let run_on_init = true;
     let ignore = vec![];
-    Ok(vec![Rules::new(
+    Ok(vec![Rules::from_argv(
         "unnamed".to_owned(),
-        vec![command],
+        argv,
         watches,
         ignore,
         run_on_init,
@@ -493,7 +495,7 @@ mod tests {
 
     use self::yaml_rust::YamlLoader;
     use super::control_socket_from_yaml;
-    use super::from_string;
+    use super::from_argv;
     use super::from_yaml;
     use super::rule_as_yaml;
     use super::rule_from;
@@ -588,7 +590,7 @@ tasks:
             .lines()
             .map(|s| s.to_owned())
             .collect();
-        let rules = from_string(content, String::from("cargo test")).unwrap();
+        let rules = from_argv(content, vec!["cargo test".to_owned()]).unwrap();
         assert!(rules[0].watch(&get_absolute_path("foo")));
         assert!(rules[0].watch(&get_absolute_path("bar")));
         assert!(rules[0].watch(&get_absolute_path("baz")));

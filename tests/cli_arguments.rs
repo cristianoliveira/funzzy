@@ -468,7 +468,7 @@ fn spawn_watch_from_stdin(args: &[&str], stdin_data: &str, log_name: &str) -> (C
 #[test]
 fn direct_command_form_watches_stdin_patterns() {
     let (mut child, log_name) = spawn_watch_from_stdin(
-        &["exec", "--", "echo {{filepath}}"],
+        &["exec", "--", "echo", "{{filepath}}"],
         "Cargo.toml\n",
         "direct-command.log",
     );

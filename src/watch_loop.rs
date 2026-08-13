@@ -108,24 +108,32 @@ impl BlockingStrategy {
         }
     }
 
-    fn expand(&self, rules: Vec<Rules>, filepath: Option<&str>) -> Vec<String> {
-        let expanded = template::template(
-            rules::commands(rules),
-            template::TemplateOptions {
-                filepath: filepath.map(str::to_string),
-                current_dir: format!("{}", self.root.display()),
-            },
-        );
-        for variable in &expanded.unknown_variables {
-            stdout::warn(&format!("Unknown template variable '{}'.", variable));
-        }
-        expanded.commands
+    fn expand(&self, rules: Vec<Rules>, filepath: Option<&str>) -> Vec<rules::CommandLine> {
+        rules::command_lines(rules)
+            .into_iter()
+            .map(|command| {
+                let expanded = template::template_line(
+                    command,
+                    template::TemplateOptions {
+                        filepath: filepath.map(str::to_string),
+                        current_dir: format!("{}", self.root.display()),
+                    },
+                );
+                for variable in &expanded.unknown_variables {
+                    stdout::warn(&format!("Unknown template variable '{}'.", variable));
+                }
+                expanded.command
+            })
+            .collect()
     }
 
-    fn execute_tasks(&self, tasks: Vec<String>) -> Vec<Result<(), String>> {
+    fn execute_tasks(&self, tasks: Vec<rules::CommandLine>) -> Vec<Result<(), String>> {
         let mut results: Vec<Result<(), String>> = vec![];
         for task in tasks {
-            let result = cmd::execute(&task);
+            let result = match task {
+                rules::CommandLine::Shell(command) => cmd::execute(&command),
+                rules::CommandLine::Argv(argv) => cmd::execute_argv(&argv),
+            };
             if self.fail_fast && result.is_err() {
                 results.push(result);
                 break;

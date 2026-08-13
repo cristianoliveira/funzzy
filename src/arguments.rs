@@ -371,6 +371,24 @@ mod tests {
     }
 
     #[test]
+    fn exec_double_dash_without_command_fails() {
+        // `--` must not swallow a missing command: exec requires argv.
+        assert!(parse(&["exec", "--"]).is_err());
+    }
+
+    #[test]
+    fn exec_allows_flag_like_first_argument() {
+        // A child program may itself start with `-`; the boundary is `--`.
+        let action = parse_action(&["exec", "--", "--helper", "run"]);
+        assert_eq!(
+            action,
+            Action::Exec {
+                command: vec!["--helper".to_string(), "run".to_string()]
+            }
+        );
+    }
+
+    #[test]
     fn unknown_subcommand_fails() {
         // The bare ad-hoc form `fzz '<command>'` is removed in V2; the first
         // positional is now treated as a subcommand name and rejected.

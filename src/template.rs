@@ -25,37 +25,7 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> TemplateOutput 
 
     let expanded = commands
         .iter()
-        .map(|c| {
-            if c.contains("{{") {
-                c.split("{{")
-                    .map(|part| {
-                        if part.contains("}}") {
-                            let parts: Vec<&str> = part.split("}}").collect();
-                            let tpl = parts[0].trim();
-                            let rest = parts[1];
-
-                            match tpl {
-                                "filepath" | "absolute_path" => format!("{}{}", &filepath, rest),
-                                "relative_filepath" | "relative_path" => {
-                                    let relative_path =
-                                        &filepath.replace(&format!("{}/", &opts.current_dir), "");
-                                    format!("{}{}", relative_path, rest)
-                                }
-                                _ => {
-                                    unknown_variables.push(tpl.to_owned());
-                                    format!("{}{}{}{}", "{{", parts[0], "}}", parts[1])
-                                }
-                            }
-                        } else {
-                            part.to_owned()
-                        }
-                    })
-                    .collect::<Vec<String>>()
-                    .join("")
-            } else {
-                c.to_owned()
-            }
-        })
+        .map(|c| expand_command(c, &filepath, &opts.current_dir, &mut unknown_variables))
         .collect();
 
     TemplateOutput {
@@ -64,9 +34,149 @@ pub fn template(commands: Vec<String>, opts: TemplateOptions) -> TemplateOutput 
     }
 }
 
+/// Expands command templates inside an execution command line, preserving the
+/// argv boundary for ad-hoc `exec` rules: each argv element is expanded
+/// independently, and the result stays an argv vector (never joined).
+pub fn template_line(
+    command: crate::rules::CommandLine,
+    opts: TemplateOptions,
+) -> TemplateLineOutput {
+    let filepath = match opts.filepath {
+        Some(val) => val,
+        None => "".to_owned(),
+    };
+
+    let mut unknown_variables = vec![];
+
+    let expanded = match command {
+        crate::rules::CommandLine::Shell(command) => {
+            crate::rules::CommandLine::Shell(expand_command(
+                &command,
+                &filepath,
+                &opts.current_dir,
+                &mut unknown_variables,
+            ))
+        }
+        crate::rules::CommandLine::Argv(argv) => crate::rules::CommandLine::Argv(
+            argv.into_iter()
+                .map(|arg| {
+                    expand_command(&arg, &filepath, &opts.current_dir, &mut unknown_variables)
+                })
+                .collect(),
+        ),
+    };
+
+    TemplateLineOutput {
+        command: expanded,
+        unknown_variables,
+    }
+}
+
+pub struct TemplateLineOutput {
+    pub command: crate::rules::CommandLine,
+    pub unknown_variables: Vec<String>,
+}
+
+fn expand_command(
+    command: &str,
+    filepath: &str,
+    current_dir: &str,
+    unknown_variables: &mut Vec<String>,
+) -> String {
+    if command.contains("{{") {
+        command
+            .split("{{")
+            .map(|part| {
+                if part.contains("}}") {
+                    let parts: Vec<&str> = part.split("}}").collect();
+                    let tpl = parts[0].trim();
+                    let rest = parts[1];
+
+                    match tpl {
+                        "filepath" | "absolute_path" => format!("{}{}", &filepath, rest),
+                        "relative_filepath" | "relative_path" => {
+                            let relative_path = &filepath.replace(&format!("{}/", current_dir), "");
+                            format!("{}{}", relative_path, rest)
+                        }
+                        _ => {
+                            unknown_variables.push(tpl.to_owned());
+                            format!("{}{}{}{}", "{{", parts[0], "}}", parts[1])
+                        }
+                    }
+                } else {
+                    part.to_owned()
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("")
+    } else {
+        command.to_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{template, TemplateOptions};
+
+    #[test]
+    fn it_expands_filepath_template_inside_each_argv_element() {
+        use crate::rules::CommandLine;
+
+        let output = super::template_line(
+            CommandLine::Argv(vec![
+                "echo".to_owned(),
+                "changed: {{filepath}}".to_owned(),
+                "--path={{relative_filepath}}".to_owned(),
+            ]),
+            TemplateOptions {
+                filepath: Some("/foo/bar/tests/foo.rs".to_owned()),
+                current_dir: "/foo/bar".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            output.command,
+            CommandLine::Argv(vec![
+                "echo".to_owned(),
+                "changed: /foo/bar/tests/foo.rs".to_owned(),
+                "--path=tests/foo.rs".to_owned(),
+            ])
+        );
+        assert!(output.unknown_variables.is_empty());
+    }
+
+    #[test]
+    fn it_expands_filepath_template_inside_shell_command_line() {
+        use crate::rules::CommandLine;
+
+        let output = super::template_line(
+            CommandLine::Shell("echo {{filepath}}".to_owned()),
+            TemplateOptions {
+                filepath: Some("tests/foo.rs".to_owned()),
+                current_dir: "/foo/bar".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            output.command,
+            CommandLine::Shell("echo tests/foo.rs".to_owned())
+        );
+    }
+
+    #[test]
+    fn it_reports_unknown_variables_in_argv_elements() {
+        use crate::rules::CommandLine;
+
+        let output = super::template_line(
+            CommandLine::Argv(vec!["echo {{unknown_var}}".to_owned()]),
+            TemplateOptions {
+                filepath: Some("x".to_owned()),
+                current_dir: "/".to_owned(),
+            },
+        );
+
+        assert_eq!(output.unknown_variables, vec!["unknown_var".to_owned()]);
+    }
 
     #[test]
     fn it_replaces_filepath_tpl_with_absolute_filepath() {
