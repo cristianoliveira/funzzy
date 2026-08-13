@@ -12,9 +12,23 @@ pub struct Watches {
     root: PathBuf,
 }
 impl Watches {
+    /// Convenience constructor resolving the workspace root from the process
+    /// current directory. Keep usage at the outer boundary (composition root
+    /// and tests); prefer [`Watches::with_root`] so core behavior does not
+    /// depend on hidden process state.
     pub fn new(rules: Vec<Rules>) -> Self {
         let root = std::env::current_dir().expect("Unable to get current directory");
+        Watches::with_root(rules, root)
+    }
+
+    /// Creates watches anchored at an explicit workspace root.
+    pub fn with_root(rules: Vec<Rules>, root: PathBuf) -> Self {
         Watches { rules, root }
+    }
+
+    /// The workspace root this watch planning is anchored to.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     fn normalize_paths<'a>(&'a self, path: &'a str) -> (PathBuf, Option<String>) {
@@ -472,6 +486,51 @@ mod tests {
         for (i, expected_dir) in expected.iter().enumerate() {
             assert_eq!(&results[i], expected_dir);
         }
+    }
+
+    #[test]
+    fn it_uses_injected_root_with_spaces_for_relative_patterns() {
+        let file_content = "
+        - name: txt files
+          run: 'echo txt'
+          change: 'src/*.txt'
+    ";
+        let rules = rules::from_yaml(&file_content).expect("Error parsing yaml");
+        let root =
+            std::env::temp_dir().join(format!("funzzy root with spaces {}", std::process::id()));
+        let watches = Watches::with_root(rules, root.clone());
+
+        let inside = root.join("src/foo.txt");
+        let outside = std::env::temp_dir()
+            .join(format!("funzzy elsewhere {}", std::process::id()))
+            .join("src/foo.txt");
+
+        assert!(
+            watches.watch(inside.to_str().unwrap()).is_some(),
+            "relative patterns must anchor to the injected root"
+        );
+        assert!(
+            watches.watch(outside.to_str().unwrap()).is_none(),
+            "paths outside the injected root must not match relative patterns"
+        );
+    }
+
+    #[test]
+    fn it_matches_absolute_patterns_outside_the_injected_root() {
+        let file_content = "
+        - name: outside
+          run: 'echo outside'
+          change: '/tmp/**'
+    ";
+        let rules = rules::from_yaml(&file_content).expect("Error parsing yaml");
+        let root = std::env::temp_dir().join(format!("funzzy-root-{}", std::process::id()));
+        let watches = Watches::with_root(rules, root);
+
+        let outside = std::path::Path::new("/tmp/funzzy-outside-marker/foo.txt");
+        assert!(
+            watches.watch(outside.to_str().unwrap()).is_some(),
+            "absolute patterns must still match outside the injected root"
+        );
     }
 
     #[test]

@@ -106,9 +106,10 @@ impl Command for WatchNonBlockCommand {
 
         let control_state = Arc::new(Mutex::new(ControlState::default()));
         let worker_state = Arc::clone(&control_state);
-        let worker = Arc::new(workers::Worker::new(
+        let worker = Arc::new(workers::Worker::with_root(
             self.verbose,
             self.fail_fast,
+            self.watches.root().to_path_buf(),
             move |event| {
                 worker_state.lock().unwrap().apply(event);
             },

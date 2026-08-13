@@ -7,6 +7,7 @@ use crate::stdout;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
@@ -174,12 +175,27 @@ fn drain_newest(receiver: &Receiver<WorkerCommand>) -> Option<WorkerCommand> {
 pub struct Worker {
     scheduler: Option<Sender<WorkerCommand>>,
     next_run_id: AtomicU64,
+    root: PathBuf,
 
     consumer: Option<JoinHandle<()>>,
 }
 
 impl Worker {
+    /// Convenience constructor resolving the workspace root from the process
+    /// current directory. Keep usage at the outer boundary; prefer
+    /// [`Worker::with_root`] so command template preparation does not depend
+    /// on hidden process state.
     pub fn new<F>(verbose: bool, fail_fast: bool, on_event: F) -> Self
+    where
+        F: Fn(WorkerEvent) + Send + 'static,
+    {
+        let root = std::env::current_dir().expect("Unable to get current directory");
+        Self::with_root(verbose, fail_fast, root, on_event)
+    }
+
+    /// Creates a worker that expands command templates against an explicit
+    /// workspace root.
+    pub fn with_root<F>(verbose: bool, fail_fast: bool, root: PathBuf, on_event: F) -> Self
     where
         F: Fn(WorkerEvent) + Send + 'static,
     {
@@ -266,6 +282,7 @@ impl Worker {
         Worker {
             scheduler: Some(tscheduler),
             next_run_id: AtomicU64::new(0),
+            root,
             consumer: Some(consumer),
         }
     }
@@ -292,12 +309,11 @@ impl Worker {
         filepath: Option<&str>,
     ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let current_dir = std::env::current_dir().unwrap();
             let commands = rules::template(
                 rules::commands(rules),
                 rules::TemplateOptions {
                     filepath: filepath.map(str::to_string),
-                    current_dir: format!("{}", current_dir.display()),
+                    current_dir: format!("{}", self.root.display()),
                 },
             );
             let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
@@ -579,6 +595,49 @@ mod tests {
             _ => vec![],
         };
         assert_eq!(failures.len(), 1, "the single failure must be reported");
+    }
+
+    #[test]
+    fn it_templates_relative_filepath_against_the_injected_root() {
+        let marker = output_file("injected-root");
+        let _ = std::fs::remove_file(&marker);
+
+        let root =
+            std::env::temp_dir().join(format!("funzzy root with spaces {}", std::process::id()));
+        let (tx, rx) = channel();
+        let worker = Worker::with_root(false, false, root.clone(), move |event| {
+            tx.send(event).unwrap();
+        });
+
+        let rule = Rules::new(
+            "test".to_string(),
+            vec![format!(
+                "echo '{{{{relative_filepath}}}}' > {}",
+                marker.display()
+            )],
+            vec![],
+            vec![],
+            false,
+        );
+        let filepath = root.join("src/main.rs");
+        worker
+            .schedule_with_trigger(
+                vec![rule],
+                filepath.to_str().unwrap(),
+                Some(filepath.to_str().unwrap()),
+            )
+            .unwrap();
+
+        collect_until_finished(&rx);
+        drop(worker);
+
+        let content = std::fs::read_to_string(&marker).expect("marker file was not written");
+        assert_eq!(
+            content.trim(),
+            "src/main.rs",
+            "template expansion must be relative to the injected root"
+        );
+        let _ = std::fs::remove_file(&marker);
     }
 
     #[test]

@@ -37,7 +37,7 @@ impl Command for WatchCommand {
     fn execute(&self) -> Result<(), FzzError> {
         stdout::verbose("Verbose mode enabled.", self.verbose);
 
-        let current_dir = std::env::current_dir().unwrap();
+        let current_dir = self.watches.root();
 
         let list_of_watched_paths = self.watches.paths_to_watch().unwrap_or_default();
 

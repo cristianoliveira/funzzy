@@ -176,6 +176,10 @@ pub fn run() {
         stdout::info(&format!("Logging output to {}", log_path.display()));
     }
 
+    // Resolve the workspace root once and anchor all watch planning,
+    // config discovery, and command template preparation to it.
+    let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+
     match args {
         Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
         // Commands
@@ -224,10 +228,13 @@ pub fn run() {
                             rules::available_targets(rules),
                         );
                     } else {
-                        execute_watch_command(Watches::new(filtered), args);
+                        execute_watch_command(
+                            Watches::with_root(filtered, workspace_root.clone()),
+                            args,
+                        );
                     }
                 }
-                _ => execute_watch_command(Watches::new(rules), args),
+                _ => execute_watch_command(Watches::with_root(rules, workspace_root.clone()), args),
             }
         }
 
@@ -263,7 +270,7 @@ pub fn run() {
                         stdout::failure("Invalid config file.", err);
                     }
 
-                    execute_watch_command(Watches::new(watch_rules), args);
+                    execute_watch_command(Watches::with_root(watch_rules, workspace_root), args);
                 }
                 Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
             };
@@ -279,7 +286,7 @@ pub fn run() {
 
 fn execute_watch_command(watches: Watches, mut args: Args) {
     let possible_config_paths = if args.flag_config.is_empty() {
-        let dir = std::env::current_dir().expect("Failed to get current directory");
+        let dir = watches.root();
         vec![
             dir.join(cli::watch::DEFAULT_FILENAME)
                 .to_str()
