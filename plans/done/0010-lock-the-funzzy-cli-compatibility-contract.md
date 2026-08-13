@@ -1,7 +1,7 @@
 ---
 id: TASK-0010
 title: Lock the Funzzy CLI compatibility contract
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [rust, cli, tests]
@@ -27,15 +27,15 @@ Executable characterization tests that define parser-visible compatibility befor
 
 ## Acceptance criteria
 
-- [ ] Both binaries, `funzzy` and `fzz`, have smoke coverage.
-- [ ] `--help`, `-v`, and `--version` behavior is covered; `-V` remains verbose rather than Clap's default version short flag.
-- [ ] Combined short flags such as `-nb` remain accepted.
-- [ ] `--target` has covered absent, value-less, matching-value, and no-match paths.
-- [ ] Configured watch, `watch '<command>'`, and direct `'<command>'` forms are covered.
-- [ ] Supported option placement around command forms is explicit.
-- [ ] Unknown options and missing required values have deterministic failure assertions.
-- [ ] Assertions protect semantic help/error content and exit status without snapshotting colors or incidental whitespace.
-- [ ] Any intentionally accepted Clap-native help/error formatting change is named in test comments rather than hidden as drift.
+- [x] Both binaries, `funzzy` and `fzz`, have smoke coverage.
+- [x] `--help`, `-v`, and `--version` behavior is covered; `-V` remains verbose rather than Clap's default version short flag.
+- [x] Combined short flags such as `-nb` remain accepted.
+- [x] `--target` has covered absent, value-less, matching-value, and no-match paths.
+- [x] Configured watch, `watch '<command>'`, and direct `'<command>'` forms are covered.
+- [x] Supported option placement around command forms is explicit.
+- [x] Unknown options and missing required values have deterministic failure assertions.
+- [x] Assertions protect semantic help/error content and exit status without snapshotting colors or incidental whitespace.
+- [x] Any intentionally accepted Clap-native help/error formatting change is named in test comments rather than hidden as drift.
 
 ## Verification
 
