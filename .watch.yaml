@@ -99,21 +99,21 @@ tasks:
     ignore:
       - "**/*.txt"
 
-  - name: after all checks if no error stage to git @quick @nixbuild
-    run:
-      - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
-      - 'git add . -p'
-      # - 'git commit'
-    change:
-      - ".watch.yaml"
-      - "README.md"
-      - "src/**"
-      - "tests/**"
-      - "**/*.nix"
-    ignore:
-      - "examples/workdir/**"
-      - "examples/reload-config-example.yml"
-    run_on_init: true
+  # - name: after all checks if no error stage to git @quick @nixbuild
+  #   run:
+  #     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
+  #     - 'git add . -p'
+  #     # - 'git commit'
+  #   change:
+  #     - ".watch.yaml"
+  #     - "README.md"
+  #     - "src/**"
+  #     - "tests/**"
+  #     - "**/*.nix"
+  #   ignore:
+  #     - "examples/workdir/**"
+  #     - "examples/reload-config-example.yml"
+  #   run_on_init: true
 
   - name: install locally @quick
     # Check if .tmp/install exists then install otherwise skip
