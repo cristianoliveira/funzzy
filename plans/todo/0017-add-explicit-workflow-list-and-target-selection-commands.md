@@ -1,7 +1,7 @@
 ---
 id: TASK-0017
 title: Add explicit workflow list and target selection commands
-status: todo
+status: doing
 depends_on: [TASK-0015]
 priority: high
 tags: [rust, cli, workflow, targets, tdd]

@@ -22,7 +22,7 @@ This must feed shared event-to-run policy rather than creating second matcher or
 
 - [ ] Tests first cover relative path, absolute path, ignored path, unmatched path, malformed/empty path, deleted/nonexistent path, busy watcher, and notification form without an `id`.
 - [ ] JSON-RPC `emit` accepts one normalized path and returns deterministic matched-task/run identity defined in TASK-0014.
-- [ ] `fzz control emit PATH` sends request to running watcher and can use same `--wait`/timeout semantics as `control run` when work is scheduled.
+- [ ] `fzz control emit PATH` sends request to running watcher and returns matched/no-match result plus scheduled generation identity; atomic `--wait` is added by TASK-0044.
 - [ ] Emitted path follows same normalization, change matching, ignore precedence, task ordering, templates, `run_on_init` exclusions, and busy-run policy as native change event.
 - [ ] Unmatched/ignored result is explicit and schedules no generation.
 - [ ] Missing path does not need to exist, so deletion and remote logical events remain representable.
@@ -33,5 +33,5 @@ This must feed shared event-to-run policy rather than creating second matcher or
 
 ## Notes
 
-Security boundary remains permission-restricted Unix socket. Path normalization and template handling must be identical to native filesystem events; do not introduce IPC-only interpolation behavior.
+Security boundary remains permission-restricted Unix socket. Path normalization and template handling must be identical to native filesystem events; do not introduce IPC-only interpolation behavior. Implement scheduling response first; TASK-0044 later adds one-round-trip emit-and-await semantics using shared atomic await primitive.
 

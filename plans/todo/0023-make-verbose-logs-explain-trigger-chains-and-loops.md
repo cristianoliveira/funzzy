@@ -2,7 +2,7 @@
 id: TASK-0023
 title: Make verbose logs explain trigger chains and loops
 status: todo
-depends_on: [TASK-0015, TASK-0018, TASK-0022]
+depends_on: [TASK-0015, TASK-0018, TASK-0022, TASK-0043]
 priority: high
 tags: [rust, cli, logging, diagnostics, determinism, tdd]
 ---
