@@ -9,7 +9,7 @@ use crate::cli::*;
 use crate::errors;
 use crate::errors::FzzError;
 use crate::watches::Watches;
-use crate::{environment, logging, rules, stdout, watcher};
+use crate::{config, environment, logging, rules, stdout, watcher};
 
 use docopt::Docopt;
 use docopt::Error;
@@ -193,11 +193,11 @@ pub fn run() {
         // If no command argument provided, use config branch (if config exists, else error)
         _ if args.arg_command.is_empty() => {
             let rules = if args.flag_config.is_empty() {
-                rules::from_default_file_config().unwrap_or_else(|err| {
+                config::from_default_file_config().unwrap_or_else(|err| {
                     stdout::failure("Failed to read default config file", err.to_string());
                 })
             } else {
-                match rules::from_file(&args.flag_config) {
+                match config::from_file(&args.flag_config) {
                     Ok(rules) => rules,
                     Err(err) => stdout::failure("Failed to read config file", err.to_string()),
                 }
@@ -252,15 +252,21 @@ pub fn run() {
                     stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz 'echo {{filepath}}'`.".to_string());
                 }
                 Ok(StdinRead::Data(content)) => {
-                    let patterns = match rules::extract_paths(content) {
+                    let patterns = match config::extract_paths(content) {
                         Ok(patterns) => patterns,
                         Err(err) => {
                             stdout::failure("Failed to get rules from stdin", err.to_string())
                         }
                     };
 
-                    let watch_rules = match rules::from_string(patterns, arg_command.to_string()) {
-                        Ok(rules) => rules,
+                    let watch_rules = match config::from_string(patterns, arg_command.to_string()) {
+                        Ok(rules) => {
+                            stdout::info(&format!(
+                                "watching patterns\r{}",
+                                rules[0].watch_patterns().join("\n")
+                            ));
+                            rules
+                        }
                         Err(err) => {
                             stdout::failure("Failed to get rules from stdin", err.to_string())
                         }
@@ -311,7 +317,7 @@ fn execute_watch_command(watches: Watches, mut args: Args) {
     if args.flag_control_socket.is_none() {
         args.flag_control_socket = config_file_paths
             .first()
-            .map(|path| rules::control_socket_from_file(path))
+            .map(|path| config::control_socket_from_file(path))
             .transpose()
             .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
             .flatten();

@@ -200,6 +200,7 @@ mod tests {
     extern crate yaml_rust;
 
     use super::*;
+    use crate::config;
     use crate::rules;
     use std::env;
 
@@ -213,7 +214,7 @@ mod tests {
     fn it_loads_from_args() {
         let args = String::from("cargo build");
         let watches = Watches::new(
-            rules::from_string(vec![".".to_owned()], args)
+            config::from_string(vec![".".to_owned()], args)
                 .expect("Error while parsing rules from string"),
         );
 
@@ -232,7 +233,7 @@ mod tests {
           run: 'cargo tests'
           change: 'tests/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch(&get_absolute_path("tests/test.rs")).is_some());
         assert!(watches.watch("tests/tests.rs").is_some());
         assert!(watches.watch("tests/ruby.rb").is_some());
@@ -246,7 +247,7 @@ mod tests {
           run: 'cargo tests'
           change: './tests/foo/bar.rs'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("./tests/foo/bar.rs").is_some())
     }
 
@@ -257,7 +258,7 @@ mod tests {
           run: 'echo txt'
           change: 'src/*.txt'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
 
         let root = std::env::current_dir().unwrap();
         let inside = root.join("src/foo.txt");
@@ -274,7 +275,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
 
         assert!(watches.watch(&get_absolute_path("events.yaml")).is_none());
         assert!(watches.watch("tests/").is_none());
@@ -289,7 +290,7 @@ mod tests {
           run: 'cargo build'
           change: 'src/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         let result = rules::commands(watches.watch("src/test.rs").unwrap());
         assert_eq!("cargo build", result[0])
     }
@@ -305,7 +306,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
 
         let result = rules::commands(watches.watch("test/test.rs").unwrap());
         assert_eq!("cargo test", result[0]);
@@ -329,7 +330,7 @@ mod tests {
           run: 'cargo test'
           change: 'test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
 
         let result = rules::commands(watches.watch("src/test.rs").unwrap());
         assert_eq!(vec!["echo same", "cargo build"], result);
@@ -346,7 +347,7 @@ mod tests {
           change: 'src/**'
           ignore: 'src/test/**'
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/test/other.tmp").is_none())
@@ -360,7 +361,7 @@ mod tests {
           change: 'src/**'
           ignore: ['src/test/**', 'src/tmp/**']
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("src/other.rb").is_some());
         assert!(watches.watch("src/test.txt").is_some());
         assert!(watches.watch("src/tmp/test.txt").is_none());
@@ -377,7 +378,7 @@ mod tests {
               change: 'tests/**'
               ignore: ['**/.pi', '**/.pi/**']
         ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         assert!(watches.watch("tests/foo.rs").is_some());
         assert!(watches.watch("tests/.pi").is_none());
         assert!(watches.watch("tests/.pi/ast-index.sqlite").is_none());
@@ -388,7 +389,7 @@ mod tests {
         let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let config =
             std::fs::read_to_string(here.join(".watch.yaml")).expect("missing .watch.yaml");
-        let watches = Watches::new(rules::from_yaml(&config).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&config).expect("Error parsing yaml"));
 
         for path in ["tests/.pi", "tests/.pi/ast-index.sqlite"] {
             let matched: Vec<String> = watches
@@ -421,7 +422,7 @@ mod tests {
               run: 'cargo test'
               change: 'test/**'
             ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         let results = rules::commands(watches.run_on_init().unwrap());
 
         assert_eq!(
@@ -460,7 +461,7 @@ mod tests {
                 - '/usr/**'
                 - '/etc/**'
             ";
-        let watches = Watches::new(rules::from_yaml(&file_content).expect("Error parsing yaml"));
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
         let results = watches.paths_to_watch().expect("No rules found");
 
         let current_dir = std::env::current_dir().expect("Unable to get current directory");
@@ -495,7 +496,7 @@ mod tests {
           run: 'echo txt'
           change: 'src/*.txt'
     ";
-        let rules = rules::from_yaml(&file_content).expect("Error parsing yaml");
+        let rules = config::from_yaml(&file_content).expect("Error parsing yaml");
         let root =
             std::env::temp_dir().join(format!("funzzy root with spaces {}", std::process::id()));
         let watches = Watches::with_root(rules, root.clone());
@@ -522,7 +523,7 @@ mod tests {
           run: 'echo outside'
           change: '/tmp/**'
     ";
-        let rules = rules::from_yaml(&file_content).expect("Error parsing yaml");
+        let rules = config::from_yaml(&file_content).expect("Error parsing yaml");
         let root = std::env::temp_dir().join(format!("funzzy-root-{}", std::process::id()));
         let watches = Watches::with_root(rules, root);
 
@@ -535,7 +536,7 @@ mod tests {
 
     #[test]
     fn it_returns_an_error_when_fail_to_load_config_file() {
-        // assert!(rules::from_yaml(
+        // assert!(config::from_yaml(
         //     &r#"
         // - name: run tests
         //   run: [
@@ -547,7 +548,7 @@ mod tests {
         // )
         // .is_err());
 
-        assert!(rules::from_yaml(
+        assert!(config::from_yaml(
             &r#"
         - name: run tests
           run: [
@@ -557,7 +558,7 @@ mod tests {
         )
         .is_err());
 
-        assert!(rules::from_yaml(
+        assert!(config::from_yaml(
             &r#"
         - name: other
           run: 'cargo test'

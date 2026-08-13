@@ -4,7 +4,7 @@
 
 ```text
 main.rs
-  -> rules.rs / yaml.rs
+  -> config.rs / rules.rs / template.rs / yaml.rs
   -> watches.rs <- watcher.rs
   -> cli/watch.rs | cli/watch_non_block.rs
   -> cmd.rs | workers.rs
@@ -15,14 +15,14 @@ main.rs
 
 ## Main modules
 
-### Workflow tasks — `rules.rs`, `yaml.rs`
+### Workflow tasks — `rules.rs`, `config.rs`, `template.rs`, `yaml.rs`
 
-Own config parsing, task validation, glob semantics, shared `on` rules, command extraction, and path-template expansion. A `Rules` value represents one configured task despite legacy plural name.
+`rules.rs` owns the user-facing task model (`Rules`): matching semantics, glob validation, and task-level presentation. `config.rs` owns YAML parsing, legacy list and grouped `on`/`tasks` compatibility, nested groups, merging, and file loading. `template.rs` is pure command template expansion with no YAML or stdout side effects — unknown variables are returned to callers, who decide how to present them. `yaml.rs` holds low-level YAML extraction helpers.
 
-- Keep YAML shape handling in parser functions and task invariants on `Rules`.
+- Keep YAML shape handling in parser functions (`config.rs`) and task invariants on `Rules`.
+- The task model does not retain raw YAML; verbose render (`config::rule_as_yaml`) is reconstructed from model fields.
 - Preserve relative versus absolute glob behavior.
 - Test malformed and valid forms, including legacy lists and grouped `on`/`tasks`.
-- Do not move filesystem event or process behavior here.
 
 ### Watch plan — `watches.rs`, `watcher.rs`
 

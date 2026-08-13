@@ -4,6 +4,7 @@ use crate::cmd::spawn;
 use crate::cmd::LoggedChild;
 use crate::rules::{self, Rules};
 use crate::stdout;
+use crate::template;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::collections::VecDeque;
@@ -309,17 +310,20 @@ impl Worker {
         filepath: Option<&str>,
     ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let commands = rules::template(
+            let expanded = template::template(
                 rules::commands(rules),
-                rules::TemplateOptions {
+                template::TemplateOptions {
                     filepath: filepath.map(str::to_string),
                     current_dir: format!("{}", self.root.display()),
                 },
             );
+            for variable in &expanded.unknown_variables {
+                stdout::warn(&format!("Unknown template variable '{}'.", variable));
+            }
             let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
             let request = RunRequest {
                 run_id,
-                commands,
+                commands: expanded.commands,
                 trigger: trigger.to_string(),
             };
             if let Err(err) = scheduler.send(WorkerCommand::Run(request)) {

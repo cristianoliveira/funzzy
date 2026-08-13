@@ -1,8 +1,10 @@
 use crate::cli::Command;
 use crate::cmd;
+use crate::config;
 use crate::errors::FzzError;
 use crate::rules;
 use crate::stdout;
+use crate::template;
 use crate::watcher;
 use crate::watches::Watches;
 
@@ -50,13 +52,17 @@ impl Command for WatchCommand {
 
                         stdout::info("Running on init commands.");
 
-                        let tasks = rules::template(
+                        let expanded = template::template(
                             rules::commands(rules),
-                            rules::TemplateOptions {
+                            template::TemplateOptions {
                                 filepath: None,
                                 current_dir: format!("{}", current_dir.display()),
                             },
                         );
+                        for variable in &expanded.unknown_variables {
+                            stdout::warn(&format!("Unknown template variable '{}'.", variable));
+                        }
+                        let tasks = expanded.commands;
                         let mut results: Vec<Result<(), String>> = vec![];
                         for task in tasks {
                             let result = cmd::execute(&task);
@@ -88,20 +94,24 @@ impl Command for WatchCommand {
                         self.verbose,
                     );
 
-                    let rules_as_yaml = rules::format_rules(&rules);
+                    let rules_as_yaml = config::format_rules(&rules);
                     stdout::verbose(&format!("Rules: {:?}", rules), self.verbose);
                     stdout::verbose(
                         &format!("Formatted rules:\n{}", rules_as_yaml),
                         self.verbose,
                     );
 
-                    let tasks = rules::template(
+                    let expanded = template::template(
                         rules::commands(rules),
-                        rules::TemplateOptions {
+                        template::TemplateOptions {
                             filepath: Some(file_changed.to_string()),
                             current_dir: format!("{}", current_dir.display()),
                         },
                     );
+                    for variable in &expanded.unknown_variables {
+                        stdout::warn(&format!("Unknown template variable '{}'.", variable));
+                    }
+                    let tasks = expanded.commands;
                     let mut results: Vec<Result<(), String>> = vec![];
                     for task in tasks {
                         let result = cmd::execute(&task);
