@@ -53,7 +53,7 @@ fn test_it_filter_tasks_with_target_flag() {
             );
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Watching...
 
 [2J

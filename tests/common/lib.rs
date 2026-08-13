@@ -262,6 +262,54 @@ where
     handler()
 }
 
+/// Remove ANSI SGR color sequences (\x1b[...m) from output.
+///
+/// Assertions must be robust to the spawned binary being built with or
+/// without the `test-integration` feature: outside the feature build,
+/// `environment::is_enabled` reads the real `FUNZZY_COLORED`, so a direnv
+/// export of `FUNZZY_COLORED=1` makes child output colored. Only SGR color
+/// codes are stripped: the clear-screen sequence `\x1b[2J` is a semantic
+/// marker some snapshots assert and is left intact.
+#[allow(dead_code)]
+pub fn strip_ansi_codes(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next(); // consume '['
+                          // Peek ahead from the byte after '[': only strip CSI sequences
+                          // that end in 'm' (SGR color codes). Other sequences (e.g. the
+                          // clear-screen `\x1b[2J` some snapshots assert) are left intact.
+            let mut lookahead = chars.clone();
+            let mut is_sgr = false;
+            let mut tail = String::new();
+            for next in lookahead.by_ref() {
+                if next == 'm' {
+                    is_sgr = true;
+                    break;
+                }
+                if !('\u{20}'..='\u{3f}').contains(&next) {
+                    break;
+                }
+                tail.push(next);
+            }
+            if is_sgr {
+                // consume the parameter bytes plus the 'm' we peeked
+                for _ in tail.chars() {
+                    chars.next();
+                }
+                chars.next();
+            } else {
+                result.push(c);
+                result.push('[');
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[allow(dead_code)]
 pub fn clean_output(output_file: &str) -> String {
     output_file

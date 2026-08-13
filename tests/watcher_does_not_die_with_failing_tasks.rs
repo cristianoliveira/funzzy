@@ -41,7 +41,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             );
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 

@@ -31,7 +31,7 @@ fn test_when_using_fail_fast_exit_before() {
             });
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -56,7 +56,7 @@ Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             });
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -115,7 +115,7 @@ fn test_when_using_fail_fast_exit_before_with_env() {
                     });
 
                     assert_eq!(
-                        setup::clean_output(&output),
+                        setup::strip_ansi_codes(&setup::clean_output(&output)),
                         "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -140,7 +140,7 @@ Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
                     });
 
                     assert_eq!(
-                        setup::clean_output(&output),
+                        setup::strip_ansi_codes(&setup::clean_output(&output)),
                         "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -204,7 +204,7 @@ fn test_fail_fast_with_non_block() {
             });
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 
@@ -229,7 +229,7 @@ Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             });
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 "Funzzy: Running on init commands.
 
 Funzzy: echo complex | sed s/complex/third/g 

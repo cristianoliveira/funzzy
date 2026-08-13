@@ -86,7 +86,7 @@ Funzzy results ----------------------------
 Success; Completed: 3; Failed: 0; Duration: 0.0000s";
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 expected.replace("$PWD", &dir.to_string_lossy())
             )
         },
@@ -183,7 +183,7 @@ Funzzy results ----------------------------
 Success; Completed: 4; Failed: 0; Duration: 0.0000s";
 
             assert_eq!(
-                setup::clean_output(&output),
+                setup::strip_ansi_codes(&setup::clean_output(&output)),
                 expected.replace("$PWD", &dir.to_string_lossy())
             )
         },

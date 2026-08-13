@@ -100,6 +100,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
+                    let output = setup::strip_ansi_codes(&output);
                     output.contains("Running on init commands")
                         && output.contains("echo 'this file changed: '")
                 },
@@ -122,6 +123,10 @@ fn test_it_allows_templates_in_arbitrary_commands() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
+                    // Strip ANSI before counting: outside the test-integration
+                    // build the child honors FUNZZY_COLORED, so "Success" may
+                    // arrive as "\x1b[32mSuccess\x1b[0m; Completed: 1; ...".
+                    let output = setup::strip_ansi_codes(&output);
                     // Wait till the second time the workflow is executed
                     output
                         .match_indices("Success; Completed: 1; Failed: 0")
