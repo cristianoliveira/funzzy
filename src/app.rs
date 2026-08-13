@@ -4,7 +4,7 @@
 //! is a thin process adapter that calls [`run`]; integration tests exercise
 //! the same modules the binaries use.
 
-use crate::arguments::{Action, Arguments};
+use crate::arguments::{Action, Arguments, OnBusy};
 use crate::cli;
 use crate::cli::*;
 use crate::errors;
@@ -236,7 +236,7 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
 
     let verbose = args.verbose;
     let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
-    let non_block = args.non_block
+    let non_block = matches!(args.on_busy, OnBusy::Restart)
         || environment::is_enabled("FUNZZY_NON_BLOCK")
         || args.control_socket.is_some();
 

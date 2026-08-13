@@ -15,7 +15,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
-                .arg("--non-block")
+                .arg("--restart")
                 .spawn()
                 .expect("failed to spawn child");
 

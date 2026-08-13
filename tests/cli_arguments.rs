@@ -167,13 +167,12 @@ fn migrate_without_init_is_unknown() {
 }
 
 #[test]
-fn combined_short_flags_are_accepted() {
-    // `-nb` = --non-block + --fail-fast. Docopt must not reject the combined
-    // form; reaching the config branch (missing default config) proves the
-    // parse succeeded.
+fn on_busy_and_fail_fast_flags_reach_config_branch() {
+    // `--on-busy restart` + `-b` (fail-fast) must parse; reaching the config
+    // branch (missing default config) proves the parse succeeded.
     with_tmp_dir("combined-flags", |dir| {
         fzz()
-            .args(["-nb"])
+            .args(["--on-busy", "restart", "-b"])
             .current_dir(dir)
             .assert()
             .code(1)

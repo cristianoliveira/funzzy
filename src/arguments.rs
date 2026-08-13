@@ -9,6 +9,16 @@
 
 use clap::{Arg, ArgAction, Command};
 
+/// Busy-run policy: what to do when a change arrives while a run is active.
+/// Replaces the V1 `--non-block` flag (TASK-0018).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnBusy {
+    /// Finish the active run before processing the next change.
+    Wait,
+    /// Cancel the active child and schedule the newest generation.
+    Restart,
+}
+
 /// Semantic application action selected from the parsed subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -31,7 +41,7 @@ pub struct Arguments {
     pub log_file: Option<String>,
     pub control_socket: Option<String>,
     pub migrate: bool,
-    pub non_block: bool,
+    pub on_busy: OnBusy,
     pub no_run_on_init: bool,
     pub fail_fast: bool,
     pub verbose: bool,
@@ -85,7 +95,18 @@ impl Arguments {
             log_file,
             control_socket,
             migrate,
-            non_block: matches.get_flag("non_block"),
+            on_busy: if matches.get_flag("restart") {
+                OnBusy::Restart
+            } else {
+                match matches
+                    .get_one::<String>("on_busy")
+                    .map(String::as_str)
+                    .unwrap_or("wait")
+                {
+                    "restart" => OnBusy::Restart,
+                    _ => OnBusy::Wait,
+                }
+            },
             no_run_on_init: matches.get_flag("no_run_on_init"),
             fail_fast: matches.get_flag("fail_fast"),
             verbose: matches.get_flag("verbose"),
@@ -134,12 +155,22 @@ fn command() -> Command {
                 .help("Execute only the given task target (if empty list availables)."),
         )
         .arg(
-            Arg::new("non_block")
-                .short('n')
-                .long("non-block")
+            Arg::new("on_busy")
+                .long("on-busy")
+                .global(true)
+                .value_name("POLICY")
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "wait", "restart",
+                ]))
+                .default_value("wait")
+                .help("What to do when a change arrives while a run is active (wait|restart)."),
+        )
+        .arg(
+            Arg::new("restart")
+                .long("restart")
                 .global(true)
                 .action(ArgAction::SetTrue)
-                .help("Execute tasks and cancel them if a new event is received."),
+                .help("Convenience alias for --on-busy restart."),
         )
         .arg(
             Arg::new("fail_fast")
@@ -172,7 +203,7 @@ fn command() -> Command {
                 .global(true)
                 .value_name("path")
                 .value_parser(clap::builder::ValueParser::string())
-                .help("Expose watcher status over a Unix socket (implies --non-block)."),
+                .help("Expose watcher status over a Unix socket (implies --on-busy restart)."),
         )
         .arg(
             Arg::new("no_run_on_init")
@@ -238,7 +269,7 @@ Commands:
 {all-args}
 
 Environment configs:
-  FUNZZY_NON_BLOCK        Same as `--non-block`
+  FUNZZY_NON_BLOCK        Same as `--on-busy restart`
   FUNZZY_BAIL             Same as `--fail-fast`
   FUNZZY_COLORED          Output with colors.
   FUNZZY_STDIN_TIMEOUT_MS Timeout in milliseconds waiting for stdin data (default: 2000)
@@ -394,10 +425,33 @@ mod tests {
     }
 
     #[test]
-    fn combined_short_flags_are_accepted() {
-        let args = parse(&["-nb"]).expect("parse");
-        assert!(args.non_block);
-        assert!(args.fail_fast);
+    fn on_busy_defaults_to_wait() {
+        let args = parse(&[]).expect("parse");
+        assert_eq!(args.on_busy, OnBusy::Wait);
+    }
+
+    #[test]
+    fn on_busy_restart_flag_selects_restart() {
+        let args = parse(&["--on-busy", "restart"]).expect("parse");
+        assert_eq!(args.on_busy, OnBusy::Restart);
+    }
+
+    #[test]
+    fn restart_alias_selects_restart() {
+        let args = parse(&["--restart"]).expect("parse");
+        assert_eq!(args.on_busy, OnBusy::Restart);
+    }
+
+    #[test]
+    fn on_busy_invalid_value_fails() {
+        assert!(parse(&["--on-busy", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn non_block_flag_is_removed() {
+        // V2 removed --non-block in favor of --on-busy restart.
+        assert!(parse(&["--non-block"]).is_err());
+        assert!(parse(&["-n"]).is_err());
     }
 
     #[test]
