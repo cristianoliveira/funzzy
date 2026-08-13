@@ -201,7 +201,7 @@ fn init_smoke_creates_config_in_cwd() {
 }
 
 // ---------------------------------------------------------------------------
-// watch/list/target paths
+// watch/list/explain/target paths
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -272,6 +272,120 @@ fn watch_unknown_target_fails_listing_available_tasks() {
             "No target found for 'no-such-target'",
         ))
         .stdout(predicate::str::contains("Available tasks"));
+}
+
+// ---------------------------------------------------------------------------
+// explain paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn explain_matched_path_names_tasks_and_change_rules() {
+    // A path matching the change patterns selects the tasks and reports the
+    // exact change rule per task.
+    fzz()
+        .args(["-c", FILTER_EXAMPLE, "explain", "examples/workdir/foo.txt"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(
+            "Explain path examples/workdir/foo.txt",
+        ))
+        .stdout(predicate::str::contains("matched:"))
+        .stdout(predicate::str::contains("run my test @quick"))
+        .stdout(predicate::str::contains("change: examples/workdir/*.txt"))
+        .stdout(predicate::str::contains("ignored:").not())
+        .stdout(predicate::str::contains("unmatched").not());
+}
+
+#[test]
+fn explain_ignored_path_names_winning_ignore_rule() {
+    // Change matches but the ignore rule wins; both are reported.
+    fzz()
+        .args([
+            "-c",
+            FILTER_EXAMPLE,
+            "explain",
+            "examples/workdir/ignored/x.txt",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("ignored:"))
+        .stdout(predicate::str::contains("run my test @quick"))
+        .stdout(predicate::str::contains("change: examples/workdir/*.txt"))
+        .stdout(predicate::str::contains(
+            "ignored by: examples/workdir/ignored/**/*.txt",
+        ))
+        .stdout(predicate::str::contains("matched:").not());
+}
+
+#[test]
+fn explain_unmatched_path_is_informative() {
+    // No rule watches the path: explicit unmatched message, exit 0.
+    fzz()
+        .args([
+            "-c",
+            FILTER_EXAMPLE,
+            "explain",
+            "examples/workdir/nope.yaml",
+        ])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains(
+            "unmatched: no configured task watches this path",
+        ));
+}
+
+#[test]
+fn explain_accepts_absolute_paths() {
+    let absolute = std::path::Path::new("examples/workdir/trigger-watcher.txt")
+        .canonicalize()
+        .expect("canonicalize fixture path");
+    fzz()
+        .arg("-c")
+        .arg(FILTER_EXAMPLE)
+        .arg("explain")
+        .arg(absolute.to_str().expect("utf8 path"))
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("run my test @quick"));
+}
+
+#[test]
+fn explain_without_path_fails_with_usage_error() {
+    fzz()
+        .args(["-c", FILTER_EXAMPLE, "explain"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("PATH"));
+}
+
+#[test]
+fn explain_rejects_semantically_invalid_config() {
+    with_tmp_dir("explain-invalid", |dir| {
+        let config = dir.join("invalid.yml");
+        std::fs::write(&config, "- name: broken\n  run: echo broken\n")
+            .expect("failed to write invalid config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .args(["explain", "any/path.rs"])
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid config file"));
+    });
+}
+
+#[test]
+fn explain_does_not_start_a_watcher() {
+    // `explain` is side-effect free: it must exit immediately with results,
+    // not enter the watch loop.
+    fzz()
+        .args(["-c", FILTER_EXAMPLE, "explain", "examples/workdir/foo.txt"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("matched:"))
+        .stdout(predicate::str::contains("Watching...").not())
+        .stdout(predicate::str::contains("Running on init").not());
 }
 
 // ---------------------------------------------------------------------------

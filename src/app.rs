@@ -100,6 +100,15 @@ pub fn run() {
             }
             stdout::info(&rules::available_targets(&rules));
         }
+        Action::Explain { ref path } => {
+            let rules = load_rules(&args.config);
+            if let Err(err) = rules::validate_rules(&rules) {
+                stdout::failure("Invalid config file.", err);
+            }
+            let watches = Watches::with_root(rules, workspace_root);
+            let result = watches.explain(path);
+            stdout::info(&explain_output(path, &result));
+        }
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
         // is preserved end to end: it is never joined and re-parsed through a
@@ -146,6 +155,44 @@ pub fn run() {
             };
         }
     }
+}
+
+/// Renders a deterministic human summary of which tasks a path matches.
+/// Reuses the structured `ExplainResult`; no matching logic lives here.
+fn explain_output(path: &str, result: &crate::watches::ExplainResult) -> String {
+    let mut output = String::from("Explain path ");
+    output.push_str(path);
+    output.push('\n');
+
+    if result.matched.is_empty() && result.ignored.is_empty() {
+        output.push_str("  unmatched: no configured task watches this path\n");
+        return output;
+    }
+
+    if !result.matched.is_empty() {
+        output.push_str("  matched:\n");
+        for rule in &result.matched {
+            output.push_str(&format!("    - {}\n", rule.name));
+            for change in &rule.change_patterns {
+                output.push_str(&format!("        change: {}\n", change));
+            }
+        }
+    }
+
+    if !result.ignored.is_empty() {
+        output.push_str("  ignored:\n");
+        for rule in &result.ignored {
+            output.push_str(&format!("    - {}\n", rule.name));
+            for change in &rule.change_patterns {
+                output.push_str(&format!("        change: {}\n", change));
+            }
+            for ignore in &rule.ignore_patterns {
+                output.push_str(&format!("        ignored by: {}\n", ignore));
+            }
+        }
+    }
+
+    output
 }
 
 fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {

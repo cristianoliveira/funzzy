@@ -26,6 +26,8 @@ pub enum Action {
     Watch { target: Option<String> },
     /// `fzz list`: print configured tasks.
     List,
+    /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
+    Explain { path: String },
     /// `fzz init [--migrate]`: create or migrate the default config file.
     Init,
     /// `fzz exec -- PROGRAM ARG...`: ad-hoc command over stdin-supplied paths.
@@ -77,6 +79,13 @@ impl Arguments {
                 (Action::Watch { target }, false)
             }
             Some(("list", _)) => (Action::List, false),
+            Some(("explain", sub)) => {
+                let path = sub
+                    .get_one::<String>("path")
+                    .cloned()
+                    .expect("path is required by clap");
+                (Action::Explain { path }, false)
+            }
             Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
             Some(("exec", sub)) => {
                 let command: Vec<String> = sub
@@ -240,6 +249,19 @@ fn command() -> Command {
                 .version(env!("CARGO_PKG_VERSION")),
         )
         .subcommand(
+            Command::new("explain")
+                .about("Explain which configured tasks a path matches or is ignored by.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("path")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .required(true)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Path to explain (relative or absolute)."),
+                ),
+        )
+        .subcommand(
             Command::new("exec")
                 .about("Run an ad-hoc command over stdin-supplied paths.")
                 .version(env!("CARGO_PKG_VERSION"))
@@ -268,6 +290,7 @@ Commands:
   init                Create or migrate a '.watch.yaml' file.
   watch [TARGET]      Watch for file changes and run configured tasks.
   list                List configured tasks.
+  explain PATH        Show which tasks a path matches or is ignored by.
   exec                Run an ad-hoc command over stdin-supplied paths.
 
 {all-args}

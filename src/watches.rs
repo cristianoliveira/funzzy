@@ -2,6 +2,25 @@ use std::path::{Path, PathBuf};
 
 use crate::rules::Rules;
 
+/// Why a configured rule was selected or skipped for an explained path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainRule {
+    pub name: String,
+    /// Change patterns that matched the path.
+    pub change_patterns: Vec<String>,
+    /// Ignore patterns that matched and win over the change match.
+    pub ignore_patterns: Vec<String>,
+}
+
+/// Result of explaining a path against the configured rules.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExplainResult {
+    /// Rules that would run for the path (change matched, no ignore).
+    pub matched: Vec<ExplainRule>,
+    /// Rules whose change pattern matched but an ignore pattern won.
+    pub ignored: Vec<ExplainRule>,
+}
+
 /// # Watches
 ///
 /// Represents all rules in the yaml config loaded.
@@ -121,6 +140,52 @@ impl Watches {
         } else {
             None
         }
+    }
+
+    /// Explains which configured rules match, ignore, or miss `path`.
+    ///
+    /// Reuses the exact matching policy of [`Watches::watch`] (same path
+    /// normalization and rule matchers); this method only reports *which*
+    /// change and ignore patterns matched per rule. It never starts a watcher
+    /// or executes a task.
+    pub fn explain(&self, path: &str) -> ExplainResult {
+        let (absolute_path, relative_path) = self.normalize_paths(path);
+        let absolute_path_str = absolute_path.to_str().unwrap_or_default();
+
+        let mut matched = vec![];
+        let mut ignored = vec![];
+
+        for rule in &self.rules {
+            // Mirror Watches::watch exactly: absolute patterns match the
+            // absolute path; relative patterns match the root-relative path.
+            let mut change_patterns = rule.watch_absolute_patterns(absolute_path_str);
+            if let Some(rel) = relative_path.as_ref() {
+                change_patterns.extend(rule.watch_relative_patterns(rel));
+            }
+            if change_patterns.is_empty() {
+                continue;
+            }
+
+            let mut ignore_patterns = rule.ignore_absolute_patterns(absolute_path_str);
+            if let Some(rel) = relative_path.as_ref() {
+                ignore_patterns.extend(rule.ignore_relative_patterns(rel));
+            }
+            if ignore_patterns.is_empty() {
+                matched.push(ExplainRule {
+                    name: rule.name.clone(),
+                    change_patterns,
+                    ignore_patterns: vec![],
+                });
+            } else {
+                ignored.push(ExplainRule {
+                    name: rule.name.clone(),
+                    change_patterns,
+                    ignore_patterns,
+                });
+            }
+        }
+
+        ExplainResult { matched, ignored }
     }
 
     /// Extract the directory to watch from a glob pattern.
@@ -265,6 +330,108 @@ mod tests {
 
         assert!(watches.watch(inside.to_str().unwrap()).is_some());
         assert!(watches.watch(outside.to_str().unwrap()).is_none());
+    }
+
+    #[test]
+    fn it_explains_matched_ignored_and_unmatched_paths() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: 'tests/**'
+          ignore: 'tests/ignored/**'
+
+        - name: docs
+          run: 'echo docs'
+          change: 'docs/**'
+        ";
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
+
+        let matched = watches.explain(&get_absolute_path("tests/foo.rs"));
+        assert_eq!(matched.matched.len(), 1, "one rule matches tests/**");
+        assert_eq!(matched.matched[0].name, "my tests");
+        assert_eq!(matched.matched[0].change_patterns, vec!["tests/**"]);
+        assert!(matched.matched[0].ignore_patterns.is_empty());
+        assert!(matched.ignored.is_empty());
+
+        let ignored = watches.explain(&get_absolute_path("tests/ignored/foo.rs"));
+        assert!(ignored.matched.is_empty());
+        assert_eq!(ignored.ignored.len(), 1, "ignore wins over change match");
+        assert_eq!(ignored.ignored[0].name, "my tests");
+        assert_eq!(ignored.ignored[0].ignore_patterns, vec!["tests/ignored/**"]);
+        assert_eq!(ignored.ignored[0].change_patterns, vec!["tests/**"]);
+
+        let unmatched = watches.explain(&get_absolute_path("unknown/path.rs"));
+        assert!(unmatched.matched.is_empty());
+        assert!(unmatched.ignored.is_empty());
+    }
+
+    #[test]
+    fn it_explains_relative_paths_the_same_as_absolute() {
+        let file_content = "
+        - name: my tests
+          run: 'cargo tests'
+          change: 'tests/**'
+        ";
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
+
+        let absolute = watches.explain(&get_absolute_path("tests/foo.rs"));
+        let relative = watches.explain("tests/foo.rs");
+
+        assert_eq!(absolute.matched.len(), 1);
+        assert_eq!(
+            relative.matched[0].change_patterns,
+            absolute.matched[0].change_patterns
+        );
+    }
+
+    #[test]
+    fn it_explains_absolute_pattern_paths() {
+        let file_content = "
+        - name: tmp watcher
+          run: 'echo tmp'
+          change: '/tmp/funzzy-explain-*/*.txt'
+        ";
+        let watches = Watches::new(config::from_yaml(&file_content).expect("Error parsing yaml"));
+
+        let matched = watches.explain("/tmp/funzzy-explain-1/foo.txt");
+        assert_eq!(matched.matched.len(), 1);
+        assert_eq!(matched.matched[0].name, "tmp watcher");
+        assert_eq!(
+            matched.matched[0].change_patterns,
+            vec!["/tmp/funzzy-explain-*/*.txt"]
+        );
+    }
+
+    #[test]
+    fn it_explains_merged_group_rules_from_nested_groups() {
+        let content = std::fs::read_to_string("examples/nested-groups.yml").expect("read example");
+        let watches = Watches::new(config::from_yaml(&content).expect("Error parsing yaml"));
+
+        // frontend-build inherits the group change patterns.
+        let matched = watches.explain("src/frontend/App.tsx");
+        let names: Vec<&str> = matched
+            .matched
+            .iter()
+            .map(|rule| rule.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"frontend-build"),
+            "group-merged rule must match: {:?}",
+            names
+        );
+
+        // Group ignore wins over the inherited change match.
+        let ignored = watches.explain("src/frontend/server.log");
+        let ignored_names: Vec<&str> = ignored
+            .ignored
+            .iter()
+            .map(|rule| rule.name.as_str())
+            .collect();
+        assert!(
+            ignored_names.contains(&"frontend-build"),
+            "group ignore must win: {:?}",
+            ignored_names
+        );
     }
 
     #[test]

@@ -195,6 +195,20 @@ fzz watch "@quick"
 
 ---
 
+### `explain PATH`
+
+**Description**: Show which configured tasks a path would match or be ignored by, without starting a watcher or executing anything.
+
+**Usage**:
+```bash
+fzz explain src/main.rs
+fzz explain /absolute/path/to/file.rs
+```
+
+**Suggestion**: Use this to diagnose why a file change runs (or skips) a task. Matched tasks list the change rule; ignored tasks list both the change rule and the winning ignore rule. An unmatched path prints an explicit `unmatched` message.
+
+---
+
 ### `exec`
 
 **Description**: Watch stdin-supplied paths and run an ad-hoc program on each change. The child program and its arguments cross the CLI boundary without being joined and re-parsed through a shell.

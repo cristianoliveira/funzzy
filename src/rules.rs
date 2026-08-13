@@ -67,22 +67,46 @@ impl Rules {
     }
 
     pub fn watch_relative(&self, path: &str) -> bool {
+        !self.watch_relative_patterns(path).is_empty()
+    }
+
+    /// Change patterns that match `path` through the relative matcher.
+    pub fn watch_relative_patterns(&self, path: &str) -> Vec<String> {
         let normalized_path = if path.starts_with('/') {
             path.to_owned()
         } else {
             format!("/{}", path)
         };
 
-        self.watch_relative_paths().iter().any(|watch| {
-            let normalized = watch.trim_start_matches("./");
-            anchored_pattern(&format!("/{}", normalized)).matches(&normalized_path)
-        })
+        self.watch_relative_paths()
+            .iter()
+            .filter(|watch| {
+                let normalized = watch.trim_start_matches("./");
+                anchored_pattern(&format!("/{}", normalized)).matches(&normalized_path)
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn watch_absolute(&self, path: &str) -> bool {
+        !self.watch_absolute_patterns(path).is_empty()
+    }
+
+    /// Change patterns that match `path` through the absolute matcher.
+    pub fn watch_absolute_patterns(&self, path: &str) -> Vec<String> {
         self.watch_absolute_paths()
             .iter()
-            .any(|watch| anchored_pattern(watch).matches(path))
+            .filter(|watch| anchored_pattern(watch).matches(path))
+            .cloned()
+            .collect()
+    }
+
+    /// Change patterns that match `path` through either matcher, in
+    /// declaration order (relative then absolute).
+    pub fn watch_patterns_matching(&self, path: &str) -> Vec<String> {
+        let mut patterns = self.watch_relative_patterns(path);
+        patterns.extend(self.watch_absolute_patterns(path));
+        patterns
     }
 
     pub fn ignore(&self, path: &str) -> bool {
@@ -90,6 +114,11 @@ impl Rules {
     }
 
     pub fn ignore_relative(&self, path: &str) -> bool {
+        !self.ignore_relative_patterns(path).is_empty()
+    }
+
+    /// Ignore patterns that match `path` through the relative matcher.
+    pub fn ignore_relative_patterns(&self, path: &str) -> Vec<String> {
         let normalized_path = if path.starts_with('/') {
             path.to_owned()
         } else {
@@ -99,17 +128,34 @@ impl Rules {
         self.ignore_patterns
             .iter()
             .filter(|pattern| !pattern.starts_with("/"))
-            .any(|ignore| {
+            .filter(|ignore| {
                 let normalized = ignore.trim_start_matches("./");
                 anchored_pattern(&format!("/{}", normalized)).matches(&normalized_path)
             })
+            .cloned()
+            .collect()
     }
 
     pub fn ignore_absolute(&self, path: &str) -> bool {
+        !self.ignore_absolute_patterns(path).is_empty()
+    }
+
+    /// Ignore patterns that match `path` through the absolute matcher.
+    pub fn ignore_absolute_patterns(&self, path: &str) -> Vec<String> {
         self.ignore_patterns
             .iter()
             .filter(|pattern| pattern.starts_with("/"))
-            .any(|ignore| anchored_pattern(ignore).matches(path))
+            .filter(|ignore| anchored_pattern(ignore).matches(path))
+            .cloned()
+            .collect()
+    }
+
+    /// Ignore patterns that match `path` through either matcher, in
+    /// declaration order (relative then absolute).
+    pub fn ignore_patterns_matching(&self, path: &str) -> Vec<String> {
+        let mut patterns = self.ignore_relative_patterns(path);
+        patterns.extend(self.ignore_absolute_patterns(path));
+        patterns
     }
 
     pub fn commands(&self) -> Vec<String> {
