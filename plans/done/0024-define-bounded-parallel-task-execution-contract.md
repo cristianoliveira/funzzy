@@ -1,7 +1,7 @@
 ---
 id: TASK-0024
 title: Define bounded parallel task execution contract
-status: todo
+status: done
 depends_on: [TASK-0014]
 priority: high
 tags: [rust, concurrency, execution, design, performance]
@@ -41,20 +41,20 @@ This is later workstream and does not block TASK-0020 CLI redesign release.
 
 ## Acceptance criteria
 
-- [ ] Contract defines task as concurrency unit, named `parallel` group as opt-in, and preserves command order within task.
-- [ ] Existing tasks without `parallel` remain sequential by default; no task becomes concurrent merely because independence is guessed.
-- [ ] Only consecutive tasks with same non-empty group name run together; separated reuse of name creates distinct group occurrence.
-- [ ] Serial task, changed group name, or end of list closes group; next task/stage starts after all selected members terminate.
-- [ ] Filtering occurs without losing original topology: unmatched tasks are skipped but cannot merge originally separate group occurrences.
-- [ ] Concurrency configuration, safe default, `jobs=1`, explicit numeric limit, and optional `auto` behavior are decided.
-- [ ] Overall run success/failure/cancelled semantics are defined from per-task outcomes.
-- [ ] Fail-fast defines what happens to queued tasks and already-running sibling tasks.
-- [ ] Wait/restart busy policies define cancellation and replacement across all active tasks.
-- [ ] Live output attribution includes group/task identity; completion and display order inside group is explicitly not contractual.
-- [ ] Result combination is order-independent and keyed by task identity.
-- [ ] No task dependency DAG is introduced initially; assigning tasks to same named contiguous group declares independence.
-- [ ] Performance success criterion compares batch latency against sequential sum without relying solely on flaky wall-clock assertions.
-- [ ] Test matrix covers limits, ordering, all outcome combinations, cancellation, spawn errors, output, and shutdown.
+- [x] Contract defines task as concurrency unit, named `parallel` group as opt-in, and preserves command order within task.
+- [x] Existing tasks without `parallel` remain sequential by default; no task becomes concurrent merely because independence is guessed.
+- [x] Only consecutive tasks with same non-empty group name run together; separated reuse of name creates distinct group occurrence.
+- [x] Serial task, changed group name, or end of list closes group; next task/stage starts after all selected members terminate.
+- [x] Filtering occurs without losing original topology: unmatched tasks are skipped but cannot merge originally separate group occurrences.
+- [x] Concurrency configuration, safe default, `jobs=1`, explicit numeric limit, and optional `auto` behavior are decided.
+- [x] Overall run success/failure/cancelled semantics are defined from per-task outcomes.
+- [x] Fail-fast defines what happens to queued tasks and already-running sibling tasks.
+- [x] Wait/restart busy policies define cancellation and replacement across all active tasks.
+- [x] Live output attribution includes group/task identity; completion and display order inside group is explicitly not contractual.
+- [x] Result combination is order-independent and keyed by task identity.
+- [x] No task dependency DAG is introduced initially; assigning tasks to same named contiguous group declares independence.
+- [x] Performance success criterion compares batch latency against sequential sum without relying solely on flaky wall-clock assertions.
+- [x] Test matrix covers limits, ordering, all outcome combinations, cancellation, spawn errors, output, and shutdown.
 
 ## Proposed contract decisions
 
