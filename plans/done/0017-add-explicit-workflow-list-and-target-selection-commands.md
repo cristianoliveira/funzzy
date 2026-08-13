@@ -1,7 +1,7 @@
 ---
 id: TASK-0017
 title: Add explicit workflow list and target selection commands
-status: doing
+status: done
 depends_on: [TASK-0015]
 priority: high
 tags: [rust, cli, workflow, targets, tdd]
@@ -18,12 +18,12 @@ Replace value-less `--target` discovery with `fzz list`. Keep configured watch a
 
 ## Acceptance criteria
 
-- [ ] Tests first cover empty config, valid targets, no matches, malformed config, custom config, and target/tag selection.
-- [ ] `fzz list` prints stable task identity and enough trigger information to choose a target.
-- [ ] `fzz watch TARGET` selects only intended tasks; no match is an actionable error.
-- [ ] Plain `fzz` still watches all configured tasks.
-- [ ] Value-less `--target` and empty-string sentinels are removed rather than retained as deprecated paths.
-- [ ] Human output remains concise and deterministic.
+- [x] Tests first cover empty config, valid targets, no matches, malformed config, custom config, and target/tag selection.
+- [x] `fzz list` prints stable task identity and enough trigger information to choose a target.
+- [x] `fzz watch TARGET` selects only intended tasks; no match is an actionable error.
+- [x] Plain `fzz` still watches all configured tasks.
+- [x] Value-less `--target` and empty-string sentinels are removed rather than retained as deprecated paths.
+- [x] Human output remains concise and deterministic.
 
 ## Notes
 
