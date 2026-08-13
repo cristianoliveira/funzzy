@@ -1,7 +1,7 @@
 ---
 id: TASK-0005
 title: Split workflow configuration responsibilities from rules.rs
-status: todo
+status: done
 depends_on: []
 priority: normal
 tags: [rust, workflow, cohesion]
