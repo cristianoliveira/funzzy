@@ -38,6 +38,7 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
 #[test]
 fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
     setup::nonparallel(|| {
+        let original_dir = std::env::current_dir().expect("failed to get current dir");
         std::env::set_current_dir("examples/workdir/init").expect("failed to change dir");
         //delete files in the folder
         std::fs::remove_file(".watch.yaml").unwrap_or_default();
@@ -47,9 +48,15 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
         readonly.set_readonly(true);
         std::fs::set_permissions(".", readonly).expect("failed to set read only");
         defer!({
+            // Restore the folder permissions first (while still inside it),
+            // then the process cwd: sibling tests in this binary rely on
+            // running from the repo root. Leaking `examples/workdir/init`
+            // made `it_fails_when_config_file_alredy_exists` race against
+            // the wrong directory's `.watch.yaml` state.
             let mut perms = folder.permissions();
             perms.set_readonly(false);
             std::fs::set_permissions(".", perms).expect("failed to set read only");
+            std::env::set_current_dir(&original_dir).expect("failed to restore dir");
         });
 
         let mut cmd = cargo::cargo_bin_cmd!("funzzy");
