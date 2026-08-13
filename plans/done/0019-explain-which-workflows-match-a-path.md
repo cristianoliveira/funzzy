@@ -1,7 +1,7 @@
 ---
 id: TASK-0019
 title: Explain which workflows match a path
-status: todo
+status: done
 depends_on: [TASK-0017]
 priority: normal
 tags: [rust, cli, workflow, diagnostics, tdd]
@@ -18,12 +18,12 @@ Users cannot easily diagnose why a file change runs or skips a configured task, 
 
 ## Acceptance criteria
 
-- [ ] Tests first cover matched, ignored, unmatched, absolute, relative, and invalid paths.
-- [ ] Output identifies each selected task and matching change rule.
-- [ ] Output identifies ignore rules that win over change matches.
-- [ ] Grouped/common rule merging is reflected accurately.
-- [ ] Results are deterministic and command performs no watch or task execution.
-- [ ] No-match output is informative rather than silent.
+- [x] Tests first cover matched, ignored, unmatched, absolute, relative, and invalid paths.
+- [x] Output identifies each selected task and matching change rule.
+- [x] Output identifies ignore rules that win over change matches.
+- [x] Grouped/common rule merging is reflected accurately.
+- [x] Results are deterministic and command performs no watch or task execution.
+- [x] No-match output is informative rather than silent.
 
 ## Notes
 
