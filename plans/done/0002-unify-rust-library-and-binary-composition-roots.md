@@ -1,7 +1,7 @@
 ---
 id: TASK-0002
 title: Unify Rust library and binary composition roots
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [rust, architecture, cli]
@@ -21,15 +21,15 @@ tags: [rust, architecture, cli]
 
 ## Acceptance criteria
 
-- [ ] `lib.rs` is canonical module root.
-- [ ] `main.rs` is a thin process adapter that calls library application behavior.
-- [ ] `funzzy` and `fzz` preserve flags, environment variables, output, and exit behavior.
-- [ ] New module wiring has one obvious place.
-- [ ] Integration tests execute same application modules used by binaries.
-- [ ] No deprecated compatibility path is introduced.
+- [x] `lib.rs` is canonical module root.
+- [x] `main.rs` is a thin process adapter that calls library application behavior.
+- [x] `funzzy` and `fzz` preserve flags, environment variables, output, and exit behavior.
+- [x] New module wiring has one obvious place.
+- [x] Integration tests execute same application modules used by binaries.
+- [x] No deprecated compatibility path is introduced.
 
 ## Verification
 
-- CLI happy and error paths pass for both binary names.
-- Default and feature-gated integration suites pass.
+- [x] CLI happy and error paths pass for both binary names.
+- [x] Default and feature-gated integration suites pass.
 

@@ -1,5 +1,6 @@
 // #![feature(plugin)]
 // #![plugin(clippy)]
+pub mod app;
 pub mod cli;
 pub mod cmd;
 pub mod control;
