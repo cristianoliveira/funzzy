@@ -1,7 +1,7 @@
 ---
 id: TASK-0006
 title: Unify blocking and non-blocking watch orchestration
-status: todo
+status: done
 depends_on: [TASK-0001, TASK-0003]
 priority: normal
 tags: [rust, orchestration, cohesion]
