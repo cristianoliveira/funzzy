@@ -1,7 +1,7 @@
 ---
 id: TASK-0013
 title: Prove and document the Clap migration
-status: doing
+status: done
 depends_on: [TASK-0012]
 priority: normal
 tags: [rust, cli, release]
