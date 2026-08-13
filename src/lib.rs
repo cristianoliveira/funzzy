@@ -11,6 +11,7 @@ pub mod logging;
 pub mod rules;
 pub mod stdout;
 pub mod template;
+pub mod watch_loop;
 pub mod watcher;
 pub mod watches;
 pub mod workers;

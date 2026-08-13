@@ -5,6 +5,7 @@
 ```text
 main.rs
   -> config.rs / rules.rs / template.rs / yaml.rs
+  -> watch_loop.rs (blocking | non-block strategies)
   -> watches.rs <- watcher.rs
   -> cli/watch.rs | cli/watch_non_block.rs
   -> cmd.rs | workers.rs
@@ -24,14 +25,15 @@ main.rs
 - Preserve relative versus absolute glob behavior.
 - Test malformed and valid forms, including legacy lists and grouped `on`/`tasks`.
 
-### Watch plan — `watches.rs`, `watcher.rs`
+### Watch orchestration — `watch_loop.rs`, `watches.rs`, `watcher.rs`
 
-`Watches` maps tasks to concrete watch roots and selects tasks for changed paths. `watcher.rs` is only filesystem-event adapter.
+`watch_loop.rs` owns the single application flow: filesystem readiness, init/change event-to-run conversion, and the injected executor strategies (`BlockingStrategy`, `NonBlockStrategy`). CLI watch commands stay thin: build a strategy and call `watch_loop`. `watches.rs` maps tasks to concrete watch roots and selects tasks for changed paths. `watcher.rs` is only filesystem-event adapter.
 
 - Ignore match wins before change match.
 - Normalize both project-relative and absolute paths explicitly.
 - Register every watch before signaling readiness; initialization must not create event-loss gap.
 - Keep `notify` details out of rule policy.
+- Control socket publishes through the `NonBlockStrategy` run contract, never worker internals.
 
 ### Run lifecycle — `workers.rs`, `cmd.rs`
 
