@@ -272,6 +272,10 @@ fn process_request(
         _ => Err((-32601, "Method not found", None)),
     };
 
+    // Wire contract: the pi-watcher extension decodes these results from
+    // `unknown` (pi-watcher/src/domain/watcher.ts) and fails closed on any
+    // shape drift. Change the serializers here and the decoders together.
+
     if !object.contains_key("id") {
         return None;
     }

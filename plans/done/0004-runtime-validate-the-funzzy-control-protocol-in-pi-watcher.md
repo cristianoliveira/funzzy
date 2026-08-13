@@ -1,7 +1,7 @@
 ---
 id: TASK-0004
 title: Runtime-validate the Funzzy control protocol in pi-watcher
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [pi-watcher, protocol, typescript]
@@ -21,15 +21,14 @@ Rust serializes control state while TypeScript manually duplicates its shape and
 
 ## Acceptance criteria
 
-- [ ] JSON-RPC envelope remains validated.
-- [ ] `status`, `targets`, and `run` results decode from `unknown` with explicit runtime checks.
-- [ ] Missing, extra-incompatible, or wrong-type fields produce actionable errors.
-- [ ] Valid Rust-produced payload fixtures decode successfully.
-- [ ] Public socket methods and payload compatibility remain unchanged.
-- [ ] Contract coordination requirement is documented near both boundaries.
+- [x] JSON-RPC envelope remains validated.
+- [x] `status`, `targets`, and `run` results decode from `unknown` with explicit runtime checks.
+- [x] Missing, extra-incompatible, or wrong-type fields produce actionable errors.
+- [x] Valid Rust-produced payload fixtures decode successfully.
+- [x] Public socket methods and payload compatibility remain unchanged.
+- [x] Contract coordination requirement is documented near both boundaries.
 
 ## Verification
 
-- Tests cover valid and malformed payloads for every method.
-- Pi watcher format, lint, typecheck, coverage, and audit gates pass.
-
+- [x] Tests cover valid and malformed payloads for every method.
+- [x] Pi watcher format, lint, typecheck, coverage, and audit gates pass.
