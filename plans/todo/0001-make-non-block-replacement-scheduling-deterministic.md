@@ -1,7 +1,7 @@
 ---
 id: TASK-0001
 title: Make non-block replacement scheduling deterministic
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [rust, worker, reliability]
