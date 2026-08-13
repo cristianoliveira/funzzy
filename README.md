@@ -177,7 +177,7 @@ cargo install funzzy
 
 Make sure you have installed the following dependencies:
 
-- Rust (>= 1.85, the minimum supported version — declared as `rust-version` in `Cargo.toml`)
+- Rust (>= 1.97, the minimum supported version — declared as `rust-version` in `Cargo.toml`)
 - Cargo
 
 Execute:
