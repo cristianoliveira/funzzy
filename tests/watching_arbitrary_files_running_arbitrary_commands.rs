@@ -7,11 +7,12 @@ mod setup;
 #[test]
 fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
     let test_log_file = "test_it_allows_run_arbitrary_commans_with_by_piping_files.log";
-    setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+    setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
         let files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
+            .current_dir(fixture)
             .stdout(Stdio::piped())
             .spawn()
             .expect("failed to run find");
@@ -38,8 +39,8 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
             "Failed to find Running on init commands"
         );
 
-        write_to_file!("examples/workdir/another_ignored_file.foo");
-        write_to_file!("examples/workdir/trigger-watcher.txt");
+        write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
+        write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
         wait_until!(
             {
@@ -52,8 +53,8 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
             "Failed to find Funzzy results"
         );
 
-        write_to_file!("examples/workdir/another_ignored_file.foo");
-        write_to_file!("examples/workdir/trigger-watcher.txt");
+        write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
+        write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
         wait_until!(
             {
@@ -73,11 +74,12 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
 fn test_it_allows_templates_in_arbitrary_commands() {
     setup::with_output(
         "test_it_allows_templates_in_arbitrary_commands.log",
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let files = Command::new("find")
                 .arg(".")
                 .arg("-name")
                 .arg("*.txt")
+                .current_dir(fixture)
                 .stdout(Stdio::piped())
                 .spawn()
                 .expect("failed to run find");
@@ -107,13 +109,13 @@ fn test_it_allows_templates_in_arbitrary_commands() {
                 "Failed to find Funzzy results"
             );
 
-            write_to_file!("examples/workdir/another_ignored_file.foo");
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
-            let dir = std::env::current_dir().expect("failed to get current dir");
             let expected = &format!(
                 "this file changed: {}",
-                dir.join("examples/workdir/trigger-watcher.txt")
+                fixture
+                    .join("examples/workdir/trigger-watcher.txt")
                     .to_str()
                     .expect("failed to convert path to string")
             );
@@ -145,11 +147,12 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 #[test]
 fn it_runs_on_init_by_default_with_stdin() {
     let test_log_file = "it_runs_on_init_by_default_with_stdin.log";
-    setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+    setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
         let files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
+            .current_dir(fixture)
             .stdout(Stdio::piped())
             .spawn()
             .expect("failed to run find");
@@ -182,7 +185,7 @@ fn it_runs_on_init_by_default_with_stdin() {
 #[test]
 fn it_timesout_after_x_secs_and_inform() {
     let test_log_file = "it_timesout_after_x_secs_and_inform.log";
-    setup::with_output(test_log_file, |fzz_cmd, mut output_log| {
+    setup::with_output(test_log_file, |fzz_cmd, mut output_log, _fixture| {
         fzz_cmd.env("FUNZZY_STDIN_TIMEOUT_MS", "10");
         let mut child = fzz_cmd
             .arg("watch")

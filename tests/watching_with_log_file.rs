@@ -11,8 +11,11 @@ fn test_it_writes_output_to_log_file() {
             output_file: "test_it_writes_output_to_log_file.console.log",
             example_file: "examples/simple-case.yml",
         },
-        |fzz_cmd, mut output_log| {
-            let log_path = std::env::temp_dir().join("funzzy_integration_output.log");
+        |fzz_cmd, mut output_log, fixture| {
+            let log_path = std::env::temp_dir().join(format!(
+                "funzzy_integration_output-{}.log",
+                std::process::id()
+            ));
             let _ = std::fs::remove_file(&log_path);
 
             let mut child = fzz_cmd
@@ -42,7 +45,7 @@ fn test_it_writes_output_to_log_file() {
 
             console_output.truncate(0);
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {
@@ -112,13 +115,14 @@ fn test_it_truncates_log_on_config_change() {
             output_file: "test_it_truncates_log_on_config_change.console.log",
             example_file: "examples/simple-case.yml",
         },
-        |fzz_cmd, mut output_log| {
-            let log_path = std::env::temp_dir().join("funzzy_truncate_on_change.log");
+        |fzz_cmd, mut output_log, fixture| {
+            let log_path = std::env::temp_dir().join(format!(
+                "funzzy_truncate_on_change-{}.log",
+                std::process::id()
+            ));
             let _ = std::fs::remove_file(&log_path);
 
-            let config_path = std::env::current_dir()
-                .expect("failed to get current directory")
-                .join("examples/simple-case.yml");
+            let config_path = fixture.join("examples/simple-case.yml");
             let original_config =
                 std::fs::read_to_string(&config_path).expect("failed to read config for backup");
 
@@ -152,7 +156,7 @@ fn test_it_truncates_log_on_config_change() {
 
             console_output.truncate(0);
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {

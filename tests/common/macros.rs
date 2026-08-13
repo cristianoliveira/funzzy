@@ -108,14 +108,20 @@ macro_rules! wait_until {
 /// it will write the string `test_content\n` to the given file for testing purposes.
 #[macro_export]
 macro_rules! write_to_file {
-    ($file_path:expr) => {
-        println!("Integration Tests: writting to file {}", $file_path);
-        let mut file = match std::fs::File::create($file_path) {
+    ($file_path:expr) => {{
+        let file_path = $file_path;
+        let file_path = std::path::Path::new(&file_path);
+        println!(
+            "Integration Tests: writting to file {}",
+            file_path.display()
+        );
+        let mut file = match std::fs::File::create(file_path) {
             Ok(file) => file,
             Err(err) => {
                 panic!(
                     "Integration Tests: [ERROR] failed to create file: {}\nCause: {:?}",
-                    $file_path, err
+                    file_path.display(),
+                    err
                 );
             }
         };
@@ -125,11 +131,12 @@ macro_rules! write_to_file {
             Err(err) => {
                 panic!(
                     "Integration Tests: [ERROR] failed to write to file: {}\nCause: {:?}",
-                    $file_path, err
+                    file_path.display(),
+                    err
                 );
             }
         };
-    };
+    }};
 }
 
 /// Function to run commands in the shell

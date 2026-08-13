@@ -13,7 +13,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
             output_file: "test_it_cancel_current_running_task_when_something_change.log",
             example_file: "examples/tasks-with-long-running-commands.yaml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
                 .arg("--non-block")
                 .spawn()
@@ -37,9 +37,9 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
             // This should not trigger another restart
-            write_to_file!("examples/workdir/another_ignored_file.foo");
+            write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
 
             wait_until!(
                 {
@@ -55,7 +55,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {
@@ -111,7 +111,7 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
                         "test_it_cancel_current_running_task_when_something_change_with_env.log",
                     example_file: "examples/tasks-with-long-running-commands.yaml",
                 },
-                |fzz_cmd, mut output_log| {
+                |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd.spawn().expect("failed to spawn child");
 
                     defer!({
@@ -132,9 +132,9 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
                         output
                     );
 
-                    write_to_file!("examples/workdir/trigger-watcher.txt");
+                    write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
                     // This should not trigger another restart
-                    write_to_file!("examples/workdir/another_ignored_file.foo");
+                    write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
 
                     wait_until!(
                         {
@@ -150,7 +150,7 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
                         output
                     );
 
-                    write_to_file!("examples/workdir/trigger-watcher.txt");
+                    write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
                     wait_until!(
                         {

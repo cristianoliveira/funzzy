@@ -12,7 +12,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
             output_file: "test_it_replaces_filepath_template_with_changed_file.log",
             example_file: "examples/tasks-with-filepath-template.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
                 .arg("-t")
                 .arg("@absolute")
@@ -38,7 +38,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {
@@ -54,7 +54,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
                 output
             );
 
-            let dir = std::env::current_dir().expect("failed to get current dir");
+            let dir = fixture;
             let expected = "Funzzy: Running on init commands.
 
 Funzzy: echo 'this file has changed: ' 
@@ -100,7 +100,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
             output_file: "it_replaces_relative_path_relative_to_the_cunrrent_dir.log",
             example_file: "examples/tasks-with-filepath-template.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
                 .arg("-t")
                 .arg("@relative")
@@ -126,7 +126,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {
@@ -141,7 +141,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
                 output
             );
 
-            let dir = std::env::current_dir().expect("failed to get current dir");
+            let dir = fixture;
             let expected = "Funzzy: Running on init commands.
 Funzzy warning: Unknown template variable 'foobar'.
 

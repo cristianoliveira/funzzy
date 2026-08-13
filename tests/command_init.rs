@@ -8,10 +8,9 @@ mod setup;
 fn test_it_creates_the_config_file_with_cmd_init() {
     setup::with_output(
         "test_it_creates_the_config_file_with_cmd_init.log",
-        |fzz_cmd, mut output_file| {
-            std::env::set_current_dir("examples/workdir/ignored").expect("failed to change dir");
-
-            let dir = std::env::current_dir().expect("failed to get current dir");
+        |fzz_cmd, mut output_file, fixture| {
+            let dir = fixture.join("examples/workdir/ignored");
+            fzz_cmd.current_dir(&dir);
             let file = dir.join(".watch.yaml");
             let _ = std::fs::remove_file(&file);
 

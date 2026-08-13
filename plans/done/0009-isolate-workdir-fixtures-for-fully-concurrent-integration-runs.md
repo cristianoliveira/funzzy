@@ -1,7 +1,7 @@
 ---
 id: TASK-0009
 title: Isolate workdir fixtures for fully concurrent integration runs
-status: todo
+status: done
 depends_on: [TASK-0008]
 priority: low
 tags: [tests, concurrency, reliability]
@@ -30,11 +30,11 @@ collisions; this task covers the workdir trigger vector.
 
 ## Acceptance criteria
 
-- [ ] Two full integration suites run concurrently pass deterministically.
-- [ ] Per-run workdir fixtures never share files with another run.
-- [ ] Relative-path glob behavior (`examples/workdir/**/*`) remains covered.
-- [ ] Sequential runs behave exactly as today.
-- [ ] No shared mutable fixture remains in `examples/workdir` for tests.
+- [x] Two full integration suites run concurrently pass deterministically.
+- [x] Per-run workdir fixtures never share files with another run.
+- [x] Relative-path glob behavior (`examples/workdir/**/*`) remains covered.
+- [x] Sequential runs behave exactly as today.
+- [x] No shared mutable fixture remains in `examples/workdir` for tests.
 
 ## Verification
 

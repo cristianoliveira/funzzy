@@ -12,11 +12,11 @@ fn test_nested_groups_watch_different_patterns() {
             output_file: "test_nested_groups_watch_different_patterns.log",
             example_file: "examples/test-nested-groups.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             // Create directories for test
-            std::fs::create_dir_all("examples/workdir/frontend").ok();
-            std::fs::create_dir_all("examples/workdir/backend").ok();
-            std::fs::create_dir_all("examples/workdir/regular").ok();
+            std::fs::create_dir_all(fixture.join("examples/workdir/frontend")).ok();
+            std::fs::create_dir_all(fixture.join("examples/workdir/backend")).ok();
+            std::fs::create_dir_all(fixture.join("examples/workdir/regular")).ok();
 
             let mut child = fzz_cmd.spawn().expect("failed to spawn process");
             let mut output = String::new();
@@ -39,7 +39,7 @@ fn test_nested_groups_watch_different_patterns() {
             output.truncate(0);
 
             // Test 1: Trigger frontend group
-            write_to_file!("examples/workdir/frontend/test.js");
+            write_to_file!(fixture.join("examples/workdir/frontend/test.js"));
 
             wait_until!(
                 {
@@ -71,7 +71,7 @@ fn test_nested_groups_watch_different_patterns() {
             output.truncate(0);
 
             // Test 2: Trigger backend group
-            write_to_file!("examples/workdir/backend/test.rs");
+            write_to_file!(fixture.join("examples/workdir/backend/test.rs"));
 
             wait_until!(
                 {
@@ -98,7 +98,7 @@ fn test_nested_groups_watch_different_patterns() {
             output.truncate(0);
 
             // Test 3: Trigger regular task (not in a group)
-            write_to_file!("examples/workdir/regular/test.txt");
+            write_to_file!(fixture.join("examples/workdir/regular/test.txt"));
 
             wait_until!(
                 {
@@ -138,9 +138,9 @@ fn test_nested_groups_respect_ignore_patterns() {
             output_file: "test_nested_groups_respect_ignore_patterns.log",
             example_file: "examples/test-nested-groups.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             // Create directories for test
-            std::fs::create_dir_all("examples/workdir/frontend").ok();
+            std::fs::create_dir_all(fixture.join("examples/workdir/frontend")).ok();
 
             let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn process");
             let mut output = String::new();
@@ -163,7 +163,7 @@ fn test_nested_groups_respect_ignore_patterns() {
             output.truncate(0);
 
             // Trigger a .log file in frontend (should be ignored by frontend group)
-            write_to_file!("examples/workdir/frontend/test.log");
+            write_to_file!(fixture.join("examples/workdir/frontend/test.log"));
 
             wait_until!(
                 {

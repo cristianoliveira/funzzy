@@ -11,7 +11,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             example_file: "examples/list-of-failing-commands.yml",
             output_file: "test_it_watches_a_list_of_tasks_and_do_not_panic.log",
         },
-        |fzz_cmd, mut output_file| {
+        |fzz_cmd, mut output_file, fixture| {
             let mut output = String::new();
             let mut child = fzz_cmd.spawn().expect("failed to spawn sub process");
             defer!({
@@ -26,7 +26,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
                 output.contains("Running on init commands.") && output.contains("Funzzy results")
             });
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {

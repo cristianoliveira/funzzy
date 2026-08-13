@@ -10,7 +10,7 @@ fn it_terminates_the_current_running_watcher_when_config_changes() {
             output_file: "it_terminates_the_current_running_watcher_when_config_changes.log",
             example_file: "examples/reload-config-example.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, _fixture| {
             let mut child = fzz_cmd
                 .arg("--non-block")
                 .spawn()

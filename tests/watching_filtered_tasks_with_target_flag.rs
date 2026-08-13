@@ -13,7 +13,7 @@ fn test_it_filter_tasks_with_target_flag() {
             output_file: "test_it_filter_tasks_with_target_flag.log",
             example_file: "examples/tasks-with-tags-to-filter.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
                 .arg("--target")
                 .arg("@quick")
@@ -38,7 +38,7 @@ fn test_it_filter_tasks_with_target_flag() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {

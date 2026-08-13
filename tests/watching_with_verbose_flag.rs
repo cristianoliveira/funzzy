@@ -10,7 +10,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
             output_file: "test_it_gives_more_context_of_events_when_using_verbose.log",
             example_file: "examples/simple-case.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn child");
 
             defer!({
@@ -33,7 +33,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
 
             output.truncate(0);
 
-            write_to_file!("examples/workdir/ignored/modifyme.txt");
+            write_to_file!(fixture.join("examples/workdir/ignored/modifyme.txt"));
 
             wait_until!(
                 {
@@ -48,7 +48,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
                 output
             );
 
-            write_to_file!("examples/workdir/another_ignored_file.foo");
+            write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
 
             wait_until!(
                 {
@@ -63,7 +63,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {

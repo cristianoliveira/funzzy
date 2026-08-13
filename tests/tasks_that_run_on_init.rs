@@ -16,7 +16,7 @@ fn test_it_executes_tasks_on_init_when_configured() {
                     output_file: "test_it_executes_tasks_on_init_when_configured.log",
                     example_file: "examples/list-of-tasks-run-on-init.yml",
                 },
-                |fzz_cmd, mut output_log| {
+                |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd
                         .env("_TEST_FUNZZY_COLORED", "1")
                         .spawn()
@@ -65,7 +65,7 @@ fn test_it_executes_tasks_on_init_when_configured() {
 
                     // FIXME: this should not be needed sleep 5s
                     std::thread::sleep(std::time::Duration::from_secs(5));
-                    write_to_file!("examples/workdir/trigger-watcher.txt");
+                    write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
                     wait_until!(
                         {
@@ -98,7 +98,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                         "test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag.log",
                     example_file: "examples/list-of-tasks-run-on-init.yml",
                 },
-                |fzz_cmd, mut output_log| {
+                |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd
                         .arg("--no-run-on-init")
                         .env("_TEST_FUNZZY_COLORED", "1")
@@ -126,7 +126,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
 
                     // FIXME: this should not be needed sleep 5s
                     std::thread::sleep(std::time::Duration::from_secs(5));
-                    write_to_file!("examples/workdir/trigger-watcher.txt");
+                    write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
                     wait_until!(
                         {

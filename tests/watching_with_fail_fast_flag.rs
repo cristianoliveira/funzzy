@@ -12,7 +12,7 @@ fn test_when_using_fail_fast_exit_before() {
             example_file: "examples/list-of-failing-commands.yml",
             output_file: "test_when_using_fail_fast_exit_before.log",
         },
-        |fzz_cmd, mut output_file| {
+        |fzz_cmd, mut output_file, fixture| {
             let mut output = String::new();
             let mut child = fzz_cmd
                 .arg("--fail-fast")
@@ -45,7 +45,7 @@ Funzzy results ----------------------------
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!({
                 output_file
@@ -99,7 +99,7 @@ fn test_when_using_fail_fast_exit_before_with_env() {
                     example_file: "examples/list-of-failing-commands.yml",
                     output_file: "test_when_using_fail_fast_exit_before_with_env.log",
                 },
-                |fzz_cmd, mut output_file| {
+                |fzz_cmd, mut output_file, fixture| {
                     let mut output = String::new();
                     let mut child = fzz_cmd.spawn().expect("failed to spawn sub process");
                     defer!({
@@ -129,7 +129,7 @@ Funzzy results ----------------------------
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
                     );
 
-                    write_to_file!("examples/workdir/trigger-watcher.txt");
+                    write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
                     wait_until!({
                         output_file
@@ -185,7 +185,7 @@ fn test_fail_fast_with_non_block() {
             example_file: "examples/list-of-failing-commands.yml",
             output_file: "test_fail_fast_with_non_block.log",
         },
-        |fzz_cmd, mut output_file| {
+        |fzz_cmd, mut output_file, fixture| {
             let mut output = String::new();
             let mut child = fzz_cmd
                 .arg("-nb") // --non-block + --fail-fast
@@ -218,7 +218,7 @@ Funzzy results ----------------------------
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!({
                 output_file

@@ -22,6 +22,51 @@ pub struct Options {
 
 static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 
+/// Per-run fixture root: `temp_dir()/funzzy-fixture-<pid>-<label>/` with a
+/// private copy of the `examples/` tree.
+///
+/// Tests write trigger files and example configs watch `examples/workdir/**`
+/// relative to the fzz working directory, so concurrent integration runs
+/// (watcher generation, CI, manual invocations) would otherwise write the
+/// same files and see each other's triggers. Each run instead gets its own
+/// fixture and fzz is spawned with `current_dir = fixture`, which keeps the
+/// relative-path glob behavior (`examples/workdir/**`) intact while making
+/// every write and every watch root run-private.
+#[allow(dead_code)]
+pub fn fixture_root(label: &str) -> std::path::PathBuf {
+    let root =
+        std::env::temp_dir().join(format!("funzzy-fixture-{}-{}", std::process::id(), label));
+    let _ = std::fs::remove_dir_all(&root);
+    // Copy the trees example configs glob against. `src/**`/`tests/**` must
+    // resolve inside the fixture or fzz warns "unknown file/directory".
+    for tree in ["examples", "src", "tests"] {
+        copy_dir_recursive(tree, &root.join(tree))
+            .expect(&format!("failed to copy {} tree into fixture", tree));
+    }
+    // Resolve symlink prefixes (macOS maps /var -> /private/var) so the
+    // fixture paths the test writes, the paths notify reports, and the
+    // `$PWD` template expansion are the same canonical strings.
+    std::fs::canonicalize(&root).expect("failed to canonicalize fixture root")
+}
+
+/// Recursively copy a directory tree (follows symlinks, copying target
+/// content). Used to build per-run fixtures from the checked-in `examples/`.
+#[allow(dead_code)]
+fn copy_dir_recursive(src: &str, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from.to_string_lossy(), &to)?;
+        } else {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 #[allow(dead_code)]
 pub const CLEAR_SCREEN: &str = "[2J";
 
@@ -29,7 +74,7 @@ pub const CLEAR_SCREEN: &str = "[2J";
 #[allow(dead_code)]
 pub fn with_example<F>(_: Options, _: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     println!("WARNING: Skipping integration tests");
     ()
@@ -39,7 +84,7 @@ where
 #[allow(dead_code)]
 pub fn with_config<F>(_: &std::path::Path, _: &str, _: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     println!("WARNING: Skipping integration tests");
     ()
@@ -49,7 +94,7 @@ where
 #[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     println!("WARNING: Skipping integration tests");
     ()
@@ -59,7 +104,7 @@ where
 #[allow(dead_code)]
 pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     let config_path = std::path::Path::new(opts.example_file);
     with_config(config_path, opts.output_file, handler)
@@ -69,9 +114,15 @@ where
 #[allow(dead_code)]
 pub fn with_config<F>(config_path: &std::path::Path, output_file: &str, handler: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     let dir = env::current_dir().expect("error getting current directory");
+
+    // Per-run fixture root so concurrent integration runs never share
+    // trigger files or watch roots. fzz spawns with `current_dir` inside
+    // the fixture, keeping relative config paths and relative globs
+    // (`examples/workdir/**`) resolving against the fixture.
+    let fixture = fixture_root(output_file);
 
     // Per-process log name so concurrent integration runs (watcher
     // generation, CI, manual) never create or truncate each other's logs.
@@ -117,6 +168,7 @@ where
     }
     defer!({
         *is_running = 0;
+        let _ = std::fs::remove_dir_all(&fixture);
     });
 
     // check if the file exists if so fail
@@ -131,6 +183,7 @@ where
     let output_log = File::create(dir.join(&log_name)).expect("error log file");
 
     let mut cmd = Command::new(bin_path);
+    cmd.current_dir(&fixture);
     cmd.arg("-c");
     cmd.arg(config_path);
     if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
@@ -147,6 +200,7 @@ where
     handler(
         &mut cmd,
         File::open(dir.join(&log_name)).expect("failed to open file"),
+        &fixture,
     );
 
     std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");
@@ -156,9 +210,13 @@ where
 #[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
-    F: FnOnce(&mut Command, File) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
 {
     let dir = env::current_dir().expect("error getting current directory");
+
+    // Per-run fixture root so concurrent integration runs never share
+    // trigger files or watch roots.
+    let fixture = fixture_root(output_file_path);
 
     // Per-process log name so concurrent integration runs (watcher
     // generation, CI, manual) never create or truncate each other's logs.
@@ -199,6 +257,7 @@ where
     }
     defer!({
         *is_running = 0;
+        let _ = std::fs::remove_dir_all(&fixture);
     });
 
     // NOTE: Execute ls command for debug purposes
@@ -218,6 +277,7 @@ where
     let output_file = File::create(dir.join(&log_name)).expect("error log file");
 
     let mut cmd = Command::new(bin_path);
+    cmd.current_dir(&fixture);
     if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
         cmd.env("_TEST_FUNZZY_COLORED", "0");
     }
@@ -232,6 +292,7 @@ where
     handler(
         &mut cmd,
         File::open(dir.join(&log_name)).expect("failed to open file"),
+        &fixture,
     );
 
     std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");

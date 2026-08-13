@@ -42,7 +42,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
             output_file: "test_it_is_not_triggered_by_ignored_files.log",
             example_file: "examples/simple-case.yml",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn child");
 
             defer!({
@@ -65,7 +65,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
 
             output.truncate(0);
 
-            write_to_file!("examples/workdir/ignored/modifyme.txt");
+            write_to_file!(fixture.join("examples/workdir/ignored/modifyme.txt"));
 
             wait_until!(
                 {
@@ -80,7 +80,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
                 output
             );
 
-            write_to_file!("examples/workdir/another_ignored_file.foo");
+            write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
 
             wait_until!(
                 {
@@ -110,7 +110,7 @@ fn test_it_watch_files_and_execute_configured_commands() {
             example_file: "examples/simple-case.yml",
             output_file: "test_it_watch_files_and_execute_configured_commands.log",
         },
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd.spawn().expect("failed to spawn process");
             let mut output = String::new();
             defer!({
@@ -131,7 +131,7 @@ fn test_it_watch_files_and_execute_configured_commands() {
 
             output.truncate(0);
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
             wait_until!(
                 {
@@ -190,7 +190,7 @@ fn accepts_full_or_relativepaths() {
     setup::with_config(
         &config_path,
         "accepts_full_or_relativepaths.log",
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             // Initialize the files
             write_to_file!(f1.as_str());
             write_to_file!(f2.as_str());
@@ -225,8 +225,8 @@ fn accepts_full_or_relativepaths() {
             write_to_file!(f1.as_str());
             write_to_file!(f2.as_str());
             write_to_file!(f3.as_str());
-            write_to_file!("examples/workdir/trigger-watcher.txt");
-            write_to_file!("examples/workdir/ignored/modify.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
+            write_to_file!(fixture.join("examples/workdir/ignored/modify.txt"));
 
             wait_until!(
                 {
@@ -273,7 +273,7 @@ fn fails_with_unkown_paths() {
     setup::with_config(
         &config_path,
         "fails_with_unkown_paths.log",
-        |fzz_cmd, mut output_log| {
+        |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
                 .arg("-t")
                 .arg("@invalid")
@@ -313,7 +313,7 @@ fn fails_with_unkown_paths() {
                 output
             );
 
-            write_to_file!("examples/workdir/trigger-watcher.txt");
+            write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
             wait_until!(
                 {
                     output_log
