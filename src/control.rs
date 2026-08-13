@@ -275,6 +275,11 @@ fn process_request(
     // Wire contract: the pi-watcher extension decodes these results from
     // `unknown` (pi-watcher/src/domain/watcher.ts) and fails closed on any
     // shape drift. Change the serializers here and the decoders together.
+    //
+    // Additive contract: pi-watcher negotiates `capabilities` and correlated
+    // snapshots (pi-watcher/src/domain/capabilities.ts). Golden wire fixtures
+    // live in pi-watcher/src/domain/fixtures/*.json and MUST stay in sync with
+    // any Rust test that asserts these payloads — change both together.
 
     if !object.contains_key("id") {
         return None;
