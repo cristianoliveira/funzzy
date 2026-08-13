@@ -42,6 +42,8 @@ tasks:
       - "examples/*.yml"
       - "examples/*.yaml"
       - "examples/workdir/**"
+      # cargo fmt only accepts Rust sources; markdown/docs edits under src/ must not trigger it.
+      - "**/*.md"
 
   - name: run my test @quick @agent-final
     run: |
