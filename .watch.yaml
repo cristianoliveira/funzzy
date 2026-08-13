@@ -19,6 +19,8 @@ on:
     - "tests/**"
   ignore:
     - "src/**/*log*"
+    # Watchers can emit either the directory event or events for files inside it.
+    - "**/.pi"
     - "**/.pi/**"
 
 tasks:
