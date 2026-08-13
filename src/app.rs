@@ -4,6 +4,7 @@
 //! is a thin process adapter that calls [`run`]; integration tests exercise
 //! the same modules the binaries use.
 
+use crate::arguments::{Action, Arguments};
 use crate::cli;
 use crate::cli::*;
 use crate::errors;
@@ -11,13 +12,10 @@ use crate::errors::FzzError;
 use crate::watches::Watches;
 use crate::{config, environment, logging, rules, stdout, watcher};
 
-use docopt::Docopt;
-use docopt::Error;
 use nix::{
     sys::signal::{self, Signal},
     unistd::Pid,
 };
-use serde_derive::Deserialize;
 use std::io::prelude::*;
 use std::io::{self, IsTerminal};
 use std::process;
@@ -27,135 +25,20 @@ use std::sync::mpsc::TryRecvError;
 // remove this sha AI!
 const SHA: Option<&str> = option_env!("GITSHA");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const USAGE: &str = "
-Funzzy the watcher.
-
-Alias:
-  fzz -> funzzy
-
-Usage:
-  funzzy [options]
-  funzzy init [--migrate]
-  funzzy watch [<command>] [options]
-  funzzy <command> [options]
-
-Commands:
-    init                Create or migrate a '.watch.yaml' file.
-    watch               Watch for file changes and execute a command.
-
-Options:
-  <command>                    Run an arbitrary command for current folder.
-  -c --config <cfgfile>        Use given config file.
-  -t --target <name>           Execute only the given task target (if empty list availables).
-  -n --non-block               Execute tasks and cancel them if a new event is received.
-  -b --fail-fast               Bail current execution if a task fails (exit code != 0).
-  -T --log-truncate-on-change  Truncate the log file when the config reloads (requires --log-file).
-  -l --log-file <file>         Write all output to the specified log file in addition to the console.
-  --control-socket <path>      Expose watcher status over a Unix socket (implies --non-block).
-  --migrate                    Migrate legacy root task list to current format.
-  --no-run-on-init             Do not run tasks on initialization.
-  -h --help                    Show this message.
-  -v --version                 Show version.
-  -V                           Use verbose output.
-
-Environment configs:
-
-FUNZZY_NON_BLOCK: Boolean   Same as `--non-block`
-FUNZZY_BAIL: Boolean        Same as `--fail-fast`
-FUNZZY_COLORED: Boolean     Output with colors.
-FUNZZY_STDIN_TIMEOUT_MS: Number   Timeout in milliseconds waiting for stdin data (default: 2000)
-";
-
-#[allow(non_snake_case)]
-#[derive(Debug, Deserialize)]
-pub struct Args {
-    // comand
-    pub cmd_init: bool,
-    pub cmd_watch: bool,
-
-    pub arg_command: String,
-
-    // options
-    pub flag_config: String,
-    pub flag_target: Option<String>,
-
-    pub flag_log_truncate_on_change: bool,
-    pub flag_log_file: Option<String>,
-    pub flag_control_socket: Option<String>,
-    pub flag_migrate: bool,
-
-    pub flag_n: bool,
-    pub flag_h: bool,
-    pub flag_v: bool,
-    pub flag_V: bool,
-
-    pub flag_non_block: bool,
-    pub flag_no_run_on_init: bool,
-    pub flag_fail_fast: bool,
-}
 
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
 pub fn run() {
-    let docopt = Docopt::new(USAGE);
-    let docopt_parser = match docopt {
-        Ok(args) => args,
-        Err(err) => {
-            panic!("Failed to parse arguments: {:?}", err);
-        }
-    };
+    let args = Arguments::parse();
 
-    let args: Args = match docopt_parser.deserialize() {
-        Ok(args) => args,
-        Err(err) => {
-            match err {
-                Error::WithProgramUsage(err, usage) => {
-                    match *err {
-                        Error::Help => stdout::show_and_exit(&usage),
-                        Error::Version(_) => stdout::show_and_exit(get_version().as_str()),
-                        Error::Argv(argverr) => {
-                            // NOTE: Docopt doesn't support a flag without a value even when
-                            // declaring a default value with [default: foobar].
-                            // In short, this adds a default value to the flag `--target` if it's empty.
-                            // So one can use `fzz -t` and it will list all available tasks.
-                            if !argverr.contains("flag '--target' but reached end of arguments") {
-                                stdout::failure(&argverr, usage);
-                            }
-
-                            let argv_with_missing_target = std::env::args()
-                                .flat_map(|arg| {
-                                    if arg == "--target" || arg == "-t" {
-                                        vec![arg, "".to_string()]
-                                    } else {
-                                        vec![arg]
-                                    }
-                                })
-                                .collect::<Vec<String>>();
-
-                            let newargs: Args = Docopt::new(USAGE)
-                                .and_then(|d| d.argv(argv_with_missing_target).deserialize())
-                                .unwrap_or_else(|err| {
-                                    stdout::failure("Failed to parse arguments", err.to_string())
-                                });
-
-                            newargs
-                        }
-                        _ => stdout::failure(&usage, err.to_string()),
-                    }
-                }
-                err => stdout::failure("Failed to parse arguments", err.to_string()),
-            }
-        }
-    };
-
-    if args.flag_log_truncate_on_change && args.flag_log_file.is_none() {
+    if args.log_truncate_on_change && args.log_file.is_none() {
         stdout::failure(
             "`--log-truncate-on-change` requires `--log-file`",
             "Provide a log file path before enabling truncation.".to_string(),
         );
     }
 
-    if let Some(ref log_file) = args.flag_log_file {
+    if let Some(ref log_file) = args.log_file {
         if log_file.trim().is_empty() {
             stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
         }
@@ -180,42 +63,39 @@ pub fn run() {
     // config discovery, and command template preparation to it.
     let workspace_root = std::env::current_dir().expect("Failed to get current directory");
 
-    match args {
-        Args { flag_v: true, .. } => stdout::show_and_exit(get_version().as_str()),
+    match args.action {
+        // `-v`/`--version` wins over every command regardless of position.
+        Action::Version => stdout::show_and_exit(get_version().as_str()),
         // Commands
-        Args {
-            cmd_init: true,
-            flag_migrate: true,
-            ..
-        } => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
-        Args { cmd_init: true, .. } => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
+        Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
+        Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        // If no command argument provided, use config branch (if config exists, else error)
-        _ if args.arg_command.is_empty() => {
-            let rules = if args.flag_config.is_empty() {
-                config::from_default_file_config().unwrap_or_else(|err| {
+        // No command argument: use config branch (if config exists, else error)
+        Action::WatchConfig => {
+            let rules = match args.config.as_deref() {
+                None => config::from_default_file_config().unwrap_or_else(|err| {
                     stdout::failure("Failed to read default config file", err.to_string());
-                })
-            } else {
-                match config::from_file(&args.flag_config) {
+                }),
+                Some(config_file) => match config::from_file(config_file) {
                     Ok(rules) => rules,
                     Err(err) => stdout::failure("Failed to read config file", err.to_string()),
-                }
+                },
             };
 
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
 
-            match args.flag_target {
-                Some(ref target) if target.trim().is_empty() => {
+            match args.target.as_deref() {
+                // Value-less `-t`/`--target` is list-targets mode.
+                Some(target) if target.trim().is_empty() => {
                     stdout::info(&format!(
                         "`--target` help\n{}",
                         rules::available_targets(rules)
                     ));
                     stdout::show_and_exit("Usage `fzz -t <text_contain_in_task>`");
                 }
-                Some(ref target) => {
+                Some(target) => {
                     let filtered = rules
                         .iter()
                         .cloned()
@@ -234,18 +114,19 @@ pub fn run() {
                         );
                     }
                 }
-                _ => execute_watch_command(Watches::with_root(rules, workspace_root.clone()), args),
+                None => {
+                    execute_watch_command(Watches::with_root(rules, workspace_root.clone()), args)
+                }
             }
         }
 
-        // Otherwise, command argument provided, use stdin branch (arbitrary command mode)
-        Args {
-            ref arg_command, ..
-        } if !arg_command.is_empty() => {
+        // Arbitrary command provided: use stdin branch (arbitrary command mode)
+        Action::WatchCommand(ref command) => {
+            let command = command.clone();
             match from_stdin() {
                 Ok(StdinRead::NoPipe) => {
                     // No stdin and no config -> help and exit 1
-                    println!("{}", USAGE);
+                    println!("{}", Arguments::help_text());
                     process::exit(1);
                 }
                 Ok(StdinRead::PipeEmpty) => {
@@ -259,7 +140,7 @@ pub fn run() {
                         }
                     };
 
-                    let watch_rules = match config::from_string(patterns, arg_command.to_string()) {
+                    let watch_rules = match config::from_string(patterns, command) {
                         Ok(rules) => {
                             stdout::info(&format!(
                                 "watching patterns\r{}",
@@ -282,40 +163,44 @@ pub fn run() {
             };
         }
 
-        // Fallback: no config, no command argument -> show help
-        _ => {
-            println!("{}", USAGE);
-            process::exit(1);
-        }
-    };
+        // Unsupported command shape: show guidance and exit 1
+        Action::Unexpected(words) => stdout::failure(
+            "Unexpected arguments",
+            format!(
+                "Supported forms: `fzz init`, `fzz watch <command>`, `fzz <command>`. Received: {}",
+                words.join(" ")
+            ),
+        ),
+    }
 }
 
-fn execute_watch_command(watches: Watches, mut args: Args) {
-    let possible_config_paths = if args.flag_config.is_empty() {
-        let dir = watches.root();
-        vec![
-            dir.join(cli::watch::DEFAULT_FILENAME)
-                .to_str()
-                .unwrap()
-                .to_string(),
-            dir.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"))
-                .to_str()
-                .unwrap()
-                .to_string(),
-        ]
-    } else {
-        vec![format!("{}", &args.flag_config)]
+fn execute_watch_command(watches: Watches, mut args: Arguments) {
+    let possible_config_paths = match args.config.as_deref() {
+        None => {
+            let dir = watches.root();
+            vec![
+                dir.join(cli::watch::DEFAULT_FILENAME)
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                dir.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"))
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            ]
+        }
+        Some(config_file) => vec![config_file.to_string()],
     };
 
-    let truncate_on_config_change = args.flag_log_truncate_on_change;
+    let truncate_on_config_change = args.log_truncate_on_change;
 
     let config_file_paths = possible_config_paths
         .into_iter()
         .filter(|path| std::path::Path::new(path).exists())
         .collect::<Vec<String>>();
 
-    if args.flag_control_socket.is_none() {
-        args.flag_control_socket = config_file_paths
+    if args.control_socket.is_none() {
+        args.control_socket = config_file_paths
             .first()
             .map(|path| config::control_socket_from_file(path))
             .transpose()
@@ -362,20 +247,20 @@ fn execute_watch_command(watches: Watches, mut args: Args) {
         )
     });
 
-    let verbose = args.flag_V;
-    let fail_fast = args.flag_fail_fast || environment::is_enabled("FUNZZY_BAIL");
-    let non_block = args.flag_non_block
+    let verbose = args.verbose;
+    let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
+    let non_block = args.non_block
         || environment::is_enabled("FUNZZY_NON_BLOCK")
-        || args.flag_control_socket.is_some();
+        || args.control_socket.is_some();
 
-    let run_on_init = !args.flag_no_run_on_init;
+    let run_on_init = !args.no_run_on_init;
     if non_block {
         execute(WatchNonBlockCommand::new(
             watches,
             verbose,
             fail_fast,
             run_on_init,
-            args.flag_control_socket.map(std::path::PathBuf::from),
+            args.control_socket.map(std::path::PathBuf::from),
         ))
     } else {
         execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))

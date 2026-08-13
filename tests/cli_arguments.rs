@@ -327,17 +327,16 @@ fn config_option_accepts_equals_form() {
 }
 
 #[test]
-fn short_config_equals_form_keeps_equals_in_value() {
-    // Docopt quirk: `-c=<path>` yields the value `=<path>` literally.
-    // Clap treats `-c=<path>` as value `<path>`, so after the migration this
-    // test is expected to change: the failure path becomes the file `<path>`
-    // instead of `=<path>`. Named here so the change is a decision.
+fn short_config_equals_form_uses_value_without_equals() {
+    // Docopt quirk: `-c=<path>` yielded the value `=<path>` literally.
+    // Clap treats `-c=<path>` as value `<path>`; the migration adopts clap
+    // semantics, so a missing file fails naming the path without the `=`.
     fzz()
-        .args(["-c=examples/tasks-with-tags-to-filter.yml"])
+        .args(["-c=/definitely/not/a/config.yml"])
         .assert()
         .code(1)
         .stdout(predicate::str::contains(
-            "Couldn't open configuration file: '=examples/tasks-with-tags-to-filter.yml'",
+            "Couldn't open configuration file: '/definitely/not/a/config.yml'",
         ));
 }
 
