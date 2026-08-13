@@ -64,42 +64,22 @@ pub fn run() {
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
 
-        // No command argument: use config branch (if config exists, else error)
-        Action::WatchConfig => {
-            let rules = match args.config.as_deref() {
-                None => config::from_default_file_config().unwrap_or_else(|err| {
-                    stdout::failure("Failed to read default config file", err.to_string());
-                }),
-                Some(config_file) => match config::from_file(config_file) {
-                    Ok(rules) => rules,
-                    Err(err) => stdout::failure("Failed to read config file", err.to_string()),
-                },
-            };
-
+        Action::Watch { target: ref wanted } => {
+            let rules = load_rules(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
-
-            match args.target.as_deref() {
-                // Value-less `-t`/`--target` is list-targets mode.
-                Some(target) if target.trim().is_empty() => {
-                    stdout::info(&format!(
-                        "`--target` help\n{}",
-                        rules::available_targets(rules)
-                    ));
-                    stdout::show_and_exit("Usage `fzz -t <text_contain_in_task>`");
-                }
+            match wanted {
                 Some(target) => {
                     let filtered = rules
                         .iter()
                         .cloned()
                         .filter(|r| r.name.contains(target))
                         .collect::<Vec<rules::Rules>>();
-
                     if filtered.is_empty() {
                         stdout::failure(
                             &format!("No target found for '{}'", target),
-                            rules::available_targets(rules),
+                            rules::available_targets(&rules),
                         );
                     } else {
                         execute_watch_command(
@@ -112,6 +92,13 @@ pub fn run() {
                     execute_watch_command(Watches::with_root(rules, workspace_root.clone()), args)
                 }
             }
+        }
+        Action::List => {
+            let rules = load_rules(&args.config);
+            if let Err(err) = rules::validate_rules(&rules) {
+                stdout::failure("Invalid config file.", err);
+            }
+            stdout::info(&rules::available_targets(&rules));
         }
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`: join the
@@ -158,6 +145,18 @@ pub fn run() {
                 Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
             };
         }
+    }
+}
+
+fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {
+    match config.as_deref() {
+        None => config::from_default_file_config().unwrap_or_else(|err| {
+            stdout::failure("Failed to read default config file", err.to_string());
+        }),
+        Some(config_file) => match config::from_file(config_file) {
+            Ok(rules) => rules,
+            Err(err) => stdout::failure("Failed to read config file", err.to_string()),
+        },
     }
 }
 

@@ -9,7 +9,7 @@
 //! Notes on the current contract:
 //! - `-V`/`--version` is Clap's built-in version flag (stdout, exit 0).
 //! - `-v`/`--verbose` is the verbose watch flag.
-//! - `--target` accepts a value-less form by second-parse workaround.
+//! - `fzz watch [TARGET]` selects tasks by name/@tag substring; `fzz list` lists them.
 //! - The `watch` keyword is inert: `watch '<command>'` == `'<command>'`.
 //! - `--migrate` only acts together with `init`; alone it falls through to
 //!   the config branch.
@@ -71,7 +71,7 @@ fn help_shows_usage_commands_and_options_for_both_binaries() {
             // not the version short flag (`-V`).
             .stdout(predicate::str::contains("-v"))
             .stdout(predicate::str::contains("--verbose"))
-            .stdout(predicate::str::contains("--target"))
+            .stdout(predicate::str::contains("--on-busy"))
             .stdout(predicate::str::contains("--control-socket"));
     }
 }
@@ -201,41 +201,71 @@ fn init_smoke_creates_config_in_cwd() {
 }
 
 // ---------------------------------------------------------------------------
-// --target paths
+// watch/list/target paths
 // ---------------------------------------------------------------------------
 
 #[test]
-fn target_without_value_lists_available_tasks() {
-    // Value-less `-t` is accepted through a second-parse workaround and lists
-    // available tasks with exit 0. Clap would normally reject a missing
-    // value; the migration must keep this path working.
+fn list_subcommand_lists_available_tasks() {
+    // `fzz list` prints configured tasks and exits 0.
     fzz()
-        .args(["-c", FILTER_EXAMPLE, "-t"])
+        .args(["-c", FILTER_EXAMPLE, "list"])
         .assert()
         .code(0)
         .stdout(predicate::str::contains("Available tasks"))
         .stdout(predicate::str::contains("run my test @quick"))
-        .stdout(predicate::str::contains(
-            "Usage `fzz -t <text_contain_in_task>`",
-        ));
+        .stdout(predicate::str::contains("Usage").not());
 }
 
 #[test]
-fn target_with_explicit_empty_value_lists_available_tasks() {
+fn list_handles_empty_custom_config() {
+    with_tmp_dir("list-empty", |dir| {
+        let config = dir.join("empty.yml");
+        std::fs::write(&config, "[]\n").expect("failed to write empty config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("list")
+            .assert()
+            .code(0)
+            .stdout(predicate::str::contains("Available tasks\n  (none)"));
+    });
+}
+
+#[test]
+fn list_rejects_semantically_invalid_config() {
+    with_tmp_dir("list-invalid", |dir| {
+        let config = dir.join("invalid.yml");
+        std::fs::write(&config, "- name: broken\n  run: echo broken\n")
+            .expect("failed to write invalid config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("list")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid config file"))
+            .stdout(predicate::str::contains(
+                "must contain a `change` and/or `run_on_init` property",
+            ));
+    });
+}
+
+#[test]
+fn target_flag_is_rejected() {
+    // V2 removed --target/-t in favor of `watch TARGET` and `list`.
     fzz()
-        .args(["-c", FILTER_EXAMPLE, "--target="])
+        .args(["-c", FILTER_EXAMPLE, "--target=foo"])
         .assert()
-        .code(0)
-        .stdout(predicate::str::contains("Available tasks"))
-        .stdout(predicate::str::contains(
-            "Usage `fzz -t <text_contain_in_task>`",
-        ));
+        .code(2)
+        .stderr(predicate::str::contains("--target"));
 }
 
 #[test]
-fn target_without_match_fails_listing_available_tasks() {
+fn watch_unknown_target_fails_listing_available_tasks() {
     fzz()
-        .args(["-c", FILTER_EXAMPLE, "-t", "no-such-target"])
+        .args(["-c", FILTER_EXAMPLE, "watch", "no-such-target"])
         .assert()
         .code(1)
         .stdout(predicate::str::contains(
@@ -382,11 +412,10 @@ fn configured_watch_form_starts_watcher() {
 
 #[cfg(feature = "test-integration")]
 #[test]
-fn target_matching_value_starts_watcher() {
-    // Options placed before and around the command form; substring match on
-    // a task name (not a tag) selects the target and the watch starts. The
-    // matched task runs on init, which is the deterministic startup marker.
-    let (mut child, log_name) = spawn_with_config(&["-t", "run my build"], "target-match.log");
+fn watch_target_starts_watcher() {
+    // `fzz watch <TARGET>` selects by substring match on a task name; the
+    // matched task runs on init, the deterministic startup marker.
+    let (mut child, log_name) = spawn_with_config(&["watch", "run my build"], "target-match.log");
     defer!({
         let _ = child.kill();
         let _ = std::fs::remove_file(&log_name);

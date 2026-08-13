@@ -181,18 +181,17 @@ fzz --fail-fast
 
 ---
 
-### `-t` or `--target`
+### `list` and `watch TARGET`
 
-**Description**: Filter tasks by their target name. Runs only the tasks that match the given target name.
+**Description**: List configured tasks, or watch only tasks whose name or tag contains `TARGET`.
 
 **Usage**:
 ```bash
-fzz -t "@quick"
+fzz list
+fzz watch "@quick"
 ```
 
-**Suggestion**: This is useful for running specific tasks without executing the entire workflow.
-
-[More details](/docs/FLAG_TARGET.md)
+**Suggestion**: List tasks first, then select a name or tag without executing the entire workflow.
 
 ---
 

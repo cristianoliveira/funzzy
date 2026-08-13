@@ -230,18 +230,23 @@ pub fn validate_rules(rule: &Vec<Rules>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn available_targets(rules: Vec<Rules>) -> String {
-    let mut output = String::new();
-    output.push_str("Available tasks\n");
-    output.push_str(&format!(
-        "  - {}\n",
-        rules
-            .iter()
-            .cloned()
-            .map(|r| r.name)
-            .collect::<Vec<String>>()
-            .join("\n  - ")
-    ));
+pub fn available_targets(rules: &[Rules]) -> String {
+    let mut output = String::from("Available tasks\n");
+    if rules.is_empty() {
+        output.push_str("  (none)\n");
+        return output;
+    }
+
+    for rule in rules {
+        output.push_str(&format!("  - {}\n", rule.name));
+        if !rule.watch_patterns.is_empty() {
+            output.push_str(&format!("    change: {}\n", rule.watch_patterns.join(", ")));
+        }
+        if rule.run_on_init {
+            output.push_str("    run_on_init: true\n");
+        }
+    }
+
     output
 }
 
@@ -265,6 +270,30 @@ mod tests {
             ignores.iter().map(|s| s.to_string()).collect(),
             run_on_init,
         )
+    }
+
+    #[test]
+    fn available_targets_lists_names_patterns_and_init_trigger() {
+        let rules = vec![
+            rule(
+                "my tests @quick",
+                &["cargo test"],
+                &["tests/**", "src/**"],
+                &[],
+                false,
+            ),
+            rule("startup", &["echo ready"], &[], &[], true),
+        ];
+
+        assert_eq!(
+            super::available_targets(&rules),
+            "Available tasks\n  - my tests @quick\n    change: tests/**, src/**\n  - startup\n    run_on_init: true\n"
+        );
+    }
+
+    #[test]
+    fn available_targets_handles_empty_config() {
+        assert_eq!(super::available_targets(&[]), "Available tasks\n  (none)\n");
     }
 
     #[test]

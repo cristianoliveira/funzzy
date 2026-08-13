@@ -1,7 +1,7 @@
-# This workflow shows how to use fzz -t <tag>
+# This workflow shows how to use fzz watch <tag>
 # to filter tags or limit them
-# 
-# run: fzz -t @quick
+#
+# run: fzz watch @quick
 #
 # It will load only those tasks
 # very useful for having different workflows inside of
@@ -21,7 +21,7 @@
   run:
     - "echo 'prebuild'"
     - "echo 'build'"
-    - "echo 'should not run when using --target @quick'"
+    - "echo 'should not run when using watch @quick'"
   change: 
     - "examples/workdir/*.txt"
   ignore: 

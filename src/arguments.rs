@@ -22,8 +22,10 @@ pub enum OnBusy {
 /// Semantic application action selected from the parsed subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// `fzz` (no subcommand) or `fzz watch`: run configured tasks.
-    WatchConfig,
+    /// `fzz` (no subcommand) or `fzz watch [TARGET]`: run configured tasks.
+    Watch { target: Option<String> },
+    /// `fzz list`: print configured tasks.
+    List,
     /// `fzz init [--migrate]`: create or migrate the default config file.
     Init,
     /// `fzz exec -- PROGRAM ARG...`: ad-hoc command over stdin-supplied paths.
@@ -35,8 +37,6 @@ pub enum Action {
 pub struct Arguments {
     pub action: Action,
     pub config: Option<String>,
-    /// Task-name filter; `Some("")` means list-targets mode.
-    pub target: Option<String>,
     pub log_truncate_on_change: bool,
     pub log_file: Option<String>,
     pub control_socket: Option<String>,
@@ -67,14 +67,17 @@ impl Arguments {
             .get_one::<String>("config")
             .cloned()
             .filter(|value| !value.is_empty());
-        let target = matches.get_one::<String>("target").cloned();
         let log_file = matches.get_one::<String>("log_file").cloned();
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
         let (action, migrate) = match matches.subcommand() {
-            None => (Action::WatchConfig, false),
+            None => (Action::Watch { target: None }, false),
+            Some(("watch", sub)) => {
+                let target = sub.get_one::<String>("target").cloned();
+                (Action::Watch { target }, false)
+            }
+            Some(("list", _)) => (Action::List, false),
             Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
-            Some(("watch", _)) => (Action::WatchConfig, false),
             Some(("exec", sub)) => {
                 let command: Vec<String> = sub
                     .get_many::<String>("command")
@@ -90,7 +93,6 @@ impl Arguments {
         Ok(Arguments {
             action,
             config,
-            target,
             log_truncate_on_change: matches.get_flag("log_truncate_on_change"),
             log_file,
             control_socket,
@@ -142,17 +144,6 @@ fn command() -> Command {
                 .value_name("cfgfile")
                 .value_parser(clap::builder::ValueParser::string())
                 .help("Use given config file."),
-        )
-        .arg(
-            Arg::new("target")
-                .short('t')
-                .long("target")
-                .global(true)
-                .value_name("name")
-                .num_args(0..=1)
-                .default_missing_value("")
-                .value_parser(clap::builder::ValueParser::string())
-                .help("Execute only the given task target (if empty list availables)."),
         )
         .arg(
             Arg::new("on_busy")
@@ -234,6 +225,18 @@ fn command() -> Command {
         .subcommand(
             Command::new("watch")
                 .about("Watch for file changes and run configured tasks.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("target")
+                        .value_name("TARGET")
+                        .num_args(0..=1)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Optional task name/@tag substring; only matching tasks run."),
+                ),
+        )
+        .subcommand(
+            Command::new("list")
+                .about("List configured tasks.")
                 .version(env!("CARGO_PKG_VERSION")),
         )
         .subcommand(
@@ -263,7 +266,8 @@ Alias:
 
 Commands:
   init                Create or migrate a '.watch.yaml' file.
-  watch               Watch for file changes and run configured tasks.
+  watch [TARGET]      Watch for file changes and run configured tasks.
+  list                List configured tasks.
   exec                Run an ad-hoc command over stdin-supplied paths.
 
 {all-args}
@@ -294,12 +298,27 @@ mod tests {
 
     #[test]
     fn no_arguments_selects_configured_watch() {
-        assert_eq!(parse_action(&[]), Action::WatchConfig);
+        assert_eq!(parse_action(&[]), Action::Watch { target: None });
     }
 
     #[test]
     fn watch_subcommand_selects_configured_watch() {
-        assert_eq!(parse_action(&["watch"]), Action::WatchConfig);
+        assert_eq!(parse_action(&["watch"]), Action::Watch { target: None });
+    }
+
+    #[test]
+    fn watch_with_target_carries_target() {
+        assert_eq!(
+            parse_action(&["watch", "@quick"]),
+            Action::Watch {
+                target: Some("@quick".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn list_subcommand_selects_list() {
+        assert_eq!(parse_action(&["list"]), Action::List);
     }
 
     #[test]
@@ -378,7 +397,7 @@ mod tests {
     fn verbose_short_flag_is_verbose_not_version() {
         let args = parse(&["-v"]).expect("parse");
         assert!(args.verbose);
-        assert_eq!(args.action, Action::WatchConfig);
+        assert_eq!(args.action, Action::Watch { target: None });
     }
 
     #[test]
@@ -397,7 +416,7 @@ mod tests {
     fn global_config_propagates_to_subcommand() {
         let args = parse(&["watch", "-c", "/some/path"]).expect("parse");
         assert_eq!(args.config.as_deref(), Some("/some/path"));
-        assert_eq!(args.action, Action::WatchConfig);
+        assert_eq!(args.action, Action::Watch { target: None });
     }
 
     #[test]
@@ -413,15 +432,11 @@ mod tests {
     }
 
     #[test]
-    fn target_without_value_is_empty_list_mode() {
-        let args = parse(&["-t"]).expect("parse");
-        assert_eq!(args.target.as_deref(), Some(""));
-    }
-
-    #[test]
-    fn target_with_value_keeps_value() {
-        let args = parse(&["-t", "run my build"]).expect("parse");
-        assert_eq!(args.target.as_deref(), Some("run my build"));
+    fn target_flag_is_removed() {
+        // V2 removed --target/-t in favor of `watch TARGET` and `list`.
+        assert!(parse(&["-t"]).is_err());
+        assert!(parse(&["--target"]).is_err());
+        assert!(parse(&["--target", "@quick"]).is_err());
     }
 
     #[test]

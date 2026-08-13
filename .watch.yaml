@@ -9,8 +9,8 @@
 # then start making my changes, everytime all the tests pass the changed file
 # is staged to git. Once I'm done with my changes I simply commit. :)
 #
-# Run all tasks with `fzz -nb`
-# Run quick tasks with `fzz -nbt @quick`
+# Run all tasks with `fzz --restart`
+# Run quick tasks with `fzz --restart watch @quick`
 #
 on:
   socket: .tmp/funzzy/control.sock
@@ -61,7 +61,7 @@ tasks:
       # Serialized because each integration test spawns a real `fzz` watcher;
       # running them in parallel exhausts the process table under the dev
       # watcher (EAGAIN on fork -> spawn panics). CI stays parallel.
-      # Filter with `INTEGRATION_TEST=watching_configured_rules fzz -t integration`
+      # Filter with `INTEGRATION_TEST=watching_configured_rules fzz watch integration`
       # if fails open nvim with the failing logs
       - "direnv exec . cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture --test-threads=1"
     ignore:
@@ -88,9 +88,9 @@ tasks:
       # See: tests/common/macros.rs
       # And the usage in: tests/common/lib.rs
       #
-      # To debug use `fzz -nt @nixbuild`
+      # To debug use `fzz --restart watch @nixbuild`
       #
-      # IN NIGHTLY VERSION `fzz -nbt @nixbuild`
+      # IN NIGHTLY VERSION `fzz --restart --fail-fast watch @nixbuild`
       # which bails fast
       # - "src/**"
       - "tests/**"

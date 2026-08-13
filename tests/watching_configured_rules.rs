@@ -197,8 +197,7 @@ fn accepts_full_or_relativepaths() {
             write_to_file!(f3.as_str());
 
             let mut child = fzz_cmd
-                .arg("-t")
-                .arg("@valid")
+                .args(["watch", "@valid"])
                 .arg("-v")
                 .spawn()
                 .expect("failed to spawn child");
@@ -275,8 +274,7 @@ fn fails_with_unkown_paths() {
         "fails_with_unkown_paths.log",
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
-                .arg("-t")
-                .arg("@invalid")
+                .args(["watch", "@invalid"])
                 .arg("-v")
                 .spawn()
                 .expect("failed to spawn child");

@@ -1,5 +1,5 @@
 use assert_cmd::cargo;
-use predicates::prelude::predicate;
+use predicates::prelude::*;
 use pretty_assertions::assert_eq;
 use std::io::prelude::*;
 
@@ -7,16 +7,15 @@ use std::io::prelude::*;
 mod setup;
 
 #[test]
-fn test_it_filter_tasks_with_target_flag() {
+fn test_it_filter_tasks_with_watch_target() {
     setup::with_example(
         setup::Options {
-            output_file: "test_it_filter_tasks_with_target_flag.log",
+            output_file: "test_it_filter_tasks_with_watch_target.log",
             example_file: "examples/tasks-with-tags-to-filter.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
-                .arg("--target")
-                .arg("@quick")
+                .args(["watch", "@quick"])
                 .spawn()
                 .expect("failed to spawn child");
 
@@ -79,37 +78,42 @@ Success; Completed: 3; Failed: 0; Duration: 0.0000s"
 fn test_it_list_the_available_tasks_when_nothing_matches() {
     let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
-        .arg("-t")
-        .arg("unknown_task_name")
         .arg("-c")
         .arg("examples/tasks-with-tags-to-filter.yml")
+        .args(["watch", "unknown_task_name"])
         .assert()
         .failure()
         .stdout(predicate::str::contains(
-            "Error: No target found for \'unknown_task_name\'
+            "Error: No target found for 'unknown_task_name'
 Available tasks
   - run my test @quick
+    change: examples/workdir/*.txt
   - run my build
-  - run my lint @quick",
+    change: examples/workdir/*.txt
+    run_on_init: true
+  - run my lint @quick
+    change: examples/workdir/*.txt",
         ));
 }
 
 #[test]
-fn test_it_list_the_available_tasks_flag_is_empty() {
+fn test_list_subcommand_lists_available_tasks() {
     let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
         .arg("-c")
         .arg("examples/tasks-with-tags-to-filter.yml")
-        .arg("-t")
+        .arg("list")
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Funzzy: `--target` help
-Available tasks
+            "Available tasks
   - run my test @quick
+    change: examples/workdir/*.txt
   - run my build
+    change: examples/workdir/*.txt
+    run_on_init: true
   - run my lint @quick
-
-Usage `fzz -t <text_contain_in_task>`",
-        ));
+    change: examples/workdir/*.txt",
+        ))
+        .stdout(predicate::str::contains("Usage").not());
 }

@@ -14,8 +14,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
-                .arg("-t")
-                .arg("@absolute")
+                .args(["watch", "@absolute"])
                 .spawn()
                 .expect("failed to spawn child");
 
@@ -102,8 +101,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
-                .arg("-t")
-                .arg("@relative")
+                .args(["watch", "@relative"])
                 .spawn()
                 .expect("failed to spawn child");
 

@@ -20,7 +20,7 @@ Or more complex workflows like:
 # TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
 # TIP2: List the tasks/steps from quicker to slower for better workflows
 #
-# Run: `fzz --fail-fast --non-block` (`fzz -nb`) to start this workflow (min: v1.4.0)
+# Run: `fzz --fail-fast --restart` to restart busy runs on change.
 
 - name: run my tests
   run: make test
@@ -43,7 +43,7 @@ Or more complex workflows like:
   ignore: ["src/**/*.stories.*", "libs/**/*.log"]
 
 - name: run ci checks @quick @ci
-  run: | ## Watch with `fzz -t @ci`
+  run: | ## Watch with `fzz watch @ci`
    cat .github/workflows/on-push.yml \
     | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
     | xargs -I {} bash -c {}
@@ -230,11 +230,12 @@ depend on all task to be successful. [See its usage in our workflow](https://git
 fzz --fail-fast # or fzz -b (bail)
 ```
 
-Filtering tasks by target. (**EXPERIMENTAL**)
+Filtering tasks by target:
 
 ```bash
-fzz -t "@quick"
-# Assuming you have one or more tasks with `@quick` in the name, it will only load those tasks
+fzz list
+fzz watch "@quick"
+# Assuming one or more tasks contain `@quick`, only those tasks are watched.
 ```
 
 Run with some arbitrary command and stdin
