@@ -1,0 +1,1 @@
+/Users/cristianoliveira/work/agentsmd/funzzy/AGENTS.md
