@@ -1,7 +1,7 @@
 ---
 id: TASK-0015
 title: Introduce real Clap subcommands and conventional global flags
-status: todo
+status: doing
 depends_on: [TASK-0014]
 priority: high
 tags: [rust, cli, clap, tdd]

@@ -22,10 +22,6 @@ use std::process;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
 
-// remove this sha AI!
-const SHA: Option<&str> = option_env!("GITSHA");
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
 pub fn run() {
@@ -64,8 +60,6 @@ pub fn run() {
     let workspace_root = std::env::current_dir().expect("Failed to get current directory");
 
     match args.action {
-        // `-v`/`--version` wins over every command regardless of position.
-        Action::Version => stdout::show_and_exit(get_version().as_str()),
         // Commands
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
@@ -366,29 +360,6 @@ fn from_stdin() -> errors::Result<StdinRead> {
                 "Failed to read stdin".to_string(),
                 None,
             ))
-        }
-    }
-}
-
-fn get_version() -> String {
-    if let Some(sha) = SHA {
-        format!("{}-{}", VERSION, sha)
-    } else {
-        VERSION.to_owned()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_includes_gitsha_when_present() {
-        let version = get_version();
-        if let Some(sha) = SHA {
-            assert_eq!(version, format!("{}-{}", VERSION, sha));
-        } else {
-            assert_eq!(version, VERSION);
         }
     }
 }

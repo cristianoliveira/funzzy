@@ -43,7 +43,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
             example_file: "examples/simple-case.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
-            let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn child");
+            let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn child");
 
             defer!({
                 child.kill().expect("failed to kill child");
@@ -199,7 +199,7 @@ fn accepts_full_or_relativepaths() {
             let mut child = fzz_cmd
                 .arg("-t")
                 .arg("@valid")
-                .arg("-V")
+                .arg("-v")
                 .spawn()
                 .expect("failed to spawn child");
 
@@ -277,7 +277,7 @@ fn fails_with_unkown_paths() {
             let mut child = fzz_cmd
                 .arg("-t")
                 .arg("@invalid")
-                .arg("-V")
+                .arg("-v")
                 .spawn()
                 .expect("failed to spawn child");
 

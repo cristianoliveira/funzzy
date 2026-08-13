@@ -6,13 +6,14 @@
 //! render help/errors differently, the test comment names the accepted change
 //! so the migration decision is conscious rather than hidden as drift.
 //!
-//! Notes on the current (Docopt) contract:
-//! - `-v`/`--version` win over every command regardless of position.
-//! - `-V` is the verbose watch flag, NOT the version short flag.
+//! Notes on the current contract:
+//! - `-V`/`--version` is Clap's built-in version flag (stdout, exit 0).
+//! - `-v`/`--verbose` is the verbose watch flag.
 //! - `--target` accepts a value-less form by second-parse workaround.
 //! - The `watch` keyword is inert: `watch '<command>'` == `'<command>'`.
 //! - `--migrate` only acts together with `init`; alone it falls through to
 //!   the config branch.
+//! - Parse errors are rendered by Clap to stderr with exit 2.
 
 use assert_cmd::cargo;
 use predicates::prelude::*;
@@ -66,9 +67,10 @@ fn help_shows_usage_commands_and_options_for_both_binaries() {
             .stdout(predicate::str::contains("Usage:"))
             .stdout(predicate::str::contains("Commands:"))
             .stdout(predicate::str::contains("Options:"))
-            // The verbose flag is `-V`, listed as "Use verbose output.",
-            // not as the version short flag.
-            .stdout(predicate::str::contains("-V"))
+            // The verbose flag is `-v`/`--verbose` ("Use verbose output."),
+            // not the version short flag (`-V`).
+            .stdout(predicate::str::contains("-v"))
+            .stdout(predicate::str::contains("--verbose"))
             .stdout(predicate::str::contains("--target"))
             .stdout(predicate::str::contains("--control-socket"));
     }
@@ -86,7 +88,7 @@ fn help_output_is_color_neutral_when_colors_disabled() {
 #[test]
 fn short_version_flag_prints_version_for_both_binaries() {
     for mut cmd in [fzz(), funzzy()] {
-        cmd.arg("-v")
+        cmd.arg("-V")
             .assert()
             .code(0)
             .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
@@ -104,14 +106,14 @@ fn long_version_flag_prints_version() {
 
 #[test]
 fn version_and_help_flags_win_over_commands_regardless_of_position() {
-    // Options accepted before AND after the command word; -v/-h still win.
+    // Options accepted before AND after the command word; -V/-h still win.
     fzz()
-        .args(["init", "-v"])
+        .args(["init", "-V"])
         .assert()
         .code(0)
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
     fzz()
-        .args(["-v", "init"])
+        .args(["-V", "init"])
         .assert()
         .code(0)
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
@@ -124,12 +126,9 @@ fn version_and_help_flags_win_over_commands_regardless_of_position() {
 
 #[test]
 fn verbose_short_flag_is_verbose_not_version() {
-    // `-V` is the verbose watch flag. When combined with `-v`, version wins.
-    // Clap defaults `-V` to the version flag, so the migration must either
-    // disable that or keep an explicit verbose flag; this test names the
-    // contract: `-V` never prints the version.
+    // `-v` is the verbose watch flag; it never prints the version. `-V` does.
     fzz()
-        .args(["-v", "-V"])
+        .args(["-V"])
         .assert()
         .code(0)
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
@@ -255,15 +254,13 @@ fn target_without_match_fails_listing_available_tasks() {
 
 #[test]
 fn unknown_long_option_fails_naming_the_flag() {
-    // Docopt: "Unknown flag: '--bogus'". Clap renders "unexpected argument
-    // '--bogus' found". The contract is the exit code and that the offending
-    // flag appears in the error output.
+    // Clap renders parse errors to stderr with exit 2; the offending flag
+    // appears in the error output.
     fzz()
         .arg("--bogus")
         .assert()
-        .code(1)
-        .stdout(predicate::str::contains("--bogus"))
-        .stdout(predicate::str::contains("Usage:"));
+        .code(2)
+        .stderr(predicate::str::contains("--bogus"));
 }
 
 #[test]
@@ -271,22 +268,19 @@ fn unknown_short_option_fails_naming_the_flag() {
     fzz()
         .arg("-z")
         .assert()
-        .code(1)
-        .stdout(predicate::str::contains("-z"))
-        .stdout(predicate::str::contains("Usage:"));
+        .code(2)
+        .stderr(predicate::str::contains("-z"));
 }
 
 #[test]
 fn missing_value_for_config_option_fails() {
-    // Docopt: "Expected argument for flag '--config' but reached end of
-    // arguments.". Clap: "a value is required for '--config <cfgfile>'".
-    // Contract: exit 1, the option name appears, usage is shown.
+    // Clap: "a value is required for '--config <cfgfile>'". Contract: parse
+    // error -> stderr, exit 2.
     fzz()
         .arg("-c")
         .assert()
-        .code(1)
-        .stdout(predicate::str::contains("--config"))
-        .stdout(predicate::str::contains("Usage:"));
+        .code(2)
+        .stderr(predicate::str::contains("--config"));
 }
 
 #[test]
@@ -294,9 +288,8 @@ fn missing_value_for_log_file_option_fails() {
     fzz()
         .arg("--log-file")
         .assert()
-        .code(1)
-        .stdout(predicate::str::contains("--log-file"))
-        .stdout(predicate::str::contains("Usage:"));
+        .code(2)
+        .stderr(predicate::str::contains("--log-file"));
 }
 
 #[test]
@@ -408,7 +401,7 @@ fn target_matching_value_starts_watcher() {
 #[cfg(feature = "test-integration")]
 #[test]
 fn verbose_short_flag_starts_watcher_in_verbose() {
-    let (mut child, log_name) = spawn_with_config(&["-V"], "verbose-flag.log");
+    let (mut child, log_name) = spawn_with_config(&["-v"], "verbose-flag.log");
     defer!({
         let _ = child.kill();
         let _ = std::fs::remove_file(&log_name);

@@ -142,7 +142,7 @@ fn test_nested_groups_respect_ignore_patterns() {
             // Create directories for test
             std::fs::create_dir_all(fixture.join("examples/workdir/frontend")).ok();
 
-            let mut child = fzz_cmd.arg("-V").spawn().expect("failed to spawn process");
+            let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn process");
             let mut output = String::new();
             defer!({
                 child.kill().expect("failed to close process");

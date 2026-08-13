@@ -1,17 +1,15 @@
 //! Clap-backed CLI argument parsing.
 //!
 //! Owns parser details and exposes semantic action/option types to
-//! application code. Replaces the Docopt parser (TASK-0012): no Docopt-shaped
-//! `flag_*` fields, no empty-string sentinels, and no second parse for
-//! value-less `--target`.
+//! application code. V2 conventions (TASK-0015): `-V`/`--version` is Clap's
+//! built-in version flag (stdout, exit 0); `-v`/`--verbose` is the verbose
+//! flag; parse errors use Clap's native handling (stderr, exit 2).
 
 use clap::{Arg, ArgAction, Command};
 
 /// Semantic application action selected from the positional command words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// `-v`/`--version` — wins over every command regardless of position.
-    Version,
     /// `init` — create or migrate the default config file.
     Init,
     /// No command (or the inert `watch` keyword alone): configured watch.
@@ -40,21 +38,11 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    /// Parse process arguments, printing help or errors and exiting per the
-    /// CLI contract (help exits 0; parse errors print and exit 1).
+    /// Parse process arguments, handing help/version/error display to Clap:
+    /// help and version print to stdout and exit 0; parse errors print to
+    /// stderr and exit 2.
     pub fn parse() -> Arguments {
-        match Self::try_parse_from(std::env::args()) {
-            Ok(args) => args,
-            Err(err) => match err.kind() {
-                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
-                    stdout_show_and_exit(&err.to_string())
-                }
-                _ => stdout_failure(
-                    "Failed to parse arguments",
-                    format!("{}\n\n{}", err.to_string(), Self::help_text()),
-                ),
-            },
-        }
+        Self::try_parse_from(std::env::args()).unwrap_or_else(|err| err.exit())
     }
 
     /// Parse from an argument iterator without exiting (used by unit tests).
@@ -78,17 +66,13 @@ impl Arguments {
             .map(|values| values.cloned().collect())
             .unwrap_or_default();
 
-        let action = if matches.get_flag("version") {
-            Action::Version
-        } else {
-            match words.as_slice() {
-                [] => Action::WatchConfig,
-                [word] if word == "init" => Action::Init,
-                [word] if word == "watch" => Action::WatchConfig,
-                [word, command] if word == "watch" => Action::WatchCommand(command.clone()),
-                [command] => Action::WatchCommand(command.clone()),
-                _ => Action::Unexpected(words.clone()),
-            }
+        let action = match words.as_slice() {
+            [] => Action::WatchConfig,
+            [word] if word == "init" => Action::Init,
+            [word] if word == "watch" => Action::WatchConfig,
+            [word, command] if word == "watch" => Action::WatchCommand(command.clone()),
+            [command] => Action::WatchCommand(command.clone()),
+            _ => Action::Unexpected(words.clone()),
         };
 
         Ok(Arguments {
@@ -112,21 +96,10 @@ impl Arguments {
     }
 }
 
-fn stdout_show_and_exit(text: &str) -> ! {
-    println!("{}", text);
-    std::process::exit(0)
-}
-
-fn stdout_failure(text: &str, err: String) -> ! {
-    println!("Error: {}", text);
-    println!("{}", err);
-    std::process::exit(1)
-}
-
 fn command() -> Command {
     Command::new("funzzy")
-        .disable_version_flag(true)
         .about("Funzzy the watcher.\n\nAlias:\n  fzz -> funzzy")
+        .version(env!("CARGO_PKG_VERSION"))
         .help_template(HELP_TEMPLATE)
         .arg(
             Arg::new("config")
@@ -195,15 +168,9 @@ fn command() -> Command {
                 .help("Do not run tasks on initialization."),
         )
         .arg(
-            Arg::new("version")
-                .short('v')
-                .long("version")
-                .action(ArgAction::SetTrue)
-                .help("Show version."),
-        )
-        .arg(
             Arg::new("verbose")
-                .short('V')
+                .short('v')
+                .long("verbose")
                 .action(ArgAction::SetTrue)
                 .help("Use verbose output."),
         )
@@ -320,27 +287,40 @@ mod tests {
     // -------------------------------------------------------------------
 
     #[test]
-    fn short_version_flag_selects_version() {
-        assert_eq!(parse_action(&["-v"]), Action::Version);
+    fn short_version_flag_is_handled_by_clap() {
+        // `-V`/`--version` is Clap's built-in version flag: parsing returns a
+        // DisplayVersion error that the process entrypoint renders to stdout
+        // and exit 0. It is not an `Action` variant.
+        let err = parse(&["-V"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 
     #[test]
-    fn long_version_flag_selects_version() {
-        assert_eq!(parse_action(&["--version"]), Action::Version);
+    fn long_version_flag_is_handled_by_clap() {
+        let err = parse(&["--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
     }
 
     #[test]
     fn version_wins_over_command_regardless_of_position() {
-        assert_eq!(parse_action(&["init", "-v"]), Action::Version);
-        assert_eq!(parse_action(&["-v", "init"]), Action::Version);
+        for args in [["init", "-V"], ["-V", "init"]] {
+            let err = parse(&args).unwrap_err();
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        }
     }
 
     #[test]
-    fn verbose_short_flag_is_not_version() {
-        let args = parse(&["-V"]).expect("parse");
-        assert_eq!(args.action, Action::WatchConfig);
+    fn verbose_short_flag_is_verbose_not_version() {
+        // `-v` is verbose; it never prints the version.
+        let args = parse(&["-v"]).expect("parse");
         assert!(args.verbose);
-        assert!(!matches!(args.action, Action::Version));
+        assert_eq!(args.action, Action::WatchConfig);
+    }
+
+    #[test]
+    fn verbose_long_flag_is_verbose() {
+        let args = parse(&["--verbose"]).expect("parse");
+        assert!(args.verbose);
     }
 
     #[test]

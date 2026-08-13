@@ -86,7 +86,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 
             let mut child = fzz_cmd
                 .arg("echo 'this file changed: {{filepath}}'")
-                .arg("-V") // DEBUG
+                .arg("-v") // DEBUG
                 .stdin(files.stdout.expect("failed to open stdin"))
                 .spawn()
                 .expect("Failed to spawn grep command");
