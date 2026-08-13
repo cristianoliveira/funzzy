@@ -153,19 +153,16 @@ fn no_args_without_config_fails_with_guidance() {
 }
 
 #[test]
-fn migrate_flag_without_init_falls_through_to_config_branch() {
-    // `--migrate` is only meaningful next to `init`. Alone it must not be a
-    // parse error: it reaches the config branch and fails on the missing
-    // default config. The migration must keep this dispatch behavior.
+fn migrate_without_init_is_unknown() {
+    // `--migrate` is scoped to `init` in V2; without `init` it is not a valid
+    // flag, so parsing fails to stderr with exit 2.
     with_tmp_dir("migrate-alone", |dir| {
         fzz()
             .args(["--migrate"])
             .current_dir(dir)
             .assert()
-            .code(1)
-            .stdout(predicate::str::contains(
-                "Failed to read default config file",
-            ));
+            .code(2)
+            .stderr(predicate::str::contains("--migrate"));
     });
 }
 
@@ -443,7 +440,7 @@ fn spawn_watch_from_stdin(args: &[&str], stdin_data: &str, log_name: &str) -> (C
 #[test]
 fn direct_command_form_watches_stdin_patterns() {
     let (mut child, log_name) = spawn_watch_from_stdin(
-        &["-c", "/definitely/not/a/config.yml", "echo {{filepath}}"],
+        &["exec", "--", "echo {{filepath}}"],
         "Cargo.toml\n",
         "direct-command.log",
     );
@@ -459,30 +456,5 @@ fn direct_command_form_watches_stdin_patterns() {
     );
 }
 
-#[cfg(feature = "test-integration")]
-#[test]
-fn watch_keyword_form_matches_direct_form() {
-    // The `watch` keyword is inert: `watch '<command>'` dispatches exactly
-    // like the bare `'<command>'` form. Both must consume stdin patterns and
-    // start the same watcher.
-    let (mut child, log_name) = spawn_watch_from_stdin(
-        &[
-            "-c",
-            "/definitely/not/a/config.yml",
-            "watch",
-            "echo {{filepath}}",
-        ],
-        "Cargo.toml\n",
-        "watch-keyword.log",
-    );
-    defer!({
-        let _ = child.kill();
-        let _ = std::fs::remove_file(&log_name);
-    });
-    let output = wait_for_output(&log_name, "Funzzy: watching patterns");
-    assert!(
-        output.contains("Cargo.toml"),
-        "stdin pattern must be reported:\n{}",
-        output
-    );
-}
+// The `watch <command>` form is removed in V2; ad-hoc commands now go
+// through `exec --` (see direct_command_form_watches_stdin_patterns).

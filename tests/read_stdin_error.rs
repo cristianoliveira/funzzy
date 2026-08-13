@@ -12,14 +12,14 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
     cmd.env("FUNZZY_COLORED", "false")
         .env("FUNZZY_STDIN_TIMEOUT_MS", "10")
         .current_dir("examples/workdir")
-        .arg("echo 'foo'")
+        .args(["exec", "--", "echo 'foo'"])
         .write_stdin("")
         .assert()
         .failure()
         .stdout(
             vec![
                 "Error: No files provided via stdin.",
-                "Provide a list of files or directories via stdin, e.g., `find . | fzz 'echo {{filepath}}'`.",
+                "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.",
                 "",
             ]
             .join("\n"),
@@ -40,7 +40,7 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
     cmd.env("FUNZZY_COLORED", "false")
         .env("FUNZZY_STDIN_TIMEOUT_MS", "10")
         .current_dir("examples/workdir")
-        .arg("echo 'foo'")
+        .args(["exec", "--", "echo 'foo'"])
         .write_stdin(lsla.stdout)
         .assert()
         .failure()

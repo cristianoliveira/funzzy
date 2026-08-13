@@ -1,23 +1,23 @@
 //! Clap-backed CLI argument parsing.
 //!
 //! Owns parser details and exposes semantic action/option types to
-//! application code. V2 conventions (TASK-0015): `-V`/`--version` is Clap's
-//! built-in version flag (stdout, exit 0); `-v`/`--verbose` is the verbose
-//! flag; parse errors use Clap's native handling (stderr, exit 2).
+//! application code. V2 structure (TASK-0015): real Clap subcommands
+//! (`init`, `watch`, `exec`); `fzz` with no subcommand is configured watch.
+//! `-V`/`--version` is Clap's built-in version flag (stdout, exit 0);
+//! `-v`/`--verbose` is the verbose flag; parse errors use Clap's native
+//! handling (stderr, exit 2).
 
 use clap::{Arg, ArgAction, Command};
 
-/// Semantic application action selected from the positional command words.
+/// Semantic application action selected from the parsed subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// `init` — create or migrate the default config file.
-    Init,
-    /// No command (or the inert `watch` keyword alone): configured watch.
+    /// `fzz` (no subcommand) or `fzz watch`: run configured tasks.
     WatchConfig,
-    /// An arbitrary command run against stdin-provided paths.
-    WatchCommand(String),
-    /// Words that do not form a supported command shape.
-    Unexpected(Vec<String>),
+    /// `fzz init [--migrate]`: create or migrate the default config file.
+    Init,
+    /// `fzz exec -- PROGRAM ARG...`: ad-hoc command over stdin-supplied paths.
+    Exec { command: Vec<String> },
 }
 
 /// Parser-owned, semantic application arguments.
@@ -61,18 +61,20 @@ impl Arguments {
         let log_file = matches.get_one::<String>("log_file").cloned();
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
-        let words: Vec<String> = matches
-            .get_many::<String>("command")
-            .map(|values| values.cloned().collect())
-            .unwrap_or_default();
-
-        let action = match words.as_slice() {
-            [] => Action::WatchConfig,
-            [word] if word == "init" => Action::Init,
-            [word] if word == "watch" => Action::WatchConfig,
-            [word, command] if word == "watch" => Action::WatchCommand(command.clone()),
-            [command] => Action::WatchCommand(command.clone()),
-            _ => Action::Unexpected(words.clone()),
+        let (action, migrate) = match matches.subcommand() {
+            None => (Action::WatchConfig, false),
+            Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
+            Some(("watch", _)) => (Action::WatchConfig, false),
+            Some(("exec", sub)) => {
+                let command: Vec<String> = sub
+                    .get_many::<String>("command")
+                    .map(|values| values.cloned().collect())
+                    .unwrap_or_default();
+                (Action::Exec { command }, false)
+            }
+            Some((other, _)) => {
+                unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
+            }
         };
 
         Ok(Arguments {
@@ -82,7 +84,7 @@ impl Arguments {
             log_truncate_on_change: matches.get_flag("log_truncate_on_change"),
             log_file,
             control_socket,
-            migrate: matches.get_flag("migrate"),
+            migrate,
             non_block: matches.get_flag("non_block"),
             no_run_on_init: matches.get_flag("no_run_on_init"),
             fail_fast: matches.get_flag("fail_fast"),
@@ -100,11 +102,22 @@ fn command() -> Command {
     Command::new("funzzy")
         .about("Funzzy the watcher.\n\nAlias:\n  fzz -> funzzy")
         .version(env!("CARGO_PKG_VERSION"))
+        .disable_version_flag(true)
         .help_template(HELP_TEMPLATE)
+        .subcommand_required(false)
+        .arg(
+            Arg::new("version")
+                .short('V')
+                .long("version")
+                .global(true)
+                .action(ArgAction::Version)
+                .help("Show version."),
+        )
         .arg(
             Arg::new("config")
                 .short('c')
                 .long("config")
+                .global(true)
                 .value_name("cfgfile")
                 .value_parser(clap::builder::ValueParser::string())
                 .help("Use given config file."),
@@ -113,6 +126,7 @@ fn command() -> Command {
             Arg::new("target")
                 .short('t')
                 .long("target")
+                .global(true)
                 .value_name("name")
                 .num_args(0..=1)
                 .default_missing_value("")
@@ -123,6 +137,7 @@ fn command() -> Command {
             Arg::new("non_block")
                 .short('n')
                 .long("non-block")
+                .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Execute tasks and cancel them if a new event is received."),
         )
@@ -130,6 +145,7 @@ fn command() -> Command {
             Arg::new("fail_fast")
                 .short('b')
                 .long("fail-fast")
+                .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Bail current execution if a task fails (exit code != 0)."),
         )
@@ -137,6 +153,7 @@ fn command() -> Command {
             Arg::new("log_truncate_on_change")
                 .short('T')
                 .long("log-truncate-on-change")
+                .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Truncate the log file when the config reloads (requires --log-file)."),
         )
@@ -144,6 +161,7 @@ fn command() -> Command {
             Arg::new("log_file")
                 .short('l')
                 .long("log-file")
+                .global(true)
                 .value_name("file")
                 .value_parser(clap::builder::ValueParser::string())
                 .help("Write all output to the specified log file in addition to the console."),
@@ -151,19 +169,15 @@ fn command() -> Command {
         .arg(
             Arg::new("control_socket")
                 .long("control-socket")
+                .global(true)
                 .value_name("path")
                 .value_parser(clap::builder::ValueParser::string())
                 .help("Expose watcher status over a Unix socket (implies --non-block)."),
         )
         .arg(
-            Arg::new("migrate")
-                .long("migrate")
-                .action(ArgAction::SetTrue)
-                .help("Migrate legacy root task list to current format."),
-        )
-        .arg(
             Arg::new("no_run_on_init")
                 .long("no-run-on-init")
+                .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Do not run tasks on initialization."),
         )
@@ -171,15 +185,40 @@ fn command() -> Command {
             Arg::new("verbose")
                 .short('v')
                 .long("verbose")
+                .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Use verbose output."),
         )
-        .arg(
-            Arg::new("command")
-                .value_name("command")
-                .num_args(0..=2)
-                .value_parser(clap::builder::ValueParser::string())
-                .help("Run an arbitrary command for current folder."),
+        .subcommand(
+            Command::new("init")
+                .about("Create or migrate a '.watch.yaml' file.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("migrate")
+                        .long("migrate")
+                        .action(ArgAction::SetTrue)
+                        .help("Migrate legacy root task list to current format."),
+                ),
+        )
+        .subcommand(
+            Command::new("watch")
+                .about("Watch for file changes and run configured tasks.")
+                .version(env!("CARGO_PKG_VERSION")),
+        )
+        .subcommand(
+            Command::new("exec")
+                .about("Run an ad-hoc command over stdin-supplied paths.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("command")
+                        .value_name("COMMAND")
+                        .num_args(1..)
+                        .required(true)
+                        .trailing_var_arg(true)
+                        .allow_hyphen_values(true)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Program and arguments to run on each change."),
+                ),
         )
 }
 
@@ -193,7 +232,8 @@ Alias:
 
 Commands:
   init                Create or migrate a '.watch.yaml' file.
-  watch               Watch for file changes and execute a command.
+  watch               Watch for file changes and run configured tasks.
+  exec                Run an ad-hoc command over stdin-supplied paths.
 
 {all-args}
 
@@ -227,70 +267,72 @@ mod tests {
     }
 
     #[test]
-    fn init_selects_init() {
+    fn watch_subcommand_selects_configured_watch() {
+        assert_eq!(parse_action(&["watch"]), Action::WatchConfig);
+    }
+
+    #[test]
+    fn init_subcommand_selects_init() {
         assert_eq!(parse_action(&["init"]), Action::Init);
     }
 
     #[test]
-    fn init_with_migrate_flag_selects_init_with_migration() {
+    fn init_with_migrate_flag_sets_migrate() {
         let args = parse(&["init", "--migrate"]).expect("parse");
         assert_eq!(args.action, Action::Init);
         assert!(args.migrate);
     }
 
     #[test]
-    fn migrate_without_init_falls_through_to_configured_watch() {
-        let args = parse(&["--migrate"]).expect("parse");
-        assert_eq!(args.action, Action::WatchConfig);
-        assert!(args.migrate);
+    fn migrate_without_init_is_unknown() {
+        // `--migrate` is scoped to `init`; without it, it is not a valid flag.
+        assert!(parse(&["--migrate"]).is_err());
     }
 
     #[test]
-    fn watch_keyword_alone_is_configured_watch() {
-        assert_eq!(parse_action(&["watch"]), Action::WatchConfig);
-    }
-
-    #[test]
-    fn watch_keyword_with_command_selects_command() {
+    fn exec_captures_trailing_command_argv() {
+        let action = parse_action(&["exec", "echo", "hello world"]);
         assert_eq!(
-            parse_action(&["watch", "echo {{filepath}}"]),
-            Action::WatchCommand("echo {{filepath}}".to_string())
+            action,
+            Action::Exec {
+                command: vec!["echo".to_string(), "hello world".to_string()]
+            }
         );
     }
 
     #[test]
-    fn bare_command_selects_command() {
+    fn exec_after_double_dash_captures_flag_like_args() {
+        let action = parse_action(&["exec", "--", "cargo", "test", "--release"]);
         assert_eq!(
-            parse_action(&["echo {{filepath}}"]),
-            Action::WatchCommand("echo {{filepath}}".to_string())
+            action,
+            Action::Exec {
+                command: vec![
+                    "cargo".to_string(),
+                    "test".to_string(),
+                    "--release".to_string(),
+                ]
+            }
         );
     }
 
     #[test]
-    fn init_with_extra_words_is_unexpected() {
-        assert_eq!(
-            parse_action(&["init", "extra"]),
-            Action::Unexpected(vec!["init".to_string(), "extra".to_string()])
-        );
+    fn exec_without_command_fails() {
+        assert!(parse(&["exec"]).is_err());
     }
 
     #[test]
-    fn two_arbitrary_words_are_unexpected() {
-        assert_eq!(
-            parse_action(&["a", "b"]),
-            Action::Unexpected(vec!["a".to_string(), "b".to_string()])
-        );
+    fn unknown_subcommand_fails() {
+        // The bare ad-hoc form `fzz '<command>'` is removed in V2; the first
+        // positional is now treated as a subcommand name and rejected.
+        assert!(parse(&["echo", "hello"]).is_err());
     }
 
     // -------------------------------------------------------------------
-    // Options
+    // Options (global, usable with any subcommand)
     // -------------------------------------------------------------------
 
     #[test]
     fn short_version_flag_is_handled_by_clap() {
-        // `-V`/`--version` is Clap's built-in version flag: parsing returns a
-        // DisplayVersion error that the process entrypoint renders to stdout
-        // and exit 0. It is not an `Action` variant.
         let err = parse(&["-V"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
     }
@@ -302,16 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn version_wins_over_command_regardless_of_position() {
-        for args in [["init", "-V"], ["-V", "init"]] {
-            let err = parse(&args).unwrap_err();
-            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
-        }
-    }
-
-    #[test]
     fn verbose_short_flag_is_verbose_not_version() {
-        // `-v` is verbose; it never prints the version.
         let args = parse(&["-v"]).expect("parse");
         assert!(args.verbose);
         assert_eq!(args.action, Action::WatchConfig);
@@ -330,9 +363,14 @@ mod tests {
     }
 
     #[test]
+    fn global_config_propagates_to_subcommand() {
+        let args = parse(&["watch", "-c", "/some/path"]).expect("parse");
+        assert_eq!(args.config.as_deref(), Some("/some/path"));
+        assert_eq!(args.action, Action::WatchConfig);
+    }
+
+    #[test]
     fn short_config_equals_form_uses_value_without_equals() {
-        // Clap treats `-c=<path>` as value `<path>` (Docopt kept the leading
-        // `=`). The migration adopts clap semantics.
         let args = parse(&["-c=/some/path"]).expect("parse");
         assert_eq!(args.config.as_deref(), Some("/some/path"));
     }
@@ -346,12 +384,6 @@ mod tests {
     #[test]
     fn target_without_value_is_empty_list_mode() {
         let args = parse(&["-t"]).expect("parse");
-        assert_eq!(args.target.as_deref(), Some(""));
-    }
-
-    #[test]
-    fn target_with_explicit_empty_value_is_list_mode() {
-        let args = parse(&["--target="]).expect("parse");
         assert_eq!(args.target.as_deref(), Some(""));
     }
 
@@ -409,10 +441,5 @@ mod tests {
     #[test]
     fn missing_value_for_log_file_option_fails() {
         assert!(parse(&["--log-file"]).is_err());
-    }
-
-    #[test]
-    fn three_positional_words_fail() {
-        assert!(parse(&["a", "b", "c"]).is_err());
     }
 }

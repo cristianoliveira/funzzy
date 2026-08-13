@@ -114,9 +114,11 @@ pub fn run() {
             }
         }
 
-        // Arbitrary command provided: use stdin branch (arbitrary command mode)
-        Action::WatchCommand(ref command) => {
-            let command = command.clone();
+        // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`: join the
+        // argv into one shell command string for the existing stdin runner.
+        // (Proper argv preservation without re-joining is TASK-0016.)
+        Action::Exec { command: ref cmd } => {
+            let command = cmd.join(" ");
             match from_stdin() {
                 Ok(StdinRead::NoPipe) => {
                     // No stdin and no config -> help and exit 1
@@ -124,7 +126,7 @@ pub fn run() {
                     process::exit(1);
                 }
                 Ok(StdinRead::PipeEmpty) => {
-                    stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz 'echo {{filepath}}'`.".to_string());
+                    stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
                 }
                 Ok(StdinRead::Data(content)) => {
                     let patterns = match config::extract_paths(content) {
@@ -156,15 +158,6 @@ pub fn run() {
                 Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
             };
         }
-
-        // Unsupported command shape: show guidance and exit 1
-        Action::Unexpected(words) => stdout::failure(
-            "Unexpected arguments",
-            format!(
-                "Supported forms: `fzz init`, `fzz watch <command>`, `fzz <command>`. Received: {}",
-                words.join(" ")
-            ),
-        ),
     }
 }
 
