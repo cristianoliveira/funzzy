@@ -1,7 +1,7 @@
 ---
 id: TASK-0013
 title: Prove and document the Clap migration
-status: todo
+status: doing
 depends_on: [TASK-0012]
 priority: normal
 tags: [rust, cli, release]
@@ -28,13 +28,13 @@ Release-ready migration evidence and synchronized CLI/package documentation.
 
 ## Acceptance criteria
 
-- [ ] Help documents all public commands/options and Funzzy environment variables.
-- [ ] `funzzy` and `fzz` manual smoke cases pass for help, version, target-list, valid config, and invalid arguments.
-- [ ] Nix local package builds with refreshed, deterministic dependency hash.
-- [ ] No Docopt reference remains outside historical planning/release notes.
-- [ ] No deprecated CLI aliases or compatibility parser path is introduced.
-- [ ] Any intentional help/error presentation difference from Docopt is documented in PR evidence.
-- [ ] Issue #226 acceptance is traceable to tests and verification commands.
+- [x] Help documents all public commands/options and Funzzy environment variables.
+- [x] `funzzy` and `fzz` manual smoke cases pass for help, version, target-list, valid config, and invalid arguments.
+- [x] Nix local package builds with refreshed, deterministic dependency hash.
+- [x] No Docopt reference remains outside historical planning/release notes.
+- [x] No deprecated CLI aliases or compatibility parser path is introduced.
+- [x] Any intentional help/error presentation difference from Docopt is documented in PR evidence.
+- [x] Issue #226 acceptance is traceable to tests and verification commands.
 
 ## Verification
 
