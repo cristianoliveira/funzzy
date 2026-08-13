@@ -9,6 +9,7 @@ pub mod control;
 pub mod environment;
 pub mod errors;
 pub mod logging;
+pub mod plan;
 pub mod rules;
 pub mod stdout;
 pub mod template;

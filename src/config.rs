@@ -29,14 +29,13 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
         "ignore",
     )?;
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+    let parallel = yaml::extract_optional_string(yaml, "parallel")?;
 
-    Ok(Rules::new(
-        name,
-        commands,
-        watch_patterns,
-        ignore_patterns,
-        run_on_init,
-    ))
+    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init);
+    Ok(match parallel {
+        Some(group) => rule.with_parallel(group),
+        None => rule,
+    })
 }
 
 pub fn commands(rules: Vec<Rules>) -> Vec<String> {
@@ -243,14 +242,13 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let ignore_patterns = ensure_glob_only(merge_patterns(&common.ignore, task_ignore), "ignore")?;
 
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+    let parallel = yaml::extract_optional_string(yaml, "parallel")?;
 
-    Ok(Rules::new(
-        name,
-        commands,
-        watch_patterns,
-        ignore_patterns,
-        run_on_init,
-    ))
+    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init);
+    Ok(match parallel {
+        Some(group) => rule.with_parallel(group),
+        None => rule,
+    })
 }
 
 /// Append task-specific patterns to the common ones, dropping duplicates.
@@ -409,6 +407,37 @@ pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String
     control_socket_from_yaml(&content)
 }
 
+/// Reads the optional global `on.jobs` concurrency cap. Missing yields
+/// `Ok(None)` (caller decides the default); zero, negative, and
+/// non-integer values are rejected deterministically.
+pub fn jobs_from_yaml(content: &str) -> Result<Option<usize>, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+
+    if on == &Yaml::BadValue {
+        return Ok(None);
+    }
+
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+
+    if on["jobs"] == Yaml::BadValue {
+        return Ok(None);
+    }
+
+    match &on["jobs"] {
+        Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
+        Yaml::Integer(_) => {
+            Err("Property 'on.jobs' must be a positive integer (got zero or negative)".to_owned())
+        }
+        _ => Err("Property 'on.jobs' must be a positive integer".to_owned()),
+    }
+}
+
 pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
     match File::open(filename) {
         Ok(mut file) => {
@@ -497,6 +526,7 @@ mod tests {
     use super::control_socket_from_yaml;
     use super::from_argv;
     use super::from_yaml;
+    use super::jobs_from_yaml;
     use super::rule_as_yaml;
     use super::rule_from;
     use std::env::current_dir;
@@ -1037,6 +1067,149 @@ tasks:
         assert!(rules[0].run_on_init());
         assert_eq!(rules[0].watch_patterns().len(), 0);
         assert!(rules[0].validate().is_ok());
+    }
+
+    #[test]
+    fn it_parses_parallel_group_name_on_task() {
+        let file_content = "
+        - name: lint
+          parallel: checks
+          run: make lint
+          change: 'src/**'
+
+        - name: test
+          parallel: checks
+          run: make test
+          change: 'src/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].parallel(), Some("checks"));
+        assert_eq!(rules[1].parallel(), Some("checks"));
+    }
+
+    #[test]
+    fn it_parses_parallel_group_in_hash_format_with_common_rules() {
+        let file_content = "
+        on:
+          change: 'src/**'
+        tasks:
+          - name: lint
+            parallel: checks
+            run: make lint
+          - name: test
+            run: make test
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+        assert_eq!(rules[0].parallel(), Some("checks"));
+        assert_eq!(rules[1].parallel(), None, "no parallel means serial");
+    }
+
+    #[test]
+    fn it_rejects_boolean_parallel_value() {
+        let file_content = "
+        - name: lint
+          parallel: true
+          run: make lint
+          change: 'src/**'
+        ";
+
+        let err = from_yaml(file_content).expect_err("boolean parallel must fail");
+        assert!(
+            format!("{}", err).contains("Expected 'String' but got: Boolean"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn it_rejects_collection_parallel_value() {
+        let file_content = "
+        - name: lint
+          parallel: [checks]
+          run: make lint
+          change: 'src/**'
+        ";
+
+        let err = from_yaml(file_content).expect_err("collection parallel must fail");
+        assert!(
+            format!("{}", err).contains("Expected 'String' but got: Array"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn it_rejects_empty_parallel_group_name() {
+        let file_content = "
+        - name: lint
+          parallel: ''
+          run: make lint
+          change: 'src/**'
+        ";
+
+        let err = from_yaml(file_content).expect_err("empty parallel must fail");
+        assert!(
+            format!("{}", err).contains("Property 'parallel' cannot be empty"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn it_accepts_jobs_from_on_section() {
+        let file_content = "
+on:\n  jobs: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make lint\n";
+        assert_eq!(jobs_from_yaml(file_content).unwrap(), Some(4));
+    }
+
+    #[test]
+    fn it_defaults_jobs_when_absent() {
+        let file_content = "
+        - name: lint
+          run: make lint
+          change: 'src/**'
+        ";
+        assert_eq!(jobs_from_yaml(file_content).unwrap(), None);
+    }
+
+    #[test]
+    fn it_rejects_zero_and_negative_jobs() {
+        let zero = "\non:\n  jobs: 0\ntasks:\n  - name: a\n    run: echo a\n";
+        let negative = "\non:\n  jobs: -2\ntasks:\n  - name: a\n    run: echo a\n";
+
+        let zero_err = jobs_from_yaml(zero).expect_err("zero jobs must fail");
+        assert!(
+            zero_err.contains("positive integer"),
+            "unexpected: {}",
+            zero_err
+        );
+        let negative_err = jobs_from_yaml(negative).expect_err("negative jobs must fail");
+        assert!(
+            negative_err.contains("positive integer"),
+            "unexpected: {}",
+            negative_err
+        );
+    }
+
+    #[test]
+    fn it_rejects_non_integer_jobs() {
+        let file_content = "\non:\n  jobs: many\ntasks:\n  - name: a\n    run: echo a\n";
+        let err = jobs_from_yaml(file_content).expect_err("string jobs must fail");
+        assert!(err.contains("positive integer"), "unexpected: {}", err);
+    }
+
+    #[test]
+    fn it_rejects_jobs_outside_object_on() {
+        let file_content = "\non: 3\ntasks:\n  - name: a\n    run: echo a\n";
+        let err = jobs_from_yaml(file_content).expect_err("scalar on must fail");
+        assert!(
+            err.contains("'on' must be an object"),
+            "unexpected: {}",
+            err
+        );
     }
 
     #[test]

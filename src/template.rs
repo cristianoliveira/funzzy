@@ -5,6 +5,7 @@
 //! parsing and no console output: unknown variables are collected and
 //! reported to the caller, which decides how to present them.
 
+#[derive(Clone)]
 pub struct TemplateOptions {
     pub filepath: Option<String>,
     pub current_dir: String,

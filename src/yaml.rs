@@ -82,6 +82,47 @@ Expected 'String' but got: {:?}
     }
 }
 
+/// Extracts an optional string property. Missing values yield `Ok(None)`;
+/// present non-string values are errors. Empty strings are rejected so an
+/// empty `parallel` group name cannot silently disable grouping.
+pub fn extract_optional_string(yaml: &Yaml, prop: &str) -> Result<Option<String>> {
+    match &yaml[prop] {
+        Yaml::BadValue => Ok(None),
+        Yaml::String(ref item) => {
+            let value = item.as_str();
+            if value.trim().is_empty() {
+                Err(FzzError::InvalidConfigError(
+                    format!(
+                        "Property '{}' cannot be empty\n```yaml\n{}\n```",
+                        prop,
+                        yaml_to_string(&yaml, 0),
+                    ),
+                    None,
+                    Some("Provide a non-empty value".to_string()),
+                ))
+            } else {
+                Ok(Some(String::from(value)))
+            }
+        }
+        unknown => Err(FzzError::InvalidConfigError(
+            format!(
+                "Invalid property '{}' in rule below
+Expected 'String' but got: {}
+```
+{}
+```",
+                prop,
+                get_type(unknown),
+                yaml_to_string(&yaml, 0),
+            ),
+            None,
+            Some(
+                "Check if the property is defined, with the right type and identation".to_string(),
+            ),
+        )),
+    }
+}
+
 pub fn extract_bool(yaml: &Yaml, prop: &str) -> bool {
     match yaml[prop] {
         Yaml::Boolean(item) => item,

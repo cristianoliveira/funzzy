@@ -10,7 +10,7 @@ extern crate glob;
 
 use self::glob::Pattern;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
     pub name: String,
 
@@ -22,6 +22,9 @@ pub struct Rules {
     watch_patterns: Vec<String>,
     ignore_patterns: Vec<String>,
     run_on_init: bool,
+    /// Optional named `parallel` group (TASK-0024/0025). `None` means the
+    /// task is serial and never runs concurrently with siblings.
+    parallel: Option<String>,
 }
 
 impl Rules {
@@ -39,6 +42,7 @@ impl Rules {
             watch_patterns: watches,
             ignore_patterns: ignores,
             run_on_init,
+            parallel: None,
         }
     }
 
@@ -59,7 +63,20 @@ impl Rules {
             watch_patterns: watches,
             ignore_patterns: ignores,
             run_on_init,
+            parallel: None,
         }
+    }
+
+    /// Declares the task as a member of the named `parallel` group. Only
+    /// consecutive tasks sharing the same non-empty group name run together.
+    pub fn with_parallel(mut self, group: String) -> Self {
+        self.parallel = Some(group);
+        self
+    }
+
+    /// The optional named `parallel` group this task belongs to.
+    pub fn parallel(&self) -> Option<&str> {
+        self.parallel.as_deref()
     }
 
     pub fn watch(&self, path: &str) -> bool {
