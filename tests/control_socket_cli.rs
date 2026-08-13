@@ -35,7 +35,7 @@ tasks:
     change: "*.txt"
     run_on_init: true
   - name: full tests @agent-final
-    run: "true"
+    run: 'test -z "{{filepath}}"'
     change: ".funzzy-final-never"
 "#,
     )
@@ -56,7 +56,10 @@ tasks:
         serde_json::json!({"jsonrpc": "2.0", "id": "targets", "method": "targets"}),
     );
     assert_eq!(targets["result"][1]["name"], "full tests @agent-final");
-    assert_eq!(targets["result"][1]["commands"][0], "true");
+    assert_eq!(
+        targets["result"][1]["commands"][0],
+        "test -z \"{{filepath}}\""
+    );
 
     let run = call(
         &socket_path,

@@ -80,7 +80,7 @@ impl WatchNonBlockCommand {
                     .target(&target)
                     .ok_or_else(|| format!("No target found for '{}'", target))?;
                 runner_worker.cancel_running_tasks()?;
-                runner_worker.schedule(rules, &format!("control:{}", target))
+                runner_worker.schedule_with_trigger(rules, &format!("control:{}", target), None)
             },
         ) {
             Ok(server) => {

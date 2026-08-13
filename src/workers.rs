@@ -205,17 +205,26 @@ impl Worker {
     }
 
     pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<u64, String> {
+        self.schedule_with_trigger(rules, filepath, Some(filepath))
+    }
+
+    pub(crate) fn schedule_with_trigger(
+        &self,
+        rules: Vec<Rules>,
+        trigger: &str,
+        filepath: Option<&str>,
+    ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
             let current_dir = std::env::current_dir().unwrap();
             let commands = rules::template(
                 rules::commands(rules),
                 rules::TemplateOptions {
-                    filepath: Some(filepath.to_string()),
+                    filepath: filepath.map(str::to_string),
                     current_dir: format!("{}", current_dir.display()),
                 },
             );
             let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Err(err) = scheduler.send((run_id, commands, filepath.to_string())) {
+            if let Err(err) = scheduler.send((run_id, commands, trigger.to_string())) {
                 return Err(format!("{:?}", err));
             }
             return Ok(run_id);
