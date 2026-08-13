@@ -9,7 +9,16 @@ fn it_migrates_legacy_config_with_init_migrate() {
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    let directory = std::env::temp_dir().join(format!("funzzy-init-migrate-{unique}"));
+    // Nanos alone can collide when two `cargo test` invocations overlap
+    // (watcher generations, CI steps) and read the same clock tick; the PID
+    // disambiguates concurrent processes. Pre-remove defends against stale
+    // dirs from earlier crashed runs.
+    let directory = std::env::temp_dir().join(format!(
+        "funzzy-init-migrate-{}-{}",
+        std::process::id(),
+        unique
+    ));
+    let _ = fs::remove_dir_all(&directory);
     fs::create_dir(&directory).expect("failed to create test directory");
     let config = directory.join(".watch.yaml");
     fs::write(
