@@ -1,4 +1,4 @@
-{ lib , rustPlatform , fetchFromGitHub , stdenv , darwin }:
+{ lib , rustPlatform , fetchFromGitHub }:
 
 rustPlatform.buildRustPackage {
   pname = "funzzy";
@@ -18,11 +18,10 @@ rustPlatform.buildRustPackage {
 #   allowBuiltinFetchGit = true;
 # };
 
-  cargoHash = "sha256-UiteOp81eqFpibkVEq2zqzsPoyh2GMsrXCETfNqEbms=";
+  cargoHash = "sha256-KBD6cwbkG9i1y0Xqtk3foVWjZTp7eIEvo32RQPhOs90=";
 
-  buildInputs = lib.optionals stdenv.isDarwin [
-    darwin.apple_sdk.frameworks.CoreServices
-  ];
+  # NOTE: legacy darwin.apple_sdk.frameworks references were removed in
+  # nixpkgs; the default SDK (via SDKROOT) provides CoreServices now.
 
 # Custom build phase
 # NOTE: to debug pass --verbose to cargo test

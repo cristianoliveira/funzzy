@@ -1,7 +1,7 @@
 ---
 id: TASK-0011
 title: Raise the minimum Rust toolchain for current Clap
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [rust, nix, dependencies]
@@ -27,13 +27,13 @@ One explicit, deterministic Rust 1.85-or-newer baseline across Cargo metadata an
 
 ## Acceptance criteria
 
-- [ ] `Cargo.toml` declares `rust-version = "1.85"` or a justified newer minimum.
-- [ ] `nix develop` and Nix package builds provide compiler satisfying declared minimum.
-- [ ] Repository keeps one obvious Nix-owned toolchain path; no redundant toolchain manager is added.
-- [ ] CI uses compiler satisfying declared minimum and does not depend on runner accident.
-- [ ] Nix lock/hash changes are limited to toolchain requirement.
-- [ ] Existing exact `assert_cmd` pin is not opportunistically changed in this deliverable.
-- [ ] Rust upgrade alone does not change Funzzy runtime or CLI behavior.
+- [x] `Cargo.toml` declares `rust-version = "1.85"` or a justified newer minimum.
+- [x] `nix develop` and Nix package builds provide compiler satisfying declared minimum.
+- [x] Repository keeps one obvious Nix-owned toolchain path; no redundant toolchain manager is added.
+- [x] CI uses compiler satisfying declared minimum and does not depend on runner accident.
+- [x] Nix lock/hash changes are limited to toolchain requirement.
+- [x] Existing exact `assert_cmd` pin is not opportunistically changed in this deliverable.
+- [x] Rust upgrade alone does not change Funzzy runtime or CLI behavior.
 
 ## Verification
 

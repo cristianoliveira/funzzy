@@ -1,4 +1,4 @@
-{ lib , rustPlatform , fetchFromGitHub , stdenv , darwin }:
+{ lib , rustPlatform , fetchFromGitHub }:
 
 rustPlatform.buildRustPackage rec {
   pname = "funzzy";
@@ -11,11 +11,10 @@ rustPlatform.buildRustPackage rec {
     hash = "sha256-ZbpZaAoUsHPPbBAOOLYvEJDy06WO0uDYnRF1+gEzB0Q=";
   };
 
-  cargoHash = "sha256-sbEXprBFWetV8W41Ib8X4pzOhYA7RiIYAfJOTV2DT4A=";
+  cargoHash = "sha256-m7qlL+ajw/rwIHQ7KAw7gI9QmpTBnxWEeTVRgrBOcl4=";
 
-  buildInputs = lib.optionals stdenv.isDarwin [
-    darwin.apple_sdk.frameworks.CoreServices
-  ];
+  # NOTE: legacy darwin.apple_sdk.frameworks references were removed in
+  # nixpkgs; the default SDK (via SDKROOT) provides CoreServices now.
 
   meta = with lib; {
     description = "A lightweight watcher";

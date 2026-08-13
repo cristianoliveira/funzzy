@@ -6,6 +6,9 @@ description = "A lightweight blazingly fast file watcher"
 license = "MIT"
 repository = "https://github.com/cristianoliveira/funzzy"
 edition = "2021"
+# Minimum supported Rust version. Clap 4.6 (used by the CLI refactor) and its
+# edition-2024 dependencies require 1.85; keep in sync with the Nix toolchain.
+rust-version = "1.85"
 default-run = "funzzy" # the binary to run when `cargo run` is called
 
 [profile.release]

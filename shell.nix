@@ -21,12 +21,8 @@ pkgs.mkShell {
     # For development install latest version of funzzy
     # copkgs.funzzyNightly
 
-    # if system contains "darwin" then darwin.apple_sdk.frameworks.CoreServices else null
-    # Fix error: `ld: framework not found CoreServices`
-    (if system == "x86_64-darwin" || 
-    system == "aarch64-darwin" 
-    then darwin.apple_sdk.frameworks.CoreServices
-    else null)
+    # NOTE: legacy darwin.apple_sdk.frameworks references were removed in
+    # nixpkgs; the default SDK (via SDKROOT) provides CoreServices now.
   ];
 
   shellHook = ''
