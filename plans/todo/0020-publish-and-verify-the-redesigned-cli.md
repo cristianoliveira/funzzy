@@ -2,7 +2,7 @@
 id: TASK-0020
 title: Publish and verify the redesigned CLI
 status: todo
-depends_on: [TASK-0016, TASK-0017, TASK-0018, TASK-0019, TASK-0021, TASK-0022]
+depends_on: [TASK-0016, TASK-0017, TASK-0018, TASK-0019, TASK-0021, TASK-0022, TASK-0023]
 priority: high
 tags: [rust, cli, docs, release]
 ---
@@ -18,7 +18,7 @@ Treat generated help and executable behavior as truth. Coordinate control-socket
 
 ## Acceptance criteria
 
-- [ ] README and usage docs lead with configured workflow mode, document `exec` as ad-hoc composition, and show control-socket client workflows.
+- [ ] README and usage docs lead with configured workflow mode, document `exec` as ad-hoc composition, show control-socket client workflows, and explain verbose diagnostic records.
 - [ ] Migration section maps every removed or renamed V1 invocation to V2.
 - [ ] `funzzy` and `fzz` expose identical command trees and behavior.
 - [ ] Help examples are exercised as smoke tests and no stale `--target`, `--non-block`, or flag convention remains.
