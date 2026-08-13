@@ -21,7 +21,7 @@ integration:
 	@cargo test --features test-integration
 
 .PHONY: integration-e2e ## Exectute integration tests
-integration-e2e: integration-clean
+integration-e2e:
 	@cargo test --features test-integration-e2e
 
 .PHONY: ci-enable-hook
@@ -30,7 +30,7 @@ ci-enable-hook: ## Enable the pre-push hook
 	@chmod +x "${PWD}/.git/hooks/pre-push"
 
 .PHONY: ci-integration
-ci-integration: integration-clean
+ci-integration:
 	@cargo test --features test-integration
 
 .PHONY: ci-run-on-push
@@ -53,12 +53,6 @@ linter: lint
 .PHONY: install
 install: tests ## Install funzzy on your machine
 	GITSHA="$(shell git rev-parse --short HEAD)" cargo install --path .
-
-.PHONY: integration-clean
-integration-clean:
-	echo "Creating a temp dir for integration tests in /tmp/fzz"
-	rm -rf /tmp/fzz
-	mkdir -p /tmp/fzz
 
 .PHONY: nix-gen-patch
 nix-gen-patch: ## Generate a patch for the nix derivation

@@ -37,6 +37,16 @@ where
 
 #[cfg(not(feature = "test-integration"))]
 #[allow(dead_code)]
+pub fn with_config<F>(_: &std::path::Path, _: &str, _: F) -> ()
+where
+    F: FnOnce(&mut Command, File) -> (),
+{
+    println!("WARNING: Skipping integration tests");
+    ()
+}
+
+#[cfg(not(feature = "test-integration"))]
+#[allow(dead_code)]
 pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
@@ -51,9 +61,22 @@ pub fn with_example<F>(opts: Options, handler: F) -> ()
 where
     F: FnOnce(&mut Command, File) -> (),
 {
+    let config_path = std::path::Path::new(opts.example_file);
+    with_config(config_path, opts.output_file, handler)
+}
+
+#[cfg(feature = "test-integration")]
+#[allow(dead_code)]
+pub fn with_config<F>(config_path: &std::path::Path, output_file: &str, handler: F) -> ()
+where
+    F: FnOnce(&mut Command, File) -> (),
+{
     let dir = env::current_dir().expect("error getting current directory");
 
-    let _ = std::fs::remove_file(dir.join(opts.output_file));
+    // Per-process log name so concurrent integration runs (watcher
+    // generation, CI, manual) never create or truncate each other's logs.
+    let log_name = format!("{}-{}", output_file, std::process::id());
+    let _ = std::fs::remove_file(dir.join(&log_name));
 
     // NOTE: Execute ls command for debug purposes
     // very usefil to debug the tests that are failing
@@ -98,17 +121,18 @@ where
 
     // check if the file exists if so fail
     assert!(
-        !std::path::Path::new(&dir.join(opts.output_file)).exists(),
+        !std::path::Path::new(&dir.join(&log_name)).exists(),
        "the log file already exists, make sure to give an unique log file to avoid multiple writes to same file: {}",
-       dir.join(opts.output_file).display()
+       dir.join(&log_name).display()
     );
 
     let bin_path = env!("CARGO_BIN_EXE_fzz");
     println!("Integration Tests: fzz bin from {}", bin_path);
-    let output_file = File::create(dir.join(opts.output_file)).expect("error log file");
+    let output_log = File::create(dir.join(&log_name)).expect("error log file");
 
     let mut cmd = Command::new(bin_path);
     cmd.arg("-c");
+    cmd.arg(config_path);
     if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
         cmd.env("_TEST_FUNZZY_COLORED", "0");
     }
@@ -118,16 +142,14 @@ where
     if std::env::var("_TEST_FUNZZY_NON_BLOCK").is_err() {
         cmd.env("_TEST_FUNZZY_NON_BLOCK", "0");
     }
-    cmd.arg(dir.join(opts.example_file))
-        .stdout(Stdio::from(output_file));
+    cmd.stdout(Stdio::from(output_log));
 
     handler(
         &mut cmd,
-        File::open(dir.join(opts.output_file)).expect("failed to open file"),
+        File::open(dir.join(&log_name)).expect("failed to open file"),
     );
 
-    std::fs::remove_file(dir.join(opts.output_file))
-        .expect("failed to remove file after running test");
+    std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");
 }
 
 #[cfg(feature = "test-integration")]
@@ -138,7 +160,10 @@ where
 {
     let dir = env::current_dir().expect("error getting current directory");
 
-    let _ = std::fs::remove_file(dir.join(output_file_path));
+    // Per-process log name so concurrent integration runs (watcher
+    // generation, CI, manual) never create or truncate each other's logs.
+    let log_name = format!("{}-{}", output_file_path, std::process::id());
+    let _ = std::fs::remove_file(dir.join(&log_name));
 
     // NOTE: OK, this is a bit hacky, but it's a simple way to avoid running
     // the tests from tests/*.rs in parallel.
@@ -183,14 +208,14 @@ where
 
     // check if the file exists if so fail
     assert!(
-        !std::path::Path::new(&dir.join(output_file_path)).exists(),
+        !std::path::Path::new(&dir.join(&log_name)).exists(),
        "the log file already exists, make sure to give an unique log file to avoid multiple writes to same file: {}",
-       dir.join(output_file_path).display()
+       dir.join(&log_name).display()
     );
 
     let bin_path = env!("CARGO_BIN_EXE_fzz");
     println!("Integration Tests: fzz bin from {}", bin_path);
-    let output_file = File::create(dir.join(output_file_path)).expect("error log file");
+    let output_file = File::create(dir.join(&log_name)).expect("error log file");
 
     let mut cmd = Command::new(bin_path);
     if std::env::var("_TEST_FUNZZY_COLORED").is_err() {
@@ -206,11 +231,10 @@ where
 
     handler(
         &mut cmd,
-        File::open(dir.join(output_file_path)).expect("failed to open file"),
+        File::open(dir.join(&log_name)).expect("failed to open file"),
     );
 
-    std::fs::remove_file(dir.join(output_file_path))
-        .expect("failed to remove file after running test");
+    std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");
 }
 
 #[allow(dead_code)]
