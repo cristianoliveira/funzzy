@@ -298,6 +298,26 @@ debounce window.
 - Invalid `on.debounce` values (zero, negative, unknown suffix) fail loudly;
 they never silently change timing.
 
+## Filesystem backend policy
+
+By default Funzzy uses the native filesystem backend and **automatically falls
+back to deterministic polling** if native watch registration fails (containers,
+network filesystems, WSL, unusual platforms). You can force a backend:
+
+```yaml
+on:
+  watch_backend: auto     # native first, poll fallback (default)
+  # watch_backend: native  # fail clearly if native is unavailable
+  # watch_backend: poll    # always poll
+  poll_interval: 200ms    # used with poll; default 500ms
+```
+
+Polling scans watched roots for create/modify/remove changes on a fixed
+interval and feeds the exact same batching, matching, and execution path as
+the native backend. Tradeoffs: polling adds a small per-interval scan cost and
+change latency up to the interval; prefer native for large trees. Forced
+native fails with an actionable error instead of silently changing semantics.
+
 ## Parallel execution
 
 Funzzy can run independent tasks concurrently. Concurrency is **opt-in**: a

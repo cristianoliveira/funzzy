@@ -255,10 +255,12 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                             && key_str != "socket"
                             && key_str != "concurrency"
                             && key_str != "debounce"
+                            && key_str != "watch_backend"
+                            && key_str != "poll_interval"
                         {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', and 'debounce' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', 'debounce', 'watch_backend', and 'poll_interval' are allowed.",
                                     key_str
                                 ),
                                 None,
@@ -1851,4 +1853,94 @@ mod jobs_tests {
             .is_err()
         );
     }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    fn watch_backend_defaults_to_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            None
+        );
+        assert_eq!(watch_backend_from_yaml("tasks: []\n").unwrap(), None);
+    }
+
+    #[test]
+    fn watch_backend_accepts_native_poll_and_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: native\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Native)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: auto\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Auto)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 200ms\n")
+                .unwrap(),
+            Some(crate::watcher::WatchBackend::Poll {
+                interval: Duration::from_millis(200)
+            })
+        );
+    }
+
+    #[test]
+    fn watch_backend_rejects_invalid_values() {
+        assert!(watch_backend_from_yaml("on:\n  watch_backend: bogus\n").is_err());
+        assert!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 0\n").is_err()
+        );
+    }
+}
+
+/// Parses the optional `on.watch_backend` (native|poll|auto) plus
+/// `on.poll_interval` duration. Absent defaults to auto (native first, poll
+/// fallback). Zero/invalid values are rejected loudly.
+pub fn watch_backend_from_yaml(
+    content: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+
+    if on == &Yaml::BadValue {
+        return Ok(None);
+    }
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+    if on["watch_backend"] == Yaml::BadValue {
+        return Ok(None);
+    }
+
+    let backend = match &on["watch_backend"] {
+        Yaml::String(value) => value.clone(),
+        _ => return Err("Property 'on.watch_backend' must be a string".to_owned()),
+    };
+    let poll_interval = match &on["poll_interval"] {
+        Yaml::BadValue => None,
+        Yaml::Integer(value) => Some(value.to_string()),
+        Yaml::String(value) => Some(value.clone()),
+        _ => return Err("Property 'on.poll_interval' must be a duration".to_owned()),
+    };
+    let poll_interval = match poll_interval {
+        None => None,
+        Some(raw) => parse_debounce(&raw)?.map(|d| d.max(Duration::from_millis(20))),
+    };
+    crate::watcher::WatchBackend::parse(Some(&backend), poll_interval).map(Some)
+}
+
+pub fn watch_backend_from_file(
+    filename: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    watch_backend_from_yaml(&content)
 }

@@ -104,6 +104,7 @@ pub fn run() {
             let rules = load_rules(&args.config);
             let concurrency = effective_concurrency(&args, &args.config);
             let debounce = load_debounce(&args.config);
+            let backend = load_watch_backend(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
@@ -112,7 +113,8 @@ pub fn run() {
                 workspace_root.clone(),
                 concurrency,
             )
-            .with_debounce(debounce);
+            .with_debounce(debounce)
+            .with_backend(backend);
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
@@ -190,7 +192,8 @@ pub fn run() {
                 workspace_root.clone(),
                 effective_concurrency(&args, &args.config),
             )
-            .with_debounce(load_debounce(&args.config));
+            .with_debounce(load_debounce(&args.config))
+            .with_backend(load_watch_backend(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
                 concurrency: watches.concurrency(),
@@ -444,6 +447,27 @@ fn load_debounce(config_file: &Option<String>) -> std::time::Duration {
         .unwrap_or_else(|| std::time::Duration::from_millis(1000))
 }
 
+/// The filesystem backend policy from `on.watch_backend` (TASK-0037);
+/// defaults to auto (native first, poll fallback). Invalid values fail loudly.
+fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBackend {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return crate::watcher::WatchBackend::Auto;
+    };
+    config::watch_backend_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid watch backend config", err))
+        .unwrap_or(crate::watcher::WatchBackend::Auto)
+}
+
 fn load_concurrency(config_file: &Option<String>) -> usize {
     let default = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get())
@@ -523,6 +547,7 @@ fn execute_watch_command(
     let startup_config_paths = config_file_paths.clone();
     let th = std::thread::spawn(move || {
         let baselines = std::sync::Mutex::new(baselines);
+        let backend = crate::watcher::WatchBackend::Auto;
         watcher::events(
             startup_config_paths,
             || {},
@@ -581,6 +606,7 @@ fn execute_watch_command(
                 }
             },
             debounce,
+            backend,
             false,
         )
     });

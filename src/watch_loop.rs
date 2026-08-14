@@ -143,6 +143,7 @@ pub fn watch_loop(
             strategy.on_batch_complete();
         },
         debounce,
+        watches.backend(),
         verbose,
     )
     .map_err(FzzError::GenericError)

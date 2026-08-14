@@ -90,6 +90,8 @@ pub struct Watches {
     /// Debounce window per filesystem event batch (TASK-0031). Defaults to
     /// the historical one second unless `on.debounce` configures otherwise.
     debounce: Duration,
+    /// Filesystem backend policy (TASK-0037): native, poll, or auto.
+    backend: crate::watcher::WatchBackend,
 }
 impl Watches {
     /// Convenience constructor resolving the workspace root from the process
@@ -118,6 +120,7 @@ impl Watches {
             root,
             concurrency,
             debounce: Duration::from_millis(1000),
+            backend: crate::watcher::WatchBackend::Auto,
         }
     }
 
@@ -131,6 +134,17 @@ impl Watches {
     /// The debounce window used per filesystem event batch.
     pub fn debounce(&self) -> Duration {
         self.debounce
+    }
+
+    /// Overrides the filesystem backend policy (TASK-0037).
+    pub fn with_backend(mut self, backend: crate::watcher::WatchBackend) -> Self {
+        self.backend = backend;
+        self
+    }
+
+    /// The configured filesystem backend policy.
+    pub fn backend(&self) -> crate::watcher::WatchBackend {
+        self.backend
     }
 
     /// Narrows visible rules while retaining barriers from original topology.
@@ -153,6 +167,7 @@ impl Watches {
             root: self.root.clone(),
             concurrency: self.concurrency,
             debounce: self.debounce,
+            backend: self.backend,
         })
     }
 

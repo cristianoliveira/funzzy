@@ -328,3 +328,58 @@ fn fails_with_unkown_paths() {
         },
     );
 }
+
+#[cfg(feature = "test-integration")]
+#[test]
+fn poll_backend_detects_changes_and_runs_tasks() {
+    // TASK-0037: `on.watch_backend: poll` drives the same batching/matching
+    // path and must detect a file change and run the matching task.
+    use std::io::prelude::*;
+    use std::time::Duration;
+
+    let scratch = std::env::temp_dir().join(format!(
+        "funzzy-poll-watch-{}-{}",
+        std::process::id(),
+        "poll-backend"
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(
+        scratch.join(".watch.yaml"),
+        "on:\n  change: '**/*'\n  watch_backend: poll\n  poll_interval: 100ms\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: 'captured.txt'\n",
+    )
+    .unwrap();
+
+    let output_log = std::fs::File::create(scratch.join("child.out")).unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&scratch)
+        .env("FUNZZY_COLORED", "false")
+        .stdout(std::process::Stdio::from(output_log))
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+
+    // Wait for the watcher to be up (poll backend has no socket; wait for
+    // the watching line via a small poll on the process output).
+    std::thread::sleep(Duration::from_millis(500));
+
+    std::fs::write(scratch.join("trigger.txt"), "change").unwrap();
+
+    let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut ran = false;
+    while std::time::Instant::now() < deadline {
+        if scratch.join("captured.txt").exists() {
+            ran = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(ran, "poll backend must detect the change and run the task");
+    assert_eq!(
+        std::fs::read_to_string(scratch.join("captured.txt")).unwrap(),
+        "captured\n"
+    );
+    std::fs::remove_dir_all(&scratch).unwrap();
+}
