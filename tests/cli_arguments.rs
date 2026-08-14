@@ -689,3 +689,82 @@ fn direct_command_form_watches_stdin_patterns() {
 
 // The `watch <command>` form is removed in V2; ad-hoc commands now go
 // through `exec --` (see direct_command_form_watches_stdin_patterns).
+
+#[test]
+fn check_reports_valid_config_and_counts() {
+    with_tmp_dir("check-valid", |dir| {
+        let config = dir.join("valid.yml");
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\n  concurrency: 2\njobs:\n  - name: lint\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n",
+        )
+        .expect("write config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("check")
+            .assert()
+            .code(0)
+            .stdout(predicate::str::contains("config valid"))
+            .stdout(predicate::str::contains("2 job(s)"))
+            .stdout(predicate::str::contains("2 in parallel group(s)"))
+            .stdout(predicate::str::contains("concurrency 2"));
+
+        // Side-effect free: no socket, no log file, no task output.
+        let entries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(entries, vec!["valid.yml"], "check must not create files");
+    });
+}
+
+#[test]
+fn check_rejects_invalid_config_without_watching() {
+    with_tmp_dir("check-invalid", |dir| {
+        let config = dir.join("invalid.yml");
+        // No command and no change/run_on_init: rule-level validation error.
+        std::fs::write(&config, "jobs:\n  - name: broken\n").expect("write config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("check")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid config file"));
+    });
+}
+
+#[test]
+fn check_rejects_invalid_debounce_and_mixed_tasks_jobs() {
+    with_tmp_dir("check-debounce", |dir| {
+        let config = dir.join("bad.yml");
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\n  debounce: fast\ntasks:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
+        )
+        .expect("write config");
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("check")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid debounce config"));
+
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\ntasks:\n  - name: a\n    run: echo a\n    change: '**/*'\njobs:\n  - name: b\n    run: echo b\n    change: '**/*'\n",
+        )
+        .expect("write config");
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("check")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid config file"));
+    });
+}

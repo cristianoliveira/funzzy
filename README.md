@@ -238,6 +238,15 @@ fzz watch "@quick"
 # Assuming one or more tasks contain `@quick`, only those tasks are watched.
 ```
 
+Validate the configuration without starting a watcher:
+
+```bash
+fzz check
+# Loads the same parser/validator the watcher uses: schema, globs, durations,
+# concurrency, parallel groups, and path existence. Never runs tasks or opens
+# a socket. Exit 0 when valid, non-zero with actionable errors when not.
+```
+
 Run same configured workflow once, without watcher or control socket:
 
 ```bash

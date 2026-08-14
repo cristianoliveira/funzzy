@@ -68,6 +68,7 @@ pub fn run() {
 
     match args.action {
         // Commands
+        Action::Check => check_config(&args.config),
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
         Action::Control { action, socket } => {
@@ -284,6 +285,78 @@ fn effective_concurrency(args: &Arguments, config_file: &Option<String>) -> usiz
         1
     } else {
         load_concurrency(config_file)
+    }
+}
+
+/// `fzz check`: side-effect-free config validation (TASK-0033). Loads the
+/// same parser/validator the watcher uses, plus debounce/concurrency/path
+/// checks. Never starts a watcher, executes a task, or opens a socket.
+fn check_config(config_file: &Option<String>) {
+    let config_path = config_file
+        .clone()
+        .unwrap_or_else(|| cli::watch::DEFAULT_FILENAME.to_string());
+    let rules = match config::from_file(&config_path) {
+        Ok(rules) => rules,
+        Err(err) => stdout::failure("Invalid config file.", err.to_string()),
+    };
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    // Debounce and concurrency reuse the exact watch-time parsers.
+    if let Some(debounce) = config::debounce_from_file(&config_path)
+        .unwrap_or_else(|err| stdout::failure("Invalid debounce config", err))
+    {
+        stdout::info(&format!("debounce: {:?}", debounce));
+    }
+    let concurrency = config::concurrency_from_file(&config_path)
+        .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|p| p.get())
+                .unwrap_or(1)
+        });
+
+    // Filesystem metadata checks only (never registers watches).
+    let mut missing_paths: Vec<String> = vec![];
+    for rule in &rules {
+        for pattern in rule.watch_patterns() {
+            if let Some(literal) = literal_prefix(&pattern) {
+                if !std::path::Path::new(&literal).exists() {
+                    missing_paths.push(literal);
+                }
+            }
+        }
+    }
+    let groups = rules
+        .iter()
+        .filter(|rule| rule.parallel().is_some())
+        .count();
+
+    if !missing_paths.is_empty() {
+        missing_paths.sort();
+        missing_paths.dedup();
+        stdout::warn(&format!(
+            "paths do not exist (may still match future files): {}",
+            missing_paths.join(", ")
+        ));
+    }
+    stdout::info(&format!(
+        "config valid: {} job(s), {} in parallel group(s), concurrency {}",
+        rules.len(),
+        groups,
+        concurrency
+    ));
+}
+
+/// Longest literal prefix of a change glob before the first wildcard, or
+/// None when the pattern is fully wildcard. Used for path-existence checks.
+fn literal_prefix(pattern: &str) -> Option<String> {
+    let end = pattern.find(['*', '?', '[']).unwrap_or(pattern.len());
+    let prefix = pattern[..end].trim_end_matches('/');
+    if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix.to_owned())
     }
 }
 

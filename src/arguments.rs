@@ -29,6 +29,8 @@ pub enum Action {
     Watch { target: Option<String> },
     /// `fzz list`: print configured tasks.
     List,
+    /// `fzz check`: validate configuration without starting a watcher.
+    Check,
     /// `fzz run TARGET`: execute selected configured tasks once, locally.
     Run { target: String },
     /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
@@ -91,6 +93,7 @@ impl Arguments {
                 (Action::Watch { target }, false)
             }
             Some(("list", _)) => (Action::List, false),
+            Some(("check", _)) => (Action::Check, false),
             Some(("run", sub)) => {
                 let target = sub
                     .get_one::<String>("target")
@@ -356,6 +359,14 @@ fn command() -> Command {
                         .required(true)
                         .value_parser(clap::builder::ValueParser::string())
                         .help("Exact task name, @tag, or unambiguous name substring."),
+                ),
+        )
+        .subcommand(
+            Command::new("check")
+                .about("Validate configuration without starting a watcher.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .long_about(
+                    "Load and validate the configured workflow: schema, globs, durations, concurrency, parallel groups, and paths. Never starts a watcher, executes a command, or opens a socket. Exit 0 when valid; non-zero with actionable errors when not.",
                 ),
         )
         .subcommand(
@@ -700,6 +711,13 @@ mod tests {
     #[test]
     fn list_subcommand_selects_list() {
         assert_eq!(parse_action(&["list"]), Action::List);
+    }
+
+    #[test]
+    fn check_subcommand_selects_check() {
+        assert_eq!(parse_action(&["check"]), Action::Check);
+        let args = parse(&["check"]).expect("check parses");
+        assert_eq!(args.action, Action::Check);
     }
 
     #[test]
