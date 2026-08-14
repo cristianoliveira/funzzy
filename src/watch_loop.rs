@@ -253,7 +253,11 @@ impl RunStrategy for BlockingStrategy {
 
     fn run_init(&self, plan: RunPlan) -> Option<u64> {
         match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
-            Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
+            Ok(completed) => stdout::present_results(
+                completed.results,
+                completed.elapsed,
+                Some(&completed.outcome),
+            ),
             Err(error) => stdout::error(&error),
         }
         None
@@ -263,7 +267,11 @@ impl RunStrategy for BlockingStrategy {
         let metadata =
             RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
         match self.workflow.run(plan, metadata, Some(filepath)) {
-            Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
+            Ok(completed) => stdout::present_results(
+                completed.results,
+                completed.elapsed,
+                Some(&completed.outcome),
+            ),
             Err(error) => stdout::error(&error),
         }
         None

@@ -188,8 +188,8 @@ pub enum ShutdownOutcome {
 }
 
 impl LoggedChild {
-    fn new(mut child: Child, capture: Option<Arc<CaptureHandle>>) -> Self {
-        let forward_handles = forward_child_output(&mut child, capture);
+    fn new(mut child: Child, capture: Option<Arc<CaptureHandle>>, label: Option<String>) -> Self {
+        let forward_handles = forward_child_output(&mut child, capture, label);
         Self {
             child,
             forward_handles,
@@ -347,7 +347,7 @@ fn run_to_completion(cmd: &mut Command, display: &str) -> Result<(), String> {
             .spawn()
             .map_err(|error| format!("Command {} has errored with {}", display, error))?;
 
-        let mut handles = forward_child_output(&mut child, None);
+        let mut handles = forward_child_output(&mut child, None, None);
 
         match child.wait() {
             Ok(status) if status.success() => {
@@ -382,16 +382,19 @@ pub fn spawn(command: &String) -> Result<LoggedChild, String> {
 }
 
 pub fn spawn_in(command: &String, context: &TaskContext) -> Result<LoggedChild, String> {
-    spawn_in_with_capture(command, context, None)
+    spawn_in_with_capture(command, context, None, None)
 }
 
 /// Spawns with an optional bounded output capture (TASK-0045, contract §6).
 /// The capture shares the child's pipe reads: live forwarding and the log
 /// file keep working exactly as before, with one read, multiple sinks.
+/// `label` (TASK-0028) prefixes every live line with `[label] ` so parallel
+/// tasks keep task identity; raw capture bytes are never prefixed.
 pub fn spawn_in_with_capture(
     command: &String,
     context: &TaskContext,
     capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
 ) -> Result<LoggedChild, String> {
     println!();
     logging::log_line("");
@@ -400,7 +403,7 @@ pub fn spawn_in_with_capture(
     let mut cmd = prepare_command(command);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, command, capture)
+    spawn_configured(&mut cmd, command, capture, label)
 }
 
 /// Spawns an exact argv (program plus arguments) directly, without a shell.
@@ -418,7 +421,7 @@ pub fn spawn_argv_in(argv: &[String], context: &TaskContext) -> Result<LoggedChi
     let mut cmd = prepare_argv_command(argv);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, &display, None)
+    spawn_configured(&mut cmd, &display, None, None)
 }
 
 fn apply_context(command: &mut Command, context: &TaskContext) {
@@ -432,8 +435,14 @@ fn spawn_configured(
     cmd: &mut Command,
     display: &str,
     capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
 ) -> Result<LoggedChild, String> {
-    if logging::is_enabled() || capture.is_some() {
+    // Pipe child output whenever we need to forward it: logging, bounded
+    // capture, or live task attribution (TASK-0028). Attribution requires the
+    // forwarding thread, so parallel-group tasks always pipe even without
+    // `--log-file`; serial tasks without logging/capture keep inherited
+    // stdout today's passthrough.
+    if logging::is_enabled() || capture.is_some() || label.is_some() {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
     }
@@ -472,7 +481,7 @@ fn spawn_configured(
             // shutdown path can reach the whole task tree (TASK-0030).
             let pid = child.id() as i32;
             crate::process_owner::register(pid);
-            Ok(LoggedChild::new(child, capture))
+            Ok(LoggedChild::new(child, capture, label))
         }
         Err(error) => Err(format!("Command {} has errored with {}", display, error)),
     }
@@ -602,52 +611,131 @@ fn prepare_argv_command(argv: &[String]) -> Command {
     cmd
 }
 
-fn forward_child_output(child: &mut Child, capture: Option<Arc<CaptureHandle>>) -> ForwardHandles {
+fn forward_child_output(
+    child: &mut Child,
+    capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
+) -> ForwardHandles {
     let mut handles = ForwardHandles::new();
 
     if let Some(stdout) = child.stdout.take() {
-        handles.stdout = Some(spawn_forwarding_thread(stdout, false, capture.clone()));
+        handles.stdout = Some(spawn_forwarding_thread(
+            stdout,
+            false,
+            capture.clone(),
+            label.clone(),
+        ));
     }
 
     if let Some(stderr) = child.stderr.take() {
-        handles.stderr = Some(spawn_forwarding_thread(stderr, true, capture));
+        handles.stderr = Some(spawn_forwarding_thread(stderr, true, capture, label));
     }
 
     handles
+}
+
+/// Byte-safe, line-atomic child output forwarding (TASK-0028, contract §6):
+/// reads raw bytes until each newline, so invalid UTF-8 never corrupts or
+/// drops output (rendered lossy), partial final lines are still emitted, and
+/// one whole line is written per call so concurrent tasks cannot interleave
+/// mid-line. When `label` is set, every live line is prefixed with `[label] `
+/// so parallel tasks keep task identity; the capture always keeps the raw
+/// bytes, never the rendered prefix.
+/// Renders one raw child-output chunk (a full line, including its trailing
+/// newline, or a partial final line) for live forwarding: lossy UTF-8 so
+/// binary output never drops the stream, with an optional `[label] ` prefix
+/// for parallel-task attribution (TASK-0028). Pure and testable.
+fn render_live_line(raw: &[u8], label: Option<&str>) -> String {
+    let rendered = String::from_utf8_lossy(raw);
+    match label {
+        Some(label) => format!("[{}] {}", label, rendered),
+        None => rendered.into_owned(),
+    }
 }
 
 fn spawn_forwarding_thread<R: std::io::Read + Send + 'static>(
     reader: R,
     is_stderr: bool,
     capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = BufReader::new(reader);
-        let mut line = String::new();
+        let mut line: Vec<u8> = Vec::new();
 
         loop {
             line.clear();
 
-            match reader.read_line(&mut line) {
+            match reader.read_until(b'\n', &mut line) {
                 Ok(0) => break,
                 Ok(_) => {
+                    // Lossy render: binary or invalid UTF-8 output still
+                    // reaches the console instead of silently dropping the
+                    // rest of the stream.
+                    let attributed = render_live_line(&line, label.as_deref());
                     if is_stderr {
-                        eprint!("{}", line);
+                        eprint!("{}", attributed);
                         let _ = std::io::stderr().flush();
                     } else {
-                        print!("{}", line);
+                        print!("{}", attributed);
                         let _ = std::io::stdout().flush();
                     }
 
-                    logging::log_plain(&line);
+                    logging::log_plain(&attributed);
                     if let Some(capture) = &capture {
                         // Raw bytes: no secret inference, no UTF-8 validation
-                        // here (retrieval renders lossy).
-                        capture.append(line.as_bytes(), is_stderr);
+                        // here (retrieval renders lossy), and no prefix.
+                        capture.append(&line, is_stderr);
                     }
                 }
                 Err(_) => break,
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_live_line_preserves_plain_output_byte_for_byte() {
+        assert_eq!(render_live_line(b"hello\n", None), "hello\n");
+        assert_eq!(render_live_line(b"", None), "");
+        assert_eq!(
+            render_live_line(b"partial without newline", None),
+            "partial without newline"
+        );
+    }
+
+    #[test]
+    fn render_live_line_prefixes_label_on_complete_and_partial_lines() {
+        assert_eq!(
+            render_live_line(b"line one\n", Some("lint")),
+            "[lint] line one\n"
+        );
+        assert_eq!(
+            render_live_line(b"trailing partial", Some("test")),
+            "[test] trailing partial"
+        );
+    }
+
+    #[test]
+    fn render_live_line_is_lossy_for_non_utf8_but_never_drops_bytes() {
+        // 0xFF is invalid UTF-8: rendered lossily (never kills the stream),
+        // and every byte still appears in the rendered line.
+        let rendered = render_live_line(b"ok \xff done\n", Some("check"));
+        assert!(rendered.contains("[check] ok "), "rendered: {rendered}");
+        assert!(rendered.contains(" done\n"), "rendered: {rendered}");
+    }
+
+    #[test]
+    fn render_live_line_keeps_one_line_atomic_under_attribution() {
+        // The prefix must not split a line: one whole line in, one whole
+        // attributed line out, with the newline preserved at the end.
+        let line = b"interleaved output stays whole\n";
+        let rendered = render_live_line(line, Some("task a"));
+        assert_eq!(rendered, "[task a] interleaved output stays whole\n");
+        assert_eq!(rendered.matches('\n').count(), 1);
+    }
 }

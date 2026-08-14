@@ -88,8 +88,10 @@ pub enum TaskOutcome {
 /// Overall run outcome derived deterministically from task outcomes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunOutcome {
-    /// Task identity -> outcome, preserving plan order.
-    pub tasks: Vec<(String, TaskOutcome)>,
+    /// Task identity (+ optional parallel group) -> outcome, in plan order.
+    /// Ordering inside a named parallel group is explicitly unspecified;
+    /// combination is keyed by task identity (TASK-0028).
+    pub tasks: Vec<(String, Option<String>, TaskOutcome)>,
 }
 
 impl TaskPlan {
@@ -527,7 +529,9 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 impl RunOutcome {
     /// Derives the overall outcome from per-task outcomes in plan order.
-    pub fn from_task_outcomes(outcomes: Vec<(String, TaskOutcome)>) -> RunOutcome {
+    /// `group` is the named parallel group occurrence the task belongs to,
+    /// None for serial tasks (TASK-0028).
+    pub fn from_task_outcomes(outcomes: Vec<(String, Option<String>, TaskOutcome)>) -> RunOutcome {
         RunOutcome { tasks: outcomes }
     }
 
@@ -535,14 +539,14 @@ impl RunOutcome {
     pub fn is_success(&self) -> bool {
         self.tasks
             .iter()
-            .all(|(_, outcome)| matches!(outcome, TaskOutcome::Passed))
+            .all(|(_, _, outcome)| matches!(outcome, TaskOutcome::Passed))
     }
 
     /// True when at least one task failed.
     pub fn has_failures(&self) -> bool {
         self.tasks
             .iter()
-            .any(|(_, outcome)| matches!(outcome, TaskOutcome::Failed { .. }))
+            .any(|(_, _, outcome)| matches!(outcome, TaskOutcome::Failed { .. }))
     }
 
     /// True when the run was cancelled (restart replacement), even if some
@@ -550,14 +554,14 @@ impl RunOutcome {
     pub fn is_cancelled(&self) -> bool {
         self.tasks
             .iter()
-            .any(|(_, outcome)| matches!(outcome, TaskOutcome::Cancelled))
+            .any(|(_, _, outcome)| matches!(outcome, TaskOutcome::Cancelled))
     }
 
     /// All failure messages across tasks, in plan order.
     pub fn failures(&self) -> Vec<String> {
         self.tasks
             .iter()
-            .flat_map(|(name, outcome)| match outcome {
+            .flat_map(|(name, _, outcome)| match outcome {
                 TaskOutcome::Failed { failures } => failures
                     .iter()
                     .map(|f| format!("{}: {}", name, f))
@@ -771,9 +775,10 @@ mod tests {
     #[test]
     fn outcome_combination_is_order_independent() {
         let a = RunOutcome::from_task_outcomes(vec![
-            ("t1".to_owned(), TaskOutcome::Passed),
+            ("t1".to_owned(), None, TaskOutcome::Passed),
             (
                 "t2".to_owned(),
+                None,
                 TaskOutcome::Failed {
                     failures: vec!["boom".to_owned()],
                 },
@@ -782,11 +787,12 @@ mod tests {
         let b = RunOutcome::from_task_outcomes(vec![
             (
                 "t2".to_owned(),
+                None,
                 TaskOutcome::Failed {
                     failures: vec!["boom".to_owned()],
                 },
             ),
-            ("t1".to_owned(), TaskOutcome::Passed),
+            ("t1".to_owned(), None, TaskOutcome::Passed),
         ]);
         assert!(!a.is_success());
         assert!(a.has_failures());
@@ -795,10 +801,59 @@ mod tests {
     }
 
     #[test]
+    fn outcome_combination_keeps_group_identity_keyed_by_task() {
+        // TASK-0028: the summary identifies group and every task; combining
+        // outcomes is keyed by task identity, and parallel-group ordering is
+        // explicitly unspecified (reversed inputs reduce identically).
+        let a = RunOutcome::from_task_outcomes(vec![
+            (
+                "lint".to_owned(),
+                Some("checks".to_owned()),
+                TaskOutcome::Passed,
+            ),
+            (
+                "test".to_owned(),
+                Some("checks".to_owned()),
+                TaskOutcome::Failed {
+                    failures: vec!["boom".to_owned()],
+                },
+            ),
+        ]);
+        let b = RunOutcome::from_task_outcomes(vec![
+            (
+                "test".to_owned(),
+                Some("checks".to_owned()),
+                TaskOutcome::Failed {
+                    failures: vec!["boom".to_owned()],
+                },
+            ),
+            (
+                "lint".to_owned(),
+                Some("checks".to_owned()),
+                TaskOutcome::Passed,
+            ),
+        ]);
+        assert_eq!(a.tasks.len(), 2);
+        // Every task keeps its group identity regardless of completion order.
+        assert!(a
+            .tasks
+            .iter()
+            .all(|(_, group, _)| group.as_deref() == Some("checks")));
+        assert_eq!(a.failures(), b.failures());
+        assert_eq!(
+            a.tasks
+                .iter()
+                .find(|(name, _, _)| name == "test")
+                .map(|(_, group, _)| group.clone()),
+            Some(Some("checks".to_owned()))
+        );
+    }
+
+    #[test]
     fn cancelled_run_is_never_success() {
         let outcome = RunOutcome::from_task_outcomes(vec![
-            ("t1".to_owned(), TaskOutcome::Passed),
-            ("t2".to_owned(), TaskOutcome::Cancelled),
+            ("t1".to_owned(), None, TaskOutcome::Passed),
+            ("t2".to_owned(), None, TaskOutcome::Cancelled),
         ]);
         assert!(!outcome.is_success());
         assert!(outcome.is_cancelled());

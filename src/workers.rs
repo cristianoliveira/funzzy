@@ -386,7 +386,11 @@ impl Worker {
                     },
                     Step::Finished => {
                         let completed = executor.finish(active.take().expect("active run"));
-                        stdout::present_results(completed.results, completed.elapsed);
+                        stdout::present_results(
+                            completed.results,
+                            completed.elapsed,
+                            Some(&completed.outcome),
+                        );
                     }
                 }
             }

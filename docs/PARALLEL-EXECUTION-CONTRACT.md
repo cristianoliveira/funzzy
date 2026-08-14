@@ -1,6 +1,8 @@
 # Funzzy Parallel Execution Contract
 
-> Status: **draft** — defined by TASK-0024. Drives TASK-0025 through TASK-0030.
+> Status: **normative** — defined by TASK-0024. TASK-0025 through TASK-0028
+> implement the executor, scheduling, process ownership, and attributed
+> output/results sections. TASK-0029 proves performance/lifecycle safety.
 > This workstream is independent of the V2 CLI redesign (TASK-0020) and does
 > not block it. Existing configurations without `parallel` keep today's
 > sequential behavior exactly.

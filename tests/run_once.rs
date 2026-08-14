@@ -73,6 +73,34 @@ fn tag_selection_runs_all_matching_parallel_tasks() {
 }
 
 #[test]
+fn parallel_live_output_is_attributed_and_summary_names_group_and_tasks() {
+    // TASK-0028: live lines from parallel-group tasks carry the `[task]`
+    // prefix (identity under interleaving), and the final summary lists every
+    // task with its group. The output is deterministic in content, not in
+    // completion order, so assertions are task-keyed contains-checks.
+    let directory = fixture("attributed-output");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  concurrency: 2\ntasks:\n  - name: lint @quick\n    parallel: checks\n    run: 'echo lint-output; echo lint-second'\n  - name: test @quick\n    parallel: checks\n    run: 'echo test-output'\n",
+    );
+
+    fzz(&directory)
+        .args(["run", "@quick"])
+        .assert()
+        .success()
+        // Live lines are attributed to the emitting task.
+        .stdout(predicate::str::contains("[lint @quick] lint-output"))
+        .stdout(predicate::str::contains("[lint @quick] lint-second"))
+        .stdout(predicate::str::contains("[test @quick] test-output"))
+        // Final summary identifies group and every task.
+        .stdout(predicate::str::contains("- [checks#1] lint @quick: passed"))
+        .stdout(predicate::str::contains("- [checks#1] test @quick: passed"))
+        .stdout(predicate::str::contains("Completed: 2"));
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn sequential_override_forces_effective_concurrency_one() {
     // SEQUENTIAL-OVERRIDE-CONTRACT §2: the handshake tasks only pass when
     // both run concurrently (concurrency 2). Under `--sequential` the first
@@ -227,5 +255,75 @@ fn ctrl_c_stops_owned_task_group_and_exits_130() {
         .map(|output| output.status.success())
         .unwrap_or(false);
     assert!(!alive, "Ctrl-C orphaned child {}", task_pid.trim());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn parallel_binary_output_is_lossy_attributed_and_never_drops_stream() {
+    // TASK-0028: a parallel-group task emitting invalid-UTF-8 bytes must not
+    // lose the rest of its stream (the old read_line loop broke on the first
+    // invalid byte); every line still carries the task attribution.
+    let directory = fixture("binary-output");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  concurrency: 2\ntasks:\n  - name: binary @quick\n    parallel: checks\n    run: 'printf \"\\377\\376first\\nsecond\\n\"'\n  - name: plain @quick\n    parallel: checks\n    run: 'echo plain-output'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "@quick"])
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Both lines from the binary task survive, attributed to the task. The
+    // invalid bytes render lossily (replacement chars) before "first".
+    assert!(
+        stdout.contains("[binary @quick]") && stdout.contains("first"),
+        "first line must survive with attribution: {stdout}"
+    );
+    assert!(
+        stdout.contains("[binary @quick] second"),
+        "second line must survive after invalid bytes: {stdout}"
+    );
+    assert!(
+        stdout.contains("[plain @quick] plain-output"),
+        "sibling task output: {stdout}"
+    );
+    assert!(
+        stdout.contains("- [checks#1] binary @quick: passed")
+            && stdout.contains("- [checks#1] plain @quick: passed"),
+        "summary must list every task with its group: {stdout}"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn parallel_partial_final_line_without_newline_is_emitted() {
+    // TASK-0028: a child that exits without a trailing newline must still
+    // have its final partial line forwarded and attributed.
+    let directory = fixture("partial-line");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  concurrency: 2\ntasks:\n  - name: partial @quick\n    parallel: checks\n    run: 'printf \"complete\\nno-newline\"'\n  - name: plain @quick\n    parallel: checks\n    run: 'echo plain-output'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "@quick"])
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[partial @quick] complete"),
+        "complete line: {stdout}"
+    );
+    assert!(
+        stdout.contains("[partial @quick] no-newline"),
+        "partial final line must still be emitted: {stdout}"
+    );
+    assert!(
+        stdout.contains("- [checks#1] partial @quick: passed"),
+        "summary: {stdout}"
+    );
     std::fs::remove_dir_all(directory).unwrap();
 }

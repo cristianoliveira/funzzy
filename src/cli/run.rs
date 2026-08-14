@@ -46,7 +46,11 @@ impl RunCommand {
             .with_duration_profile(Some(target.to_owned()), None);
         let completed = self.workflow.run(plan, metadata, None)?;
         let succeeded = completed.outcome.is_success();
-        stdout::present_results(completed.results, completed.elapsed);
+        stdout::present_results(
+            completed.results,
+            completed.elapsed,
+            Some(&completed.outcome),
+        );
         Ok(succeeded)
     }
 }

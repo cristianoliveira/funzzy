@@ -99,12 +99,44 @@ pub fn print_time_elapsed(_elapsed_param: std::time::Duration) -> () {
     logging::log_plain(&message);
 }
 
-pub fn present_results(results: Vec<Result<(), String>>, time_elapsed: std::time::Duration) {
+pub fn present_results(
+    results: Vec<Result<(), String>>,
+    time_elapsed: std::time::Duration,
+    outcome: Option<&crate::plan::RunOutcome>,
+) {
     let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
     let completed = results.iter().cloned().filter(|r| r.is_ok()).count();
     let header = "Funzzy results ----------------------------";
     println!("{}", header);
     logging::log_line(header);
+
+    // TASK-0028: runs with parallel groups render one line per task with its
+    // group identity, so the summary identifies group and every task. Ordering
+    // inside a named parallel group is explicitly unspecified; lines are keyed
+    // by task identity. Serial runs keep today's summary exactly (contract §7).
+    let has_groups = outcome
+        .map(|outcome| outcome.tasks.iter().any(|(_, group, _)| group.is_some()))
+        .unwrap_or(false);
+    if has_groups {
+        if let Some(outcome) = outcome {
+            for (name, group, task_outcome) in &outcome.tasks {
+                let identity = match group {
+                    Some(group) => format!("[{}] {}", group, name),
+                    None => name.clone(),
+                };
+                let status = match task_outcome {
+                    crate::plan::TaskOutcome::Passed => "passed",
+                    crate::plan::TaskOutcome::Failed { .. } => "failed",
+                    crate::plan::TaskOutcome::Cancelled => "cancelled",
+                    crate::plan::TaskOutcome::Skipped => "skipped",
+                };
+                let message = format!("- {}: {}", identity, status);
+                println!("{}", message);
+                logging::log_line(&message);
+            }
+        }
+    }
+
     if !errors.is_empty() {
         if is_colored() {
             print!("{}", RED);

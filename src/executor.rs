@@ -136,6 +136,7 @@ pub trait ProcessRunner: Send + Sync {
         command: &CommandLine,
         context: &TaskContext,
         capture: Option<Arc<CaptureHandle>>,
+        label: Option<String>,
     ) -> Result<Box<dyn ChildProcess>, String>;
 }
 
@@ -148,9 +149,12 @@ impl ProcessRunner for SystemProcessRunner {
         command: &CommandLine,
         context: &TaskContext,
         capture: Option<Arc<CaptureHandle>>,
+        label: Option<String>,
     ) -> Result<Box<dyn ChildProcess>, String> {
         let child = match command {
-            CommandLine::Shell(command) => cmd::spawn_in_with_capture(command, context, capture),
+            CommandLine::Shell(command) => {
+                cmd::spawn_in_with_capture(command, context, capture, label)
+            }
             CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
         }?;
         Ok(Box::new(child))
@@ -340,7 +344,7 @@ pub struct Run {
     active: Vec<ActiveTask>,
     stage_limit: usize,
     results: Vec<Result<(), String>>,
-    outcomes: Vec<(usize, String, TaskOutcome)>,
+    outcomes: Vec<(usize, String, Option<String>, TaskOutcome)>,
     metadata: RunMetadata,
     superseded_by: Option<u64>,
     started: Instant,
@@ -560,10 +564,17 @@ impl Executor {
                 if task.capture.is_none() && self.outputs.is_some() {
                     task.capture = Some(Arc::new(CaptureHandle::new()));
                 }
-                match self
-                    .runner
-                    .spawn(&task.name, &command, &task.context, task.capture.clone())
-                {
+                match self.runner.spawn(
+                    &task.name,
+                    &command,
+                    &task.context,
+                    task.capture.clone(),
+                    // TASK-0028: attribute live lines to the task only when
+                    // it runs in a parallel group, where output can interleave.
+                    // Serial tasks keep today's raw passthrough (contract §7:
+                    // configurations without `parallel` execute exactly as today).
+                    task.group_occurrence.is_some().then(|| task.name.clone()),
+                ) {
                     Ok(child) => {
                         task.child = Some(child);
                         task.command_index += 1;
@@ -681,7 +692,12 @@ impl Executor {
             state,
             duration_ms,
         );
-        run.outcomes.push((task.position, task.name, outcome));
+        run.outcomes.push((
+            task.position,
+            task.name,
+            task.group_occurrence.clone(),
+            outcome,
+        ));
     }
 
     fn stop_after_failure(&self, run: &mut Run) {
@@ -700,8 +716,12 @@ impl Executor {
                 TaskState::Cancelled,
                 duration_ms,
             );
-            run.outcomes
-                .push((task.position, task.name, TaskOutcome::Cancelled));
+            run.outcomes.push((
+                task.position,
+                task.name,
+                task.group_occurrence.clone(),
+                TaskOutcome::Cancelled,
+            ));
         }
         for task in run.queued.drain(..) {
             self.record_task_snapshot(
@@ -711,8 +731,12 @@ impl Executor {
                 TaskState::Cancelled,
                 None,
             );
-            run.outcomes
-                .push((task.position, task.name, TaskOutcome::Skipped));
+            run.outcomes.push((
+                task.position,
+                task.name,
+                task.group_occurrence.clone(),
+                TaskOutcome::Skipped,
+            ));
         }
         for stage in run.stages.drain(..) {
             for task in stage_tasks(stage) {
@@ -723,19 +747,23 @@ impl Executor {
                     TaskState::Cancelled,
                     None,
                 );
-                run.outcomes
-                    .push((task.position, task.name, TaskOutcome::Skipped));
+                run.outcomes.push((
+                    task.position,
+                    task.name,
+                    task.group_occurrence.clone(),
+                    TaskOutcome::Skipped,
+                ));
             }
         }
     }
 
     pub fn finish(&self, mut run: Run) -> CompletedRun {
         let elapsed = self.clock.elapsed(run.started);
-        run.outcomes.sort_by_key(|(position, _, _)| *position);
+        run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
             run.outcomes
                 .into_iter()
-                .map(|(_, name, outcome)| (name, outcome))
+                .map(|(_, name, group, outcome)| (name, group, outcome))
                 .collect(),
         );
         let failures = outcome.failures();
@@ -991,12 +1019,15 @@ mod tests {
             command: &CommandLine,
             context: &TaskContext,
             capture: Option<Arc<CaptureHandle>>,
+            label: Option<String>,
         ) -> Result<Box<dyn ChildProcess>, String> {
-            self.commands
-                .lock()
-                .unwrap()
-                .push(format!("{}:{}", task, command.display()));
-            SystemProcessRunner.spawn(task, command, context, capture)
+            self.commands.lock().unwrap().push(format!(
+                "{}:{}:{}",
+                task,
+                command.display(),
+                label.is_some()
+            ));
+            SystemProcessRunner.spawn(task, command, context, capture, label)
         }
     }
 
@@ -1036,7 +1067,7 @@ mod tests {
         );
 
         assert_eq!(completed.elapsed, Duration::from_millis(42));
-        assert_eq!(*runner.commands.lock().unwrap(), vec!["task:true"]);
+        assert_eq!(*runner.commands.lock().unwrap(), vec!["task:true:false"]);
         let events = events.lock().unwrap();
         assert!(matches!(
             events.first(),
@@ -1047,6 +1078,39 @@ mod tests {
             Some(Event::Finished { elapsed, failures, .. })
                 if *elapsed == Duration::from_millis(42) && failures.is_empty()
         ));
+    }
+
+    #[test]
+    fn parallel_group_tasks_get_live_output_labels_serial_tasks_do_not() {
+        // TASK-0028: live lines from parallel-group tasks are attributed with
+        // the task name so interleaved output keeps identity; serial tasks
+        // keep today's raw passthrough.
+        let runner = Arc::new(RecordingRunner::default());
+        let executor = Executor::new(
+            runner.clone(),
+            Arc::new(FixedClock),
+            2,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .expect("bounded concurrency");
+
+        let completed = executor.run_to_completion(
+            RunMetadata::new(1, "test"),
+            RunPlan::from_rules(vec![
+                task("serial", None, &["true"]),
+                task("grouped-a", Some("checks"), &["true"]),
+                task("grouped-b", Some("checks"), &["true"]),
+            ]),
+        );
+        assert!(completed.outcome.is_success());
+
+        let commands = runner.commands.lock().unwrap();
+        // serial task spawns without a label; both group members spawn labeled.
+        assert_eq!(commands[0], "serial:true:false");
+        assert!(commands.iter().any(|entry| entry == "grouped-a:true:true"));
+        assert!(commands.iter().any(|entry| entry == "grouped-b:true:true"));
     }
 
     #[derive(Default)]
@@ -1134,6 +1198,7 @@ mod tests {
             command: &CommandLine,
             _context: &TaskContext,
             _capture: Option<Arc<CaptureHandle>>,
+            _label: Option<String>,
         ) -> Result<Box<dyn ChildProcess>, String> {
             let command = command.display();
             if command == "spawn-error" {
