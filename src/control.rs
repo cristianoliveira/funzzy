@@ -28,6 +28,38 @@ pub struct ControlTarget {
     pub commands: Vec<String>,
 }
 
+/// One Funzzy process identity (contract §1): the token changes on restart,
+/// so pi-watcher can detect instance changes instead of assuming continuity.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlInstance {
+    pub token: String,
+    pub started_at_epoch_ms: u64,
+}
+
+impl ControlInstance {
+    pub fn new() -> Self {
+        let started_at_epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let token = format!("fz-{:016x}{:08x}", nanos, std::process::id());
+        Self {
+            token,
+            started_at_epoch_ms,
+        }
+    }
+}
+
+/// Largest accepted control response; the extension fails closed beyond it.
+pub const MAX_RESPONSE_BYTES: u64 = 65_536;
+/// Default failure-evidence tail the server emits.
+pub const MAX_EVIDENCE_LINES: usize = 40;
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlState {
@@ -124,10 +156,13 @@ impl ControlServer {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let instance = ControlInstance::new();
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_client(stream, &state, &targets, run_target.as_ref()),
+                    Ok((stream, _)) => {
+                        handle_client(stream, &state, &targets, run_target.as_ref(), &instance)
+                    }
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
@@ -186,6 +221,7 @@ fn handle_client(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    instance: &ControlInstance,
 ) {
     let mut request = String::new();
     if BufReader::new(&stream).read_line(&mut request).is_err() {
@@ -208,7 +244,7 @@ fn handle_client(
         }
     };
 
-    if let Some(response) = process_payload(request, state, targets, run_target) {
+    if let Some(response) = process_payload(request, state, targets, run_target, instance) {
         write_response(&mut stream, response);
     }
 }
@@ -218,9 +254,10 @@ fn process_payload(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
-        return process_request(request, state, targets, run_target);
+        return process_request(request, state, targets, run_target, instance);
     };
 
     if requests.is_empty() {
@@ -234,7 +271,7 @@ fn process_payload(
 
     let responses: Vec<_> = requests
         .into_iter()
-        .filter_map(|request| process_request(request, state, targets, run_target))
+        .filter_map(|request| process_request(request, state, targets, run_target, instance))
         .collect();
     if responses.is_empty() {
         return None;
@@ -247,6 +284,7 @@ fn process_request(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
     let Some(object) = request.as_object() else {
@@ -269,6 +307,33 @@ fn process_request(
         "status" => Ok(serde_json::json!(state.lock().unwrap().clone())),
         "targets" => Ok(serde_json::json!(targets)),
         "run" => run_requested_target(&request, run_target),
+        // Honest negotiated profile (contract §8): methods list only what this
+        // server implements; features stay false until the additive contract
+        // (subscribe, cancel, output, correlated snapshots) lands. The
+        // extension keeps the legacy polling fallback and never assumes
+        // capabilities from package versions.
+        "capabilities" => Ok(serde_json::json!({
+            "protocolVersion": "1.0",
+            "schemaVersion": 1,
+            "instance": {
+                "token": instance.token,
+                "startedAtEpochMs": instance.started_at_epoch_ms,
+            },
+            "methods": ["status", "targets", "run", "capabilities"],
+            "optionalFields": [],
+            "limits": {
+                "outputRetentionBytes": 0,
+                "maxResponseBytes": MAX_RESPONSE_BYTES,
+                "maxEvidenceLines": MAX_EVIDENCE_LINES,
+            },
+            "features": {
+                "atomicAwait": false,
+                "subscription": false,
+                "correlatedSnapshots": false,
+                "outputRetrieval": false,
+                "pendingWork": false,
+            },
+        })),
         _ => Err((-32601, "Method not found", None)),
     };
 

@@ -129,6 +129,101 @@ mod unix {
     }
 
     #[test]
+    fn it_answers_capabilities_with_the_negotiated_profile() {
+        let path = socket_path("capabilities");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start(&path, state).unwrap();
+
+        let response = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "capabilities", "method": "capabilities"}),
+        );
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        let result = &response["result"];
+        assert_eq!(result["protocolVersion"], "1.0");
+        assert_eq!(result["schemaVersion"], 1);
+        let token = result["instance"]["token"]
+            .as_str()
+            .expect("instance token");
+        assert!(!token.is_empty());
+        assert!(result["instance"]["startedAtEpochMs"].is_number());
+        let methods: Vec<_> = result["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method.as_str().unwrap())
+            .collect();
+        for method in ["status", "targets", "run", "capabilities"] {
+            assert!(
+                methods.contains(&method),
+                "missing method {method}: {methods:?}"
+            );
+        }
+        // Honest current profile: none of the additive features exist yet, so
+        // the extension keeps the legacy polling fallback (contract §8).
+        assert_eq!(result["features"]["atomicAwait"], false);
+        assert_eq!(result["features"]["subscription"], false);
+        assert_eq!(result["features"]["correlatedSnapshots"], false);
+        assert_eq!(result["features"]["outputRetrieval"], false);
+        assert_eq!(result["features"]["pendingWork"], false);
+        assert_eq!(result["limits"]["maxResponseBytes"], 65536);
+        assert_eq!(result["limits"]["maxEvidenceLines"], 40);
+    }
+
+    #[test]
+    fn it_keeps_a_stable_instance_identity_across_requests() {
+        let path = socket_path("capabilities-stable");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start(&path, state).unwrap();
+
+        let first = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "c1", "method": "capabilities"}),
+        );
+        let second = call(
+            &path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "c2", "method": "capabilities"}),
+        );
+
+        assert_eq!(
+            first["result"]["instance"]["token"],
+            second["result"]["instance"]["token"]
+        );
+        assert_eq!(
+            first["result"]["instance"]["startedAtEpochMs"],
+            second["result"]["instance"]["startedAtEpochMs"]
+        );
+    }
+
+    #[test]
+    fn it_generates_a_fresh_instance_identity_per_server() {
+        let first_path = socket_path("capabilities-restart-a");
+        let first =
+            ControlServer::start(&first_path, Arc::new(Mutex::new(ControlState::default())))
+                .unwrap();
+        let first_token = call(
+            &first_path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "c", "method": "capabilities"}),
+        )["result"]["instance"]["token"]
+            .clone();
+        drop(first);
+
+        // A restart is a new instance: same socket path, fresh identity.
+        let second_path = socket_path("capabilities-restart-b");
+        let _second =
+            ControlServer::start(&second_path, Arc::new(Mutex::new(ControlState::default())))
+                .unwrap();
+        let second_token = call(
+            &second_path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "c", "method": "capabilities"}),
+        )["result"]["instance"]["token"]
+            .clone();
+
+        assert_ne!(first_token, second_token);
+    }
+
+    #[test]
     fn it_returns_standard_json_rpc_errors() {
         let path = socket_path("errors");
         let state = Arc::new(Mutex::new(ControlState::default()));
