@@ -1,7 +1,7 @@
 ---
 id: TASK-0076
 title: Parse and emit ordered jobs configuration
-status: todo
+status: done
 depends_on: [TASK-0075, TASK-0005]
 priority: high
 tags: [rust, config, parser, init, migration, jobs, tdd]
