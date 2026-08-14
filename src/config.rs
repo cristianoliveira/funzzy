@@ -17,6 +17,7 @@ use self::yaml_rust::Yaml;
 use self::yaml_rust::YamlLoader;
 use std::fs::File;
 use std::io::prelude::*;
+use std::time::Duration;
 pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
@@ -203,14 +204,15 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                             && key_str != "ignore"
                             && key_str != "socket"
                             && key_str != "concurrency"
+                            && key_str != "debounce"
                         {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', and 'concurrency' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', and 'debounce' are allowed.",
                                     key_str
                                 ),
                                 None,
-                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock\n  concurrency: 2".to_owned()),
+                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock\n  concurrency: 2\n  debounce: 500ms".to_owned()),
                             ));
                         }
                     }
@@ -468,6 +470,76 @@ pub fn concurrency_from_file(filename: &str) -> Result<Option<usize>, String> {
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
     concurrency_from_yaml(&content)
+}
+
+/// Parses the optional `on.debounce` duration. Bare numbers are seconds;
+/// `ms`/`s`/`m` suffixes are accepted. Absent defaults to the existing
+/// one-second behavior (contract keeps it unless explicitly configured);
+/// zero and invalid values are rejected.
+pub fn debounce_from_yaml(content: &str) -> Result<Option<Duration>, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+
+    if on == &Yaml::BadValue {
+        return Ok(None);
+    }
+
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+
+    if on["debounce"] == Yaml::BadValue {
+        return Ok(None);
+    }
+
+    let raw = match &on["debounce"] {
+        Yaml::Integer(value) => value.to_string(),
+        Yaml::String(value) => value.clone(),
+        _ => return Err("Property 'on.debounce' must be a duration string or number".to_owned()),
+    };
+    parse_debounce(&raw)
+}
+
+/// Parses one debounce duration: `<number>` (seconds), or `<number>ms|s|m`.
+/// Rejects zero and unknown suffixes so a typo never silently changes timing.
+pub fn parse_debounce(raw: &str) -> Result<Option<Duration>, String> {
+    let raw = raw.trim();
+    let (digits, multiplier) = if let Some(stripped) = raw.strip_suffix("ms") {
+        (stripped, 1u64)
+    } else if let Some(stripped) = raw.strip_suffix('s') {
+        (stripped, 1_000u64)
+    } else if let Some(stripped) = raw.strip_suffix('m') {
+        (stripped, 60_000u64)
+    } else {
+        (raw, 1_000u64)
+    };
+    let value: u64 = digits.trim().parse().map_err(|_| {
+        format!(
+            "invalid 'on.debounce' duration '{}': expected <number> with optional ms/s/m suffix (bare number = seconds)",
+            raw
+        )
+    })?;
+    if value == 0 {
+        return Err(format!(
+            "invalid 'on.debounce' duration '{}': must be positive",
+            raw
+        ));
+    }
+    let millis = value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("invalid 'on.debounce' duration '{}': too large", raw))?;
+    Ok(Some(Duration::from_millis(millis)))
+}
+
+pub fn debounce_from_file(filename: &str) -> Result<Option<Duration>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    debounce_from_yaml(&content)
 }
 
 pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
@@ -1603,5 +1675,46 @@ tasks:
         let rules3 = from_yaml(nested).expect("Failed to parse nested groups format");
         assert_eq!(rules3.len(), 1);
         assert_eq!(rules3[0].name, "task3");
+    }
+}
+
+#[cfg(test)]
+mod debounce_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn debounce_defaults_to_one_second_when_absent() {
+        assert_eq!(debounce_from_yaml("on:\n  change: '**/*'\n").unwrap(), None);
+        assert_eq!(debounce_from_yaml("tasks: []\n").unwrap(), None);
+    }
+
+    #[test]
+    fn debounce_accepts_documented_duration_syntax() {
+        assert_eq!(
+            debounce_from_yaml("on:\n  debounce: 500ms\n").unwrap(),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(
+            debounce_from_yaml("on:\n  debounce: 2s\n").unwrap(),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
+            debounce_from_yaml("on:\n  debounce: 3\n").unwrap(),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(
+            debounce_from_yaml("on:\n  debounce: 1m\n").unwrap(),
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn debounce_rejects_zero_and_invalid_values() {
+        assert!(debounce_from_yaml("on:\n  debounce: 0\n").is_err());
+        assert!(debounce_from_yaml("on:\n  debounce: 0ms\n").is_err());
+        assert!(debounce_from_yaml("on:\n  debounce: -1\n").is_err());
+        assert!(debounce_from_yaml("on:\n  debounce: fast\n").is_err());
+        assert!(debounce_from_yaml("on:\n  debounce: 1h\n").is_err());
     }
 }

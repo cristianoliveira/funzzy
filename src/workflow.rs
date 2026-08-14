@@ -70,6 +70,7 @@ impl WorkflowRunner {
         let plan = plan.resolve_context(&self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_owned),
+            paths: vec![],
             current_dir: self.root.display().to_string(),
         });
         if self.verbose {

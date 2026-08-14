@@ -540,6 +540,9 @@ impl Worker {
         let plan = plan.resolve_context(&self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_string),
+            // TASK-0031: the complete normalized changed-path set rides the
+            // generation; expose it as {{paths}} for batch-aware commands.
+            paths: changed.clone(),
             current_dir: format!("{}", self.root.display()),
         });
         for variable in unknown_variables {

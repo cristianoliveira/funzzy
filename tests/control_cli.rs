@@ -702,3 +702,57 @@ tasks:
     assert!(!directory.join("overlap").exists());
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+#[test]
+fn emit_routes_with_debounce_policy_and_paths_template_carries_batch() {
+    // TASK-0031: a debounce-configured watcher accepts `on.debounce`, stays
+    // functional, and synthetic `control emit` is an explicit immediate event
+    // (it does not wait for the debounce window). The task writes the expanded
+    // value to a file so the assertion is deterministic.
+    let counter = DIRECTORY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let directory =
+        std::env::temp_dir().join(format!("fzzc-paths-{counter}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"on:
+  socket: sock
+  debounce: 500ms
+tasks:
+  - name: capture
+    run: 'echo {{filepath}} > captured.txt'
+    change: "*.txt"
+"#,
+    )
+    .unwrap();
+    let _watcher = TestProcess {
+        child: Command::new(env!("CARGO_BIN_EXE_fzz"))
+            .current_dir(&directory)
+            .env_remove("FUNZZY_BAIL")
+            .env_remove("FUNZZY_NON_BLOCK")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        directory: directory.clone(),
+    };
+    wait_until_socket(&directory);
+
+    let output = run_cli(&directory, &["control", "emit", "alpha.txt"]);
+    assert!(
+        output.status.success(),
+        "emit must exit 0: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    wait_until(|| directory.join("captured.txt").exists());
+
+    let captured = std::fs::read_to_string(directory.join("captured.txt")).unwrap();
+    // The emitted path reaches {{filepath}}; the debounce-configured watcher
+    // stays fully functional (explicit emit does not wait for the window).
+    assert!(
+        captured.contains("alpha.txt"),
+        "{{filepath}} must carry the emitted path: {captured}"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}

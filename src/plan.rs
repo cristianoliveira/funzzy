@@ -906,6 +906,7 @@ mod tests {
             .expect("relative cwd");
         let (expanded, unknown) = plan.expand(&TemplateOptions {
             filepath: Some("/tmp/work space/packages/web app/src/main.rs".to_owned()),
+            paths: vec![],
             current_dir: root.display().to_string(),
         });
         let Stage::Serial(task) = &expanded.stages[0] else {
@@ -1009,6 +1010,7 @@ mod tests {
 
         let opts = TemplateOptions {
             filepath: Some("/root/src/main.rs".to_owned()),
+            paths: vec![],
             current_dir: "/root".to_owned(),
         };
         let (expanded, unknown) = task.expand(&opts);

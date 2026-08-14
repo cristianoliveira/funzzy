@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::plan::RunPlan;
 use crate::rules::Rules;
@@ -65,6 +66,9 @@ pub struct Watches {
     topology: RunPlan,
     root: PathBuf,
     concurrency: usize,
+    /// Debounce window per filesystem event batch (TASK-0031). Defaults to
+    /// the historical one second unless `on.debounce` configures otherwise.
+    debounce: Duration,
 }
 impl Watches {
     /// Convenience constructor resolving the workspace root from the process
@@ -92,7 +96,20 @@ impl Watches {
             topology,
             root,
             concurrency,
+            debounce: Duration::from_millis(1000),
         }
+    }
+
+    /// Overrides the filesystem debounce window (TASK-0031); the default is
+    /// the historical one second.
+    pub fn with_debounce(mut self, debounce: Duration) -> Self {
+        self.debounce = debounce;
+        self
+    }
+
+    /// The debounce window used per filesystem event batch.
+    pub fn debounce(&self) -> Duration {
+        self.debounce
     }
 
     /// Narrows visible rules while retaining barriers from original topology.
@@ -114,6 +131,7 @@ impl Watches {
                 .filter(|rule| rule.name.contains(target)),
             root: self.root.clone(),
             concurrency: self.concurrency,
+            debounce: self.debounce,
         })
     }
 

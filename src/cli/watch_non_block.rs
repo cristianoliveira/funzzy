@@ -103,6 +103,12 @@ impl Command for WatchNonBlockCommand {
             Some(broker),
             Some(recorder),
         );
-        watch_loop(&self.watches, self.run_on_init, &*strategy, self.verbose)
+        watch_loop(
+            &self.watches,
+            self.run_on_init,
+            &*strategy,
+            self.watches.debounce(),
+            self.verbose,
+        )
     }
 }

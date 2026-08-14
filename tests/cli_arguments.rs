@@ -307,6 +307,41 @@ fn list_rejects_semantically_invalid_config() {
 }
 
 #[test]
+fn watch_rejects_invalid_on_debounce_config() {
+    // TASK-0031: a typo or invalid `on.debounce` duration must fail loudly,
+    // never silently change timing.
+    with_tmp_dir("invalid-debounce", |dir| {
+        let config = dir.join("debounce.yml");
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\n  debounce: fast\ntasks:\n  - name: ok\n    run: 'true'\n    change: '**/*'\n",
+        )
+        .expect("failed to write invalid debounce config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("watch")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid debounce config"));
+
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\n  debounce: 0\ntasks:\n  - name: ok\n    run: 'true'\n    change: '**/*'\n",
+        )
+        .expect("rewrite config");
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("watch")
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid debounce config"));
+    });
+}
+
+#[test]
 fn target_flag_is_rejected() {
     // V2 removed --target/-t in favor of `watch TARGET` and `list`.
     fzz()

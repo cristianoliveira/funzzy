@@ -26,6 +26,7 @@ use crate::workers;
 use crate::workflow::WorkflowRunner;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// What the watch loop does once filesystem watches are registered.
 pub enum InitAction {
@@ -81,6 +82,7 @@ pub fn watch_loop(
     watches: &Watches,
     run_on_init: bool,
     strategy: &dyn RunStrategy,
+    debounce: Duration,
     verbose: bool,
 ) -> Result<(), FzzError> {
     let list_of_watched_paths = watches.paths_to_watch().unwrap_or_default();
@@ -140,6 +142,7 @@ pub fn watch_loop(
             }
             strategy.on_batch_complete();
         },
+        debounce,
         verbose,
     )
     .map_err(FzzError::GenericError)

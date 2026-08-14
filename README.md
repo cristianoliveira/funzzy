@@ -264,6 +264,31 @@ It's super useful when a workflow contains long-running tasks. [See more in long
 fzz --non-block # or fzz -n
 ```
 
+## Event batching and debounce
+
+Filesystem events are collapsed into batches: one debounce window maps to one
+generation, so a burst of writes to several files runs matching tasks **once**
+per batch, not once per duplicate event. The window defaults to one second and
+is configurable with `on.debounce`:
+
+```yaml
+on:
+  debounce: 500ms   # <number> seconds, or <number>ms/s/m; default 1s
+```
+
+Rules:
+
+- One batch preserves the complete normalized changed-path set (deduplicated,
+deterministically ordered) and the stable event kind.
+- Matching runs once per batch, never once per duplicate backend event.
+- Templates expose the trigger path as `{{filepath}}` (backward compatible)
+and the full batch as `{{paths}}` (shell-escaped, space-joined).
+- `control emit` is an **explicit immediate event**: it routes through the
+same matching and busy-run policy as a native batch but does not wait for the
+debounce window.
+- Invalid `on.debounce` values (zero, negative, unknown suffix) fail loudly;
+they never silently change timing.
+
 ## Parallel execution
 
 Funzzy can run independent tasks concurrently. Concurrency is **opt-in**: a

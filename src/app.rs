@@ -83,6 +83,7 @@ pub fn run() {
         Action::Watch { target: ref wanted } => {
             let rules = load_rules(&args.config);
             let concurrency = effective_concurrency(&args, &args.config);
+            let debounce = load_debounce(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
@@ -90,7 +91,8 @@ pub fn run() {
                 rules.clone(),
                 workspace_root.clone(),
                 concurrency,
-            );
+            )
+            .with_debounce(debounce);
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args),
@@ -115,11 +117,13 @@ pub fn run() {
                 stdout::failure("Invalid config file.", err);
             }
             let concurrency = effective_concurrency(&args, &args.config);
+            let debounce = load_debounce(&args.config);
             let watches = Watches::with_root_and_concurrency(
                 rules.clone(),
                 workspace_root.clone(),
                 concurrency,
-            );
+            )
+            .with_debounce(debounce);
             let plan = match watches.run_target_plan(target) {
                 Ok(plan) => plan,
                 Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
@@ -283,6 +287,28 @@ fn effective_concurrency(args: &Arguments, config_file: &Option<String>) -> usiz
     }
 }
 
+/// The filesystem debounce window from `on.debounce` (TASK-0031); defaults
+/// to the historical one second when absent or invalid (invalid values fail
+/// loudly, they never silently change timing).
+fn load_debounce(config_file: &Option<String>) -> std::time::Duration {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return std::time::Duration::from_millis(1000);
+    };
+    config::debounce_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid debounce config", err))
+        .unwrap_or_else(|| std::time::Duration::from_millis(1000))
+}
+
 fn load_concurrency(config_file: &Option<String>) -> usize {
     let default = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get())
@@ -325,6 +351,7 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
     };
 
     let truncate_on_config_change = args.log_truncate_on_change;
+    let debounce = load_debounce(&args.config);
 
     let config_file_paths = possible_config_paths
         .into_iter()
@@ -414,6 +441,7 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
                     Err(err) => panic!("Failed to terminate watcher forcefully.\nCause: {:?}", err),
                 }
             },
+            debounce,
             false,
         )
     });

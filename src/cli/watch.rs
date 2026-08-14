@@ -36,6 +36,12 @@ impl Command for WatchCommand {
             self.fail_fast,
             self.watches.concurrency(),
         );
-        watch_loop(&self.watches, self.run_on_init, &strategy, self.verbose)
+        watch_loop(
+            &self.watches,
+            self.run_on_init,
+            &strategy,
+            self.watches.debounce(),
+            self.verbose,
+        )
     }
 }

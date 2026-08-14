@@ -30,11 +30,11 @@ pub fn events(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
+    debounce: Duration,
     verbose: bool,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
-    let mut debouncer =
-        new_debouncer(Duration::from_millis(1000), None, tx).expect("Unable to create watcher");
+    let mut debouncer = new_debouncer(debounce, None, tx).expect("Unable to create watcher");
     let watcher = debouncer.watcher();
     let batch_sequence = AtomicSequence::new();
 
@@ -96,6 +96,20 @@ pub fn events(
                 }
                 let batch_id = batch_sequence.next();
                 if verbose {
+                    // One deterministic batch summary (TASK-0031): batch
+                    // identity, debounce window, and normalized size, so the
+                    // whole collapse is observable, not just individual events.
+                    diagnostics::debug(&diagnostics::Record {
+                        batch: Some(batch_id),
+                        source: Some("filesystem"),
+                        decision: Some("batch"),
+                        note: Some(format!(
+                            "{} normalized path(s) in a {:?} debounce window",
+                            events.len(),
+                            debounce
+                        )),
+                        ..Default::default()
+                    });
                     for event in &events {
                         diagnostics::debug(&diagnostics::Record {
                             batch: Some(batch_id),
