@@ -33,5 +33,5 @@ Use bounded scheduling only within named contiguous parallel-group occurrences. 
 
 ## Notes
 
-Completed with stage-aware bounded scheduling in the shared executor, task-sequential command state, deterministic fake-child barrier tests, and a one-slot overwrite scheduler for newest-generation replacement. `on.jobs` is wired from configuration; absent values resolve available parallelism once. Path, init, and target filtering preserve original group occurrences. Fresh Funzzy watcher generation 99 passed all configured checks.
+Completed with stage-aware bounded scheduling in the shared executor, task-sequential command state, deterministic fake-child barrier tests, and a one-slot overwrite scheduler for newest-generation replacement. `on.concurrency` is wired from configuration; absent values resolve available parallelism once. Path, init, and target filtering preserve original group occurrences. Fresh Funzzy watcher generation 99 passed all configured checks.
 

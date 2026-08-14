@@ -18,7 +18,7 @@ Add `fzz check [--config PATH]` as side-effect-free command. It may inspect file
 
 ## Acceptance criteria
 
-- [ ] Black-box tests first cover valid config, YAML/schema error, invalid glob/duration/jobs/group/context, missing path, and multiple errors.
+- [ ] Black-box tests first cover valid config, YAML/schema error, invalid glob/duration/concurrency/group/context, missing path, and multiple errors.
 - [ ] Command loads same parser/validator as watch; no duplicate validation implementation.
 - [ ] Reports all independent actionable errors in deterministic config order where safe.
 - [ ] Human output is concise and exit code is 0 valid, documented nonzero invalid/operational.

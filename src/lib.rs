@@ -19,4 +19,5 @@ pub mod watch_loop;
 pub mod watcher;
 pub mod watches;
 pub mod workers;
+pub mod workflow;
 pub mod yaml;

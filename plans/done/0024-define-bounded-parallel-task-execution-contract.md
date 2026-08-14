@@ -46,7 +46,7 @@ This is later workstream and does not block TASK-0020 CLI redesign release.
 - [x] Only consecutive tasks with same non-empty group name run together; separated reuse of name creates distinct group occurrence.
 - [x] Serial task, changed group name, or end of list closes group; next task/stage starts after all selected members terminate.
 - [x] Filtering occurs without losing original topology: unmatched tasks are skipped but cannot merge originally separate group occurrences.
-- [x] Concurrency configuration, safe default, `jobs=1`, explicit numeric limit, and optional `auto` behavior are decided.
+- [x] Concurrency configuration, safe default, `concurrency=1`, explicit numeric limit, and optional `auto` behavior are decided.
 - [x] Overall run success/failure/cancelled semantics are defined from per-task outcomes.
 - [x] Fail-fast defines what happens to queued tasks and already-running sibling tasks.
 - [x] Wait/restart busy policies define cancellation and replacement across all active tasks.
@@ -63,7 +63,7 @@ This is later workstream and does not block TASK-0020 CLI redesign release.
 - Without fail-fast, every command/task selected for run continues after failures, preserving current behavior; group waits for all members before next barrier and final run remains failed.
 - With fail-fast, first failure cancels active siblings, skips queued group members, and skips later work.
 - A configured group may contain one selected task after path/target filtering; it executes normally.
-- `on.jobs` is optional global cap for simultaneously active tasks. Default is `available_parallelism`; positive integer values are accepted and zero/non-integer values fail config validation. CLI override is deferred unless V2 CLI contract explicitly adds it.
+- `on.concurrency` is optional global cap for simultaneously active tasks. Default is `available_parallelism`; positive integer values are accepted and zero/non-integer values fail config validation. CLI override is deferred unless V2 CLI contract explicitly adds it.
 - Result/output order inside group is unspecified; task identity is mandatory.
 - Existing control JSON-RPC fields remain compatible. Any per-task detail is additive and coordinated with `pi-watcher`.
 
@@ -75,7 +75,7 @@ This is later workstream and does not block TASK-0020 CLI redesign release.
 | `A, B@checks, C@checks, D` | `A -> [B || C] -> D` |
 | `A@one, B@two` | `[A] -> [B]` |
 | `A@x, B, C@x` | `[A] -> B -> [C]`; reused name does not reconnect |
-| `A@x, B@x` with `jobs: 1` | both run sequentially within same barrier |
+| `A@x, B@x` with `concurrency: 1` | both run sequentially within same barrier |
 | only `B@x` matches path/target/init filter | `B` runs alone; topology remains valid |
 | separator task does not match | groups on either side remain separate |
 | member fails, fail-fast off | siblings and later selected tasks finish; run fails |

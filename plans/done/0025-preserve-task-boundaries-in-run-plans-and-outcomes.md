@@ -21,7 +21,7 @@ Introduce task-aware values such as `RunPlan`, `SerialStage`/`ParallelGroup`, `T
 - [x] Pure tests first preserve group name/occurrence, barrier topology, task name, config position, commands, trigger, expanded path values, and unknown template variables.
 - [x] Parser accepts `parallel: <group-name>` and rejects boolean, numeric, collection, and empty values with task-local actionable errors.
 - [x] Legacy tasks without `parallel` parse unchanged and retain sequential behavior.
-- [x] Parser accepts optional positive integer `on.jobs`, defaults through injected available-parallelism provider, and rejects zero/wrong types deterministically.
+- [x] Parser accepts optional positive integer `on.concurrency`, defaults through injected available-parallelism provider, and rejects zero/wrong types deterministically.
 - [x] Parsed workflow becomes ordered serial tasks and named parallel-group occurrences instead of flat `Vec<Rules>` or `Vec<String>`.
 - [x] Each task plan retains sequential command order and stable task identity/path within plan.
 - [x] Path/target filtering removes unmatched tasks without merging group occurrences across original barriers; empty stages disappear safely.

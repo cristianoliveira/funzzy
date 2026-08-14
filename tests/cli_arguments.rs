@@ -72,8 +72,20 @@ fn help_shows_usage_commands_and_options_for_both_binaries() {
             .stdout(predicate::str::contains("-v"))
             .stdout(predicate::str::contains("--verbose"))
             .stdout(predicate::str::contains("--on-busy"))
-            .stdout(predicate::str::contains("--control-socket"));
+            .stdout(predicate::str::contains("--control-socket"))
+            .stdout(predicate::str::contains("run TARGET"));
     }
+}
+
+#[test]
+fn run_help_distinguishes_local_execution_from_control_ipc() {
+    fzz()
+        .args(["run", "--help"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("once in this process"))
+        .stdout(predicate::str::contains("fzz control run TARGET"))
+        .stdout(predicate::str::contains("Path filtering is not supported"));
 }
 
 #[test]

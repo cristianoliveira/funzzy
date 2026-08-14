@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::plan::RunPlan;
@@ -26,6 +27,31 @@ pub struct ExplainResult {
     pub ignored: Vec<ExplainRule>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunTargetError {
+    Missing(String),
+    Ambiguous {
+        target: String,
+        matches: Vec<String>,
+    },
+}
+
+impl fmt::Display for RunTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RunTargetError::Missing(target) => {
+                write!(formatter, "No target found for '{}'", target)
+            }
+            RunTargetError::Ambiguous { target, matches } => write!(
+                formatter,
+                "Target '{}' is ambiguous; matches: {}",
+                target,
+                matches.join(", ")
+            ),
+        }
+    }
+}
+
 /// # Watches
 ///
 /// Represents all rules in the yaml config loaded.
@@ -35,7 +61,7 @@ pub struct Watches {
     rules: Vec<Rules>,
     topology: RunPlan,
     root: PathBuf,
-    jobs: usize,
+    concurrency: usize,
 }
 impl Watches {
     /// Convenience constructor resolving the workspace root from the process
@@ -49,20 +75,20 @@ impl Watches {
 
     /// Creates watches anchored at an explicit workspace root.
     pub fn with_root(rules: Vec<Rules>, root: PathBuf) -> Self {
-        let jobs = std::thread::available_parallelism()
-            .map(|jobs| jobs.get())
+        let concurrency = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
             .unwrap_or(1);
-        Watches::with_root_and_jobs(rules, root, jobs)
+        Watches::with_root_and_concurrency(rules, root, concurrency)
     }
 
-    pub fn with_root_and_jobs(rules: Vec<Rules>, root: PathBuf, jobs: usize) -> Self {
-        assert!(jobs > 0, "watch jobs must be positive");
+    pub fn with_root_and_concurrency(rules: Vec<Rules>, root: PathBuf, concurrency: usize) -> Self {
+        assert!(concurrency > 0, "watch concurrency must be positive");
         let topology = RunPlan::from_rules(rules.clone());
         Watches {
             rules,
             topology,
             root,
-            jobs,
+            concurrency,
         }
     }
 
@@ -84,7 +110,7 @@ impl Watches {
                 .clone()
                 .filter(|rule| rule.name.contains(target)),
             root: self.root.clone(),
-            jobs: self.jobs,
+            concurrency: self.concurrency,
         })
     }
 
@@ -94,8 +120,8 @@ impl Watches {
     }
 
     /// Maximum simultaneously active tasks within one parallel group.
-    pub fn jobs(&self) -> usize {
-        self.jobs
+    pub fn concurrency(&self) -> usize {
+        self.concurrency
     }
 
     /// Redacted configuration summary for verbose diagnostics.
@@ -106,9 +132,9 @@ impl Watches {
             .map(|plan| plan.context_summary())
             .unwrap_or_else(|error| error);
         format!(
-            "workspace={} jobs={}\n{}",
+            "workspace={} concurrency={}\n{}",
             self.root.display(),
-            self.jobs,
+            self.concurrency,
             contexts
         )
     }
@@ -148,6 +174,48 @@ impl Watches {
         }
 
         Some(rules)
+    }
+
+    /// Resolves a finite local-run target deterministically.
+    ///
+    /// An exact task name wins. `@tag` selectors intentionally run every
+    /// match. Other substrings must identify one task; multiple matches are
+    /// rejected rather than running an accidental superset in CI.
+    pub fn run_target_plan(&self, target: &str) -> Result<RunPlan, RunTargetError> {
+        let exact_matches = self
+            .rules
+            .iter()
+            .filter(|rule| rule.name == target)
+            .collect::<Vec<_>>();
+        if exact_matches.len() > 1 {
+            return Err(RunTargetError::Ambiguous {
+                target: target.to_owned(),
+                matches: exact_matches.iter().map(|rule| rule.name.clone()).collect(),
+            });
+        }
+        if exact_matches.len() == 1 {
+            return Ok(self.topology.clone().filter(|rule| rule.name == target));
+        }
+
+        let matches = self
+            .rules
+            .iter()
+            .filter(|rule| rule.name.contains(target))
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            return Err(RunTargetError::Missing(target.to_owned()));
+        }
+        if matches.len() > 1 && !target.starts_with('@') {
+            return Err(RunTargetError::Ambiguous {
+                target: target.to_owned(),
+                matches: matches.iter().map(|rule| rule.name.clone()).collect(),
+            });
+        }
+
+        Ok(self
+            .topology
+            .clone()
+            .filter(|rule| rule.name.contains(target)))
     }
 
     /// Selects a target without collapsing barriers around unmatched rules.
@@ -829,7 +897,47 @@ mod tests {
     }
 
     #[test]
-    fn target_selection_keeps_separated_group_occurrences_and_jobs() {
+    fn local_run_target_prefers_exact_allows_tags_and_rejects_ambiguity() {
+        let rules = ["build", "build docs", "lint @quick", "test @quick"]
+            .iter()
+            .map(|name| {
+                Rules::new(
+                    (*name).to_owned(),
+                    vec!["true".to_owned()],
+                    vec!["src/**".to_owned()],
+                    vec![],
+                    false,
+                )
+            })
+            .collect();
+        let watches = Watches::new(rules);
+
+        assert_eq!(
+            watches
+                .run_target_plan("build")
+                .expect("exact target")
+                .task_names(),
+            vec!["build"]
+        );
+        assert_eq!(
+            watches
+                .run_target_plan("@quick")
+                .expect("tag target")
+                .task_names(),
+            vec!["lint @quick", "test @quick"]
+        );
+        assert!(matches!(
+            watches.run_target_plan("quick"),
+            Err(RunTargetError::Ambiguous { .. })
+        ));
+        assert_eq!(
+            watches.run_target_plan("missing"),
+            Err(RunTargetError::Missing("missing".to_owned()))
+        );
+    }
+
+    #[test]
+    fn target_selection_keeps_separated_group_occurrences_and_concurrency() {
         let rules = vec![
             Rules::new(
                 "A selected".to_owned(),
@@ -855,12 +963,12 @@ mod tests {
             )
             .with_parallel("checks".to_owned()),
         ];
-        let watches = Watches::with_root_and_jobs(rules, env::current_dir().unwrap(), 2)
+        let watches = Watches::with_root_and_concurrency(rules, env::current_dir().unwrap(), 2)
             .select_target("selected")
             .expect("selected targets");
         let plan = watches.target_plan("selected").expect("target plan");
 
-        assert_eq!(watches.jobs(), 2);
+        assert_eq!(watches.concurrency(), 2);
         assert_eq!(plan.stages.len(), 2);
         assert!(plan
             .stages

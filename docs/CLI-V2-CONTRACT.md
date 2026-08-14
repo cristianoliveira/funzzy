@@ -11,6 +11,7 @@ This is a V2 redesign. During the active refactor we do **not** add deprecated p
 | --- | --- | --- |
 | `fzz` | Configured watch — all matching tasks | no |
 | `fzz watch [TARGET] [options]` | Configured watch, optional target filter | no |
+| `fzz run TARGET [options]` | Run selected configured workflow once locally | no |
 | `fzz list [options]` | Print configured tasks (name, tags, change patterns) | no |
 | `fzz explain PATH` | Print tasks a path would match / ignore (no execution) | no |
 | `fzz init [--migrate]` | Create or migrate `.watch.yaml` | no |
@@ -27,12 +28,13 @@ This is a V2 redesign. During the active refactor we do **not** add deprecated p
 - A `TARGET` is a task name, `@tag`, or substring.
 - Matching is substring over name and tags, documented explicitly.
 - `watch TARGET` with no match is an **actionable error**, not silent all-tasks.
-- `control run TARGET` uses the same matching rules over the running watcher.
+- Local `run TARGET` gives exact name precedence; `@tag` may select many tasks, while another substring must be unambiguous. It runs full selected workflow and rejects path arguments.
+- `control run TARGET` uses watcher target matching over running watcher; unlike local `run`, it requires IPC.
 - `list` and `explain` never execute tasks.
 
 ## 3. Option ownership
 
-Global options valid on `fzz`, `fzz watch`, `fzz exec`:
+Global options valid on `fzz`, `fzz watch`, `fzz run`, `fzz exec`:
 
 - `-c, --config <FILE>`
 - `--on-busy <wait|restart>` (default `wait`); `--restart` is a short alias for `--on-busy restart`
@@ -117,6 +119,8 @@ Both binary aliases must expose the identical tree and behavior.
 - `fzz` (no args, no config, no stdin) → guidance, exit 1.
 - `fzz watch TARGET` → only matching tasks.
 - `fzz watch NOMATCH` → error, exit 1.
+- `fzz run TARGET` → finite local execution, combined outcome exit, no watcher/socket.
+- `fzz run TARGET PATH` → usage error; path filtering is unsupported.
 - `fzz` with piped stdin and no `exec` → usage error.
 
 ### exec

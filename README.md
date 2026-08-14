@@ -238,6 +238,13 @@ fzz watch "@quick"
 # Assuming one or more tasks contain `@quick`, only those tasks are watched.
 ```
 
+Run same configured workflow once, without watcher or control socket:
+
+```bash
+fzz run "@quick"
+# Exits with combined configured task outcome; useful in CI.
+```
+
 Run with some arbitrary command and stdin
 
 ```bash

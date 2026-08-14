@@ -199,14 +199,18 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             if let Yaml::Hash(ref hash) = yaml {
                 for (key, _) in hash {
                     if let Yaml::String(ref key_str) = key {
-                        if key_str != "change" && key_str != "ignore" && key_str != "socket" {
+                        if key_str != "change"
+                            && key_str != "ignore"
+                            && key_str != "socket"
+                            && key_str != "concurrency"
+                        {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', and 'socket' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', and 'concurrency' are allowed.",
                                     key_str
                                 ),
                                 None,
-                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock".to_owned()),
+                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock\n  concurrency: 2".to_owned()),
                             ));
                         }
                     }
@@ -413,10 +417,9 @@ pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String
     control_socket_from_yaml(&content)
 }
 
-/// Reads the optional global `on.jobs` concurrency cap. Missing yields
-/// `Ok(None)` (caller decides the default); zero, negative, and
-/// non-integer values are rejected deterministically.
-pub fn jobs_from_yaml(content: &str) -> Result<Option<usize>, String> {
+/// Reads optional global `on.concurrency` cap. Missing yields `Ok(None)`
+/// (caller decides default); zero, negative, and non-integer values fail.
+pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
         .first()
@@ -431,25 +434,26 @@ pub fn jobs_from_yaml(content: &str) -> Result<Option<usize>, String> {
         return Err("Property 'on' must be an object".to_owned());
     }
 
-    if on["jobs"] == Yaml::BadValue {
+    if on["concurrency"] == Yaml::BadValue {
         return Ok(None);
     }
 
-    match &on["jobs"] {
+    match &on["concurrency"] {
         Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
-        Yaml::Integer(_) => {
-            Err("Property 'on.jobs' must be a positive integer (got zero or negative)".to_owned())
-        }
-        _ => Err("Property 'on.jobs' must be a positive integer".to_owned()),
+        Yaml::Integer(_) => Err(
+            "Property 'on.concurrency' must be a positive integer (got zero or negative)"
+                .to_owned(),
+        ),
+        _ => Err("Property 'on.concurrency' must be a positive integer".to_owned()),
     }
 }
 
-pub fn jobs_from_file(filename: &str) -> Result<Option<usize>, String> {
+pub fn concurrency_from_file(filename: &str) -> Result<Option<usize>, String> {
     let mut file = File::open(filename).map_err(|err| err.to_string())?;
     let mut content = String::new();
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
-    jobs_from_yaml(&content)
+    concurrency_from_yaml(&content)
 }
 
 pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
@@ -537,10 +541,10 @@ mod tests {
     extern crate yaml_rust;
 
     use self::yaml_rust::YamlLoader;
+    use super::concurrency_from_yaml;
     use super::control_socket_from_yaml;
     use super::from_argv;
     use super::from_yaml;
-    use super::jobs_from_yaml;
     use super::rule_as_yaml;
     use super::rule_from;
     use std::env::current_dir;
@@ -1108,6 +1112,7 @@ tasks:
         let file_content = "
         on:
           change: 'src/**'
+          concurrency: 2
         tasks:
           - name: lint
             parallel: checks
@@ -1237,34 +1242,46 @@ tasks:
     }
 
     #[test]
-    fn it_accepts_jobs_from_on_section() {
+    fn it_accepts_concurrency_from_on_section() {
         let file_content = "
-on:\n  jobs: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make lint\n";
-        assert_eq!(jobs_from_yaml(file_content).unwrap(), Some(4));
+on:\n  concurrency: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make lint\n";
+        assert_eq!(concurrency_from_yaml(file_content).unwrap(), Some(4));
     }
 
     #[test]
-    fn it_defaults_jobs_when_absent() {
+    fn it_rejects_jobs_so_name_remains_available_for_workflow_items() {
+        let file_content = "\non:\n  jobs: 4\ntasks:\n  - name: lint\n    run: make lint\n";
+        let error = from_yaml(file_content).expect_err("on.jobs is not a supported alias");
+        assert!(
+            error.to_string().contains("Invalid property 'jobs'"),
+            "unexpected: {}",
+            error
+        );
+    }
+
+    #[test]
+    fn it_defaults_concurrency_when_absent() {
         let file_content = "
         - name: lint
           run: make lint
           change: 'src/**'
         ";
-        assert_eq!(jobs_from_yaml(file_content).unwrap(), None);
+        assert_eq!(concurrency_from_yaml(file_content).unwrap(), None);
     }
 
     #[test]
-    fn it_rejects_zero_and_negative_jobs() {
-        let zero = "\non:\n  jobs: 0\ntasks:\n  - name: a\n    run: echo a\n";
-        let negative = "\non:\n  jobs: -2\ntasks:\n  - name: a\n    run: echo a\n";
+    fn it_rejects_zero_and_negative_concurrency() {
+        let zero = "\non:\n  concurrency: 0\ntasks:\n  - name: a\n    run: echo a\n";
+        let negative = "\non:\n  concurrency: -2\ntasks:\n  - name: a\n    run: echo a\n";
 
-        let zero_err = jobs_from_yaml(zero).expect_err("zero jobs must fail");
+        let zero_err = concurrency_from_yaml(zero).expect_err("zero concurrency must fail");
         assert!(
             zero_err.contains("positive integer"),
             "unexpected: {}",
             zero_err
         );
-        let negative_err = jobs_from_yaml(negative).expect_err("negative jobs must fail");
+        let negative_err =
+            concurrency_from_yaml(negative).expect_err("negative concurrency must fail");
         assert!(
             negative_err.contains("positive integer"),
             "unexpected: {}",
@@ -1273,16 +1290,16 @@ on:\n  jobs: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make lint\n
     }
 
     #[test]
-    fn it_rejects_non_integer_jobs() {
-        let file_content = "\non:\n  jobs: many\ntasks:\n  - name: a\n    run: echo a\n";
-        let err = jobs_from_yaml(file_content).expect_err("string jobs must fail");
+    fn it_rejects_non_integer_concurrency() {
+        let file_content = "\non:\n  concurrency: many\ntasks:\n  - name: a\n    run: echo a\n";
+        let err = concurrency_from_yaml(file_content).expect_err("string concurrency must fail");
         assert!(err.contains("positive integer"), "unexpected: {}", err);
     }
 
     #[test]
-    fn it_rejects_jobs_outside_object_on() {
+    fn it_rejects_concurrency_outside_object_on() {
         let file_content = "\non: 3\ntasks:\n  - name: a\n    run: echo a\n";
-        let err = jobs_from_yaml(file_content).expect_err("scalar on must fail");
+        let err = concurrency_from_yaml(file_content).expect_err("scalar on must fail");
         assert!(
             err.contains("'on' must be an object"),
             "unexpected: {}",

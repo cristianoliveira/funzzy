@@ -66,11 +66,15 @@ pub fn run() {
 
         Action::Watch { target: ref wanted } => {
             let rules = load_rules(&args.config);
-            let jobs = load_jobs(&args.config);
+            let concurrency = load_concurrency(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
-            let watches = Watches::with_root_and_jobs(rules.clone(), workspace_root.clone(), jobs);
+            let watches = Watches::with_root_and_concurrency(
+                rules.clone(),
+                workspace_root.clone(),
+                concurrency,
+            );
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args),
@@ -88,6 +92,40 @@ pub fn run() {
                 stdout::failure("Invalid config file.", err);
             }
             stdout::info(&rules::available_targets(&rules));
+        }
+        Action::Run { ref target } => {
+            let rules = load_rules(&args.config);
+            if let Err(err) = rules::validate_rules(&rules) {
+                stdout::failure("Invalid config file.", err);
+            }
+            let concurrency = load_concurrency(&args.config);
+            let watches = Watches::with_root_and_concurrency(
+                rules.clone(),
+                workspace_root.clone(),
+                concurrency,
+            );
+            let plan = match watches.run_target_plan(target) {
+                Ok(plan) => plan,
+                Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
+                    &format!("No target found for '{}'", target),
+                    rules::available_targets(&rules),
+                ),
+                Err(error) => stdout::failure("Cannot run target", error.to_string()),
+            };
+
+            let shutdown = install_shutdown_signal_handler();
+            let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
+            let command = RunCommand::new(workspace_root, args.verbose, fail_fast, concurrency);
+            let result = command.execute(plan, target);
+            let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
+            if signal_exit != 0 {
+                process::exit(signal_exit);
+            }
+            match result {
+                Ok(true) => {}
+                Ok(false) => process::exit(1),
+                Err(error) => stdout::failure("Configured run failed", error),
+            }
         }
         Action::Explain { ref path } => {
             let rules = load_rules(&args.config);
@@ -206,9 +244,9 @@ fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {
     }
 }
 
-fn load_jobs(config_file: &Option<String>) -> usize {
+fn load_concurrency(config_file: &Option<String>) -> usize {
     let default = std::thread::available_parallelism()
-        .map(|jobs| jobs.get())
+        .map(|parallelism| parallelism.get())
         .unwrap_or(1);
     let path = match config_file.as_deref() {
         Some(path) => Some(path.to_owned()),
@@ -224,7 +262,7 @@ fn load_jobs(config_file: &Option<String>) -> usize {
         return default;
     };
 
-    config::jobs_from_file(&path)
+    config::concurrency_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
         .unwrap_or(default)
 }
@@ -314,7 +352,7 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
         // so SIGINT/SIGTERM to funzzy's foreground group no longer reaches
         // them. Catch both and route through the shared ownership path before
         // exit so no descendant is orphaned (TASK-0030).
-        install_shutdown_signal_handler();
+        let _shutdown = install_shutdown_signal_handler();
         execute(WatchNonBlockCommand::new(
             watches,
             verbose,
@@ -333,12 +371,15 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
 /// the shared process-group ownership path (`process_owner::shutdown_all`)
 /// before exiting, so descendants in their own groups are not orphaned.
 ///
-/// Blocking is installed only on the non-block path: blocking-mode children
-/// share funzzy's process group, so the terminal's Ctrl-C still reaches them
-/// naturally.
-fn install_shutdown_signal_handler() {
+/// Installed for non-block watch and finite local run because executor child
+/// tasks lead separate process groups and need explicit signal forwarding.
+fn install_shutdown_signal_handler() -> std::sync::Arc<std::sync::atomic::AtomicI32> {
     use nix::sys::signal::{sigprocmask, SigSet, SigmaskHow};
+    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::Arc;
 
+    let exit_code = Arc::new(AtomicI32::new(0));
+    let signal_exit_code = Arc::clone(&exit_code);
     let mut mask = SigSet::empty();
     mask.add(Signal::SIGINT);
     mask.add(Signal::SIGTERM);
@@ -353,11 +394,13 @@ fn install_shutdown_signal_handler() {
         loop {
             match set.wait() {
                 Ok(Signal::SIGINT) => {
+                    signal_exit_code.store(130, Ordering::SeqCst);
                     let (signal, grace) = crate::process_owner::shutdown_policy();
                     let _ = crate::process_owner::shutdown_all(signal, grace, false);
                     std::process::exit(130);
                 }
                 Ok(Signal::SIGTERM) => {
+                    signal_exit_code.store(143, Ordering::SeqCst);
                     let (signal, grace) = crate::process_owner::shutdown_policy();
                     let _ = crate::process_owner::shutdown_all(signal, grace, false);
                     std::process::exit(143);
@@ -367,6 +410,7 @@ fn install_shutdown_signal_handler() {
             }
         }
     });
+    exit_code
 }
 
 fn execute<T: Command>(command: T) {

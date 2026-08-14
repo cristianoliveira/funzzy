@@ -68,15 +68,15 @@ originally separate group occurrences**:
 
 ## 3. Concurrency bound
 
-- `on.jobs` is an optional global cap on simultaneously active tasks.
+- `on.concurrency` is an optional global cap on simultaneously active tasks.
 - Default is the injected available-parallelism provider
   (`std::thread::available_parallelism`), resolved once at plan time.
 - Accepted values: positive integers. `0`, negative, non-integer, or
   non-numeric values fail configuration validation with an actionable
   task-local error.
 - Effective concurrency for one group occurrence is
-  `min(on.jobs, selected members in occurrence)`.
-- `jobs: 1` is valid and means tasks run sequentially inside the barrier.
+  `min(on.concurrency, selected members in occurrence)`.
+- `concurrency: 1` is valid and means tasks run sequentially inside barrier.
 - CLI override is **deferred** unless the V2 CLI contract explicitly adds it.
 - Concurrency is a bounded resource policy (worker pool / semaphore), never
   `thread::spawn` per task.
@@ -135,7 +135,7 @@ originally separate group occurrences**:
 | `A, B@checks, C@checks, D` | `A -> [B \|\| C] -> D` |
 | `A@one, B@two` | `[A] -> [B]` |
 | `A@x, B, C@x` | `[A] -> B -> [C]`; reused name does not reconnect |
-| `A@x, B@x` with `jobs: 1` | both run sequentially within same barrier |
+| `A@x, B@x` with `concurrency: 1` | both run sequentially within same barrier |
 | only `B@x` matches path/target/init filter | `B` runs alone; topology remains valid |
 | separator task does not match | groups on either side remain separate |
 | member fails, fail-fast off | siblings and later selected tasks finish; run fails |
@@ -144,7 +144,7 @@ originally separate group occurrences**:
 
 ### Test matrix (TASK-0025–0029)
 
-- Limits: `jobs` 1, 2, greater than task count; spawn failure occupies and
+- Limits: `concurrency` 1, 2, greater than task count; spawn failure occupies and
   releases one slot and is reported as task failure.
 - Ordering: commands within task sequential; group memberships and barriers
   asserted, never incidental order.

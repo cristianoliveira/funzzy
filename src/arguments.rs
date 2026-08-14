@@ -2,7 +2,7 @@
 //!
 //! Owns parser details and exposes semantic action/option types to
 //! application code. V2 structure (TASK-0015): real Clap subcommands
-//! (`init`, `watch`, `exec`); `fzz` with no subcommand is configured watch.
+//! (`init`, `watch`, `run`, `exec`); `fzz` with no subcommand is configured watch.
 //! `-V`/`--version` is Clap's built-in version flag (stdout, exit 0);
 //! `-v`/`--verbose` is the verbose flag; parse errors use Clap's native
 //! handling (stderr, exit 2).
@@ -26,6 +26,8 @@ pub enum Action {
     Watch { target: Option<String> },
     /// `fzz list`: print configured tasks.
     List,
+    /// `fzz run TARGET`: execute selected configured tasks once, locally.
+    Run { target: String },
     /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
     Explain { path: String },
     /// `fzz init [--migrate]`: create or migrate the default config file.
@@ -79,6 +81,13 @@ impl Arguments {
                 (Action::Watch { target }, false)
             }
             Some(("list", _)) => (Action::List, false),
+            Some(("run", sub)) => {
+                let target = sub
+                    .get_one::<String>("target")
+                    .cloned()
+                    .expect("target is required by clap");
+                (Action::Run { target }, false)
+            }
             Some(("explain", sub)) => {
                 let path = sub
                     .get_one::<String>("path")
@@ -249,6 +258,22 @@ fn command() -> Command {
                 .version(env!("CARGO_PKG_VERSION")),
         )
         .subcommand(
+            Command::new("run")
+                .about("Run configured tasks once in this process (no watcher or control socket).")
+                .long_about(
+                    "Run configured tasks once in this process, then exit with their combined outcome.\n\nThis is local execution. `fzz control run TARGET` requests work from an existing watcher. Path filtering is not supported; TARGET selects a full configured workflow.",
+                )
+                .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("target")
+                        .value_name("TARGET")
+                        .num_args(1)
+                        .required(true)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Exact task name, @tag, or unambiguous name substring."),
+                ),
+        )
+        .subcommand(
             Command::new("explain")
                 .about("Explain which configured tasks a path matches or is ignored by.")
                 .version(env!("CARGO_PKG_VERSION"))
@@ -290,6 +315,7 @@ Commands:
   init                Create or migrate a '.watch.yaml' file.
   watch [TARGET]      Watch for file changes and run configured tasks.
   list                List configured tasks.
+  run TARGET          Run configured tasks once locally, without watcher IPC.
   explain PATH        Show which tasks a path matches or is ignored by.
   exec                Run an ad-hoc command over stdin-supplied paths.
 
@@ -342,6 +368,18 @@ mod tests {
     #[test]
     fn list_subcommand_selects_list() {
         assert_eq!(parse_action(&["list"]), Action::List);
+    }
+
+    #[test]
+    fn run_subcommand_requires_and_carries_target() {
+        assert_eq!(
+            parse_action(&["run", "@quick"]),
+            Action::Run {
+                target: "@quick".to_owned()
+            }
+        );
+        assert!(parse(&["run"]).is_err());
+        assert!(parse(&["run", "@quick", "src/lib.rs"]).is_err());
     }
 
     #[test]

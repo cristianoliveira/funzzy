@@ -25,11 +25,11 @@ fn rule(
     }
 }
 
-fn executor(jobs: usize) -> Executor {
+fn executor(concurrency: usize) -> Executor {
     Executor::new(
         Arc::new(SystemProcessRunner),
         Arc::new(SystemClock),
-        jobs,
+        concurrency,
         Arc::new(|_| {}),
         false,
         false,

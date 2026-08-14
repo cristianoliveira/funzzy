@@ -91,18 +91,18 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
-        let jobs = std::thread::available_parallelism()
-            .map(|jobs| jobs.get())
+        let concurrency = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
             .unwrap_or(1);
-        Self::with_root_and_jobs(verbose, fail_fast, root, jobs, on_event)
+        Self::with_root_and_concurrency(verbose, fail_fast, root, concurrency, on_event)
     }
 
     /// Creates a worker with an explicit task-concurrency bound.
-    pub fn with_root_and_jobs<F>(
+    pub fn with_root_and_concurrency<F>(
         verbose: bool,
         fail_fast: bool,
         root: PathBuf,
-        jobs: usize,
+        concurrency: usize,
         on_event: F,
     ) -> Self
     where
@@ -120,12 +120,12 @@ impl Worker {
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
-            jobs,
+            concurrency,
             events,
             fail_fast,
             verbose,
         )
-        .expect("worker jobs must be positive");
+        .expect("worker concurrency must be positive");
 
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;

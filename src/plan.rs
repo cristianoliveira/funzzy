@@ -509,13 +509,13 @@ mod tests {
         assert!(
             matches!(&filtered.stages[0], Stage::Parallel { group, tasks } if group == "x" && tasks.len() == 1)
         );
-        // jobs=1 flatten still yields exactly one command.
+        // concurrency=1 flatten still yields exactly one command.
         assert_eq!(filtered.commands().len(), 1);
     }
 
     #[test]
     fn sequential_plan_commands_match_legacy_flat_order() {
-        // jobs=1 equivalence: plan.commands() equals the legacy flatten.
+        // concurrency=1 equivalence: plan.commands() equals legacy flatten.
         let rules = vec![
             rule("A", None, false),
             rule("B", Some("g"), false),

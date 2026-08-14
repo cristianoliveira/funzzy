@@ -21,7 +21,7 @@ Extend planned path explanation from match list into actual run-plan preview aft
 - [ ] Pure tests cover serial plan, parallel groups, ignored path, group separator filtered out, repeated group names, and empty plan.
 - [ ] Output distinguishes matched, ignored, selected, and skipped tasks with effective rule origin.
 - [ ] Displays barriers and named group occurrences without implying completion order.
-- [ ] Shows effective jobs, debounce, cwd, and busy/failure policies relevant to plan.
+- [ ] Shows effective concurrency, debounce, cwd, and busy/failure policies relevant to plan.
 - [ ] Uses same matcher/planner as execution and never spawns work.
 - [ ] Human output is concise; structured representation is stable if machine format exists.
 - [ ] Invalid config delegates to same validation diagnostics as `fzz check`.

@@ -216,6 +216,45 @@ fzz watch "@quick"
 
 ---
 
+### `run TARGET`
+
+**Description**: Execute selected configured tasks once in current process and exit with their combined outcome. This starts no filesystem watcher or control socket.
+
+**Usage**:
+```bash
+fzz run "build"
+fzz --fail-fast run "@quick"
+```
+
+Selection is deterministic: exact task name wins, `@tag` runs every matching task, and other substrings must match one task. Missing or ambiguous targets fail with available matches. Path input is rejected; `run` always executes full selected workflow.
+
+For CI/manual parity, use same configured target locally and in automation:
+
+```yaml
+# .watch.yaml
+on:
+  change: ["src/**", "tests/**"]
+  concurrency: 2
+tasks:
+  - name: test @ci
+    parallel: checks
+    run: cargo test
+  - name: lint @ci
+    parallel: checks
+    run: cargo clippy -- -D warnings
+```
+
+```bash
+# finite CI/manual execution
+fzz run @ci
+# continuous local feedback from same workflow
+fzz watch @ci
+```
+
+`fzz run TARGET` is local. `fzz control run TARGET` requests execution from already-running watcher and is separate IPC command.
+
+---
+
 ### `explain PATH`
 
 **Description**: Show which configured tasks a path would match or be ignored by, without starting a watcher or executing anything.

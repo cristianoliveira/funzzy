@@ -8,13 +8,13 @@
 
 use crate::control::{ControlServer, ControlState, ControlTarget};
 use crate::errors::FzzError;
-use crate::executor::{Executor, RunMetadata, SystemClock, SystemProcessRunner};
+use crate::executor::RunMetadata;
 use crate::plan::RunPlan;
 use crate::stdout;
-use crate::template::TemplateOptions;
 use crate::watcher;
 use crate::watches::Watches;
 use crate::workers;
+use crate::workflow::WorkflowRunner;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -93,71 +93,33 @@ pub fn watch_loop(
 /// Blocking executor: expands command templates and runs tasks in-process,
 /// honoring fail-fast, then presents the results.
 pub struct BlockingStrategy {
-    root: PathBuf,
-    verbose: bool,
-    executor: Executor,
+    workflow: WorkflowRunner,
 }
 
 impl BlockingStrategy {
-    pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, jobs: usize) -> Self {
-        let executor = Executor::new(
-            Arc::new(SystemProcessRunner),
-            Arc::new(SystemClock),
-            jobs,
-            Arc::new(|_| {}),
-            fail_fast,
-            verbose,
-        )
-        .expect("watch jobs must be positive");
-        BlockingStrategy {
-            root,
-            verbose,
-            executor,
+    pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, concurrency: usize) -> Self {
+        Self {
+            workflow: WorkflowRunner::new(root, verbose, fail_fast, concurrency),
         }
-    }
-
-    fn expand(&self, plan: RunPlan, filepath: Option<&str>) -> Result<RunPlan, String> {
-        let plan = plan.resolve_context(&self.root)?;
-        let (plan, unknown_variables) = plan.expand(&TemplateOptions {
-            filepath: filepath.map(str::to_string),
-            current_dir: format!("{}", self.root.display()),
-        });
-        for variable in unknown_variables {
-            stdout::warn(&format!("Unknown template variable '{}'.", variable));
-        }
-        Ok(plan)
-    }
-
-    fn execute_tasks(&self, metadata: RunMetadata, plan: RunPlan) -> crate::executor::CompletedRun {
-        self.executor.run_to_completion(metadata, plan)
     }
 }
 
 impl RunStrategy for BlockingStrategy {
     fn run_init(&self, plan: RunPlan) {
-        let plan = match self.expand(plan, None) {
-            Ok(plan) => plan,
-            Err(error) => {
-                stdout::error(&error);
-                return;
-            }
-        };
-        stdout::verbose(&plan.context_summary(), self.verbose);
-        let completed = self.execute_tasks(RunMetadata::new(0, "init"), plan);
-        stdout::present_results(completed.results, completed.elapsed);
+        match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
+            Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
+            Err(error) => stdout::error(&error),
+        }
     }
 
     fn run_change(&self, plan: RunPlan, filepath: &str) {
-        let plan = match self.expand(plan, Some(filepath)) {
-            Ok(plan) => plan,
-            Err(error) => {
-                stdout::error(&error);
-                return;
-            }
-        };
-        stdout::verbose(&plan.context_summary(), self.verbose);
-        let completed = self.execute_tasks(RunMetadata::new(0, filepath), plan);
-        stdout::present_results(completed.results, completed.elapsed);
+        match self
+            .workflow
+            .run(plan, RunMetadata::new(0, filepath), Some(filepath))
+        {
+            Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
+            Err(error) => stdout::error(&error),
+        }
     }
 }
 

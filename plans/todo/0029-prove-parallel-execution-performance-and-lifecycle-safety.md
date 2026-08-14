@@ -25,7 +25,7 @@ Use deterministic overlap assertions as primary proof. Wall-clock benchmark is s
 - [ ] Control `run`, synthetic `emit`, filesystem events, and run-on-init all use same parallel engine.
 - [ ] Output remains line-safe/task-attributed and control state produces same task-keyed combined result under deliberately reversed completion order; incidental ordering is not asserted.
 - [ ] Supporting benchmark demonstrates independent task batch latency approaches slowest task rather than sum, with environment recorded.
-- [ ] README/docs explain named contiguous groups, barriers, filtering, `on.jobs`, failures, restart, output ordering, and migration-free sequential defaults.
+- [ ] README/docs explain named contiguous groups, barriers, filtering, `on.concurrency`, failures, restart, output ordering, and migration-free sequential defaults.
 - [ ] CPU/process cost and recommended concurrency guidance are documented; no claim that parallelism makes every workload faster.
 - [ ] Focused, integration, and platform-relevant verification gates pass repeatedly without flakes.
 
