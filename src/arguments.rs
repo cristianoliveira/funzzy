@@ -31,6 +31,14 @@ pub enum Action {
     List,
     /// `fzz check`: validate configuration without starting a watcher.
     Check,
+    /// `fzz config schema|example`: agent-discoverable config surface.
+    Config {
+        /// `schema` (Some(section) when --section given) vs `example`.
+        schema_section: Option<Option<String>>,
+        example_profile: Option<String>,
+        /// Structured output format for schema (TASK-0048/0058).
+        format: OutputFormat,
+    },
     /// `fzz run TARGET`: execute selected configured tasks once, locally.
     Run { target: String },
     /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
@@ -67,6 +75,14 @@ pub struct Arguments {
     pub verbose: bool,
 }
 
+fn parse_config_format(raw: Option<&str>) -> OutputFormat {
+    match raw.unwrap_or("human") {
+        "toon" => OutputFormat::Toon,
+        "json" => OutputFormat::Json,
+        _ => OutputFormat::Human,
+    }
+}
+
 impl Arguments {
     /// Parse process arguments, handing help/version/error display to Clap:
     /// help and version print to stdout and exit 0; parse errors print to
@@ -99,6 +115,36 @@ impl Arguments {
             }
             Some(("list", _)) => (Action::List, false),
             Some(("check", _)) => (Action::Check, false),
+            Some(("config", sub)) => {
+                let action = match sub.subcommand() {
+                    Some(("schema", schema_sub)) => {
+                        let format = parse_config_format(
+                            schema_sub
+                                .get_one::<String>("config_format")
+                                .map(String::as_str),
+                        );
+                        Action::Config {
+                            schema_section: Some(schema_sub.get_one::<String>("section").cloned()),
+                            example_profile: None,
+                            format,
+                        }
+                    }
+                    Some(("example", example_sub)) => {
+                        let format = parse_config_format(
+                            example_sub
+                                .get_one::<String>("config_format")
+                                .map(String::as_str),
+                        );
+                        Action::Config {
+                            schema_section: None,
+                            example_profile: example_sub.get_one::<String>("profile").cloned(),
+                            format,
+                        }
+                    }
+                    _ => unreachable!("clap rejects unknown config subcommand"),
+                };
+                (action, false)
+            }
             Some(("run", sub)) => {
                 let target = sub
                     .get_one::<String>("target")
@@ -232,6 +278,14 @@ impl Arguments {
     }
 
     /// Rendered help text for the configured command (used by app fallbacks).
+    fn parse_config_format(raw: Option<&str>) -> OutputFormat {
+        match raw.unwrap_or("human") {
+            "toon" => OutputFormat::Toon,
+            "json" => OutputFormat::Json,
+            _ => OutputFormat::Human,
+        }
+    }
+
     pub fn help_text() -> String {
         command().render_help().to_string()
     }
@@ -397,6 +451,60 @@ fn command() -> Command {
                 .version(env!("CARGO_PKG_VERSION"))
                 .long_about(
                     "Load and validate the configured workflow: schema, globs, durations, concurrency, parallel groups, and paths. Never starts a watcher, executes a command, or opens a socket. Exit 0 when valid; non-zero with actionable errors when not.",
+                ),
+        )
+        .subcommand(
+            Command::new("config")
+                .about("Describe configuration structure and print runnable examples.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .subcommand(
+                    Command::new("schema")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .about("Print the JSON Schema for the preferred jobs: config.")
+                        .long_about(
+                            "Print a deterministic JSON Schema describing the preferred ordered `jobs:` .watch.yaml format. Exit 0. No config, watcher, or socket is read.\n\nOutput contract: one JSON Schema document on stdout, nothing else. `--section` returns a bounded self-contained section plus its identity and a hint for the full schema.\n\nExamples:\n  fzz config schema\n  fzz config schema --section parallel\n  fzz config schema --section job --format toon",
+                        )
+                        .arg(
+                            Arg::new("section")
+                                .long("section")
+                                .value_name("SECTION")
+                                .value_parser(clap::builder::PossibleValuesParser::new([
+                                    "on", "job", "matching", "execution", "parallel", "control",
+                                ]))
+                                .help("Emit one bounded schema section (on|job|matching|execution|parallel|control)."),
+                        )
+                        .arg(
+                            Arg::new("config_format")
+                                .long("format")
+                                .value_name("FORMAT")
+                                .value_parser(clap::builder::PossibleValuesParser::new(["toon", "json", "human"]))
+                                .help("Structured output format: toon, json, or human (default)."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("example")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .about("Print a runnable .watch.yaml example to stdout.")
+                        .long_about(
+                            "Print a valid runnable .watch.yaml to stdout with no prose mixed in. The output parses through the same production parser. Exit 0. No config, watcher, or socket is read.\n\nExamples:\n  fzz config example minimal\n  fzz config example parallel\n  fzz config example agent",
+                        )
+                        .arg(
+                            Arg::new("profile")
+                                .value_name("PROFILE")
+                                .num_args(1)
+                                .required(true)
+                                .value_parser(clap::builder::PossibleValuesParser::new(["minimal", "parallel", "agent"]))
+                                .help("Example profile: minimal, parallel, or agent."),
+                        )
+                        .arg(
+                            Arg::new("config_format")
+                                .long("format")
+                                .value_name("FORMAT")
+                                .value_parser(clap::builder::PossibleValuesParser::new(["toon", "json", "human"]))
+                                .help("Structured output format: toon, json, or human (default)."),
+                        ),
                 ),
         )
         .subcommand(
@@ -1487,5 +1595,54 @@ mod format_tests {
             }
             other => panic!("expected Control, got {:?}", other),
         }
+    }
+}
+
+#[cfg(test)]
+mod config_command_tests {
+    use super::tests::parse;
+    use super::{Action, Arguments};
+    use crate::cli::{ControlAction, OutputFormat};
+
+    #[test]
+    fn config_schema_parses_with_optional_section() {
+        let args = parse(&["config", "schema"]).expect("parse");
+        assert_eq!(
+            args.action,
+            Action::Config {
+                schema_section: Some(None),
+                example_profile: None,
+                format: OutputFormat::Human,
+            }
+        );
+        let args = parse(&["config", "schema", "--section", "parallel"]).expect("parse");
+        match args.action {
+            Action::Config {
+                schema_section: Some(Some(section)),
+                example_profile: None,
+                format: OutputFormat::Human,
+            } => assert_eq!(section, "parallel"),
+            other => panic!("expected config schema, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_example_parses_profile() {
+        let args = parse(&["config", "example", "agent"]).expect("parse");
+        match args.action {
+            Action::Config {
+                schema_section: None,
+                example_profile: Some(profile),
+                format: OutputFormat::Human,
+            } => assert_eq!(profile, "agent"),
+            other => panic!("expected config example, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn config_rejects_unknown_section_and_profile() {
+        assert!(parse(&["config", "schema", "--section", "bogus"]).is_err());
+        assert!(parse(&["config", "example", "bogus"]).is_err());
+        assert!(parse(&["config", "example"]).is_err());
     }
 }

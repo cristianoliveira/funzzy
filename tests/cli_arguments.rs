@@ -821,3 +821,89 @@ fn explain_shows_separated_group_occurrences() {
             .stdout(predicate::str::contains("sep @quick"));
     });
 }
+
+#[test]
+fn config_schema_emits_valid_deterministic_json_schema() {
+    // TASK-0058: `fzz config schema` emits valid JSON Schema describing the
+    // preferred jobs format, without reading any project config.
+    let first = fzz()
+        .args(["config", "schema", "--format", "json"])
+        .output()
+        .unwrap();
+    let second = fzz()
+        .args(["config", "schema", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&first.stdout).expect("valid JSON schema");
+    assert_eq!(doc["properties"]["jobs"]["type"], "array");
+    for section in ["on", "job", "matching", "execution", "parallel", "control"] {
+        assert!(
+            doc["$defs"][section].is_object(),
+            "missing section {section}"
+        );
+    }
+    // Deterministic repeated output.
+    assert_eq!(first.stdout, second.stdout);
+}
+
+#[test]
+fn config_schema_section_is_bounded_with_identity_and_hint() {
+    let output = fzz()
+        .args([
+            "config",
+            "schema",
+            "--section",
+            "parallel",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(doc["section"], "parallel");
+    assert_eq!(doc["fullSchemaCommand"], "fzz config schema");
+    assert!(doc["properties"]["parallel"].is_object());
+}
+
+#[test]
+fn config_examples_are_runnable_and_parse() {
+    for profile in ["minimal", "parallel", "agent"] {
+        let output = fzz().args(["config", "example", profile]).output().unwrap();
+        assert!(output.status.success(), "example {profile} exits 0");
+        let yaml = String::from_utf8_lossy(&output.stdout);
+        assert!(yaml.contains("jobs:"), "{profile} example uses jobs:");
+        // The emitted YAML parses through the production parser: run `check`
+        // on it in a scratch dir.
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!(
+            "funzzy-config-example-{}-{}",
+            std::process::id(),
+            profile
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut f = std::fs::File::create(dir.join(".watch.yaml")).unwrap();
+        f.write_all(&output.stdout).unwrap();
+        fzz()
+            .current_dir(&dir)
+            .arg("-c")
+            .arg(".watch.yaml")
+            .arg("check")
+            .assert()
+            .code(0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[test]
+fn config_unknown_input_fails_with_alternatives() {
+    fzz()
+        .args(["config", "example", "bogus"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("minimal"))
+        .stderr(predicate::str::contains("parallel"))
+        .stderr(predicate::str::contains("agent"));
+}

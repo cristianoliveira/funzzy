@@ -83,6 +83,20 @@ pub fn run() {
     match args.action {
         // Commands
         Action::Check => check_config(&args.config),
+        Action::Config {
+            schema_section,
+            example_profile,
+            format,
+        } => {
+            let result = crate::cli::config::execute_config(
+                schema_section.flatten(),
+                example_profile,
+                format,
+            );
+            if let Err(err) = result {
+                stdout::failure("config command failed", err.to_string());
+            }
+        }
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
         Action::Control {
