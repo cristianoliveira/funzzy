@@ -56,6 +56,19 @@ pub enum ExcludedKind {
     TimedOut,
 }
 
+/// Crate-internal persistence snapshot of one profile (TASK-0053). Serde and
+/// filesystem stay in `duration_store`; this is a plain serde-free view so
+/// the estimator remains independent of serialization concerns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProfileSnapshot {
+    pub signature: ExecutionSignature,
+    pub successes: Vec<u64>,
+    pub failures: Vec<u64>,
+    pub cancelled: usize,
+    pub superseded: usize,
+    pub timed_out: usize,
+}
+
 /// Bounded per-signature outcome samples and counts (§1, §3).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Profile {
@@ -132,6 +145,50 @@ impl DurationHistory {
             .get(signature)
             .map(|profile| (profile.cancelled, profile.superseded, profile.timed_out))
             .unwrap_or((0, 0, 0))
+    }
+
+    /// Crate-internal snapshot for persistence (TASK-0053): one plain view per
+    /// signature, insertion-order preserved. Serde-free by design.
+    pub(crate) fn snapshot(&self) -> Vec<ProfileSnapshot> {
+        self.profiles
+            .iter()
+            .map(|(signature, profile)| ProfileSnapshot {
+                signature: signature.clone(),
+                successes: profile.successes.iter().copied().collect(),
+                failures: profile.failures.iter().copied().collect(),
+                cancelled: profile.cancelled,
+                superseded: profile.superseded,
+                timed_out: profile.timed_out,
+            })
+            .collect()
+    }
+
+    /// Rebuilds history from a persisted snapshot, enforcing the same bounds
+    /// the live path enforces: sample retention is capped, oversized inputs
+    /// are rejected rather than silently truncated. Crate-internal for the
+    /// store adapter (TASK-0053).
+    pub(crate) fn from_snapshot(snapshots: Vec<ProfileSnapshot>) -> Result<Self, String> {
+        let mut history = DurationHistory::new();
+        for snapshot in snapshots {
+            let profile = history
+                .profiles
+                .entry(snapshot.signature.clone())
+                .or_default();
+            if snapshot.successes.len() > SUCCESS_RETENTION
+                || snapshot.failures.len() > SUCCESS_RETENTION
+            {
+                return Err(format!(
+                    "profile '{}' exceeds retention bound ({} samples)",
+                    snapshot.signature.0, SUCCESS_RETENTION
+                ));
+            }
+            profile.successes.extend(snapshot.successes);
+            profile.failures.extend(snapshot.failures);
+            profile.cancelled = snapshot.cancelled;
+            profile.superseded = snapshot.superseded;
+            profile.timed_out = snapshot.timed_out;
+        }
+        Ok(history)
     }
 
     /// Derives the deterministic estimate for a signature, or `None` when no

@@ -515,7 +515,7 @@ impl TaskPlan {
 }
 
 /// Lowercase hex encoding of a digest, stable and dependency-free.
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
