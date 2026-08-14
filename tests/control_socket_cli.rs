@@ -126,3 +126,159 @@ fn wait_until(timeout: Duration, mut condition: impl FnMut() -> bool) {
     }
     panic!("condition did not become true within {:?}", timeout);
 }
+
+#[test]
+fn emit_routes_a_path_and_returns_matched_with_run_id() {
+    let directory = std::env::temp_dir().join(format!("funzzy-emit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"
+on:
+  socket: .tmp/control.sock
+tasks:
+  - name: fast tests @agent-fast
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+  - name: full tests @agent-final
+    run: 'test -z "{{filepath}}"'
+    change: ".funzzy-final-never"
+"#,
+    )
+    .unwrap();
+
+    let socket_path = directory.join(".tmp/control.sock");
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&directory)
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
+        .spawn()
+        .unwrap();
+    let _process = TestProcess { child, directory };
+
+    wait_until(Duration::from_secs(5), || socket_path.exists());
+    let emit = call(
+        &socket_path,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "emit",
+            "method": "emit",
+            "params": {"path": "notes.txt"}
+        }),
+    );
+    let result = &emit["result"];
+    assert_eq!(result["outcome"], "scheduled");
+    assert_eq!(result["matched"][0], "fast tests @agent-fast");
+    assert!(result["runId"].is_number(), "runId must be numeric");
+
+    let run_id = result["runId"].as_u64().unwrap();
+    wait_until(Duration::from_secs(5), || {
+        let status = call(
+            &socket_path,
+            serde_json::json!({"jsonrpc": "2.0", "id": "status", "method": "status"}),
+        );
+        status["result"]["generation"] == run_id && status["result"]["state"] == "passed"
+    });
+}
+
+#[test]
+fn emit_unmatched_path_is_explicit_without_generation() {
+    let directory =
+        std::env::temp_dir().join(format!("funzzy-emit-unmatched-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"
+on:
+  socket: .tmp/control.sock
+tasks:
+  - name: fast tests @agent-fast
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+"#,
+    )
+    .unwrap();
+
+    let socket_path = directory.join(".tmp/control.sock");
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&directory)
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
+        .spawn()
+        .unwrap();
+    let _process = TestProcess { child, directory };
+
+    wait_until(Duration::from_secs(5), || socket_path.exists());
+    let emit = call(
+        &socket_path,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "emit",
+            "method": "emit",
+            "params": {"path": "src/main.rs"}
+        }),
+    );
+    let result = &emit["result"];
+    assert_eq!(result["outcome"], "unmatched");
+    assert_eq!(result["matched"], serde_json::json!([]));
+    assert!(
+        result["runId"].is_null(),
+        "no generation for unmatched path"
+    );
+}
+
+#[test]
+fn emit_with_missing_or_empty_path_is_invalid_params() {
+    let directory =
+        std::env::temp_dir().join(format!("funzzy-emit-invalid-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"
+on:
+  socket: .tmp/control.sock
+tasks:
+  - name: fast tests @agent-fast
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+"#,
+    )
+    .unwrap();
+
+    let socket_path = directory.join(".tmp/control.sock");
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&directory)
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
+        .spawn()
+        .unwrap();
+    let _process = TestProcess { child, directory };
+
+    wait_until(Duration::from_secs(5), || socket_path.exists());
+
+    let missing = call(
+        &socket_path,
+        serde_json::json!({"jsonrpc": "2.0", "id": "emit-missing", "method": "emit", "params": {}}),
+    );
+    assert_eq!(missing["error"]["code"], -32602);
+
+    let empty = call(
+        &socket_path,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "emit-empty",
+            "method": "emit",
+            "params": {"path": "   "}
+        }),
+    );
+    assert_eq!(empty["error"]["code"], -32602);
+}

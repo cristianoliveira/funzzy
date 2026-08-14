@@ -6,7 +6,7 @@
 //! preparation path. CLI commands stay thin: build a strategy and call
 //! [`watch_loop`].
 
-use crate::control::{ControlServer, ControlState, ControlTarget};
+use crate::control::{ControlServer, ControlState, ControlTarget, EmitOutcome};
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
 use crate::plan::RunPlan;
@@ -182,11 +182,14 @@ impl NonBlockStrategy {
             })
             .collect();
 
-        match ControlServer::start_with_runner(
+        let run_runner = Arc::clone(&runner);
+        let emit_runner = Arc::clone(&runner);
+        match ControlServer::start_with_emit(
             path,
             Arc::clone(&self.control_state),
             targets,
-            move |target| runner.run_target(&target),
+            move |target| run_runner.run_target(&target),
+            move |path| emit_runner.emit_path(&path),
         ) {
             Ok(server) => {
                 stdout::info(&format!("Control socket listening at {}", path.display()));
@@ -213,6 +216,30 @@ impl NonBlockStrategy {
         self.worker.cancel_running_tasks()?;
         self.worker
             .schedule_plan_with_trigger(plan, &format!("control:{}", target), None)
+    }
+
+    /// Routes one synthetic path change through the exact shared policy used
+    /// for native filesystem events: `watch_plan` (normalization, change
+    /// match, ignore precedence, task ordering, `run_on_init` exclusions),
+    /// then the same cancel-and-schedule busy-run contract. Unmatched and
+    /// ignored paths are explicit outcomes with no scheduled generation.
+    pub fn emit_path(&self, path: &str) -> Result<EmitOutcome, String> {
+        match self.watches.watch_plan(path) {
+            Some(plan) => {
+                let matched = plan.task_names();
+                self.worker.cancel_running_tasks()?;
+                let run_id = self.worker.schedule_plan(plan, path)?;
+                Ok(EmitOutcome::scheduled(matched, run_id))
+            }
+            None => {
+                let explained = self.watches.explain(path);
+                Ok(if explained.ignored.is_empty() {
+                    EmitOutcome::unmatched()
+                } else {
+                    EmitOutcome::ignored()
+                })
+            }
+        }
     }
 }
 
@@ -265,6 +292,16 @@ mod tests {
             vec!["echo hi".to_owned()],
             vec!["src/**".to_owned()],
             vec![],
+            false,
+        )
+    }
+
+    fn rule_with_ignore(name: &str) -> Rules {
+        Rules::new(
+            name.to_owned(),
+            vec!["echo hi".to_owned()],
+            vec!["src/**".to_owned()],
+            vec!["src/generated/**".to_owned()],
             false,
         )
     }
@@ -363,5 +400,82 @@ mod tests {
             "unexpected: {}",
             err
         );
+    }
+
+    #[test]
+    fn it_emits_a_path_through_the_worker_contract() {
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+
+        let outcome = strategy
+            .emit_path("src/main.rs")
+            .expect("matched path should schedule");
+        assert_eq!(outcome.outcome, "scheduled");
+        assert_eq!(outcome.matched, vec!["my tests".to_owned()]);
+        assert_eq!(outcome.run_id, Some(1));
+    }
+
+    #[test]
+    fn it_emits_an_absolute_path_identically_to_a_relative_one() {
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+
+        let relative = strategy.emit_path("src/main.rs").expect("relative");
+        let absolute = strategy
+            .emit_path(&format!(
+                "{}/src/main.rs",
+                strategy.watches.root().display()
+            ))
+            .expect("absolute");
+        assert_eq!(relative.outcome, "scheduled");
+        assert_eq!(absolute.outcome, "scheduled");
+        assert_eq!(absolute.matched, vec!["my tests".to_owned()]);
+    }
+
+    #[test]
+    fn it_reports_unmatched_emit_without_scheduling() {
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+
+        let outcome = strategy
+            .emit_path("docs/readme.md")
+            .expect("unmatched must not fail");
+        assert_eq!(outcome.outcome, "unmatched");
+        assert!(outcome.matched.is_empty());
+        assert_eq!(outcome.run_id, None);
+    }
+
+    #[test]
+    fn it_reports_ignored_emit_without_scheduling() {
+        let watches = Watches::new(vec![rule_with_ignore("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+
+        let outcome = strategy
+            .emit_path("src/generated/out.rs")
+            .expect("ignored must not fail");
+        assert_eq!(outcome.outcome, "ignored");
+        assert!(outcome.matched.is_empty());
+        assert_eq!(outcome.run_id, None);
+    }
+
+    #[test]
+    fn it_does_not_schedule_when_only_ignored_rules_exist() {
+        let watches = Watches::new(vec![rule_with_ignore("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+
+        let outcome = strategy
+            .emit_path("src/generated/out.rs")
+            .expect("ignored path");
+        assert_eq!(outcome.run_id, None);
     }
 }

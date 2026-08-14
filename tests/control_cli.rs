@@ -28,21 +28,20 @@ static DIRECTORY_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::Atom
 
 fn setup_watcher_directory(test_name: &str) -> std::path::PathBuf {
     let counter = DIRECTORY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let directory = std::env::temp_dir().join(format!(
-        "funzzy-control-cli-{}-{test_name}-{counter}",
-        std::process::id()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("fzzc-{}-{test_name}-{counter}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join(".watch.yaml"),
         r#"
 on:
-  socket: .tmp/control.sock
+  socket: sock
 tasks:
   - name: fast tests @agent-fast
     run: "true"
     change: "*.txt"
+    ignore: "generated/**"
     run_on_init: true
   - name: full tests @agent-final
     run: 'test -z "{{filepath}}"'
@@ -68,7 +67,7 @@ fn start_watcher(directory: &std::path::Path) -> TestProcess {
 }
 
 fn wait_until_socket(directory: &std::path::Path) {
-    let socket_path = directory.join(".tmp/control.sock");
+    let socket_path = directory.join("sock");
     for _ in 0..100 {
         if socket_path.exists() {
             return;
@@ -177,7 +176,7 @@ fn control_run_returns_scheduled_generation_identity() {
 
     // The returned identity must correlate with the watcher's own run:
     // the generation eventually reaches a terminal state.
-    let socket_path = directory.join(".tmp/control.sock");
+    let socket_path = directory.join("sock");
     wait_until(|| {
         let status = raw_status(&socket_path);
         status["result"]["generation"].as_u64() == Some(generation)
@@ -192,7 +191,7 @@ fn control_run_returns_scheduled_generation_identity() {
 fn control_status_with_missing_socket_reports_selected_path() {
     let directory = setup_watcher_directory("missing-socket");
     // No watcher is started: the socket must not exist.
-    let missing = directory.join(".tmp/control.sock");
+    let missing = directory.join("sock");
     let output = run_cli(
         &directory,
         &["control", "--socket", missing.to_str().unwrap(), "status"],
@@ -217,7 +216,7 @@ fn control_socket_flag_overrides_config_socket() {
     let _watcher = start_watcher(&directory);
     wait_until_socket(&directory);
 
-    // The watcher listens at .tmp/control.sock (from on.socket), but an
+    // The watcher listens at sock (from on.socket), but an
     // explicit --socket pointing elsewhere must win and fail actionably.
     let wrong = directory.join("wrong.sock");
     let output = run_cli(
@@ -282,4 +281,128 @@ fn control_help_lists_nested_subcommands() {
 fn control_without_subcommand_is_a_usage_error() {
     let output = run_cli(std::path::Path::new("."), &["control"]);
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn control_emit_matched_path_schedules_generation() {
+    let directory = setup_watcher_directory("emit-matched");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    let output = run_cli(&directory, &["control", "emit", "notes.txt"]);
+    assert!(
+        output.status.success(),
+        "matched emit must exit 0: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("outcome: scheduled"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("fast tests @agent-fast"),
+        "matched task must be named: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("scheduled generation:"),
+        "stdout: {}",
+        stdout
+    );
+
+    // The returned identity must correlate with the watcher's own run.
+    let generation: u64 = stdout
+        .trim()
+        .lines()
+        .find_map(|line| line.strip_prefix("scheduled generation: "))
+        .expect("generation line")
+        .parse()
+        .expect("numeric generation");
+    let socket_path = directory.join("sock");
+    wait_until(|| {
+        let status = raw_status(&socket_path);
+        status["result"]["generation"].as_u64() == Some(generation)
+    });
+}
+
+#[test]
+fn control_emit_nonexistent_path_still_routes_by_pattern() {
+    let directory = setup_watcher_directory("emit-nonexistent");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    // The path need not exist: deletions and remote logical events remain
+    // representable; routing follows change patterns only.
+    let output = run_cli(&directory, &["control", "emit", "never-created.txt"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("outcome: scheduled"), "stdout: {}", stdout);
+    assert!(
+        stdout.contains("scheduled generation:"),
+        "stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn control_emit_ignored_path_is_explicit_noop() {
+    let directory = setup_watcher_directory("emit-ignored");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    // generated/** matches the ignore pattern, which wins over *.txt.
+    let output = run_cli(&directory, &["control", "emit", "generated/out.txt"]);
+    assert!(
+        output.status.success(),
+        "ignored emit must exit 0: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("outcome: ignored"), "stdout: {}", stdout);
+    assert!(stdout.contains("matched: (none)"), "stdout: {}", stdout);
+    assert!(
+        !stdout.contains("scheduled generation"),
+        "no generation must be scheduled: {}",
+        stdout
+    );
+}
+
+#[test]
+fn control_emit_unmatched_path_is_explicit_noop() {
+    let directory = setup_watcher_directory("emit-unmatched");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    let output = run_cli(&directory, &["control", "emit", "src/main.rs"]);
+    assert!(
+        output.status.success(),
+        "unmatched emit must exit 0: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("outcome: unmatched"), "stdout: {}", stdout);
+    assert!(stdout.contains("matched: (none)"), "stdout: {}", stdout);
+    assert!(
+        !stdout.contains("scheduled generation"),
+        "no generation must be scheduled: {}",
+        stdout
+    );
+}
+
+#[test]
+fn control_emit_empty_path_is_usage_error() {
+    let directory = setup_watcher_directory("emit-empty");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    let output = run_cli(&directory, &["control", "emit", ""]);
+    assert_eq!(output.status.code(), Some(2));
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("path cannot be empty"),
+        "usage error must name the problem: {}",
+        combined
+    );
 }

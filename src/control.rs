@@ -36,7 +36,6 @@ pub struct ControlInstance {
     pub token: String,
     pub started_at_epoch_ms: u64,
 }
-
 impl ControlInstance {
     pub fn new() -> Self {
         let started_at_epoch_ms = std::time::SystemTime::now()
@@ -117,7 +116,45 @@ impl ControlState {
     }
 }
 
+/// Result of routing one synthetic path change through the shared
+/// event-to-run policy (contract §5): matched task names plus the scheduled
+/// generation, or an explicit unmatched/ignored outcome with no generation.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmitOutcome {
+    pub matched: Vec<String>,
+    pub run_id: Option<u64>,
+    pub outcome: String,
+}
+
+impl EmitOutcome {
+    pub fn scheduled(matched: Vec<String>, run_id: u64) -> Self {
+        Self {
+            matched,
+            run_id: Some(run_id),
+            outcome: "scheduled".to_owned(),
+        }
+    }
+
+    pub fn unmatched() -> Self {
+        Self {
+            matched: vec![],
+            run_id: None,
+            outcome: "unmatched".to_owned(),
+        }
+    }
+
+    pub fn ignored() -> Self {
+        Self {
+            matched: vec![],
+            run_id: None,
+            outcome: "ignored".to_owned(),
+        }
+    }
+}
+
 type RunTarget = Arc<dyn Fn(String) -> Result<u64, String> + Send + Sync>;
+type EmitPath = Arc<dyn Fn(String) -> Result<EmitOutcome, String> + Send + Sync>;
 
 pub struct ControlServer {
     path: PathBuf,
@@ -128,7 +165,7 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, vec![], None)
+        Self::start_internal(path, state, vec![], None, None)
     }
 
     pub fn start_with_runner<F>(
@@ -140,7 +177,31 @@ impl ControlServer {
     where
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
     {
-        Self::start_internal(path, state, targets, Some(Arc::new(run_target)))
+        Self::start_internal(path, state, targets, Some(Arc::new(run_target)), None)
+    }
+
+    /// Extends the runner surface with the `emit` method (TASK-0022): the
+    /// handler routes one synthetic path through the shared event-to-run
+    /// policy and returns matched tasks plus run identity or an explicit
+    /// unmatched/ignored outcome.
+    pub fn start_with_emit<F, E>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        run_target: F,
+        emit_path: E,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+    {
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(Arc::new(run_target)),
+            Some(Arc::new(emit_path)),
+        )
     }
 
     fn start_internal(
@@ -148,6 +209,7 @@ impl ControlServer {
         state: Arc<Mutex<ControlState>>,
         targets: Vec<ControlTarget>,
         run_target: Option<RunTarget>,
+        emit_path: Option<EmitPath>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -160,9 +222,14 @@ impl ControlServer {
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _)) => {
-                        handle_client(stream, &state, &targets, run_target.as_ref(), &instance)
-                    }
+                    Ok((stream, _)) => handle_client(
+                        stream,
+                        &state,
+                        &targets,
+                        run_target.as_ref(),
+                        emit_path.as_ref(),
+                        &instance,
+                    ),
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
@@ -221,6 +288,7 @@ fn handle_client(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    emit_path: Option<&EmitPath>,
     instance: &ControlInstance,
 ) {
     let mut request = String::new();
@@ -244,7 +312,9 @@ fn handle_client(
         }
     };
 
-    if let Some(response) = process_payload(request, state, targets, run_target, instance) {
+    if let Some(response) =
+        process_payload(request, state, targets, run_target, emit_path, instance)
+    {
         write_response(&mut stream, response);
     }
 }
@@ -254,10 +324,11 @@ fn process_payload(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    emit_path: Option<&EmitPath>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
-        return process_request(request, state, targets, run_target, instance);
+        return process_request(request, state, targets, run_target, emit_path, instance);
     };
 
     if requests.is_empty() {
@@ -271,7 +342,9 @@ fn process_payload(
 
     let responses: Vec<_> = requests
         .into_iter()
-        .filter_map(|request| process_request(request, state, targets, run_target, instance))
+        .filter_map(|request| {
+            process_request(request, state, targets, run_target, emit_path, instance)
+        })
         .collect();
     if responses.is_empty() {
         return None;
@@ -284,6 +357,7 @@ fn process_request(
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
+    emit_path: Option<&EmitPath>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
@@ -307,6 +381,7 @@ fn process_request(
         "status" => Ok(serde_json::json!(state.lock().unwrap().clone())),
         "targets" => Ok(serde_json::json!(targets)),
         "run" => run_requested_target(&request, run_target),
+        "emit" => emit_requested_path(&request, emit_path),
         // Honest negotiated profile (contract §8): methods list only what this
         // server implements; features stay false until the additive contract
         // (subscribe, cancel, output, correlated snapshots) lands. The
@@ -389,6 +464,42 @@ fn run_requested_target(
 
     run_target(target.to_string())
         .map(|run_id| serde_json::json!({"runId": run_id}))
+        .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
+}
+
+/// `emit` transport validation only: one non-empty path. Routing, matching,
+/// ignore precedence, ordering, templates, and busy-run policy stay in the
+/// injected handler (shared event-to-run policy); no second matcher or
+/// executor lives in `control.rs`.
+fn emit_requested_path(
+    request: &serde_json::Value,
+    emit_path: Option<&EmitPath>,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let Some(path) = request
+        .get("params")
+        .and_then(|params| params.get("path"))
+        .and_then(|path| path.as_str())
+        .filter(|path| !path.trim().is_empty())
+        .filter(|path| !path.contains('\0'))
+    else {
+        return Err((
+            -32602,
+            "Invalid params",
+            Some(serde_json::json!(
+                "emit requires a non-empty params.path without NUL bytes"
+            )),
+        ));
+    };
+    let Some(emit_path) = emit_path else {
+        return Err((
+            -32000,
+            "Server error",
+            Some(serde_json::json!("path emission is unavailable")),
+        ));
+    };
+
+    emit_path(path.to_string())
+        .map(|outcome| serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null))
         .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
 }
 

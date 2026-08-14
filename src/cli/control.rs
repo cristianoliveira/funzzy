@@ -1,6 +1,6 @@
 use crate::cli::Command;
 use crate::config;
-use crate::control_client::{ControlClient, StatusSnapshot, TargetSnapshot};
+use crate::control_client::{ControlClient, EmitSnapshot, StatusSnapshot, TargetSnapshot};
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
 
@@ -11,11 +11,12 @@ pub enum ControlAction {
     Status,
     List,
     Run { target: String },
+    Emit { path: String },
 }
 
-/// `fzz control` client command group (TASK-0021). Consumes only the
-/// existing `status`, `targets`, and `run` methods; `--wait`/`--timeout`
-/// and `emit`/`await` land in TASK-0044/TASK-0022.
+/// `fzz control` client command group (TASK-0021/0022). Consumes the
+/// existing `status`, `targets`, `run`, and `emit` methods; `--wait`/
+/// `--timeout` and `await` land in TASK-0044.
 pub struct ControlCommand {
     action: ControlAction,
     /// `control --socket <PATH>`: highest-precedence socket override.
@@ -118,6 +119,12 @@ impl Command for ControlCommand {
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_run(generation));
             }
+            ControlAction::Emit { path } => {
+                let emit = client
+                    .emit(path)
+                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                print!("{}", render_emit(&emit));
+            }
         }
         Ok(())
     }
@@ -173,6 +180,24 @@ pub fn render_targets(targets: &[TargetSnapshot]) -> String {
 /// Scheduled-generation identity returned by `control run TARGET`.
 pub fn render_run(generation: u64) -> String {
     format!("scheduled generation: {}\n", generation)
+}
+
+/// Compact deterministic `emit` rendering: outcome, matched tasks, and the
+/// scheduled generation when one was produced.
+pub fn render_emit(emit: &EmitSnapshot) -> String {
+    let mut output = format!("outcome: {}\n", emit.outcome);
+    if emit.matched.is_empty() {
+        output.push_str("matched: (none)\n");
+    } else {
+        output.push_str(&format!("matched ({}):\n", emit.matched.len()));
+        for name in &emit.matched {
+            output.push_str(&format!("  - {}\n", name));
+        }
+    }
+    if let Some(run_id) = emit.run_id {
+        output.push_str(&format!("scheduled generation: {}\n", run_id));
+    }
+    output
 }
 
 #[cfg(test)]
@@ -245,6 +270,46 @@ mod tests {
     #[test]
     fn render_run_returns_generation_identity() {
         assert_eq!(render_run(7), "scheduled generation: 7\n");
+    }
+
+    #[test]
+    fn render_emit_scheduled_shows_matched_and_generation() {
+        let emit = EmitSnapshot {
+            matched: vec!["fast tests".to_string(), "full tests".to_string()],
+            run_id: Some(7),
+            outcome: "scheduled".to_string(),
+        };
+        let rendered = render_emit(&emit);
+        assert!(rendered.contains("outcome: scheduled"));
+        assert!(rendered.contains("matched (2):"));
+        assert!(rendered.contains("  - fast tests"));
+        assert!(rendered.contains("  - full tests"));
+        assert!(rendered.contains("scheduled generation: 7"));
+    }
+
+    #[test]
+    fn render_emit_unmatched_is_explicit_no_generation() {
+        let emit = EmitSnapshot {
+            matched: vec![],
+            run_id: None,
+            outcome: "unmatched".to_string(),
+        };
+        let rendered = render_emit(&emit);
+        assert!(rendered.contains("outcome: unmatched"));
+        assert!(rendered.contains("matched: (none)"));
+        assert!(!rendered.contains("scheduled generation"));
+    }
+
+    #[test]
+    fn render_emit_ignored_is_explicit_no_generation() {
+        let emit = EmitSnapshot {
+            matched: vec![],
+            run_id: None,
+            outcome: "ignored".to_string(),
+        };
+        let rendered = render_emit(&emit);
+        assert!(rendered.contains("outcome: ignored"));
+        assert!(rendered.contains("matched: (none)"));
     }
 
     #[test]

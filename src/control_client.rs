@@ -149,6 +149,51 @@ impl TargetSnapshot {
     }
 }
 
+/// Validated `emit` result (contract §5): matched task names plus the
+/// scheduled generation, or an explicit unmatched/ignored outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmitSnapshot {
+    pub matched: Vec<String>,
+    pub run_id: Option<u64>,
+    pub outcome: String,
+}
+
+impl EmitSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "emit result must be an object".to_string())?;
+        let outcome = object
+            .get("outcome")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "emit result field \"outcome\" must be a string".to_string())?;
+        if !matches!(outcome.as_str(), "scheduled" | "unmatched" | "ignored") {
+            return Err(format!(
+                "emit result field \"outcome\" must be scheduled, unmatched, or ignored, got {}",
+                outcome
+            ));
+        }
+        let matched = read_string_array(object, "matched")?;
+        let run_id = match object.get("runId") {
+            None => None,
+            Some(Value::Null) => None,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "emit result field \"runId\" must be a number".to_string())?,
+            Some(_) => {
+                return Err("emit result field \"runId\" must be a number or null".to_string())
+            }
+        };
+        Ok(Self {
+            matched,
+            run_id,
+            outcome,
+        })
+    }
+}
+
 fn read_string_array(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -238,6 +283,13 @@ impl ControlClient {
         result.get("runId").and_then(Value::as_u64).ok_or_else(|| {
             ControlClientError::Malformed("run result must carry a numeric \"runId\"".to_string())
         })
+    }
+
+    /// Requests `emit` for one path; returns matched tasks and run identity
+    /// or an explicit unmatched/ignored outcome.
+    pub fn emit(&mut self, path: &str) -> Result<EmitSnapshot, ControlClientError> {
+        let result = self.call("emit", serde_json::json!({ "path": path }))?;
+        EmitSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
     /// Framing, request ID, error-object handling, and response validation.
@@ -444,6 +496,68 @@ mod tests {
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
         let err = client.run("x").expect_err("missing runId must fail");
+        handle.join().expect("server thread");
+        assert!(matches!(err, ControlClientError::Malformed(_)));
+    }
+
+    #[test]
+    fn emit_scheduled_returns_matched_and_run_id() {
+        let result = serde_json::json!({
+            "matched": ["fast tests", "full tests"],
+            "runId": 7,
+            "outcome": "scheduled"
+        });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let emit = client.emit("src/main.rs").expect("emit");
+        handle.join().expect("server thread");
+        assert_eq!(emit.outcome, "scheduled");
+        assert_eq!(
+            emit.matched,
+            vec!["fast tests".to_string(), "full tests".to_string()]
+        );
+        assert_eq!(emit.run_id, Some(7));
+    }
+
+    #[test]
+    fn emit_unmatched_is_explicit_no_generation() {
+        let result = serde_json::json!({"matched": [], "runId": null, "outcome": "unmatched"});
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let emit = client.emit("docs/x.md").expect("emit");
+        handle.join().expect("server thread");
+        assert_eq!(emit.outcome, "unmatched");
+        assert!(emit.matched.is_empty());
+        assert_eq!(emit.run_id, None);
+    }
+
+    #[test]
+    fn emit_ignored_is_explicit_no_generation() {
+        let result = serde_json::json!({"matched": [], "runId": null, "outcome": "ignored"});
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let emit = client.emit("src/generated/out.rs").expect("emit");
+        handle.join().expect("server thread");
+        assert_eq!(emit.outcome, "ignored");
+        assert_eq!(emit.run_id, None);
+    }
+
+    #[test]
+    fn emit_unknown_outcome_is_malformed() {
+        let result = serde_json::json!({"matched": [], "runId": null, "outcome": "maybe"});
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let err = client.emit("x").expect_err("unknown outcome must fail");
+        handle.join().expect("server thread");
+        assert!(matches!(err, ControlClientError::Malformed(_)));
+    }
+
+    #[test]
+    fn emit_missing_outcome_is_malformed() {
+        let result = serde_json::json!({"matched": [], "runId": 3});
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let err = client.emit("x").expect_err("missing outcome must fail");
         handle.join().expect("server thread");
         assert!(matches!(err, ControlClientError::Malformed(_)));
     }

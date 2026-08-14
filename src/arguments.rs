@@ -115,6 +115,12 @@ impl Arguments {
                             .cloned()
                             .expect("target is required by clap"),
                     },
+                    Some(("emit", emit_sub)) => ControlAction::Emit {
+                        path: emit_sub
+                            .get_one::<String>("path")
+                            .cloned()
+                            .expect("path is required by clap"),
+                    },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
                 (Action::Control { action, socket }, false)
@@ -362,6 +368,28 @@ fn command() -> Command {
                                 .value_parser(clap::builder::ValueParser::string())
                                 .help("Exact task name, @tag, or name substring on the running watcher."),
                         ),
+                )
+                .subcommand(
+                    Command::new("emit")
+                        .about("Report a synthetic path change to the running watcher.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Report that a logical project path changed without a reliable filesystem event.\n\nThe watcher routes the path through its configured change/ignore rules exactly like a native change: matched tasks run under the same ordering, templates, and busy policy. The path need not exist, so deletions and remote logical events are representable. This is not a generic event bus and it does not mutate the filesystem. Atomic await and `--wait` land with TASK-0044.",
+                        )
+                        .arg(
+                            Arg::new("path")
+                                .value_name("PATH")
+                                .num_args(1)
+                                .required(true)
+                                .value_parser(clap::builder::ValueParser::new(|value: &str| {
+                                    if value.trim().is_empty() {
+                                        Err("path cannot be empty".to_string())
+                                    } else {
+                                        Ok(value.to_string())
+                                    }
+                                }))
+                                .help("Project path that changed (relative or absolute)."),
+                        ),
                 ),
         )
 }
@@ -544,9 +572,27 @@ mod tests {
     }
 
     #[test]
-    fn control_emit_is_not_yet_a_command() {
-        // `emit` lands with TASK-0022; until then it must be a usage error.
-        assert!(parse(&["control", "emit", "src/x.rs"]).is_err());
+    fn control_emit_carries_path() {
+        assert_eq!(
+            parse_action(&["control", "emit", "src/main.rs"]),
+            Action::Control {
+                action: ControlAction::Emit {
+                    path: "src/main.rs".to_string(),
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_emit_without_path_fails() {
+        assert!(parse(&["control", "emit"]).is_err());
+    }
+
+    #[test]
+    fn control_emit_rejects_empty_path() {
+        assert!(parse(&["control", "emit", ""]).is_err());
+        assert!(parse(&["control", "emit", "   "]).is_err());
     }
 
     #[test]
