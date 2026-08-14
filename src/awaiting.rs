@@ -327,6 +327,8 @@ mod tests {
             predecessor: None,
             changed: vec![],
             commands: vec!["echo hi".to_owned()],
+            target: None,
+            execution_signature: None,
         }
     }
 

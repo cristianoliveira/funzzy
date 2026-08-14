@@ -55,19 +55,28 @@ impl Command for WatchNonBlockCommand {
         let coordinator = Arc::new(AwaitCoordinator::new());
         let outputs = Arc::new(OutputRegistry::new());
         let instance = Arc::new(ControlInstance::new());
-        let broker = Arc::new(SnapshotBroker::new(
-            instance.as_ref().clone(),
-            Arc::clone(&control_state),
-            Arc::clone(&coordinator),
-        ));
         // Duration recorder (TASK-0054): control-run targets record terminal
         // wall durations against their execution signature; fs/init/emit runs
-        // carry no signature and are ignored by the recorder.
+        // carry no signature and are ignored by the recorder. The same
+        // recorder drives target estimates and run-start snapshot estimates
+        // (TASK-0055).
         let recorder = Arc::new(DurationRecorder::new(DurationStore::new(state_file_path(
             &std::fs::canonicalize(self.watches.root())
                 .unwrap_or_else(|_| self.watches.root().to_path_buf()),
             STATE_SCHEMA_VERSION,
         ))));
+        // Frozen run-start estimate lookup for correlated snapshots
+        // (TASK-0055): estimates the current generation's target history at
+        // run start; None for non-target generations.
+        let recorder_lookup = Arc::clone(&recorder);
+        let snapshot_estimates: crate::snapshot::EstimateLookup =
+            Arc::new(move |run_id| recorder_lookup.estimate_at_start(run_id));
+        let broker = Arc::new(SnapshotBroker::with_estimates(
+            instance.as_ref().clone(),
+            Arc::clone(&control_state),
+            Arc::clone(&coordinator),
+            Some(snapshot_estimates),
+        ));
         let worker_state = Arc::clone(&control_state);
         let coordinator_state = Arc::clone(&coordinator);
         let worker_outputs = Arc::clone(&outputs);
@@ -96,6 +105,7 @@ impl Command for WatchNonBlockCommand {
             Some(outputs),
             instance,
             Some(broker),
+            Some(recorder),
         );
         watch_loop(&self.watches, self.run_on_init, &*strategy, self.verbose)
     }

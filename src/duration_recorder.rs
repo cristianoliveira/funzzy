@@ -21,8 +21,13 @@ use std::sync::Mutex;
 /// at most a bounded number of queued/running generations, so this is a
 /// defensive ceiling; associations are removed at terminal state.
 const MAX_ASSOCIATIONS: usize = 64;
+/// Upper bound on frozen run-start estimates retained for terminal snapshots
+/// (TASK-0055): terminal snapshots must still show the estimate captured when
+/// the generation started, so captured values outlive the association.
+const MAX_CAPTURED_ESTIMATES: usize = 256;
 
-/// One in-flight run: the profile identity to record against.
+/// One in-flight run: the profile identity to record against. The frozen
+/// run-start estimate lives in `captured_estimates` so it survives terminal.
 struct Association {
     signature: ExecutionSignature,
 }
@@ -34,6 +39,9 @@ pub struct DurationRecorder {
     /// run_id -> profile while queued/running; removed at terminal state so
     /// the map stays bounded and duplicate terminal events are no-ops.
     associations: Mutex<BTreeMap<u64, Association>>,
+    /// run_id -> frozen run-start estimate, retained past terminal so the
+    /// terminal snapshot still carries it (TASK-0055); bounded, oldest-first.
+    captured_estimates: Mutex<BTreeMap<u64, RunEstimate>>,
 }
 
 impl DurationRecorder {
@@ -49,6 +57,7 @@ impl DurationRecorder {
             history: Mutex::new(outcome.history),
             store,
             associations: Mutex::new(BTreeMap::new()),
+            captured_estimates: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -72,6 +81,20 @@ impl DurationRecorder {
                             oldest
                         ));
                     }
+                }
+                // Freeze the estimate at run start: snapshot the current
+                // history before this run can change it (contract §6).
+                if let Some(estimate) = self.history.lock().unwrap().estimate(signature, None) {
+                    let mut captured = self.captured_estimates.lock().unwrap();
+                    if captured.len() >= MAX_CAPTURED_ESTIMATES {
+                        if let Some((oldest, _)) = captured.pop_first() {
+                            stdout::warn(&format!(
+                                "funzzy: captured estimate bound reached; dropping run {}",
+                                oldest
+                            ));
+                        }
+                    }
+                    captured.insert(*run_id, estimate);
                 }
                 associations.insert(
                     *run_id,
@@ -153,6 +176,18 @@ impl DurationRecorder {
             .lock()
             .unwrap()
             .estimate(signature, configured_floor_ms)
+    }
+
+    /// Estimate captured at run start for a generation (TASK-0055): the value
+    /// is frozen when the target generation starts and never re-derived as
+    /// history changes mid-run, so progress fields stay stable for the whole
+    /// generation (contract §6). None for non-target generations.
+    pub fn estimate_at_start(&self, run_id: u64) -> Option<RunEstimate> {
+        self.captured_estimates
+            .lock()
+            .unwrap()
+            .get(&run_id)
+            .cloned()
     }
 
     /// Number of recorded success samples for a signature (tests/diagnostics).
@@ -335,6 +370,36 @@ mod tests {
         assert_eq!(recorder.success_samples(&signature), 1);
         let (cancelled, _, _) = recorder.history.lock().unwrap().excluded_counts(&signature);
         assert_eq!(cancelled, 0, "duplicate terminal must not double-record");
+    }
+
+    #[test]
+    fn estimate_at_start_is_frozen_and_survives_terminal() {
+        let (recorder, _temp) = recorder();
+        let signature = sig(1);
+        // Two prior samples -> a measured estimate exists at run start.
+        recorder.observe(&started(1, Some("build"), Some(1)));
+        recorder.observe(&finished(1, false, None));
+        recorder.observe(&started(2, Some("build"), Some(1)));
+        recorder.observe(&finished(2, false, None));
+
+        // Generation 3 starts: estimate frozen from 2 samples (typical 40k).
+        recorder.observe(&started(3, Some("build"), Some(1)));
+        let at_start = recorder.estimate_at_start(3).expect("captured");
+        assert_eq!(at_start.typical_ms, 40_000);
+        assert_eq!(at_start.samples, 2);
+
+        // The run finishes and adds a third sample; the captured estimate for
+        // generation 3 must NOT change (contract §6: snapshot-at-run-start).
+        recorder.observe(&finished(3, false, None));
+        let after = recorder
+            .estimate_at_start(3)
+            .expect("retained past terminal");
+        assert_eq!(after, at_start);
+        assert_eq!(after.samples, 2, "estimate never re-derived mid-run");
+        // New runs see the updated history.
+        recorder.observe(&started(4, Some("build"), Some(1)));
+        let newer = recorder.estimate_at_start(4).expect("captured");
+        assert_eq!(newer.samples, 3);
     }
 
     #[test]

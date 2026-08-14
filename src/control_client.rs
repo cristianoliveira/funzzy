@@ -7,6 +7,7 @@
 //! read/write carries a timeout and every response is validated against
 //! the additive contract in `docs/AGENT-FEEDBACK-CONTRACT.md`.
 
+use crate::duration_history::RunEstimate;
 use serde_json::Value;
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
@@ -151,6 +152,9 @@ impl StatusSnapshot {
 pub struct TargetSnapshot {
     pub name: String,
     pub commands: Vec<String>,
+    /// Optional duration estimate (TASK-0055): absent for legacy servers and
+    /// targets without history.
+    pub estimate: Option<RunEstimate>,
 }
 
 impl TargetSnapshot {
@@ -164,7 +168,43 @@ impl TargetSnapshot {
             .map(str::to_owned)
             .ok_or_else(|| "target entry field \"name\" must be a string".to_string())?;
         let commands = read_string_array(object, "commands")?;
-        Ok(Self { name, commands })
+        let estimate = object
+            .get("estimate")
+            .and_then(Value::as_object)
+            .map(|estimate| RunEstimate {
+                typical_ms: estimate
+                    .get("typicalMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                upper_ms: estimate
+                    .get("upperMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                recommended_timeout_ms: estimate
+                    .get("recommendedTimeoutMs")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                samples: estimate
+                    .get("samples")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default() as usize,
+                confidence: match estimate.get("confidence").and_then(Value::as_str) {
+                    Some("low") => crate::duration_history::EstimateConfidence::Low,
+                    Some("medium") => crate::duration_history::EstimateConfidence::Medium,
+                    Some("high") => crate::duration_history::EstimateConfidence::High,
+                    _ => crate::duration_history::EstimateConfidence::None,
+                },
+                source: if estimate.get("source").and_then(Value::as_str) == Some("configured") {
+                    crate::duration_history::EstimateSource::Configured
+                } else {
+                    crate::duration_history::EstimateSource::Measured
+                },
+            });
+        Ok(Self {
+            name,
+            commands,
+            estimate,
+        })
     }
 }
 
@@ -199,6 +239,11 @@ pub struct CapabilityLimits {
     pub output_retention_bytes: u64,
     pub max_response_bytes: u64,
     pub max_evidence_lines: u64,
+    /// Duration-estimate bounds (TASK-0055): 0 = surface absent. Mirrors the
+    /// estimator's retention/floor/cap so clients clamp without guessing.
+    pub estimate_max_samples: u64,
+    pub estimate_floor_ms: u64,
+    pub estimate_cap_ms: u64,
 }
 
 /// Negotiated feature flags: each stays false until its implementation lands,
@@ -210,6 +255,7 @@ pub struct CapabilityFeatures {
     pub correlated_snapshots: bool,
     pub output_retrieval: bool,
     pub pending_work: bool,
+    pub duration_estimates: bool,
 }
 
 impl CapabilitiesSnapshot {
@@ -262,6 +308,30 @@ impl CapabilitiesSnapshot {
                 .and_then(|limits| limits.get("maxEvidenceLines"))
                 .and_then(Value::as_u64)
                 .unwrap_or_default(),
+            estimate_max_samples: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("durationEstimateLimits"))
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("maxSamples"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            estimate_floor_ms: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("durationEstimateLimits"))
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("floorMs"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            estimate_cap_ms: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("durationEstimateLimits"))
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("capMs"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
         };
         let features = CapabilityFeatures {
             atomic_await: read_feature(object, "atomicAwait"),
@@ -269,6 +339,7 @@ impl CapabilitiesSnapshot {
             correlated_snapshots: read_feature(object, "correlatedSnapshots"),
             output_retrieval: read_feature(object, "outputRetrieval"),
             pending_work: read_feature(object, "pendingWork"),
+            duration_estimates: read_feature(object, "durationEstimates"),
         };
         Ok(Self {
             token,

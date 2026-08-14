@@ -1,4 +1,5 @@
 use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
+use crate::duration_history::RunEstimate;
 use crate::executor::{CancelDisposition, Event, TaskSnapshot};
 use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
 use crate::snapshot::SnapshotBroker;
@@ -31,6 +32,13 @@ pub struct ControlTarget {
     pub name: String,
     pub commands: Vec<String>,
 }
+
+/// Computes the current duration estimate for one target at request time
+/// (TASK-0055, contract §6): the estimate is derived when `targets` is
+/// served, never frozen when the watcher starts. None when the target has no
+/// history or the estimate surface is inactive. Wired at the composition root
+/// from watches + recorder; the control server stays decoupled from both.
+pub type TargetEstimateProvider = Arc<dyn Fn(&ControlTarget) -> Option<RunEstimate> + Send + Sync>;
 
 /// One Funzzy process identity (contract §1): the token changes on restart,
 /// so pi-watcher can detect instance changes instead of assuming continuity.
@@ -159,6 +167,7 @@ impl ControlState {
                 predecessor,
                 changed,
                 commands,
+                ..
             } => {
                 self.generation = run_id;
                 self.state = ExecutionState::Running;
@@ -266,6 +275,7 @@ impl ControlServer {
             None,
             Arc::new(ControlInstance::new()),
             None,
+            None,
         )
     }
 
@@ -288,6 +298,7 @@ impl ControlServer {
             None,
             None,
             Arc::new(ControlInstance::new()),
+            None,
             None,
         )
     }
@@ -338,6 +349,7 @@ impl ControlServer {
             None,
             Arc::new(ControlInstance::new()),
             None,
+            None,
         )
     }
 
@@ -370,6 +382,7 @@ impl ControlServer {
             outputs,
             Some(Arc::new(cancel_generation)),
             Arc::new(ControlInstance::new()),
+            None,
             None,
         )
     }
@@ -407,6 +420,45 @@ impl ControlServer {
             Some(Arc::new(cancel_generation)),
             instance,
             Some(broker),
+            None,
+        )
+    }
+
+    /// Extends the subscription surface with duration estimates (TASK-0055):
+    /// `targets` computes each target's current estimate at request time and
+    /// the correlated snapshot carries the run-start estimate. The provider
+    /// is wired at the composition root from watches + recorder.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_broker_and_estimates<F, E, C>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        run_target: F,
+        emit_path: E,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        cancel_generation: C,
+        instance: Arc<ControlInstance>,
+        broker: Arc<SnapshotBroker>,
+        estimates: TargetEstimateProvider,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
+    {
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(Arc::new(run_target)),
+            Some(Arc::new(emit_path)),
+            coordinator,
+            outputs,
+            Some(Arc::new(cancel_generation)),
+            instance,
+            Some(broker),
+            Some(estimates),
         )
     }
 
@@ -422,6 +474,7 @@ impl ControlServer {
         cancel_generation: Option<CancelTarget>,
         instance: Arc<ControlInstance>,
         broker: Option<Arc<SnapshotBroker>>,
+        estimates: Option<TargetEstimateProvider>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -460,6 +513,7 @@ impl ControlServer {
                         let cancel_generation = cancel_generation.clone();
                         let instance = Arc::clone(&instance);
                         let broker = broker.clone();
+                        let estimates = estimates.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
                             handle_client(
@@ -473,6 +527,7 @@ impl ControlServer {
                                 cancel_generation.as_ref(),
                                 instance.as_ref(),
                                 broker.as_ref(),
+                                estimates.as_ref(),
                             );
                             clients.fetch_sub(1, Ordering::Relaxed);
                         });
@@ -561,6 +616,7 @@ fn handle_client(
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
+    estimates: Option<&TargetEstimateProvider>,
 ) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
     // socket): the client adapter keeps one connection and increments ids.
@@ -630,6 +686,7 @@ fn handle_client(
             cancel_generation,
             instance,
             broker,
+            estimates,
         ) {
             write_response(&mut stream, response);
         }
@@ -811,6 +868,7 @@ fn process_payload(
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
+    estimates: Option<&TargetEstimateProvider>,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
         return process_request(
@@ -823,6 +881,7 @@ fn process_payload(
             cancel_generation,
             instance,
             broker,
+            estimates,
         );
     };
 
@@ -848,6 +907,7 @@ fn process_payload(
                 cancel_generation,
                 instance,
                 broker,
+                estimates,
             )
         })
         .collect();
@@ -867,6 +927,7 @@ fn process_request(
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
+    estimates: Option<&TargetEstimateProvider>,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
     let Some(object) = request.as_object() else {
@@ -887,17 +948,21 @@ fn process_request(
 
     let result = match method {
         "status" => status_result(state, outputs),
-        "targets" => Ok(serde_json::json!(targets)),
+        "targets" => Ok(targets_result(targets, estimates)),
         "run" => run_requested_target(&request, run_target),
         "emit" => emit_requested_path(&request, emit_path),
         "cancel" => cancel_requested_generation(&request, cancel_generation, instance),
         "output" => output_retrieval(&request, outputs),
         // Honest negotiated profile (contract §8): methods list only what this
         // server implements; features stay false until the additive contract
-        // (subscribe, cancel, output, correlated snapshots) lands. The
-        // extension keeps the legacy polling fallback and never assumes
+        // (subscribe, cancel, output, correlated snapshots, estimates) lands.
+        // The extension keeps the legacy polling fallback and never assumes
         // capabilities from package versions.
-        "capabilities" => Ok(capabilities_result(instance, broker.is_some())),
+        "capabilities" => Ok(capabilities_result(
+            instance,
+            broker.is_some(),
+            estimates.is_some(),
+        )),
         _ => Err((-32601, "Method not found", None)),
     };
 
@@ -930,8 +995,13 @@ fn request_id(request: &serde_json::Value) -> serde_json::Value {
 /// Negotiated capabilities (contract §6/§7): protocol facts only. `subscribe`
 /// and the `subscription` feature are advertised only when a broker endpoint
 /// is actually registered, so clients never assume a push stream that does
-/// not exist.
-fn capabilities_result(instance: &ControlInstance, subscription: bool) -> serde_json::Value {
+/// not exist. `durationEstimates` is advertised only when an estimate
+/// provider is wired, with its declared bounds.
+fn capabilities_result(
+    instance: &ControlInstance,
+    subscription: bool,
+    duration_estimates: bool,
+) -> serde_json::Value {
     let mut methods = vec![
         "status",
         "targets",
@@ -944,6 +1014,18 @@ fn capabilities_result(instance: &ControlInstance, subscription: bool) -> serde_
     ];
     if subscription {
         methods.push("subscribe");
+    }
+    let mut limits = serde_json::json!({
+        "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
+        "maxResponseBytes": MAX_RESPONSE_BYTES,
+        "maxEvidenceLines": MAX_EVIDENCE_LINES,
+    });
+    if duration_estimates {
+        limits["durationEstimateLimits"] = serde_json::json!({
+            "maxSamples": crate::duration_history::SUCCESS_RETENTION,
+            "floorMs": crate::duration_history::DEFAULT_FLOOR_MS,
+            "capMs": crate::duration_history::ABSOLUTE_CAP_MS,
+        });
     }
     serde_json::json!({
         "protocolVersion": "1.0",
@@ -959,22 +1041,43 @@ fn capabilities_result(instance: &ControlInstance, subscription: bool) -> serde_
             "changed",
             "predecessor",
             "supersededBy",
-            "failureEvidence"
+            "failureEvidence",
+            "estimate"
         ],
         "outputFormats": ["toon", "json"],
-        "limits": {
-            "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
-            "maxResponseBytes": MAX_RESPONSE_BYTES,
-            "maxEvidenceLines": MAX_EVIDENCE_LINES,
-        },
+        "limits": limits,
         "features": {
             "atomicAwait": true,
             "subscription": subscription,
             "correlatedSnapshots": false,
             "outputRetrieval": true,
             "pendingWork": false,
+            "durationEstimates": duration_estimates,
         },
     })
+}
+
+/// `targets` result: each target carries its current estimate computed at
+/// request time (TASK-0055, contract §6) — never frozen at server start.
+/// When no provider is wired, the legacy shape is unchanged (no estimate
+/// key at all, never null).
+fn targets_result(
+    targets: &[ControlTarget],
+    estimates: Option<&TargetEstimateProvider>,
+) -> serde_json::Value {
+    serde_json::json!(targets
+        .iter()
+        .map(|target| {
+            let estimate = estimates.and_then(|provider| provider(target));
+            let mut value = serde_json::to_value(target).unwrap_or_default();
+            if let Some(estimate) = estimate {
+                if let Ok(estimate) = serde_json::to_value(&estimate) {
+                    value["estimate"] = estimate;
+                }
+            }
+            value
+        })
+        .collect::<Vec<_>>())
 }
 
 /// `status` result: the legacy snapshot plus additive failure evidence when
@@ -1224,6 +1327,8 @@ mod tests {
             predecessor,
             changed: vec!["src/main.rs".to_owned()],
             commands: vec!["echo hi".to_owned()],
+            target: None,
+            execution_signature: None,
         }
     }
 
@@ -1387,7 +1492,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_subscribe_only_when_broker_registered() {
-        let with = capabilities_result(&instance("fz-7f3a"), true);
+        let with = capabilities_result(&instance("fz-7f3a"), true, false);
         let methods: Vec<_> = with["methods"]
             .as_array()
             .unwrap()
@@ -1397,7 +1502,7 @@ mod tests {
         assert!(methods.contains(&"subscribe"), "methods: {methods:?}");
         assert_eq!(with["features"]["subscription"], true);
 
-        let without = capabilities_result(&instance("fz-7f3a"), false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false);
         let methods: Vec<_> = without["methods"]
             .as_array()
             .unwrap()
@@ -1406,6 +1511,119 @@ mod tests {
             .collect();
         assert!(!methods.contains(&"subscribe"), "methods: {methods:?}");
         assert_eq!(without["features"]["subscription"], false);
+    }
+
+    #[test]
+    fn capabilities_advertise_duration_estimates_only_when_provider_wired() {
+        let with = capabilities_result(&instance("fz-7f3a"), true, true);
+        assert_eq!(with["features"]["durationEstimates"], true);
+        assert_eq!(
+            with["optionalFields"][0], "batch",
+            "estimate stays an optional additive field"
+        );
+        assert!(with["optionalFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field.as_str() == Some("estimate")));
+        assert_eq!(with["limits"]["durationEstimateLimits"]["maxSamples"], 20);
+        assert_eq!(with["limits"]["durationEstimateLimits"]["capMs"], 900_000);
+
+        let without = capabilities_result(&instance("fz-7f3a"), false, false);
+        assert_eq!(without["features"]["durationEstimates"], false);
+        assert!(
+            without["limits"].get("durationEstimateLimits").is_none(),
+            "no limits declared when the surface is inactive"
+        );
+    }
+
+    #[test]
+    fn targets_result_omits_estimate_without_provider() {
+        let targets = vec![ControlTarget {
+            name: "build".to_owned(),
+            commands: vec!["make build".to_owned()],
+        }];
+        let json = targets_result(&targets, None);
+        assert_eq!(json[0]["name"], "build");
+        assert_eq!(json[0]["commands"][0], "make build");
+        assert!(json[0].get("estimate").is_none(), "legacy shape unchanged");
+    }
+
+    #[test]
+    fn targets_result_attaches_estimate_at_request_time() {
+        let targets = vec![ControlTarget {
+            name: "build".to_owned(),
+            commands: vec!["make build".to_owned()],
+        }];
+        let estimate = RunEstimate {
+            typical_ms: 38_000,
+            upper_ms: 61_000,
+            recommended_timeout_ms: 95_000,
+            samples: 12,
+            confidence: crate::duration_history::EstimateConfidence::Medium,
+            source: crate::duration_history::EstimateSource::Measured,
+        };
+        let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
+            if target.name == "build" {
+                Some(estimate.clone())
+            } else {
+                None
+            }
+        });
+        let json = targets_result(&targets, Some(&provider));
+        let estimate_json = &json[0]["estimate"];
+        assert_eq!(estimate_json["typicalMs"], 38_000);
+        assert_eq!(estimate_json["upperMs"], 61_000);
+        assert_eq!(estimate_json["recommendedTimeoutMs"], 95_000);
+        assert_eq!(estimate_json["samples"], 12);
+        assert_eq!(estimate_json["confidence"], "medium");
+        assert_eq!(estimate_json["source"], "measured");
+        assert_eq!(json[0]["name"], "build", "legacy fields preserved");
+        assert_eq!(json[0]["commands"][0], "make build");
+    }
+
+    #[test]
+    fn targets_result_never_exposes_signature_or_state_path() {
+        let targets = vec![ControlTarget {
+            name: "build".to_owned(),
+            commands: vec!["make build".to_owned()].to_vec(),
+        }];
+        let provider: TargetEstimateProvider = Arc::new(|_| {
+            Some(RunEstimate {
+                typical_ms: 1_000,
+                upper_ms: 2_000,
+                recommended_timeout_ms: 3_000,
+                samples: 1,
+                confidence: crate::duration_history::EstimateConfidence::Low,
+                source: crate::duration_history::EstimateSource::Measured,
+            })
+        });
+        let json = serde_json::to_string(&targets_result(&targets, Some(&provider))).unwrap();
+        assert!(
+            !json.contains("signature"),
+            "no signature inputs on the wire"
+        );
+        assert!(
+            !json.contains("run-durations-v1.json"),
+            "no state-file path on the wire"
+        );
+        assert!(!json.contains("execution_signature"));
+    }
+
+    #[test]
+    fn estimate_serializes_camelcase_and_skips_nothing_when_present() {
+        let estimate = RunEstimate {
+            typical_ms: 38_000,
+            upper_ms: 61_000,
+            recommended_timeout_ms: 95_000,
+            samples: 12,
+            confidence: crate::duration_history::EstimateConfidence::Medium,
+            source: crate::duration_history::EstimateSource::Measured,
+        };
+        let json = serde_json::to_value(&estimate).unwrap();
+        assert_eq!(json["typicalMs"], 38_000);
+        assert_eq!(json["confidence"], "medium");
+        assert_eq!(json["source"], "measured");
     }
 
     #[test]

@@ -7,7 +7,11 @@
 //! [`watch_loop`].
 
 use crate::awaiting::AwaitCoordinator;
-use crate::control::{ControlInstance, ControlServer, ControlState, ControlTarget, EmitOutcome};
+use crate::control::{
+    ControlInstance, ControlServer, ControlState, ControlTarget, EmitOutcome,
+    TargetEstimateProvider,
+};
+use crate::duration_recorder::DurationRecorder;
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
 use crate::identity::{AtomicSequence, Batch, BatchId};
@@ -155,6 +159,9 @@ pub struct NonBlockStrategy {
     broker: Option<Arc<SnapshotBroker>>,
     control_server: Mutex<Option<ControlServer>>,
     self_arc: Mutex<Option<Arc<NonBlockStrategy>>>,
+    /// Optional duration recorder (TASK-0055): wires the estimate provider
+    /// into `targets`, capabilities, and correlated snapshots.
+    recorder: Option<Arc<DurationRecorder>>,
 }
 
 impl NonBlockStrategy {
@@ -177,6 +184,7 @@ impl NonBlockStrategy {
             outputs,
             Arc::new(ControlInstance::new()),
             None,
+            None,
         )
     }
 
@@ -193,6 +201,7 @@ impl NonBlockStrategy {
         outputs: Option<Arc<OutputRegistry>>,
         instance: Arc<ControlInstance>,
         broker: Option<Arc<SnapshotBroker>>,
+        recorder: Option<Arc<DurationRecorder>>,
     ) -> Arc<Self> {
         let strategy = Arc::new(NonBlockStrategy {
             worker,
@@ -205,6 +214,7 @@ impl NonBlockStrategy {
             broker,
             control_server: Mutex::new(None),
             self_arc: Mutex::new(None),
+            recorder,
         });
         *strategy.self_arc.lock().unwrap() = Some(Arc::clone(&strategy));
         strategy
@@ -243,19 +253,54 @@ impl NonBlockStrategy {
         let outputs = self.outputs.clone();
         let instance = Arc::clone(&self.instance);
         let broker = self.broker.clone();
+        // TASK-0055: estimate provider computed at request time from the
+        // target's resolved plan signature; None when no recorder is wired.
+        let estimates: Option<TargetEstimateProvider> = self.recorder.as_ref().map(|recorder| {
+            let watches = self.watches.clone();
+            let recorder = Arc::clone(recorder);
+            let concurrency = self.worker.concurrency();
+            let fail_fast = self.worker.fail_fast();
+            let root = self.watches.root().to_path_buf();
+            let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
+                let Some(plan) = watches.target_plan(&target.name) else {
+                    return None;
+                };
+                let Ok(plan) = plan.resolve_context(&root) else {
+                    return None;
+                };
+                let signature = plan.execution_signature(concurrency, fail_fast);
+                recorder.estimate(&signature, None)
+            });
+            provider
+        });
         let start = if let Some(broker) = broker {
-            ControlServer::start_with_broker(
-                path,
-                Arc::clone(&self.control_state),
-                targets,
-                move |target| run_runner.run_target(&target),
-                move |path| emit_runner.emit_path(&path),
-                coordinator,
-                outputs,
-                move |generation| cancel_runner.cancel_generation(generation),
-                instance,
-                broker,
-            )
+            match estimates {
+                Some(estimates) => ControlServer::start_with_broker_and_estimates(
+                    path,
+                    Arc::clone(&self.control_state),
+                    targets,
+                    move |target| run_runner.run_target(&target),
+                    move |path| emit_runner.emit_path(&path),
+                    coordinator,
+                    outputs,
+                    move |generation| cancel_runner.cancel_generation(generation),
+                    instance,
+                    broker,
+                    estimates,
+                ),
+                None => ControlServer::start_with_broker(
+                    path,
+                    Arc::clone(&self.control_state),
+                    targets,
+                    move |target| run_runner.run_target(&target),
+                    move |path| emit_runner.emit_path(&path),
+                    coordinator,
+                    outputs,
+                    move |generation| cancel_runner.cancel_generation(generation),
+                    instance,
+                    broker,
+                ),
+            }
         } else {
             ControlServer::start_with_cancel(
                 path,

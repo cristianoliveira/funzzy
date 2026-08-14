@@ -407,7 +407,20 @@ impl Worker {
                 reply: None,
             });
         }
+
         Ok(())
+    }
+
+    /// Task concurrency bound the worker executes with; part of the
+    /// execution signature (TASK-0054/0055).
+    pub fn concurrency(&self) -> usize {
+        self.concurrency
+    }
+
+    /// Fail-fast policy the worker executes with; part of the execution
+    /// signature (TASK-0054/0055).
+    pub fn fail_fast(&self) -> bool {
+        self.fail_fast
     }
 
     /// Cancels an exact generation through the worker command stream

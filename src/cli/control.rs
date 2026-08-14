@@ -4,6 +4,7 @@ use crate::control_client::{
     AwaitMode, AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ControlClient,
     ControlClientError, EmitSnapshot, OutputSnapshot, StatusSnapshot, TargetSnapshot,
 };
+use crate::duration_history::RunEstimate;
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -426,6 +427,20 @@ pub fn render_capabilities(caps: &CapabilitiesSnapshot) -> String {
         "  max evidence lines: {}\n",
         caps.limits.max_evidence_lines
     ));
+    if caps.features.duration_estimates {
+        output.push_str(&format!(
+            "  estimate max samples: {}\n",
+            caps.limits.estimate_max_samples
+        ));
+        output.push_str(&format!(
+            "  estimate floor ms: {}\n",
+            caps.limits.estimate_floor_ms
+        ));
+        output.push_str(&format!(
+            "  estimate cap ms: {}\n",
+            caps.limits.estimate_cap_ms
+        ));
+    }
     output.push_str("features:\n");
     output.push_str(&format!("  atomic await: {}\n", caps.features.atomic_await));
     output.push_str(&format!("  subscription: {}\n", caps.features.subscription));
@@ -438,6 +453,10 @@ pub fn render_capabilities(caps: &CapabilitiesSnapshot) -> String {
         caps.features.output_retrieval
     ));
     output.push_str(&format!("  pending work: {}\n", caps.features.pending_work));
+    output.push_str(&format!(
+        "  duration estimates: {}\n",
+        caps.features.duration_estimates
+    ));
     output
 }
 
@@ -452,8 +471,56 @@ pub fn render_targets(targets: &[TargetSnapshot]) -> String {
         for command in &target.commands {
             output.push_str(&format!("      {}\n", command));
         }
+        if let Some(estimate) = &target.estimate {
+            output.push_str(&format!("      {}\n", render_estimate(estimate)));
+        }
     }
     output
+}
+
+/// Deterministic compact duration-estimate rendering shared by targets and
+/// snapshots (TASK-0055): the same domain estimate, one stable format.
+pub fn render_estimate(estimate: &RunEstimate) -> String {
+    format!(
+        "estimate: typical={} upper={} timeout={} confidence={} n={} source={}",
+        format_duration(estimate.typical_ms),
+        format_duration(estimate.upper_ms),
+        format_duration(estimate.recommended_timeout_ms),
+        confidence_label(estimate.confidence),
+        estimate.samples,
+        source_label(estimate.source),
+    )
+}
+
+/// Deterministic human duration: `42ms`, `1.5s`, `2m`, `3h` (no sub-second
+/// noise, no locale-dependent formatting).
+pub fn format_duration(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        let seconds = ms as f64 / 1_000.0;
+        format!("{:.1}s", seconds)
+    } else if ms < 3_600_000 {
+        format!("{}m{}", ms / 60_000, (ms % 60_000) / 1_000)
+    } else {
+        format!("{}h{}m", ms / 3_600_000, (ms % 3_600_000) / 60_000)
+    }
+}
+
+fn confidence_label(confidence: crate::duration_history::EstimateConfidence) -> &'static str {
+    match confidence {
+        crate::duration_history::EstimateConfidence::None => "none",
+        crate::duration_history::EstimateConfidence::Low => "low",
+        crate::duration_history::EstimateConfidence::Medium => "medium",
+        crate::duration_history::EstimateConfidence::High => "high",
+    }
+}
+
+fn source_label(source: crate::duration_history::EstimateSource) -> &'static str {
+    match source {
+        crate::duration_history::EstimateSource::Measured => "measured",
+        crate::duration_history::EstimateSource::Configured => "configured",
+    }
 }
 
 /// Scheduled-generation identity returned by `control run TARGET`.
@@ -722,10 +789,12 @@ mod tests {
             TargetSnapshot {
                 name: "final checks @agent-final".to_string(),
                 commands: vec!["cargo test".to_string()],
+                estimate: None,
             },
             TargetSnapshot {
                 name: "fast tests".to_string(),
                 commands: vec!["true".to_string()],
+                estimate: None,
             },
         ];
         let rendered = render_targets(&targets);
@@ -733,6 +802,36 @@ mod tests {
         assert!(rendered.contains("  - final checks @agent-final"));
         assert!(rendered.contains("      cargo test"));
         assert!(rendered.contains("  - fast tests"));
+    }
+
+    #[test]
+    fn render_targets_shows_deterministic_estimate_line() {
+        use crate::duration_history::{EstimateConfidence, EstimateSource};
+        let targets = vec![TargetSnapshot {
+            name: "final checks @agent-final".to_string(),
+            commands: vec!["cargo test".to_string()],
+            estimate: Some(RunEstimate {
+                typical_ms: 38_000,
+                upper_ms: 61_000,
+                recommended_timeout_ms: 95_000,
+                samples: 12,
+                confidence: EstimateConfidence::Medium,
+                source: EstimateSource::Measured,
+            }),
+        }];
+        let rendered = render_targets(&targets);
+        assert!(rendered.contains(
+            "estimate: typical=38.0s upper=1m1 timeout=1m35 confidence=medium n=12 source=measured"
+        ));
+    }
+
+    #[test]
+    fn format_duration_is_deterministic_human_readable() {
+        use crate::cli::control::format_duration;
+        assert_eq!(format_duration(42), "42ms");
+        assert_eq!(format_duration(1_500), "1.5s");
+        assert_eq!(format_duration(61_000), "1m1");
+        assert_eq!(format_duration(7_260_000), "2h1m");
     }
 
     #[test]
@@ -761,6 +860,9 @@ mod tests {
                 output_retention_bytes: 1_048_576,
                 max_response_bytes: 65_536,
                 max_evidence_lines: 40,
+                estimate_max_samples: 20,
+                estimate_floor_ms: 10_000,
+                estimate_cap_ms: 900_000,
             },
             features: CapabilityFeatures {
                 atomic_await: true,
@@ -768,6 +870,7 @@ mod tests {
                 correlated_snapshots: false,
                 output_retrieval: true,
                 pending_work: false,
+                duration_estimates: true,
             },
         };
         let rendered = render_capabilities(&caps);
@@ -779,6 +882,8 @@ mod tests {
         assert!(rendered.contains("output retention bytes: 1048576"));
         assert!(rendered.contains("atomic await: true"));
         assert!(rendered.contains("subscription: false"));
+        assert!(rendered.contains("estimate max samples: 20"));
+        assert!(rendered.contains("duration estimates: true"));
     }
 
     #[test]

@@ -8,6 +8,7 @@
 
 use crate::awaiting::{classify, AwaitCoordinator};
 use crate::control::{ControlInstance, ControlState, ExecutionState};
+use crate::duration_history::RunEstimate;
 use crate::executor::TaskSnapshot;
 use serde_derive::Serialize;
 use std::sync::mpsc::{self, Receiver, SyncSender};
@@ -17,6 +18,11 @@ use std::sync::{Arc, Mutex};
 /// disconnected (TASK-0050): bounded so a stalled subscriber cannot grow
 /// memory or stall the executor.
 const SUBSCRIBER_BUFFER: usize = 16;
+
+/// Looks up the frozen run-start estimate for one generation (TASK-0055):
+/// wired from the duration recorder at the composition root; None for
+/// non-target generations or when the surface is inactive.
+pub type EstimateLookup = Arc<dyn Fn(u64) -> Option<RunEstimate> + Send + Sync>;
 
 /// One consistent correlated snapshot (contract §7): instance + batch identity,
 /// generation, per-task outcomes, pending work, and freshness tier. Field names
@@ -36,6 +42,11 @@ pub struct CorrelatedSnapshot {
     pub duration_ms: Option<u64>,
     pub failures: Vec<String>,
     pub paths: Vec<String>,
+    /// Frozen run-start duration estimate for the generation (TASK-0055,
+    /// contract §6): present only for target runs with history; absent for
+    /// legacy servers and non-target generations (omitted, never null).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<RunEstimate>,
 }
 
 struct Subscriber {
@@ -57,6 +68,9 @@ pub struct SnapshotBroker {
     instance: ControlInstance,
     state: Arc<Mutex<ControlState>>,
     coordinator: Arc<AwaitCoordinator>,
+    /// Optional frozen run-start estimate lookup (TASK-0055): None keeps the
+    /// legacy snapshot shape (no estimate key).
+    estimates: Option<EstimateLookup>,
     inner: Mutex<BrokerInner>,
 }
 
@@ -66,10 +80,23 @@ impl SnapshotBroker {
         state: Arc<Mutex<ControlState>>,
         coordinator: Arc<AwaitCoordinator>,
     ) -> Self {
+        Self::with_estimates(instance, state, coordinator, None)
+    }
+
+    /// Creates a broker that attaches the frozen run-start estimate to each
+    /// snapshot for the current generation (TASK-0055). The lookup is wired
+    /// from the duration recorder at the composition root.
+    pub fn with_estimates(
+        instance: ControlInstance,
+        state: Arc<Mutex<ControlState>>,
+        coordinator: Arc<AwaitCoordinator>,
+        estimates: Option<EstimateLookup>,
+    ) -> Self {
         let broker = Self {
             instance,
             state,
             coordinator,
+            estimates,
             inner: Mutex::new(BrokerInner::default()),
         };
         // Seed the idle snapshot so the first subscriber has an immediate value.
@@ -89,6 +116,10 @@ impl SnapshotBroker {
         let (latest_generation, _latest_batch, pending) = self.coordinator.snapshot_facts();
         let state = self.state.lock().unwrap().clone();
         let freshness = classify(&state, latest_generation, &pending);
+        let estimate = self
+            .estimates
+            .as_ref()
+            .and_then(|lookup| lookup(state.generation()));
         CorrelatedSnapshot {
             instance: self.instance.clone(),
             generation: state.generation(),
@@ -105,6 +136,7 @@ impl SnapshotBroker {
             duration_ms: state.duration_ms(),
             failures: state.failures().to_vec(),
             paths: state.changed().to_vec(),
+            estimate,
         }
     }
 
@@ -174,6 +206,8 @@ mod tests {
             predecessor: None,
             changed: vec!["src/main.rs".to_owned()],
             commands: vec!["make all".to_owned()],
+            target: None,
+            execution_signature: None,
         }
     }
 
@@ -247,6 +281,65 @@ mod tests {
         assert_eq!(snapshot.tasks.len(), 1);
         assert_eq!(snapshot.tasks[0].name, "check");
         assert_eq!(snapshot.tasks[0].duration_ms, Some(42));
+    }
+
+    #[test]
+    fn snapshot_carries_frozen_estimate_only_when_lookup_provided() {
+        use crate::duration_history::{EstimateConfidence, EstimateSource, RunEstimate};
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        state.lock().unwrap().apply(started(7));
+        coordinator.observe(&started(7));
+
+        let estimate = RunEstimate {
+            typical_ms: 38_000,
+            upper_ms: 61_000,
+            recommended_timeout_ms: 95_000,
+            samples: 12,
+            confidence: EstimateConfidence::Medium,
+            source: EstimateSource::Measured,
+        };
+        let lookup: EstimateLookup = Arc::new(move |run_id| {
+            if run_id == 7 {
+                Some(estimate.clone())
+            } else {
+                None
+            }
+        });
+
+        // Without a lookup the snapshot has no estimate key at all.
+        let plain = SnapshotBroker::new(
+            ControlInstance {
+                token: "fz-test".to_owned(),
+                started_at_epoch_ms: 1,
+            },
+            Arc::clone(&state),
+            Arc::clone(&coordinator),
+        );
+        let (_, plain_snapshot) = plain.subscribe();
+        let plain_json = serde_json::to_value(&plain_snapshot).unwrap();
+        assert!(
+            plain_json.get("estimate").is_none(),
+            "legacy shape unchanged"
+        );
+
+        // With a lookup, the snapshot carries the estimate for the current
+        // generation, camelCase.
+        let with_estimates = SnapshotBroker::with_estimates(
+            ControlInstance {
+                token: "fz-test".to_owned(),
+                started_at_epoch_ms: 1,
+            },
+            Arc::clone(&state),
+            Arc::clone(&coordinator),
+            Some(lookup),
+        );
+        let (_, snapshot) = with_estimates.subscribe();
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["estimate"]["typicalMs"], 38_000);
+        assert_eq!(json["estimate"]["recommendedTimeoutMs"], 95_000);
+        assert_eq!(json["estimate"]["confidence"], "medium");
+        assert_eq!(json["estimate"]["source"], "measured");
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //! Contract: `docs/RUN-DURATION-ESTIMATES-CONTRACT.md` §1–§3, §8.
 
 use crate::plan::ExecutionSignature;
+use serde_derive::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 
 /// Success samples retained per signature, oldest-first eviction (§2).
@@ -21,7 +22,8 @@ pub const SAFETY_MARGIN_ADDEND_MS: u64 = 2_000;
 pub const ABSOLUTE_CAP_MS: u64 = 15 * 60_000;
 
 /// Deterministic confidence band derived from sample count (§2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum EstimateConfidence {
     None,
     Low,
@@ -31,14 +33,17 @@ pub enum EstimateConfidence {
 
 /// Where an estimate came from (§2). This revision only emits `Measured`;
 /// `Configured` is reserved for zero-history serialization (TASK-0055).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum EstimateSource {
     Measured,
     Configured,
 }
 
-/// Deterministic estimate for one execution signature (§2).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Deterministic estimate for one execution signature (§2). Wire shape
+/// (contract §6): camelCase fields, absent optional fields omitted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunEstimate {
     pub typical_ms: u64,
     pub upper_ms: u64,
