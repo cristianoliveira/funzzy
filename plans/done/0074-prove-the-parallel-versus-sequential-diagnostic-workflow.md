@@ -1,7 +1,7 @@
 ---
 id: TASK-0074
 title: Prove the parallel versus sequential diagnostic workflow
-status: todo
+status: done
 depends_on: [TASK-0072, TASK-0073, TASK-0028]
 priority: high
 tags: [integration-tests, concurrency, debugging, agents, estimates, reliability]
