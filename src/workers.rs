@@ -1,4 +1,6 @@
-use crate::executor::{Event, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner};
+use crate::executor::{
+    Event, EventSink, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner,
+};
 use crate::plan::RunPlan;
 use crate::rules::Rules;
 use crate::stdout;
@@ -40,15 +42,45 @@ struct SchedulerState {
     closed: bool,
 }
 
-#[derive(Default)]
+/// One-slot scheduler that reports discarded queued work (contract §1): every
+/// generation that is superseded before spawn gets a terminal Cancelled event
+/// with its successor identity, so exact-generation awaits never hang.
 struct Scheduler {
     state: Mutex<SchedulerState>,
     ready: Condvar,
+    events: Arc<dyn EventSink>,
 }
 
 impl Scheduler {
+    fn new(events: Arc<dyn EventSink>) -> Self {
+        Self {
+            state: Mutex::new(SchedulerState::default()),
+            ready: Condvar::new(),
+            events,
+        }
+    }
+
     fn send(&self, command: WorkerCommand) {
-        self.state.lock().unwrap().pending = Some(command);
+        let mut state = self.state.lock().unwrap();
+        let replaced = state.pending.take();
+        state.pending = Some(command);
+        match (&replaced, &state.pending) {
+            (Some(WorkerCommand::Run(old)), Some(WorkerCommand::Run(new_req))) => {
+                // The queued generation never spawns: it is superseded by the
+                // newest request.
+                self.events.emit(Event::Cancelled {
+                    run_id: old.run_id,
+                    superseded_by: Some(new_req.run_id),
+                });
+            }
+            (Some(WorkerCommand::Run(old)), Some(WorkerCommand::Cancel)) => {
+                self.events.emit(Event::Cancelled {
+                    run_id: old.run_id,
+                    superseded_by: None,
+                });
+            }
+            _ => {}
+        }
         self.ready.notify_one();
     }
 
@@ -116,14 +148,14 @@ impl Worker {
         F: Fn(Event) + Send + Sync + 'static,
     {
         stdout::verbose("Worker in verbose mode.", verbose);
-        let scheduler = Arc::new(Scheduler::default());
-        let consumer_scheduler = Arc::clone(&scheduler);
-        let events = Arc::new(move |event: Event| {
+        let events: Arc<dyn EventSink> = Arc::new(move |event: Event| {
             if let Event::Tick { task, .. } = &event {
                 stdout::verbose(&format!("waiting next tick for task: {}", task), verbose);
             }
             on_event(event);
         });
+        let scheduler = Arc::new(Scheduler::new(Arc::clone(&events)));
+        let consumer_scheduler = Arc::clone(&scheduler);
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
@@ -674,6 +706,46 @@ mod tests {
             predecessor,
             Some(first),
             "the superseding generation names its predecessor"
+        );
+    }
+
+    #[test]
+    fn discarded_queued_generation_reports_superseded_terminal() {
+        let (worker, rx) = worker_with_events(false, false);
+        let first = worker
+            .schedule(vec![rule(vec!["sleep 5"])], "a.txt")
+            .unwrap();
+        expect_event(
+            &rx,
+            "first run to start",
+            |e| matches!(e, WorkerEvent::Started { run_id, .. } if *run_id == first),
+        );
+        expect_event(&rx, "worker tick", |e| {
+            matches!(e, WorkerEvent::Tick { .. })
+        });
+
+        // Two rapid schedules: the middle one is discarded from the queue
+        // before spawn and must still reach a terminal superseded outcome.
+        let middle = worker
+            .schedule(vec![rule(vec!["echo mid"])], "b.txt")
+            .unwrap();
+        let last = worker
+            .schedule(vec![rule(vec!["echo last"])], "c.txt")
+            .unwrap();
+
+        let events = collect_until_finished(&rx);
+        drop(worker);
+
+        let discarded = events.iter().find_map(|e| match e {
+            WorkerEvent::Cancelled {
+                run_id,
+                superseded_by,
+            } => Some((*run_id, *superseded_by)),
+            _ => None,
+        });
+        assert!(
+            matches!(discarded, Some((run_id, superseded_by)) if run_id == middle && superseded_by == Some(last)),
+            "the discarded queued generation must reach superseded terminal: {events:?}"
         );
     }
 
