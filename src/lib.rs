@@ -9,6 +9,7 @@ pub mod config;
 pub mod control;
 pub mod control_client;
 pub mod duration_history;
+pub mod duration_recorder;
 pub mod duration_store;
 pub mod environment;
 pub mod errors;

@@ -48,6 +48,8 @@ mod unix {
             predecessor: None,
             changed: vec![],
             commands: vec!["cargo test".to_string()],
+            target: None,
+            execution_signature: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,
@@ -78,6 +80,8 @@ mod unix {
             predecessor: None,
             changed: vec![],
             commands: vec!["cargo test auth".to_string()],
+            target: None,
+            execution_signature: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,

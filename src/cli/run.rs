@@ -1,8 +1,10 @@
+use crate::duration_recorder::DurationRecorder;
 use crate::executor::RunMetadata;
 use crate::plan::RunPlan;
 use crate::stdout;
 use crate::workflow::WorkflowRunner;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Executes one selected configured workflow locally and returns whether its
 /// combined task outcome succeeded.
@@ -12,17 +14,37 @@ pub struct RunCommand {
 
 impl RunCommand {
     pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, concurrency: usize) -> Self {
+        Self::with_recorder(root, verbose, fail_fast, concurrency, None)
+    }
+
+    /// Creates the local run command with an optional duration recorder
+    /// (TASK-0054): exact target runs record their terminal wall duration
+    /// against the plan's execution signature, same path as control runs.
+    pub fn with_recorder(
+        root: PathBuf,
+        verbose: bool,
+        fail_fast: bool,
+        concurrency: usize,
+        recorder: Option<Arc<DurationRecorder>>,
+    ) -> Self {
         Self {
-            workflow: WorkflowRunner::new(root, verbose, fail_fast, concurrency),
+            workflow: WorkflowRunner::with_recorder(
+                root,
+                verbose,
+                fail_fast,
+                concurrency,
+                recorder,
+            ),
         }
     }
 
     pub fn execute(&self, plan: RunPlan, target: &str) -> Result<bool, String> {
-        let completed = self.workflow.run(
-            plan,
-            RunMetadata::new(0, format!("target:{}", target)),
-            None,
-        )?;
+        // Structural target identity (TASK-0054): the recorder never parses
+        // the trigger string; the signature is filled from the resolved plan
+        // inside the workflow runner.
+        let metadata = RunMetadata::new(0, format!("target:{}", target))
+            .with_duration_profile(Some(target.to_owned()), None);
+        let completed = self.workflow.run(plan, metadata, None)?;
         let succeeded = completed.outcome.is_success();
         stdout::present_results(completed.results, completed.elapsed);
         Ok(succeeded)

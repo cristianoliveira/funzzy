@@ -7,6 +7,8 @@
 use crate::arguments::{Action, Arguments, OnBusy};
 use crate::cli;
 use crate::cli::*;
+use crate::duration_recorder::DurationRecorder;
+use crate::duration_store::{state_file_path, DurationStore, STATE_SCHEMA_VERSION};
 use crate::errors;
 use crate::errors::FzzError;
 use crate::watches::Watches;
@@ -21,6 +23,7 @@ use std::io::{self, IsTerminal};
 use std::process;
 use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
+use std::sync::Arc;
 
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
@@ -124,7 +127,19 @@ pub fn run() {
 
             let shutdown = install_shutdown_signal_handler();
             let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
-            let command = RunCommand::new(workspace_root, args.verbose, fail_fast, concurrency);
+            let command = RunCommand::with_recorder(
+                workspace_root.clone(),
+                args.verbose,
+                fail_fast,
+                concurrency,
+                Some(Arc::new(DurationRecorder::new(DurationStore::new(
+                    state_file_path(
+                        &std::fs::canonicalize(&workspace_root)
+                            .unwrap_or_else(|_| workspace_root.clone()),
+                        STATE_SCHEMA_VERSION,
+                    ),
+                )))),
+            );
             let result = command.execute(plan, target);
             let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
             if signal_exit != 0 {

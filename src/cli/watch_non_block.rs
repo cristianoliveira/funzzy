@@ -1,6 +1,8 @@
 use crate::awaiting::AwaitCoordinator;
 use crate::cli::Command;
 use crate::control::{ControlInstance, ControlState};
+use crate::duration_recorder::DurationRecorder;
+use crate::duration_store::{state_file_path, DurationStore, STATE_SCHEMA_VERSION};
 use crate::errors::FzzError;
 use crate::output::OutputRegistry;
 use crate::snapshot::SnapshotBroker;
@@ -58,16 +60,26 @@ impl Command for WatchNonBlockCommand {
             Arc::clone(&control_state),
             Arc::clone(&coordinator),
         ));
+        // Duration recorder (TASK-0054): control-run targets record terminal
+        // wall durations against their execution signature; fs/init/emit runs
+        // carry no signature and are ignored by the recorder.
+        let recorder = Arc::new(DurationRecorder::new(DurationStore::new(state_file_path(
+            &std::fs::canonicalize(self.watches.root())
+                .unwrap_or_else(|_| self.watches.root().to_path_buf()),
+            STATE_SCHEMA_VERSION,
+        ))));
         let worker_state = Arc::clone(&control_state);
         let coordinator_state = Arc::clone(&coordinator);
         let worker_outputs = Arc::clone(&outputs);
         let broker_state = Arc::clone(&broker);
+        let recorder_state = Arc::clone(&recorder);
         let worker = Arc::new(workers::Worker::with_root_and_concurrency_and_outputs(
             self.verbose,
             self.fail_fast,
             self.watches.root().to_path_buf(),
             self.watches.concurrency(),
             move |event| {
+                recorder_state.observe(&event);
                 coordinator_state.observe(&event);
                 worker_state.lock().unwrap().apply(event);
                 broker_state.publish();

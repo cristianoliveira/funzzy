@@ -3,7 +3,7 @@ use crate::executor::{
     SystemProcessRunner,
 };
 use crate::output::OutputRegistry;
-use crate::plan::RunPlan;
+use crate::plan::{ExecutionSignature, RunPlan};
 use crate::rules::Rules;
 use crate::stdout;
 use crate::template::TemplateOptions;
@@ -26,6 +26,10 @@ struct RunRequest {
     /// Generation identity this request replaces; set when it supersedes an
     /// active run (restart policy), so the relation survives to start.
     predecessor: Option<u64>,
+    /// Exact configured target name (TASK-0054); None for fs/init/emit runs.
+    target: Option<String>,
+    /// Stable execution signature of the resolved plan (TASK-0054).
+    execution_signature: Option<ExecutionSignature>,
 }
 
 /// Result of an exact-generation cancel (TASK-0046): the generation matched
@@ -194,6 +198,10 @@ pub struct Worker {
     next_run_id: AtomicU64,
     root: PathBuf,
     verbose: bool,
+    /// Task concurrency bound; part of the execution signature (TASK-0054).
+    concurrency: usize,
+    /// Fail-fast policy; part of the execution signature (TASK-0054).
+    fail_fast: bool,
 
     consumer: Option<JoinHandle<()>>,
 }
@@ -287,31 +295,43 @@ impl Worker {
                     // Promote the newest superseding run, or block on the next
                     // command when idle.
                     if let Some(req) = pending.take() {
-                        active = Some(executor.start(
-                            RunMetadata::correlated(
-                                req.run_id,
-                                req.trigger,
-                                req.batch,
-                                req.predecessor,
-                                req.changed,
+                        active = Some(
+                            executor.start(
+                                RunMetadata::correlated(
+                                    req.run_id,
+                                    req.trigger.clone(),
+                                    req.batch,
+                                    req.predecessor,
+                                    req.changed.clone(),
+                                )
+                                .with_duration_profile(
+                                    req.target.clone(),
+                                    req.execution_signature.clone(),
+                                ),
+                                req.plan,
                             ),
-                            req.plan,
-                        ));
+                        );
                         continue;
                     }
 
                     match consumer_scheduler.receive() {
                         Some(WorkerCommand::Run(req)) => {
-                            active = Some(executor.start(
-                                RunMetadata::correlated(
-                                    req.run_id,
-                                    req.trigger,
-                                    req.batch,
-                                    req.predecessor,
-                                    req.changed,
+                            active = Some(
+                                executor.start(
+                                    RunMetadata::correlated(
+                                        req.run_id,
+                                        req.trigger.clone(),
+                                        req.batch,
+                                        req.predecessor,
+                                        req.changed.clone(),
+                                    )
+                                    .with_duration_profile(
+                                        req.target.clone(),
+                                        req.execution_signature.clone(),
+                                    ),
+                                    req.plan,
                                 ),
-                                req.plan,
-                            ));
+                            );
                         }
                         Some(WorkerCommand::Cancel { generation, reply }) => {
                             // No active run: an exact cancel is a no-op unless
@@ -374,6 +394,8 @@ impl Worker {
             next_run_id: AtomicU64::new(0),
             root,
             verbose,
+            concurrency,
+            fail_fast,
             consumer: Some(consumer),
         }
     }
@@ -436,6 +458,30 @@ impl Worker {
         self.schedule_plan_correlated(plan, trigger, filepath, None, vec![])
     }
 
+    /// Schedules an exact configured target run with its stable execution
+    /// signature (TASK-0054). The signature is computed from the resolved
+    /// and expanded plan, so cwd/env/topology changes invalidate history
+    /// without parsing the trigger string. Filesystem/init/emit runs go
+    /// through [`Worker::schedule_plan_correlated`] and carry no signature,
+    /// so they never contaminate target history.
+    pub(crate) fn schedule_target(&self, plan: RunPlan, target: &str) -> Result<u64, String> {
+        // The trigger label stays `control:<target>` (compatibility surface);
+        // profile identity is carried structurally via `target` + signature,
+        // never parsed from the trigger string.
+        let request =
+            self.prepare_request(plan, &format!("control:{}", target), None, None, vec![])?;
+        let request = RunRequest {
+            target: Some(target.to_owned()),
+            execution_signature: Some(
+                request
+                    .plan
+                    .execution_signature(self.concurrency, self.fail_fast),
+            ),
+            ..request
+        };
+        self.dispatch(request)
+    }
+
     /// Schedules a run with its batch correlation (contract §1): the debounce
     /// batch identity and complete changed-path set ride on the generation
     /// from scheduling through start. The predecessor relation is filled by
@@ -448,25 +494,46 @@ impl Worker {
         batch: Option<u64>,
         changed: Vec<String>,
     ) -> Result<u64, String> {
+        let request = self.prepare_request(plan, trigger, filepath, batch, changed)?;
+        self.dispatch(request)
+    }
+
+    /// Resolves and expands a plan against the workspace root, emitting the
+    /// same verbose diagnostics as every other scheduling path.
+    fn prepare_request(
+        &self,
+        plan: RunPlan,
+        trigger: &str,
+        filepath: Option<&str>,
+        batch: Option<u64>,
+        changed: Vec<String>,
+    ) -> Result<RunRequest, String> {
+        let plan = plan.resolve_context(&self.root)?;
+        let (plan, unknown_variables) = plan.expand(&TemplateOptions {
+            filepath: filepath.map(str::to_string),
+            current_dir: format!("{}", self.root.display()),
+        });
+        stdout::verbose(&plan.context_summary(), self.verbose);
+        for variable in unknown_variables {
+            stdout::warn(&format!("Unknown template variable '{}'.", variable));
+        }
+        let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
+        Ok(RunRequest {
+            run_id,
+            plan,
+            trigger: trigger.to_string(),
+            batch,
+            changed,
+            predecessor: None,
+            target: None,
+            execution_signature: None,
+        })
+    }
+
+    /// Sends a prepared run request through the scheduler.
+    fn dispatch(&self, request: RunRequest) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let plan = plan.resolve_context(&self.root)?;
-            let (plan, unknown_variables) = plan.expand(&TemplateOptions {
-                filepath: filepath.map(str::to_string),
-                current_dir: format!("{}", self.root.display()),
-            });
-            stdout::verbose(&plan.context_summary(), self.verbose);
-            for variable in unknown_variables {
-                stdout::warn(&format!("Unknown template variable '{}'.", variable));
-            }
-            let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
-            let request = RunRequest {
-                run_id,
-                plan,
-                trigger: trigger.to_string(),
-                batch,
-                changed,
-                predecessor: None,
-            };
+            let run_id = request.run_id;
             scheduler.send(WorkerCommand::Run(request));
             return Ok(run_id);
         }
@@ -1058,5 +1125,54 @@ mod tests {
 
         assert!(output.exists(), "scheduled hook should run");
         let _ = std::fs::remove_file(&output);
+    }
+
+    #[test]
+    fn target_runs_record_duration_history_through_the_worker_path() {
+        use crate::duration_recorder::DurationRecorder;
+        use crate::duration_store::DurationStore;
+        use crate::plan::RunPlan;
+
+        let temp = std::env::temp_dir().join(format!(
+            "funzzy-worker-target-history-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+
+        // Control-run path: schedule_target attaches target + signature
+        // structurally; the recorder observes the worker's events and records
+        // the terminal wall duration against the profile.
+        let store = DurationStore::new(temp.join("run-durations-v1.json"));
+        let recorder = Arc::new(DurationRecorder::new(store));
+        let recorder_state = Arc::clone(&recorder);
+        let worker =
+            Worker::with_root_and_concurrency(false, false, temp.clone(), 1, move |event| {
+                recorder_state.observe(&event)
+            });
+        let plan = RunPlan::from_rules(vec![rule(vec!["echo ok"])]);
+        // The worker hashes the resolved+expanded plan; the test must match.
+        let resolved = plan.resolve_context(&temp).expect("resolve");
+        let signature = resolved.execution_signature(1, false);
+
+        worker
+            .schedule_target(plan, "build")
+            .expect("target schedules");
+        // Wait until the run reaches terminal (worker polls at 200ms max).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while recorder.success_samples(&signature) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        drop(worker);
+
+        assert_eq!(
+            recorder.success_samples(&signature),
+            1,
+            "control run must record one success sample"
+        );
+        assert_eq!(recorder.in_flight(), 0, "association removed at terminal");
+        let estimate = recorder.estimate(&signature, None).expect("estimate");
+        assert_eq!(estimate.samples, 1);
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

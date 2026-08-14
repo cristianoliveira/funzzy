@@ -295,15 +295,15 @@ impl NonBlockStrategy {
     }
 
     /// Runs a control-requested target through the worker run contract:
-    /// cancel the active run, then schedule the target's rules.
+    /// cancel the active run, then schedule the target's rules with its
+    /// structural target identity and execution signature (TASK-0054).
     pub fn run_target(&self, target: &str) -> Result<u64, String> {
         let plan = self
             .watches
             .target_plan(target)
             .ok_or_else(|| format!("No target found for '{}'", target))?;
         self.worker.cancel_running_tasks()?;
-        self.worker
-            .schedule_plan_with_trigger(plan, &format!("control:{}", target), None)
+        self.worker.schedule_target(plan, target)
     }
 
     /// Routes one synthetic path change through the exact shared policy used

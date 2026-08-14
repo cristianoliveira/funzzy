@@ -6,7 +6,9 @@
 
 use crate::cmd::{self, CaptureHandle, LoggedChild, ShutdownOutcome};
 use crate::output::OutputRegistry;
-use crate::plan::{RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan};
+use crate::plan::{
+    ExecutionSignature, RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan,
+};
 use crate::rules::CommandLine;
 use crate::stdout;
 use serde_derive::Serialize;
@@ -53,6 +55,12 @@ pub enum Event {
         /// Complete normalized changed-path set of the triggering batch.
         changed: Vec<String>,
         commands: Vec<String>,
+        /// Exact configured target name for target runs (TASK-0054); None for
+        /// filesystem/init/emit runs. Structural — never parsed from trigger.
+        target: Option<String>,
+        /// Stable execution signature for target runs; the profile identity
+        /// that duration history records against (TASK-0054).
+        execution_signature: Option<ExecutionSignature>,
     },
     Finished {
         run_id: u64,
@@ -176,6 +184,12 @@ pub struct RunMetadata {
     pub superseded_by: Option<u64>,
     /// Complete normalized changed-path set of the triggering batch.
     pub changed: Vec<String>,
+    /// Exact configured target name for target runs (TASK-0054); None for
+    /// filesystem/init/emit runs. Structural — never parsed from trigger.
+    pub target: Option<String>,
+    /// Stable execution signature for target runs; the profile identity that
+    /// duration history records against (TASK-0054).
+    pub execution_signature: Option<ExecutionSignature>,
 }
 
 impl RunMetadata {
@@ -187,6 +201,8 @@ impl RunMetadata {
             predecessor: None,
             superseded_by: None,
             changed: vec![],
+            target: None,
+            execution_signature: None,
         }
     }
 
@@ -206,7 +222,22 @@ impl RunMetadata {
             predecessor,
             superseded_by: None,
             changed,
+            target: None,
+            execution_signature: None,
         }
+    }
+
+    /// Attaches the exact target name and its stable execution signature
+    /// (TASK-0054). Structural identity; the recorder never parses the
+    /// trigger string to recover the target.
+    pub fn with_duration_profile(
+        mut self,
+        target: Option<String>,
+        execution_signature: Option<ExecutionSignature>,
+    ) -> Self {
+        self.target = target;
+        self.execution_signature = execution_signature;
+        self
     }
 }
 
@@ -366,6 +397,8 @@ impl Executor {
             predecessor: metadata.predecessor,
             changed: metadata.changed.clone(),
             commands: plan.commands().iter().map(CommandLine::display).collect(),
+            target: metadata.target.clone(),
+            execution_signature: metadata.execution_signature.clone(),
         });
 
         Run {
