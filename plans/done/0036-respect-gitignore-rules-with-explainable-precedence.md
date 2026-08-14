@@ -1,7 +1,7 @@
 ---
 id: TASK-0036
 title: Respect gitignore rules with explainable precedence
-status: todo
+status: done
 depends_on: [TASK-0033]
 priority: normal
 tags: [rust, watcher, gitignore, matching, diagnostics, tdd]
