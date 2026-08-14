@@ -154,6 +154,41 @@ impl RunPlan {
         RunPlan { stages }
     }
 
+    /// Expands every task without flattening stages or group barriers.
+    pub fn expand(&self, opts: &TemplateOptions) -> (RunPlan, Vec<String>) {
+        let mut unknown = vec![];
+        let stages = self
+            .stages
+            .iter()
+            .map(|stage| match stage {
+                Stage::Serial(task) => {
+                    let (commands, task_unknown) = task.expand(opts);
+                    unknown.extend(task_unknown);
+                    let mut expanded = task.clone();
+                    expanded.commands = commands;
+                    Stage::Serial(expanded)
+                }
+                Stage::Parallel { group, tasks } => {
+                    let tasks = tasks
+                        .iter()
+                        .map(|task| {
+                            let (commands, task_unknown) = task.expand(opts);
+                            unknown.extend(task_unknown);
+                            let mut expanded = task.clone();
+                            expanded.commands = commands;
+                            expanded
+                        })
+                        .collect();
+                    Stage::Parallel {
+                        group: group.clone(),
+                        tasks,
+                    }
+                }
+            })
+            .collect();
+        (RunPlan { stages }, unknown)
+    }
+
     /// True when no stage remains.
     pub fn is_empty(&self) -> bool {
         self.stages.is_empty()

@@ -66,31 +66,20 @@ pub fn run() {
 
         Action::Watch { target: ref wanted } => {
             let rules = load_rules(&args.config);
+            let jobs = load_jobs(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
+            let watches = Watches::with_root_and_jobs(rules.clone(), workspace_root.clone(), jobs);
             match wanted {
-                Some(target) => {
-                    let filtered = rules
-                        .iter()
-                        .cloned()
-                        .filter(|r| r.name.contains(target))
-                        .collect::<Vec<rules::Rules>>();
-                    if filtered.is_empty() {
-                        stdout::failure(
-                            &format!("No target found for '{}'", target),
-                            rules::available_targets(&rules),
-                        );
-                    } else {
-                        execute_watch_command(
-                            Watches::with_root(filtered, workspace_root.clone()),
-                            args,
-                        );
-                    }
-                }
-                None => {
-                    execute_watch_command(Watches::with_root(rules, workspace_root.clone()), args)
-                }
+                Some(target) => match watches.select_target(target) {
+                    Some(selected) => execute_watch_command(selected, args),
+                    None => stdout::failure(
+                        &format!("No target found for '{}'", target),
+                        rules::available_targets(&rules),
+                    ),
+                },
+                None => execute_watch_command(watches, args),
             }
         }
         Action::List => {
@@ -205,6 +194,29 @@ fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {
             Err(err) => stdout::failure("Failed to read config file", err.to_string()),
         },
     }
+}
+
+fn load_jobs(config_file: &Option<String>) -> usize {
+    let default = std::thread::available_parallelism()
+        .map(|jobs| jobs.get())
+        .unwrap_or(1);
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return default;
+    };
+
+    config::jobs_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
+        .unwrap_or(default)
 }
 
 fn execute_watch_command(watches: Watches, mut args: Arguments) {

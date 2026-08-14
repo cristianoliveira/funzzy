@@ -438,6 +438,14 @@ pub fn jobs_from_yaml(content: &str) -> Result<Option<usize>, String> {
     }
 }
 
+pub fn jobs_from_file(filename: &str) -> Result<Option<usize>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    jobs_from_yaml(&content)
+}
+
 pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
     match File::open(filename) {
         Ok(mut file) => {

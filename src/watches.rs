@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::plan::RunPlan;
 use crate::rules::Rules;
 
 /// Why a configured rule was selected or skipped for an explained path.
@@ -28,7 +29,9 @@ pub struct ExplainResult {
 #[derive(Debug, Clone)]
 pub struct Watches {
     rules: Vec<Rules>,
+    topology: RunPlan,
     root: PathBuf,
+    jobs: usize,
 }
 impl Watches {
     /// Convenience constructor resolving the workspace root from the process
@@ -42,12 +45,53 @@ impl Watches {
 
     /// Creates watches anchored at an explicit workspace root.
     pub fn with_root(rules: Vec<Rules>, root: PathBuf) -> Self {
-        Watches { rules, root }
+        let jobs = std::thread::available_parallelism()
+            .map(|jobs| jobs.get())
+            .unwrap_or(1);
+        Watches::with_root_and_jobs(rules, root, jobs)
+    }
+
+    pub fn with_root_and_jobs(rules: Vec<Rules>, root: PathBuf, jobs: usize) -> Self {
+        assert!(jobs > 0, "watch jobs must be positive");
+        let topology = RunPlan::from_rules(rules.clone());
+        Watches {
+            rules,
+            topology,
+            root,
+            jobs,
+        }
+    }
+
+    /// Narrows visible rules while retaining barriers from original topology.
+    pub fn select_target(&self, target: &str) -> Option<Self> {
+        let rules: Vec<Rules> = self
+            .rules
+            .iter()
+            .filter(|rule| rule.name.contains(target))
+            .cloned()
+            .collect();
+        if rules.is_empty() {
+            return None;
+        }
+        Some(Self {
+            rules,
+            topology: self
+                .topology
+                .clone()
+                .filter(|rule| rule.name.contains(target)),
+            root: self.root.clone(),
+            jobs: self.jobs,
+        })
     }
 
     /// The workspace root this watch planning is anchored to.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Maximum simultaneously active tasks within one parallel group.
+    pub fn jobs(&self) -> usize {
+        self.jobs
     }
 
     fn normalize_paths<'a>(&'a self, path: &'a str) -> (PathBuf, Option<String>) {
@@ -87,6 +131,45 @@ impl Watches {
         Some(rules)
     }
 
+    /// Selects a target without collapsing barriers around unmatched rules.
+    pub fn target_plan(&self, target: &str) -> Option<RunPlan> {
+        let plan = self
+            .topology
+            .clone()
+            .filter(|rule| rule.name.contains(target));
+        if plan.is_empty() {
+            return None;
+        }
+        Some(plan)
+    }
+
+    /// Selects matching tasks while retaining original stage occurrences.
+    pub fn watch_plan(&self, path: &str) -> Option<RunPlan> {
+        let (absolute_path, relative_path) = self.normalize_paths(path);
+        let absolute_path_str = absolute_path.to_str().unwrap_or_default();
+        let plan = self.topology.clone().filter(|rule| {
+            let ignored_by_absolute = rule.ignore_absolute(absolute_path_str);
+            let ignored_by_relative = relative_path
+                .as_ref()
+                .map(|relative| rule.ignore_relative(relative))
+                .unwrap_or(false);
+            if ignored_by_absolute || ignored_by_relative {
+                return false;
+            }
+
+            let watched_by_absolute = rule.watch_absolute(absolute_path_str);
+            let watched_by_relative = relative_path
+                .as_ref()
+                .map(|relative| rule.watch_relative(relative))
+                .unwrap_or(false);
+            watched_by_absolute || watched_by_relative
+        });
+        if plan.is_empty() {
+            return None;
+        }
+        Some(plan)
+    }
+
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<Rules>> {
@@ -123,6 +206,15 @@ impl Watches {
         } else {
             None
         }
+    }
+
+    /// Selects init tasks while retaining original stage occurrences.
+    pub fn run_on_init_plan(&self) -> Option<RunPlan> {
+        let plan = self.topology.clone().filter(Rules::run_on_init);
+        if plan.is_empty() {
+            return None;
+        }
+        Some(plan)
     }
 
     /// Returns the commands for the rules that should run on init
@@ -266,6 +358,7 @@ mod tests {
 
     use super::*;
     use crate::config;
+    use crate::plan::Stage;
     use crate::rules;
     use std::env;
 
@@ -698,6 +791,46 @@ mod tests {
             watches.watch(outside.to_str().unwrap()).is_some(),
             "absolute patterns must still match outside the injected root"
         );
+    }
+
+    #[test]
+    fn target_selection_keeps_separated_group_occurrences_and_jobs() {
+        let rules = vec![
+            Rules::new(
+                "A selected".to_owned(),
+                vec!["echo a".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                true,
+            )
+            .with_parallel("checks".to_owned()),
+            Rules::new(
+                "separator".to_owned(),
+                vec!["echo separator".to_owned()],
+                vec!["other/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "C selected".to_owned(),
+                vec!["echo c".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                true,
+            )
+            .with_parallel("checks".to_owned()),
+        ];
+        let watches = Watches::with_root_and_jobs(rules, env::current_dir().unwrap(), 2)
+            .select_target("selected")
+            .expect("selected targets");
+        let plan = watches.target_plan("selected").expect("target plan");
+
+        assert_eq!(watches.jobs(), 2);
+        assert_eq!(plan.stages.len(), 2);
+        assert!(plan
+            .stages
+            .iter()
+            .all(|stage| matches!(stage, Stage::Parallel { tasks, .. } if tasks.len() == 1)));
     }
 
     #[test]

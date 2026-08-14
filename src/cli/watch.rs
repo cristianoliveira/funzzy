@@ -39,6 +39,7 @@ impl Command for WatchCommand {
             self.watches.root().to_path_buf(),
             self.verbose,
             self.fail_fast,
+            self.watches.jobs(),
         );
         watch_loop(&self.watches, self.run_on_init, &strategy, self.verbose)
     }

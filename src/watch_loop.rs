@@ -6,13 +6,12 @@
 //! preparation path. CLI commands stay thin: build a strategy and call
 //! [`watch_loop`].
 
-use crate::config;
 use crate::control::{ControlServer, ControlState, ControlTarget};
 use crate::errors::FzzError;
 use crate::executor::{Executor, RunMetadata, SystemClock, SystemProcessRunner};
-use crate::rules::{self, Rules};
+use crate::plan::RunPlan;
 use crate::stdout;
-use crate::template;
+use crate::template::TemplateOptions;
 use crate::watcher;
 use crate::watches::Watches;
 use crate::workers;
@@ -21,17 +20,17 @@ use std::sync::{Arc, Mutex};
 
 /// What the watch loop does once filesystem watches are registered.
 pub enum InitAction {
-    /// Init-selected rules should run now.
-    Run(Vec<Rules>),
+    /// Init-selected plan should run now.
+    Run(RunPlan),
     /// Nothing to run on init; wait for file changes.
     Wait,
 }
 
 /// One preparation path for init triggers: run when rules exist AND the
 /// `run_on_init` flag is enabled, otherwise wait for changes.
-pub fn init_action(rules: Option<Vec<Rules>>, run_on_init: bool) -> InitAction {
-    match rules {
-        Some(rules) if run_on_init => InitAction::Run(rules),
+pub fn init_action(plan: Option<RunPlan>, run_on_init: bool) -> InitAction {
+    match plan {
+        Some(plan) if run_on_init => InitAction::Run(plan),
         _ => InitAction::Wait,
     }
 }
@@ -43,11 +42,11 @@ pub trait RunStrategy {
     /// only when readiness is truthful. Defaults to no-op.
     fn on_ready(&self) {}
 
-    /// Executes rules selected for init.
-    fn run_init(&self, rules: Vec<Rules>);
+    /// Executes plan selected for init.
+    fn run_init(&self, plan: RunPlan);
 
-    /// Executes rules selected for a file change.
-    fn run_change(&self, rules: Vec<Rules>, filepath: &str);
+    /// Executes plan selected for a file change.
+    fn run_change(&self, plan: RunPlan, filepath: &str);
 }
 
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
@@ -66,16 +65,16 @@ pub fn watch_loop(
         || {
             strategy.on_ready();
 
-            match init_action(watches.run_on_init(), run_on_init) {
-                InitAction::Run(rules) => {
+            match init_action(watches.run_on_init_plan(), run_on_init) {
+                InitAction::Run(plan) => {
                     stdout::info("Running on init commands.");
-                    strategy.run_init(rules);
+                    strategy.run_init(plan);
                 }
                 InitAction::Wait => stdout::info("Watching..."),
             }
         },
         |file_changed| {
-            if let Some(rules) = watches.watch(file_changed) {
+            if let Some(plan) = watches.watch_plan(file_changed) {
                 stdout::clear_screen();
 
                 stdout::verbose(
@@ -83,7 +82,7 @@ pub fn watch_loop(
                     verbose,
                 );
 
-                strategy.run_change(rules, file_changed);
+                strategy.run_change(plan, file_changed);
             }
         },
         verbose,
@@ -100,16 +99,16 @@ pub struct BlockingStrategy {
 }
 
 impl BlockingStrategy {
-    pub fn new(root: PathBuf, verbose: bool, fail_fast: bool) -> Self {
+    pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, jobs: usize) -> Self {
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
-            1,
+            jobs,
             Arc::new(|_| {}),
             fail_fast,
             verbose,
         )
-        .expect("concurrency one is supported");
+        .expect("watch jobs must be positive");
         BlockingStrategy {
             root,
             verbose,
@@ -117,50 +116,34 @@ impl BlockingStrategy {
         }
     }
 
-    fn expand(&self, rules: Vec<Rules>, filepath: Option<&str>) -> Vec<rules::CommandLine> {
-        rules::command_lines(rules)
-            .into_iter()
-            .map(|command| {
-                let expanded = template::template_line(
-                    command,
-                    template::TemplateOptions {
-                        filepath: filepath.map(str::to_string),
-                        current_dir: format!("{}", self.root.display()),
-                    },
-                );
-                for variable in &expanded.unknown_variables {
-                    stdout::warn(&format!("Unknown template variable '{}'.", variable));
-                }
-                expanded.command
-            })
-            .collect()
+    fn expand(&self, plan: RunPlan, filepath: Option<&str>) -> RunPlan {
+        let (plan, unknown_variables) = plan.expand(&TemplateOptions {
+            filepath: filepath.map(str::to_string),
+            current_dir: format!("{}", self.root.display()),
+        });
+        for variable in unknown_variables {
+            stdout::warn(&format!("Unknown template variable '{}'.", variable));
+        }
+        plan
     }
 
-    fn execute_tasks(
-        &self,
-        metadata: RunMetadata,
-        tasks: Vec<rules::CommandLine>,
-    ) -> crate::executor::CompletedRun {
-        self.executor.run_to_completion(metadata, tasks)
+    fn execute_tasks(&self, metadata: RunMetadata, plan: RunPlan) -> crate::executor::CompletedRun {
+        self.executor.run_to_completion(metadata, plan)
     }
 }
 
 impl RunStrategy for BlockingStrategy {
-    fn run_init(&self, rules: Vec<Rules>) {
-        let tasks = self.expand(rules, None);
-        let completed = self.execute_tasks(RunMetadata::new(0, "init"), tasks);
+    fn run_init(&self, plan: RunPlan) {
+        let plan = self.expand(plan, None);
+        let completed = self.execute_tasks(RunMetadata::new(0, "init"), plan);
         stdout::present_results(completed.results, completed.elapsed);
     }
 
-    fn run_change(&self, rules: Vec<Rules>, filepath: &str) {
-        stdout::verbose(&format!("Rules: {:?}", rules), self.verbose);
-        stdout::verbose(
-            &format!("Formatted rules:\n{}", config::format_rules(&rules)),
-            self.verbose,
-        );
+    fn run_change(&self, plan: RunPlan, filepath: &str) {
+        stdout::verbose(&format!("Run plan: {:?}", plan), self.verbose);
 
-        let tasks = self.expand(rules, Some(filepath));
-        let completed = self.execute_tasks(RunMetadata::new(0, filepath), tasks);
+        let plan = self.expand(plan, Some(filepath));
+        let completed = self.execute_tasks(RunMetadata::new(0, filepath), plan);
         stdout::present_results(completed.results, completed.elapsed);
     }
 }
@@ -248,13 +231,13 @@ impl NonBlockStrategy {
     /// Runs a control-requested target through the worker run contract:
     /// cancel the active run, then schedule the target's rules.
     pub fn run_target(&self, target: &str) -> Result<u64, String> {
-        let rules = self
+        let plan = self
             .watches
-            .target(target)
+            .target_plan(target)
             .ok_or_else(|| format!("No target found for '{}'", target))?;
         self.worker.cancel_running_tasks()?;
         self.worker
-            .schedule_with_trigger(rules, &format!("control:{}", target), None)
+            .schedule_plan_with_trigger(plan, &format!("control:{}", target), None)
     }
 }
 
@@ -265,13 +248,13 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
-    fn run_init(&self, rules: Vec<Rules>) {
-        if let Err(err) = self.worker.schedule(rules, "") {
+    fn run_init(&self, plan: RunPlan) {
+        if let Err(err) = self.worker.schedule_plan(plan, "") {
             stdout::error(&format!("failed to initiate next run: {:?}", err));
         }
     }
 
-    fn run_change(&self, rules: Vec<Rules>, filepath: &str) {
+    fn run_change(&self, plan: RunPlan, filepath: &str) {
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
                 "failed to cancel current running tasks: {:?}",
@@ -279,7 +262,7 @@ impl RunStrategy for NonBlockStrategy {
             ));
         }
 
-        if let Err(err) = self.worker.schedule(rules, filepath) {
+        if let Err(err) = self.worker.schedule_plan(plan, filepath) {
             stdout::error(&format!("failed to initiate next run: {:?}", err));
         }
     }
@@ -291,6 +274,7 @@ mod tests {
     use super::InitAction;
     use super::NonBlockStrategy;
     use crate::control::{ControlServer, ControlState};
+    use crate::plan::RunPlan;
     use crate::rules::Rules;
     use crate::watches::Watches;
     use crate::workers;
@@ -313,7 +297,7 @@ mod tests {
     #[test]
     fn it_runs_init_rules_when_flag_is_enabled_and_rules_exist() {
         assert!(matches!(
-            init_action(Some(vec![rule("build")]), true),
+            init_action(Some(RunPlan::from_rules(vec![rule("build")])), true),
             InitAction::Run(_)
         ));
     }
@@ -321,7 +305,7 @@ mod tests {
     #[test]
     fn it_waits_when_run_on_init_flag_is_disabled() {
         assert!(matches!(
-            init_action(Some(vec![rule("build")]), false),
+            init_action(Some(RunPlan::from_rules(vec![rule("build")])), false),
             InitAction::Wait
         ));
     }

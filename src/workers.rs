@@ -1,18 +1,18 @@
 use crate::executor::{Event, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner};
-use crate::rules::{self, Rules};
+use crate::plan::RunPlan;
+use crate::rules::Rules;
 use crate::stdout;
-use crate::template;
+use crate::template::TemplateOptions;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// A run requested through the worker's command stream.
 struct RunRequest {
     run_id: u64,
-    commands: Vec<rules::CommandLine>,
+    plan: RunPlan,
     trigger: String,
 }
 
@@ -24,18 +24,47 @@ enum WorkerCommand {
     Cancel,
 }
 
-/// Drain the command stream keeping only the newest message, so intermediate
-/// queued generations are discarded before any process spawn.
-fn drain_newest(receiver: &Receiver<WorkerCommand>) -> Option<WorkerCommand> {
-    let mut newest = None;
-    while let Ok(command) = receiver.try_recv() {
-        newest = Some(command);
+/// A single overwrite slot: bounded state that always retains only the newest
+/// scheduling decision. The condition variable blocks idle consumers without
+/// polling or growing an unbounded command queue.
+#[derive(Default)]
+struct SchedulerState {
+    pending: Option<WorkerCommand>,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct Scheduler {
+    state: Mutex<SchedulerState>,
+    ready: Condvar,
+}
+
+impl Scheduler {
+    fn send(&self, command: WorkerCommand) {
+        self.state.lock().unwrap().pending = Some(command);
+        self.ready.notify_one();
     }
-    newest
+
+    fn take_newest(&self) -> Option<WorkerCommand> {
+        self.state.lock().unwrap().pending.take()
+    }
+
+    fn receive(&self) -> Option<WorkerCommand> {
+        let mut state = self.state.lock().unwrap();
+        while state.pending.is_none() && !state.closed {
+            state = self.ready.wait(state).unwrap();
+        }
+        state.pending.take()
+    }
+
+    fn close(&self) {
+        self.state.lock().unwrap().closed = true;
+        self.ready.notify_all();
+    }
 }
 
 pub struct Worker {
-    scheduler: Option<Sender<WorkerCommand>>,
+    scheduler: Option<Arc<Scheduler>>,
     next_run_id: AtomicU64,
     root: PathBuf,
 
@@ -56,13 +85,31 @@ impl Worker {
     }
 
     /// Creates a worker that expands command templates against an explicit
-    /// workspace root.
+    /// workspace root and the host's available parallelism.
     pub fn with_root<F>(verbose: bool, fail_fast: bool, root: PathBuf, on_event: F) -> Self
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
+        let jobs = std::thread::available_parallelism()
+            .map(|jobs| jobs.get())
+            .unwrap_or(1);
+        Self::with_root_and_jobs(verbose, fail_fast, root, jobs, on_event)
+    }
+
+    /// Creates a worker with an explicit task-concurrency bound.
+    pub fn with_root_and_jobs<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        jobs: usize,
+        on_event: F,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
         stdout::verbose("Worker in verbose mode.", verbose);
-        let (tscheduler, rscheduler) = channel::<WorkerCommand>();
+        let scheduler = Arc::new(Scheduler::default());
+        let consumer_scheduler = Arc::clone(&scheduler);
         let events = Arc::new(move |event: Event| {
             if let Event::Tick { task } = &event {
                 stdout::verbose(&format!("waiting next tick for task: {}", task), verbose);
@@ -72,12 +119,12 @@ impl Worker {
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
-            1,
+            jobs,
             events,
             fail_fast,
             verbose,
         )
-        .expect("concurrency one is supported");
+        .expect("worker jobs must be positive");
 
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
@@ -89,27 +136,26 @@ impl Worker {
                     // command when idle.
                     if let Some(req) = pending.take() {
                         active = Some(
-                            executor.start(RunMetadata::new(req.run_id, req.trigger), req.commands),
+                            executor.start(RunMetadata::new(req.run_id, req.trigger), req.plan),
                         );
                         continue;
                     }
 
-                    match rscheduler.recv() {
-                        Ok(WorkerCommand::Run(req)) => {
+                    match consumer_scheduler.receive() {
+                        Some(WorkerCommand::Run(req)) => {
                             active = Some(
-                                executor
-                                    .start(RunMetadata::new(req.run_id, req.trigger), req.commands),
+                                executor.start(RunMetadata::new(req.run_id, req.trigger), req.plan),
                             );
                         }
-                        Ok(WorkerCommand::Cancel) => {}
-                        Err(_) => break,
+                        Some(WorkerCommand::Cancel) => {}
+                        None => break,
                     }
                     continue;
                 }
 
                 let step = executor.advance(active.as_mut().expect("active run"));
                 match step {
-                    Step::Running => match drain_newest(&rscheduler) {
+                    Step::Running => match consumer_scheduler.take_newest() {
                         Some(WorkerCommand::Run(req)) => {
                             let mut replaced = active.take().expect("active run");
                             executor.cancel(&mut replaced);
@@ -132,7 +178,7 @@ impl Worker {
         });
 
         Worker {
-            scheduler: Some(tscheduler),
+            scheduler: Some(scheduler),
             next_run_id: AtomicU64::new(0),
             root,
             consumer: Some(consumer),
@@ -141,51 +187,50 @@ impl Worker {
 
     pub fn cancel_running_tasks(&self) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            if let Err(err) = scheduler.send(WorkerCommand::Cancel) {
-                println!("failed to send cancel signal: {:?}", err);
-                return Err(format!("{:?}", err));
-            }
+            scheduler.send(WorkerCommand::Cancel);
         }
-
         Ok(())
     }
 
     pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<u64, String> {
-        self.schedule_with_trigger(rules, filepath, Some(filepath))
+        self.schedule_plan(RunPlan::from_rules(rules), filepath)
     }
 
+    pub fn schedule_plan(&self, plan: RunPlan, filepath: &str) -> Result<u64, String> {
+        self.schedule_plan_with_trigger(plan, filepath, Some(filepath))
+    }
+
+    #[cfg(test)]
     pub(crate) fn schedule_with_trigger(
         &self,
         rules: Vec<Rules>,
         trigger: &str,
         filepath: Option<&str>,
     ) -> Result<u64, String> {
+        self.schedule_plan_with_trigger(RunPlan::from_rules(rules), trigger, filepath)
+    }
+
+    pub(crate) fn schedule_plan_with_trigger(
+        &self,
+        plan: RunPlan,
+        trigger: &str,
+        filepath: Option<&str>,
+    ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let expanded: Vec<rules::CommandLine> = rules::command_lines(rules)
-                .into_iter()
-                .map(|command| {
-                    let expanded = template::template_line(
-                        command,
-                        template::TemplateOptions {
-                            filepath: filepath.map(str::to_string),
-                            current_dir: format!("{}", self.root.display()),
-                        },
-                    );
-                    for variable in &expanded.unknown_variables {
-                        stdout::warn(&format!("Unknown template variable '{}'.", variable));
-                    }
-                    expanded.command
-                })
-                .collect();
+            let (plan, unknown_variables) = plan.expand(&TemplateOptions {
+                filepath: filepath.map(str::to_string),
+                current_dir: format!("{}", self.root.display()),
+            });
+            for variable in unknown_variables {
+                stdout::warn(&format!("Unknown template variable '{}'.", variable));
+            }
             let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
             let request = RunRequest {
                 run_id,
-                commands: expanded,
+                plan,
                 trigger: trigger.to_string(),
             };
-            if let Err(err) = scheduler.send(WorkerCommand::Run(request)) {
-                return Err(format!("{:?}", err));
-            }
+            scheduler.send(WorkerCommand::Run(request));
             return Ok(run_id);
         }
 
@@ -196,11 +241,10 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            let _ = scheduler.send(WorkerCommand::Cancel);
+            scheduler.send(WorkerCommand::Cancel);
+            scheduler.close();
         }
-
-        let ts = self.scheduler.take();
-        drop(ts);
+        self.scheduler.take();
         if let Some(th) = self.consumer.take() {
             th.join().expect("failed to join consumer thread");
         }
