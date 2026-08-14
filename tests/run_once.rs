@@ -73,6 +73,40 @@ fn tag_selection_runs_all_matching_parallel_tasks() {
 }
 
 #[test]
+fn sequential_override_forces_effective_concurrency_one() {
+    // SEQUENTIAL-OVERRIDE-CONTRACT §2: the handshake tasks only pass when
+    // both run concurrently (concurrency 2). Under `--sequential` the first
+    // task never sees the second's ready file and must fail; selection,
+    // plan barriers, and commands stay unchanged.
+    let directory = fixture("sequential");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  concurrency: 2\ntasks:\n  - name: lint @quick\n    parallel: checks\n    run: 'touch lint.ready; i=0; while [ $i -lt 100 ]; do test -f test.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n  - name: test @quick\n    parallel: checks\n    run: 'touch test.ready; i=0; while [ $i -lt 100 ]; do test -f lint.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n",
+    );
+
+    // Baseline: configured concurrency 2 lets both tasks pass concurrently.
+    fzz(&directory)
+        .args(["run", "@quick"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Completed: 2"));
+    assert!(directory.join("lint.ready").exists());
+    assert!(directory.join("test.ready").exists());
+    std::fs::remove_file(directory.join("lint.ready")).unwrap();
+    std::fs::remove_file(directory.join("test.ready")).unwrap();
+
+    // Override: `--sequential` must make the first task wait in vain.
+    fzz(&directory)
+        .args(["run", "@quick", "--sequential"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("Completed: 1"))
+        .stdout(predicate::str::contains("has failed"));
+    assert!(directory.join("lint.ready").exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn missing_and_ambiguous_targets_are_actionable() {
     let directory = fixture("selection-errors");
     write_config(

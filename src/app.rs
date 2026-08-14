@@ -82,7 +82,7 @@ pub fn run() {
 
         Action::Watch { target: ref wanted } => {
             let rules = load_rules(&args.config);
-            let concurrency = load_concurrency(&args.config);
+            let concurrency = effective_concurrency(&args, &args.config);
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
@@ -114,7 +114,7 @@ pub fn run() {
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
-            let concurrency = load_concurrency(&args.config);
+            let concurrency = effective_concurrency(&args, &args.config);
             let watches = Watches::with_root_and_concurrency(
                 rules.clone(),
                 workspace_root.clone(),
@@ -269,6 +269,17 @@ fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {
             Ok(rules) => rules,
             Err(err) => stdout::failure("Failed to read config file", err.to_string()),
         },
+    }
+}
+
+/// Effective scheduler concurrency: `--sequential` forces exactly 1 (the
+/// sequential debugging override, SEQUENTIAL-OVERRIDE-CONTRACT §2); otherwise
+/// the configured value from config or available parallelism applies.
+fn effective_concurrency(args: &Arguments, config_file: &Option<String>) -> usize {
+    if args.sequential {
+        1
+    } else {
+        load_concurrency(config_file)
     }
 }
 

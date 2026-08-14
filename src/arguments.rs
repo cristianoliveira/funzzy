@@ -57,6 +57,7 @@ pub struct Arguments {
     pub on_busy: OnBusy,
     pub no_run_on_init: bool,
     pub fail_fast: bool,
+    pub sequential: bool,
     pub verbose: bool,
 }
 
@@ -196,6 +197,10 @@ impl Arguments {
             },
             no_run_on_init: matches.get_flag("no_run_on_init"),
             fail_fast: matches.get_flag("fail_fast"),
+            sequential: match matches.subcommand() {
+                Some((name, sub)) if matches!(name, "run" | "watch") => sub.get_flag("sequential"),
+                _ => false,
+            },
             verbose: matches.get_flag("verbose"),
         })
     }
@@ -312,6 +317,12 @@ fn command() -> Command {
                 .about("Watch for file changes and run configured tasks.")
                 .version(env!("CARGO_PKG_VERSION"))
                 .arg(
+                    Arg::new("sequential")
+                        .long("sequential")
+                        .action(ArgAction::SetTrue)
+                        .help("Run tasks with effective concurrency 1 for this watch session."),
+                )
+                .arg(
                     Arg::new("target")
                         .value_name("TARGET")
                         .num_args(0..=1)
@@ -331,6 +342,12 @@ fn command() -> Command {
                     "Run configured tasks once in this process, then exit with their combined outcome.\n\nThis is local execution. `fzz control run TARGET` requests work from an existing watcher. Path filtering is not supported; TARGET selects a full configured workflow.",
                 )
                 .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("sequential")
+                        .long("sequential")
+                        .action(ArgAction::SetTrue)
+                        .help("Run the selected workflow with effective concurrency 1."),
+                )
                 .arg(
                     Arg::new("target")
                         .value_name("TARGET")
@@ -658,6 +675,22 @@ mod tests {
     }
 
     #[test]
+    fn watch_sequential_flag_sets_sequential() {
+        let args = parse(&["watch", "@quick", "--sequential"]).expect("parse");
+        assert!(args.sequential);
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: Some("@quick".to_string()),
+            }
+        );
+        let args = parse(&["watch", "--sequential"]).expect("parse");
+        assert!(args.sequential);
+        let args = parse(&["watch", "@quick"]).expect("parse");
+        assert!(!args.sequential);
+    }
+
+    #[test]
     fn list_subcommand_selects_list() {
         assert_eq!(parse_action(&["list"]), Action::List);
     }
@@ -672,6 +705,22 @@ mod tests {
         );
         assert!(parse(&["run"]).is_err());
         assert!(parse(&["run", "@quick", "src/lib.rs"]).is_err());
+    }
+
+    #[test]
+    fn run_sequential_flag_sets_sequential() {
+        let args = parse(&["run", "@quick", "--sequential"]).expect("parse");
+        assert!(args.sequential);
+        assert_eq!(
+            args.action,
+            Action::Run {
+                target: "@quick".to_owned()
+            }
+        );
+        let args = parse(&["run", "--sequential", "@quick"]).expect("parse");
+        assert!(args.sequential);
+        let args = parse(&["run", "@quick"]).expect("parse");
+        assert!(!args.sequential);
     }
 
     #[test]
