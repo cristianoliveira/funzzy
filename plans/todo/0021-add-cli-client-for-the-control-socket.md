@@ -1,7 +1,7 @@
 ---
 id: TASK-0021
 title: Add CLI client for the control socket
-status: todo
+status: doing
 depends_on: [TASK-0015, TASK-0042]
 priority: high
 tags: [rust, cli, ipc, control-socket, json-rpc, tdd]
