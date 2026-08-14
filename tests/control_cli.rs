@@ -272,6 +272,32 @@ fn control_status_without_any_socket_config_is_actionable() {
 }
 
 #[test]
+fn ctl_alias_status_and_list_parity_with_control() {
+    // TASK-0070: `ctl` must behave identically to `control` against a real
+    // watcher, not just parse. Compare status and list output byte-for-byte.
+    let directory = setup_watcher_directory("ctl-parity");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    for operation in ["status", "list"] {
+        let canonical = run_cli(&directory, &["control", operation]);
+        let alias = run_cli(&directory, &["ctl", operation]);
+        assert!(
+            canonical.status.success() && alias.status.success(),
+            "{} must exit 0 through both spellings",
+            operation
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&canonical.stdout),
+            String::from_utf8_lossy(&alias.stdout),
+            "ctl {} output must match control {}",
+            operation,
+            operation
+        );
+    }
+}
+
+#[test]
 fn control_help_lists_nested_subcommands() {
     let output = run_cli(std::path::Path::new("."), &["control", "--help"]);
     assert!(output.status.success());

@@ -370,6 +370,7 @@ fn command() -> Command {
         )
         .subcommand(
             Command::new("control")
+                .visible_alias("ctl")
                 .about("Interact with a running watcher over its control socket.")
                 .version(env!("CARGO_PKG_VERSION"))
                 .subcommand_required(true)
@@ -781,6 +782,91 @@ mod tests {
     #[test]
     fn control_unknown_subcommand_fails() {
         assert!(parse(&["control", "bogus"]).is_err());
+        assert!(parse(&["ctl", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn ctl_alias_parses_identically_to_control() {
+        // TASK-0070: `ctl` is a visible alias for canonical `control`;
+        // every nested operation must produce the exact same Action.
+        let canonical = [
+            &["control", "capabilities"][..],
+            &["control", "status"][..],
+            &["control", "list"][..],
+            &["control", "run", "@agent-final"][..],
+            &[
+                "control",
+                "run",
+                "@agent-final",
+                "--wait",
+                "--timeout",
+                "30",
+            ][..],
+            &["control", "emit", "src/main.rs"][..],
+            &["control", "emit", "x.txt", "--wait", "--timeout", "2m"][..],
+            &["control", "await", "--after", "3", "--timeout", "2s"][..],
+            &[
+                "control",
+                "await",
+                "--generation",
+                "9",
+                "--timeout",
+                "500ms",
+            ][..],
+            &[
+                "control",
+                "output",
+                "--generation",
+                "7",
+                "--task",
+                "my tests",
+                "--stderr",
+                "--tail",
+                "80",
+            ][..],
+            &["control", "cancel", "--generation", "7"][..],
+            &[
+                "control",
+                "cancel",
+                "--generation",
+                "7",
+                "--wait",
+                "--timeout",
+                "1s",
+            ][..],
+        ];
+        for args in canonical {
+            let mut alias: Vec<&str> = Vec::with_capacity(args.len());
+            alias.push("ctl");
+            alias.extend_from_slice(&args[1..]);
+            assert_eq!(
+                parse_action(&alias),
+                parse_action(args),
+                "ctl alias must equal control for {:?}",
+                args
+            );
+        }
+    }
+
+    #[test]
+    fn ctl_socket_flag_and_global_socket_carry_through() {
+        let args = parse(&["ctl", "--socket", "/tmp/sock", "status"]).expect("parse");
+        match args.action {
+            Action::Control { action, socket } => {
+                assert_eq!(action, ControlAction::Status);
+                assert_eq!(socket.as_deref(), Some("/tmp/sock"));
+            }
+            other => panic!("expected Control action, got {:?}", other),
+        }
+        let args = parse(&["--control-socket", "/tmp/global", "ctl", "status"]).expect("parse");
+        assert_eq!(args.control_socket.as_deref(), Some("/tmp/global"));
+        assert_eq!(
+            args.action,
+            Action::Control {
+                action: ControlAction::Status,
+                socket: None
+            }
+        );
     }
 
     #[test]

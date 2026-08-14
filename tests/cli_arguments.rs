@@ -78,6 +78,48 @@ fn help_shows_usage_commands_and_options_for_both_binaries() {
 }
 
 #[test]
+fn control_help_distinguishes_canonical_from_ctl_alias() {
+    // TASK-0070: `ctl` must be a visible alias; both spellings expose the
+    // same nested tree and the top-level help advertises the alias once.
+    for mut cmd in [fzz(), funzzy()] {
+        for spelling in ["control", "ctl"] {
+            cmd.arg(spelling)
+                .arg("--help")
+                .assert()
+                .code(0)
+                .stdout(predicate::str::contains("status"))
+                .stdout(predicate::str::contains("list"))
+                .stdout(predicate::str::contains("run"))
+                .stdout(predicate::str::contains("capabilities"));
+        }
+    }
+}
+
+#[test]
+fn top_level_help_advertises_ctl_alias_once() {
+    let output = fzz().arg("--help").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[alias: ctl]"),
+        "top-level help must advertise the ctl alias: {}",
+        stdout
+    );
+}
+
+#[test]
+fn unknown_control_operation_fails_with_exit_2_for_both_spellings() {
+    for mut cmd in [fzz(), funzzy()] {
+        for spelling in ["control", "ctl"] {
+            cmd.arg(spelling)
+                .arg("bogus")
+                .assert()
+                .code(2)
+                .stderr(predicate::str::contains("bogus"));
+        }
+    }
+}
+
+#[test]
 fn run_help_distinguishes_local_execution_from_control_ipc() {
     fzz()
         .args(["run", "--help"])

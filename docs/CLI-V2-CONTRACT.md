@@ -21,6 +21,8 @@ This is a V2 redesign. During the active refactor we do **not** add deprecated p
 | `fzz control run TARGET [--wait] [--timeout DUR]` | Trigger named target; optionally await terminal outcome | no |
 | `fzz control emit PATH [--wait] [--timeout DUR]` | Submit synthetic path change through native routing | no |
 
+`ctl` is a visible Clap alias for the canonical `control` subcommand (TASK-0070). Every nested operation, option, and exit code is identical under both spellings; `control` remains the documentation and protocol vocabulary. No aliases exist for nested operations.
+
 `fzz` with no arguments is the **hero path** and stays zero-config.
 
 ## 2. Target matching
