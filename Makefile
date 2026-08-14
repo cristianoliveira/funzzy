@@ -96,3 +96,11 @@ nix-bump-local: ## Bump the version in nix local package and generate a new revi
 .PHONY: nix-bump-all
 nix-bump-all: nix-bump-default nix-bump-nightly ## Bump all nix revisions
 	@echo "Bumping all nix packages"
+
+.PHONY: version-check
+version-check: ## Verify release version identity across packages (TASK-0061)
+	@./scripts/version-check
+
+.PHONY: version-check-test
+version-check-test: ## Test the version consistency check (TASK-0061)
+	@./scripts/version-check-test

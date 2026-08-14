@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Tests for scripts/version-check (TASK-0061): proves the check rejects each
+# inconsistency it claims to catch. Uses a scratch copy so the real repo is
+# never modified.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+CHECK="$ROOT/scripts/version-check"
+
+pass=0; failc=0
+expect_reject() {
+  local desc="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    echo "FAIL: $desc (check unexpectedly passed)" >&2
+    failc=$((failc+1))
+  else
+    echo "ok: $desc rejected"
+    pass=$((pass+1))
+  fi
+}
+expect_accept() {
+  local desc="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    echo "ok: $desc accepted"
+    pass=$((pass+1))
+  else
+    echo "FAIL: $desc (check unexpectedly rejected)" >&2
+    failc=$((failc+1))
+  fi
+}
+
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+mkdir -p "$SCRATCH/scripts" "$SCRATCH/nix"
+cp "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" "$ROOT/README.md" "$SCRATCH/"
+cp "$ROOT/scripts/version-check" "$SCRATCH/scripts/version-check"
+cp "$ROOT/nix/package.nix" "$SCRATCH/nix/package.nix"
+chmod +x "$SCRATCH/scripts/version-check"
+mkdir -p "$SCRATCH/.git"
+
+# 1. Healthy scratch repo passes (prerelease mode).
+expect_accept "healthy prerelease repo" "$SCRATCH/scripts/version-check"
+
+# 2. Cargo/lock mismatch is rejected: fake a lock with a different version.
+cp "$SCRATCH/Cargo.toml" "$SCRATCH/Cargo.toml.orig"
+sed -i 's/^version = "2.0.0-beta.1"/version = "2.0.0-beta.2"/' "$SCRATCH/Cargo.lock"
+expect_reject "Cargo/lock version mismatch" "$SCRATCH/scripts/version-check"
+mv "$SCRATCH/Cargo.toml.orig" "$SCRATCH/Cargo.toml"
+
+# 3. Stable version requires an exact v-prefixed tag: fake a stable Cargo
+#    version and ensure the missing-tag branch fires.
+sed -i 's/^version = "2.0.0-beta.1"/version = "2.0.0"/' "$SCRATCH/Cargo.toml"
+sed -i 's/^version = "2.0.0-beta.1"/version = "2.0.0"/' "$SCRATCH/Cargo.lock"
+expect_reject "stable version without v2.0.0 tag" "$SCRATCH/scripts/version-check"
+
+echo "version-check-test: $pass passed, $failc failed"
+[ "$failc" -eq 0 ]

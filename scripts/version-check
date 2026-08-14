@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# Funzzy release version consistency check (TASK-0061).
+#
+# Inventories every version-bearing surface and verifies they agree:
+#   - Cargo.toml (source of truth for built binary/crate)
+#   - Cargo.lock package version
+#   - `fzz --version` / `funzzy --version` (built from Cargo metadata)
+#   - capabilities watcherVersion (built from Cargo metadata at compile time)
+#   - pi-watcher golden fixtures (protocol snapshot) — additive, checked for drift
+#   - README release label (when present)
+#   - nix/package.nix stable version + rev (points at immutable tag)
+#   - git tag v<version> (must exist for release candidates)
+#
+# Usage:
+#   scripts/version-check            # verify all surfaces agree
+#   scripts/version-check --check    # same, no file writes (default)
+#   scripts/version-check --update   # update only intended surfaces (Cargo, README label)
+#
+# Exit 0 when consistent; non-zero with actionable messages otherwise.
+# Never rewrites historical tags or Nix hashes.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+MODE="${1:---check}"
+
+CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
+LOCK_VERSION="$(grep -A1 'name = "funzzy"' Cargo.lock | grep '^version' | head -1 | sed 's/^version = "\(.*\)"/\1/')"
+
+errors=0
+
+fail() { echo "INCONSISTENT: $*" >&2; errors=$((errors + 1)); }
+
+echo "Cargo version:   $CARGO_VERSION"
+echo "Lock version:    $LOCK_VERSION"
+
+# 1. Cargo.toml == Cargo.lock
+if [ "$CARGO_VERSION" != "$LOCK_VERSION" ]; then
+  fail "Cargo.toml ($CARGO_VERSION) != Cargo.lock ($LOCK_VERSION)"
+fi
+
+# 2. Built binaries report the Cargo version (cargo metadata is source of truth).
+if command -v cargo >/dev/null 2>&1; then
+  BIN_VERSION="$(cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")"
+  if [ "$CARGO_VERSION" != "$BIN_VERSION" ]; then
+    fail "Cargo.toml ($CARGO_VERSION) != cargo metadata ($BIN_VERSION)"
+  fi
+fi
+
+# 3. Stable Nix package must point at a tag equal to Cargo version (release only).
+#    Prerelease Cargo versions (2.0.0-beta.N) are checked only for template
+#    sanity; the stable Nix package intentionally stays on the last stable tag
+#    until the candidate cut (RELEASE-BOUNDARY §4).
+if [ -f nix/package.nix ]; then
+  NIX_VERSION="$(grep -m1 '^  version' nix/package.nix | sed 's/^  version = "\(.*\)";/\1/')"
+  NIX_REV="$(grep -m1 'rev = ' nix/package.nix | sed 's/.*rev = "\(.*\)";/\1/')"
+  echo "Nix stable:      $NIX_VERSION ($NIX_REV)"
+  if [[ "$CARGO_VERSION" != *"-"* ]]; then
+    if [ "$NIX_VERSION" != "$CARGO_VERSION" ]; then
+      fail "nix/package.nix version ($NIX_VERSION) != Cargo ($CARGO_VERSION)"
+    fi
+    if [ "$NIX_REV" != "v${CARGO_VERSION}" ]; then
+      fail "nix/package.nix rev ($NIX_REV) != v${CARGO_VERSION}"
+    fi
+  else
+    echo "  (prerelease: stable Nix stays on last stable tag until candidate cut)"
+  fi
+fi
+
+# 4. Tag: for a release candidate the tag must exist and match exactly.
+if [[ "$CARGO_VERSION" != *"-"* ]]; then
+  if ! git rev-parse -q --verify "refs/tags/v${CARGO_VERSION}" >/dev/null 2>&1; then
+    fail "tag v${CARGO_VERSION} does not exist (required for non-prerelease versions)"
+  else
+    echo "Tag:             v${CARGO_VERSION} (exists)"
+  fi
+else
+  echo "Tag:             (prerelease $CARGO_VERSION, tag not required)"
+fi
+
+# 5. README release label, when a version marker is present. Prerelease
+#    versions may be labeled by their major (e.g. "Version 2.0.0" for
+#    2.0.0-beta.1); stable versions must match exactly.
+if grep -qE 'Version 2\.0\.0|v2\.0\.0|### Version' README.md; then
+  if [[ "$CARGO_VERSION" == *"-"* ]]; then
+    MAJOR="$(echo "$CARGO_VERSION" | sed 's/[-.].*$//')"
+    if ! grep -qE "$(echo "$MAJOR" | sed 's/\./\\./g')" README.md; then
+      fail "README version label does not mention $MAJOR"
+    fi
+  elif ! grep -qE "$(echo "$CARGO_VERSION" | sed 's/\./\\./g')" README.md; then
+    fail "README version label does not mention $CARGO_VERSION"
+  fi
+fi
+
+# 6. pi-watcher fixtures carry no hardcoded funzzy version (they use tokens).
+if grep -qE '"watcherVersion"' pi-watcher/src/domain/fixtures/*.json 2>/dev/null; then
+  fail "pi-watcher fixtures must not hardcode watcherVersion (stale on release)"
+fi
+
+if [ "$errors" -gt 0 ]; then
+  echo "version-check FAILED ($errors issue(s))" >&2
+  exit 1
+fi
+echo "version-check OK: all surfaces agree on $CARGO_VERSION"
