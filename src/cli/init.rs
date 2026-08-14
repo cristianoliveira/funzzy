@@ -94,9 +94,9 @@ fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     match documents.first() {
         Some(Yaml::Array(_)) => {}
         Some(document) if document["jobs"] != Yaml::BadValue => {
-            return Err(FzzError::GenericError(
-                "Configuration already uses the preferred jobs format".to_string(),
-            ));
+            // Already preferred: idempotent no-op (TASK-0078) — return the
+            // input unchanged so the file is never rewritten.
+            return Ok(legacy.to_owned());
         }
         Some(document) if document["tasks"] != Yaml::BadValue => {
             // Grouped tasks: rename the root key to jobs, preserving order.
@@ -187,15 +187,11 @@ mod tests {
     }
 
     #[test]
-    fn it_rejects_config_already_using_jobs_format() {
+    fn it_treats_already_jobs_config_as_idempotent_noop() {
         let current = "on:\n  socket: .tmp/funzzy.sock\njobs:\n  - name: test\n    run: cargo test\n    run_on_init: true\n";
 
-        let error = migrate_content(current).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "Reason: Configuration already uses the preferred jobs format"
-        );
+        // Idempotent (TASK-0078): already-preferred input returns unchanged.
+        assert_eq!(migrate_content(current).unwrap(), current);
     }
 
     #[test]
