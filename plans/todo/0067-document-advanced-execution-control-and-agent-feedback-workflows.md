@@ -2,7 +2,7 @@
 id: TASK-0067
 title: Document advanced execution control and agent feedback workflows
 status: todo
-depends_on: [TASK-0065, TASK-0028, TASK-0055, TASK-0059, TASK-0070]
+depends_on: [TASK-0065, TASK-0028, TASK-0055, TASK-0059, TASK-0070, TASK-0074]
 priority: high
 tags: [docs, parallel, control-socket, agents, diagnostics, duration]
 ---
@@ -18,7 +18,7 @@ Convert normative contracts into user goals and operational recipes while linkin
 
 ## Acceptance criteria
 
-- [ ] Parallel guide explains named contiguous groups, barriers, filtering, command sequentiality, `on.concurrency`, failure/fail-fast, output ordering, and workload tradeoffs with measured example.
+- [ ] Parallel guide explains named contiguous groups, barriers, filtering, command sequentiality, `on.concurrency`, `--sequential` comparison, failure/fail-fast, output ordering, and workload tradeoffs with measured example.
 - [ ] Control guide documents canonical `control` plus visible `ctl` alias, socket precedence, capabilities, status/list/run/emit/await/output/cancel, exact identity/freshness, timeout, exit codes, and bounded evidence.
 - [ ] Agent guide gives compact edit-feedback loop: capabilities → observe → edit/emit/run → atomic exact await → output diagnosis → exact cancel, including stale/restart/fallback handling.
 - [ ] Duration guide explains local XDG history, eligibility, confidence, timeout precedence, reset/privacy, invalidation, and `slower-than-history` without promising ETA.
