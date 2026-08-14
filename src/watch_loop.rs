@@ -6,7 +6,6 @@
 //! preparation path. CLI commands stay thin: build a strategy and call
 //! [`watch_loop`].
 
-use crate::cmd;
 use crate::config;
 use crate::control::{ControlServer, ControlState, ControlTarget};
 use crate::errors::FzzError;
@@ -128,19 +127,7 @@ impl BlockingStrategy {
     }
 
     fn execute_tasks(&self, tasks: Vec<rules::CommandLine>) -> Vec<Result<(), String>> {
-        let mut results: Vec<Result<(), String>> = vec![];
-        for task in tasks {
-            let result = match task {
-                rules::CommandLine::Shell(command) => cmd::execute(&command),
-                rules::CommandLine::Argv(argv) => cmd::execute_argv(&argv),
-            };
-            if self.fail_fast && result.is_err() {
-                results.push(result);
-                break;
-            }
-            results.push(result);
-        }
-        results
+        crate::executor::run_commands(tasks, self.fail_fast)
     }
 }
 

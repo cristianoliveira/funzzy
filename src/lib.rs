@@ -8,6 +8,7 @@ pub mod config;
 pub mod control;
 pub mod environment;
 pub mod errors;
+pub mod executor;
 pub mod logging;
 pub mod plan;
 pub mod rules;
