@@ -1,7 +1,7 @@
 ---
 id: TASK-0059
 title: Prove the agent configure validate and run loop
-status: todo
+status: done
 depends_on: [TASK-0058, TASK-0033]
 priority: high
 tags: [integration-tests, axi, config, schema, agents, compatibility]
