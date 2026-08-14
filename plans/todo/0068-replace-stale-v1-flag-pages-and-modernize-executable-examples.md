@@ -2,7 +2,7 @@
 id: TASK-0068
 title: Replace stale V1 flag pages and modernize executable examples
 status: todo
-depends_on: [TASK-0066, TASK-0067]
+depends_on: [TASK-0066, TASK-0067, TASK-0078]
 priority: high
 tags: [docs, migration, examples, v1, v2, cleanup]
 ---
@@ -21,7 +21,7 @@ Do not keep deprecated instructions alongside V2 as if both are valid. Preserve 
 - [ ] `FLAG_NON_BLOCK.md` and `FLAG_TARGET.md` are removed/replaced by V2 wait/restart and target-selection pages with redirects/links only where site behavior supports them.
 - [ ] Control, fail-fast, logging, init, usage, README, examples README, and scripts contain no stale removed invocation or incorrect short flag.
 - [ ] Migration table maps every V1 command/flag/config shape to exact V2 replacement, behavior change, and exit-code impact.
-- [ ] Examples use preferred grouped config and cover minimal, ignore/templates, cwd/env, tags, init, parallel, long-running restart, control socket, and agent-final target without redundant fixtures.
+- [ ] Examples use preferred ordered `jobs:` config and cover minimal, ignore/templates, cwd/env, tags, init, parallel, long-running restart, control socket, and agent-final target without redundant fixtures.
 - [ ] Every valid example passes `fzz check`; intentionally invalid fixtures assert exact current diagnostics and are labeled.
 - [ ] Example shell scripts use strict mode, bounded waits/timeouts, safe temp paths, and process cleanup.
 - [ ] Obsolete/dead examples and duplicated prose are deleted rather than left unlinked.

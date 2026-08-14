@@ -2,7 +2,7 @@
 id: TASK-0057
 title: Define the agent-discoverable configuration contract
 status: todo
-depends_on: [TASK-0042]
+depends_on: [TASK-0042, TASK-0075]
 priority: high
 tags: [design, axi, config, schema, agents, determinism]
 ---
@@ -20,7 +20,7 @@ Primary discovery lives in installed CLI, not repository docs or Pi-specific pro
 
 - [ ] Contract defines agent decision loop: discover schema → request relevant section/example → write config → check → list/explain → run/watch.
 - [ ] Locks command grammar for `fzz config schema [--section SECTION]` and `fzz config example PROFILE`; commands are non-interactive and side-effect-free.
-- [ ] Defines supported schema sections (`on`, `task`, `matching`, `execution`, `parallel`, `control`) and example profiles (`minimal`, `parallel`, `agent`).
+- [ ] Defines supported schema sections (`on`, `job`, `matching`, `execution`, `parallel`, `control`) and example profiles (`minimal`, `parallel`, `agent`).
 - [ ] JSON Schema is canonical interoperability output; compact text/TOON may be additive but cannot replace valid JSON Schema.
 - [ ] Schema identifies version, field type, required/default status, enum/range, mutual constraints, deprecation, examples, and semantic checks delegated to `fzz check`.
 - [ ] Current grouped config is recommended; legacy root task list remains documented as accepted compatibility input but is not emitted.

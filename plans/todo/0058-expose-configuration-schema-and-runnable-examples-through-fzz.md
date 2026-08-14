@@ -2,7 +2,7 @@
 id: TASK-0058
 title: Expose configuration schema and runnable examples through fzz
 status: todo
-depends_on: [TASK-0057, TASK-0005]
+depends_on: [TASK-0057, TASK-0005, TASK-0076]
 priority: high
 tags: [rust, cli, axi, config, json-schema, examples, tdd]
 ---
@@ -19,7 +19,7 @@ Add real Clap `config` subcommands with local help and examples. Commands must w
 ## Acceptance criteria
 
 - [ ] Black-box tests first cover full/section schema, each example profile, unknown section/profile, clean stdout/stderr, no config present, and deterministic repeated output.
-- [ ] `fzz config schema` emits valid deterministic JSON Schema for preferred grouped `.watch.yaml` format.
+- [ ] `fzz config schema` emits valid deterministic JSON Schema for preferred ordered `jobs:` `.watch.yaml` format.
 - [ ] `--section` returns bounded self-contained schema plus section identity and command hint for full schema.
 - [ ] `fzz config example minimal|parallel|agent` emits valid runnable YAML to stdout with no prose mixed into document.
 - [ ] Every emitted example parses through same production parser and passes available structural validation.
