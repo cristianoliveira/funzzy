@@ -220,3 +220,34 @@ fn migrated_config_with_cwd_env_and_init_runs_identically() {
     );
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+#[test]
+fn usage_guide_yaml_blocks_parse_through_the_production_parser() {
+    // TASK-0066: every copyable YAML block in docs/USAGE.md must parse with
+    // the same production parser — docs never drift from the parser.
+    let usage = std::fs::read_to_string("docs/USAGE.md").expect("usage guide");
+    let mut in_block = false;
+    let mut current = String::new();
+    let mut parsed = 0;
+    for line in usage.lines() {
+        if line.trim_start().starts_with("```yaml") {
+            in_block = true;
+            current.clear();
+            continue;
+        }
+        if in_block && line.trim_start().starts_with("```") {
+            in_block = false;
+            let rules = funzzy::config::from_yaml(&current)
+                .unwrap_or_else(|err| panic!("usage yaml block must parse: {err:?}\n{current}"));
+            funzzy::rules::validate_rules(&rules)
+                .unwrap_or_else(|err| panic!("usage yaml block must validate: {err}\n{current}"));
+            parsed += 1;
+            continue;
+        }
+        if in_block {
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+    assert!(parsed >= 2, "expected multiple yaml blocks, got {parsed}");
+}

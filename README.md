@@ -191,27 +191,24 @@ Or, clone this repo and run:
 make install
 ```
 
-## Running
+## Quick start
 
-Initializing with boilerplate:
-
-```bash
-funzzy init
-```
-
-Migrate a legacy `.watch.yaml` whose root is a task list to the current `tasks:` format:
+Create a config, validate it, run once, then watch — the five-step path
+([full guide](docs/USAGE.md)):
 
 ```bash
-fzz init --migrate
+fzz init                       # write a runnable .watch.yaml
+fzz check                      # validate (same parser as the watcher)
+fzz list                       # see the configured targets
+fzz run build                  # run the exact target once, no watcher
+fzz                            # zero-argument configured watch
 ```
 
-The migration preserves existing task content and comments. Change the config file `.watch.yaml` as you want. Then run:
-
-```bash
-funzzy
-# or use the short version
-fzz
-```
+Both binary names work — `funzzy` and its short alias `fzz`; examples use
+`fzz`. Migrate a legacy task-list config with `fzz init --migrate` (emits the
+preferred `jobs:` form). The installed binary is the config reference:
+`fzz config schema` prints the JSON Schema and `fzz config example minimal`
+prints a runnable example — docs never drift from the parser.
 
 ### Options
 
