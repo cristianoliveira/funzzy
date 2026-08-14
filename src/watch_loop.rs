@@ -11,15 +11,16 @@ use crate::control::{
     ControlInstance, ControlServer, ControlState, ControlTarget, EmitOutcome,
     TargetEstimateProvider,
 };
+use crate::diagnostics;
 use crate::duration_recorder::DurationRecorder;
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
-use crate::identity::{AtomicSequence, Batch, BatchId};
+use crate::identity::{Batch, BatchId};
 use crate::output::OutputRegistry;
 use crate::plan::RunPlan;
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
-use crate::watcher;
+use crate::watcher::{self, FileEvent};
 use crate::watches::Watches;
 use crate::workers;
 use crate::workflow::WorkflowRunner;
@@ -50,13 +51,20 @@ pub trait RunStrategy {
     /// only when readiness is truthful. Defaults to no-op.
     fn on_ready(&self) {}
 
-    /// Executes plan selected for init.
-    fn run_init(&self, plan: RunPlan);
+    /// Executes plan selected for init. Returns the scheduled generation when
+    /// the strategy schedules asynchronous work (restart policy); blocking
+    /// strategies run in-process and return `None`.
+    fn run_init(&self, plan: RunPlan) -> Option<u64>;
+
+    /// The busy-run policy this strategy implements: `restart` replaces the
+    /// active run with newer work; `wait` runs in-process and blocks.
+    fn policy(&self) -> &'static str;
 
     /// Executes plan selected for a file change. The batch carries the
     /// debounce identity and complete changed-path set (contract §1); the
-    /// trigger path is the deterministic first match.
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch);
+    /// trigger path is the deterministic first match. Returns the scheduled
+    /// generation for non-blocking strategies, `None` for in-process runs.
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64>;
 
     /// Called with each normalized batch before routing (default no-op), so
     /// the pending-debounce observation reflects open windows.
@@ -76,7 +84,6 @@ pub fn watch_loop(
     verbose: bool,
 ) -> Result<(), FzzError> {
     let list_of_watched_paths = watches.paths_to_watch().unwrap_or_default();
-    let batch_sequence = AtomicSequence::new();
 
     watcher::events(
         list_of_watched_paths,
@@ -86,31 +93,143 @@ pub fn watch_loop(
             match init_action(watches.run_on_init_plan(), run_on_init) {
                 InitAction::Run(plan) => {
                     stdout::info("Running on init commands.");
-                    strategy.run_init(plan);
+                    let commands = plan.commands().len();
+                    let generation = strategy.run_init(plan);
+                    // Blocking strategies emit their own in-process run
+                    // record; only non-blocking init schedules are recorded
+                    // here with their generation.
+                    if verbose && generation.is_some() {
+                        diagnostics::debug(&diagnostics::Record {
+                            source: Some("init"),
+                            decision: Some("scheduled"),
+                            generation,
+                            policy: Some(strategy.policy()),
+                            commands: Some(commands),
+                            ..Default::default()
+                        });
+                    }
                 }
                 InitAction::Wait => stdout::info("Watching..."),
             }
         },
-        |changed_paths: &[String]| {
-            // One debounce window is one normalized event batch: deduplicated
-            // and deterministically ordered, mapped to zero or one generation.
-            let batch = Batch::normalized(BatchId(batch_sequence.next()), changed_paths.to_vec());
+        |batch_id: u64, events: &[FileEvent]| {
+            let batch = Batch::normalized(
+                BatchId(batch_id),
+                events.iter().map(|event| event.path.clone()).collect(),
+            );
             if batch.is_empty() {
                 return;
             }
             strategy.on_batch(&batch);
-            if let Some((plan, trigger)) = watches.watch_plan_batch(&batch.changed) {
-                stdout::clear_screen();
-
-                stdout::verbose(&format!("Triggered by change in: {}", trigger), verbose);
-
-                strategy.run_change(plan, &trigger, &batch);
+            match watches.watch_plan_batch(&batch.changed) {
+                Some((plan, trigger)) => {
+                    stdout::clear_screen();
+                    if verbose {
+                        emit_matched_decisions(watches, &batch, &trigger);
+                    }
+                    let generation = strategy.run_change(plan, &trigger, &batch);
+                    if verbose {
+                        observe_triggers(watches, &batch, &trigger, generation);
+                    }
+                }
+                None => {
+                    if verbose {
+                        emit_non_matched_decisions(watches, &batch);
+                    }
+                }
             }
             strategy.on_batch_complete();
         },
         verbose,
     )
     .map_err(FzzError::GenericError)
+}
+
+/// Emits one `matched` decision record per task responsible for the trigger
+/// path, plus `ignored`/`unmatched` decisions for the remaining batch paths
+/// that did not win the deterministic first match.
+fn emit_matched_decisions(watches: &Watches, batch: &Batch, trigger: &str) {
+    let explained = watches.explain(trigger);
+    for rule in &explained.matched {
+        diagnostics::debug(&diagnostics::Record {
+            batch: Some(batch.id.0),
+            decision: Some("matched"),
+            task: Some(rule.name.clone()),
+            change: rule.change_patterns.first().cloned(),
+            rule_origin: Some(rule.origin.clone()),
+            ..Default::default()
+        });
+    }
+    for path in batch.changed.iter().filter(|path| *path != trigger) {
+        emit_path_decision(watches, batch, path);
+    }
+}
+
+/// Emits `ignored` (with the winning ignore rule and its origin) or
+/// `unmatched` decisions for a batch whose paths never matched a task.
+fn emit_non_matched_decisions(watches: &Watches, batch: &Batch) {
+    for path in &batch.changed {
+        emit_path_decision(watches, batch, path);
+    }
+}
+
+/// One decision per path: `ignored` when an ignore rule won, else
+/// `unmatched`. Never executes work.
+fn emit_path_decision(watches: &Watches, batch: &Batch, path: &str) {
+    let explained = watches.explain(path);
+    if !explained.ignored.is_empty() {
+        for rule in &explained.ignored {
+            diagnostics::debug(&diagnostics::Record {
+                batch: Some(batch.id.0),
+                decision: Some("ignored"),
+                task: Some(rule.name.clone()),
+                ignore: rule.ignore_patterns.first().cloned(),
+                rule_origin: Some(rule.origin.clone()),
+                path: Some(path.to_owned()),
+                normalized: Some(watches.normalized_path(path)),
+                ..Default::default()
+            });
+        }
+        return;
+    }
+    if explained.matched.is_empty() {
+        diagnostics::debug(&diagnostics::Record {
+            batch: Some(batch.id.0),
+            decision: Some("unmatched"),
+            path: Some(path.to_owned()),
+            normalized: Some(watches.normalized_path(path)),
+            ..Default::default()
+        });
+    }
+}
+
+/// Feeds the loop heuristic for every matched task and relays its
+/// observational output: `observed_after_run` correlation records and the
+/// bounded `possible feedback loop` warning. Diagnostics never alter the
+/// scheduled generation or task results.
+fn observe_triggers(watches: &Watches, batch: &Batch, trigger: &str, generation: Option<u64>) {
+    let explained = watches.explain(trigger);
+    for rule in &explained.matched {
+        let change = rule.change_patterns.first().cloned().unwrap_or_default();
+        let Some(observation) = diagnostics::observe(&rule.name, trigger, &change, generation)
+        else {
+            continue;
+        };
+        if let Some(warning) = &observation.warning {
+            diagnostics::warn_loop(warning);
+        }
+        if let Some(after) = observation.observed_after_run {
+            diagnostics::debug(&diagnostics::Record {
+                batch: Some(batch.id.0),
+                source: Some("filesystem"),
+                kind: Some("any"),
+                path: Some(trigger.to_owned()),
+                normalized: Some(watches.normalized_path(trigger)),
+                observed_after_run: Some(after),
+                ..Default::default()
+            });
+        }
+    }
 }
 
 /// Blocking executor: expands command templates and runs tasks in-process,
@@ -128,20 +247,26 @@ impl BlockingStrategy {
 }
 
 impl RunStrategy for BlockingStrategy {
-    fn run_init(&self, plan: RunPlan) {
+    fn policy(&self) -> &'static str {
+        "wait"
+    }
+
+    fn run_init(&self, plan: RunPlan) -> Option<u64> {
         match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
             Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
             Err(error) => stdout::error(&error),
         }
+        None
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) {
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64> {
         let metadata =
             RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
         match self.workflow.run(plan, metadata, Some(filepath)) {
             Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
             Err(error) => stdout::error(&error),
         }
+        None
     }
 }
 
@@ -347,8 +472,19 @@ impl NonBlockStrategy {
             .watches
             .target_plan(target)
             .ok_or_else(|| format!("No target found for '{}'", target))?;
+        let commands = plan.commands().len();
         self.worker.cancel_running_tasks()?;
-        self.worker.schedule_target(plan, target)
+        let run_id = self.worker.schedule_target(plan, target)?;
+        diagnostics::debug(&diagnostics::Record {
+            source: Some("control"),
+            decision: Some("scheduled"),
+            generation: Some(run_id),
+            policy: Some("restart"),
+            commands: Some(commands),
+            task: Some(target.to_owned()),
+            ..Default::default()
+        });
+        Ok(run_id)
     }
 
     /// Routes one synthetic path change through the exact shared policy used
@@ -360,12 +496,34 @@ impl NonBlockStrategy {
         match self.watches.watch_plan(path) {
             Some(plan) => {
                 let matched = plan.task_names();
+                let commands = plan.commands().len();
                 self.worker.cancel_running_tasks()?;
                 let run_id = self.worker.schedule_plan(plan, path)?;
+                diagnostics::debug(&diagnostics::Record {
+                    source: Some("control"),
+                    decision: Some("scheduled"),
+                    generation: Some(run_id),
+                    policy: Some("restart"),
+                    commands: Some(commands),
+                    path: Some(path.to_owned()),
+                    normalized: Some(self.watches.normalized_path(path)),
+                    ..Default::default()
+                });
                 Ok(EmitOutcome::scheduled(matched, run_id))
             }
             None => {
                 let explained = self.watches.explain(path);
+                diagnostics::debug(&diagnostics::Record {
+                    source: Some("control"),
+                    decision: Some(if explained.ignored.is_empty() {
+                        "unmatched"
+                    } else {
+                        "ignored"
+                    }),
+                    path: Some(path.to_owned()),
+                    normalized: Some(self.watches.normalized_path(path)),
+                    ..Default::default()
+                });
                 Ok(if explained.ignored.is_empty() {
                     EmitOutcome::unmatched()
                 } else {
@@ -377,15 +535,23 @@ impl NonBlockStrategy {
 }
 
 impl RunStrategy for NonBlockStrategy {
+    fn policy(&self) -> &'static str {
+        "restart"
+    }
+
     fn on_ready(&self) {
         if let Some(server) = self.start_control_server() {
             *self.control_server.lock().unwrap() = Some(server);
         }
     }
 
-    fn run_init(&self, plan: RunPlan) {
-        if let Err(err) = self.worker.schedule_plan(plan, "") {
-            stdout::error(&format!("failed to initiate next run: {:?}", err));
+    fn run_init(&self, plan: RunPlan) -> Option<u64> {
+        match self.worker.schedule_plan(plan, "") {
+            Ok(run_id) => Some(run_id),
+            Err(err) => {
+                stdout::error(&format!("failed to initiate next run: {:?}", err));
+                None
+            }
         }
     }
 
@@ -401,7 +567,7 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) {
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64> {
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
                 "failed to cancel current running tasks: {:?}",
@@ -409,14 +575,30 @@ impl RunStrategy for NonBlockStrategy {
             ));
         }
 
-        if let Err(err) = self.worker.schedule_plan_correlated(
+        let commands = plan.commands().len();
+        match self.worker.schedule_plan_correlated(
             plan,
             filepath,
             Some(filepath),
             Some(batch.id.0),
             batch.changed.clone(),
         ) {
-            stdout::error(&format!("failed to initiate next run: {:?}", err));
+            Ok(run_id) => {
+                diagnostics::debug(&diagnostics::Record {
+                    batch: Some(batch.id.0),
+                    source: Some("filesystem"),
+                    decision: Some("scheduled"),
+                    generation: Some(run_id),
+                    policy: Some("restart"),
+                    commands: Some(commands),
+                    ..Default::default()
+                });
+                Some(run_id)
+            }
+            Err(err) => {
+                stdout::error(&format!("failed to initiate next run: {:?}", err));
+                None
+            }
         }
     }
 }

@@ -184,7 +184,7 @@ fn test_nested_groups_respect_ignore_patterns() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose") && output.contains("Watching...")
+                    output.contains("Funzzy debug:") && output.contains("Watching...")
                 },
                 "Funzzy did not start. OUTPUT: {}",
                 output
@@ -201,7 +201,7 @@ fn test_nested_groups_respect_ignore_patterns() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose: Events Ok")
+                    output.contains("source=filesystem")
                         && output.contains("examples/workdir/frontend/test.log")
                 },
                 "Event not detected. OUTPUT: {}",

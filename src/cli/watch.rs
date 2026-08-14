@@ -1,6 +1,5 @@
 use crate::cli::Command;
 use crate::errors::FzzError;
-use crate::stdout;
 use crate::watch_loop::{watch_loop, BlockingStrategy};
 use crate::watches::Watches;
 
@@ -20,8 +19,6 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
-        stdout::verbose(&watches.diagnostic_summary(), verbose);
-
         WatchCommand {
             watches,
             verbose,
@@ -33,8 +30,6 @@ impl WatchCommand {
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), FzzError> {
-        stdout::verbose("Verbose mode enabled.", self.verbose);
-
         let strategy = BlockingStrategy::new(
             self.watches.root().to_path_buf(),
             self.verbose,

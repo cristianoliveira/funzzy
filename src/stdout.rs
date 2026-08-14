@@ -69,23 +69,6 @@ pub fn failure(text: &str, err: String) -> ! {
     std::process::exit(1)
 }
 
-pub fn verbose(msg: &str, verbose: bool) {
-    if !verbose {
-        return;
-    }
-
-    let separator = "-----------------------------";
-    println!("{}", separator);
-    logging::log_line(separator);
-
-    let message = format!("Funzzy verbose: {} ", msg);
-    println!("{}", message);
-    logging::log_line(&message);
-
-    println!("{}", separator);
-    logging::log_line(separator);
-}
-
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {

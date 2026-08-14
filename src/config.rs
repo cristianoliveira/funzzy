@@ -254,7 +254,8 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let environment = yaml::extract_optional_string_map(yaml, "env")?;
 
     let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
-        .with_execution_context(cwd, environment);
+        .with_execution_context(cwd, environment)
+        .with_inherited_patterns(inherited_patterns(common));
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
@@ -271,6 +272,19 @@ fn merge_patterns(common: &[String], task: Vec<String>) -> Vec<String> {
         }
     }
     merged
+}
+
+/// The group-provided patterns (change + ignore) that tasks inherit. Used to
+/// mark `rule_origin=group` in diagnostics when one of these patterns is the
+/// effective rule for a decision.
+fn inherited_patterns(common: &CommonRules) -> Vec<String> {
+    let mut inherited = common.change.clone();
+    for pattern in &common.ignore {
+        if !inherited.contains(pattern) {
+            inherited.push(pattern.clone());
+        }
+    }
+    inherited
 }
 
 fn ensure_glob_only(patterns: Vec<String>, field_name: &str) -> errors::Result<Vec<String>> {

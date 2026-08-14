@@ -16,6 +16,9 @@ pub struct ExplainRule {
     pub cwd: String,
     /// Task-local environment names; values remain redacted.
     pub environment_keys: Vec<String>,
+    /// Where the effective rule came from (TASK-0023): `task` or `group`
+    /// when the responsible pattern was inherited from a group `on` section.
+    pub origin: String,
 }
 
 /// Result of explaining a path against the configured rules.
@@ -124,21 +127,6 @@ impl Watches {
         self.concurrency
     }
 
-    /// Redacted configuration summary for verbose diagnostics.
-    pub fn diagnostic_summary(&self) -> String {
-        let contexts = self
-            .topology
-            .resolve_context(&self.root)
-            .map(|plan| plan.context_summary())
-            .unwrap_or_else(|error| error);
-        format!(
-            "workspace={} concurrency={}\n{}",
-            self.root.display(),
-            self.concurrency,
-            contexts
-        )
-    }
-
     fn normalize_paths<'a>(&'a self, path: &'a str) -> (PathBuf, Option<String>) {
         let provided_path = Path::new(path);
         let absolute_path = if provided_path.is_absolute() {
@@ -153,6 +141,17 @@ impl Watches {
         };
 
         (absolute_path, relative_path)
+    }
+
+    /// The root-relative form of a path used for rule matching (TASK-0023):
+    /// the deterministic normalized path diagnostics report alongside the raw
+    /// event path. Falls back to the provided path when it is outside the
+    /// workspace root.
+    pub fn normalized_path(&self, path: &str) -> String {
+        let (_, relative) = self.normalize_paths(path);
+        relative
+            .map(|relative| relative.trim_start_matches('/').to_owned())
+            .unwrap_or_else(|| path.to_owned())
     }
 
     /// Returns all configured targets.
@@ -373,25 +372,42 @@ impl Watches {
                 .to_string();
             let environment_keys = rule.environment().keys().cloned().collect();
             if ignore_patterns.is_empty() {
+                let origin = Self::origin_for(rule, change_patterns.first(), None);
                 matched.push(ExplainRule {
                     name: rule.name.clone(),
                     change_patterns,
                     ignore_patterns: vec![],
                     cwd,
                     environment_keys,
+                    origin,
                 });
             } else {
+                let origin = Self::origin_for(rule, None, ignore_patterns.first());
                 ignored.push(ExplainRule {
                     name: rule.name.clone(),
                     change_patterns,
                     ignore_patterns,
                     cwd,
                     environment_keys,
+                    origin,
                 });
             }
         }
 
         ExplainResult { matched, ignored }
+    }
+
+    /// The effective-rule origin for one rule decision: `group` when the
+    /// responsible pattern was inherited from a group `on` section, else
+    /// `task`. The responsible pattern is the first matching change pattern
+    /// (or the first matching ignore pattern when the ignore won).
+    fn origin_for(rule: &Rules, change: Option<&String>, ignore: Option<&String>) -> String {
+        let inherited = rule.inherited_patterns();
+        let responsible = change.or(ignore);
+        match responsible {
+            Some(pattern) if inherited.iter().any(|p| p == pattern) => "group".to_owned(),
+            _ => "task".to_owned(),
+        }
     }
 
     /// Extract the directory to watch from a glob pattern.
@@ -562,6 +578,7 @@ mod tests {
         assert!(matched.matched[0].ignore_patterns.is_empty());
         assert!(matched.matched[0].cwd.ends_with("crates/tests"));
         assert_eq!(matched.matched[0].environment_keys, vec!["TOKEN"]);
+        assert_eq!(matched.matched[0].origin, "task");
         assert!(!format!("{:?}", matched.matched[0]).contains("secret"));
         assert!(matched.ignored.is_empty());
 
@@ -571,6 +588,7 @@ mod tests {
         assert_eq!(ignored.ignored[0].name, "my tests");
         assert_eq!(ignored.ignored[0].ignore_patterns, vec!["tests/ignored/**"]);
         assert_eq!(ignored.ignored[0].change_patterns, vec!["tests/**"]);
+        assert_eq!(ignored.ignored[0].origin, "task");
 
         let unmatched = watches.explain(&get_absolute_path("unknown/path.rs"));
         assert!(unmatched.matched.is_empty());
@@ -619,8 +637,18 @@ mod tests {
         let content = std::fs::read_to_string("examples/nested-groups.yml").expect("read example");
         let watches = Watches::new(config::from_yaml(&content).expect("Error parsing yaml"));
 
-        // frontend-build inherits the group change patterns.
+        // frontend-build inherits the group change patterns; the effective
+        // rule origin must be reported as the group, not the task.
         let matched = watches.explain("src/frontend/App.tsx");
+        let frontend = matched
+            .matched
+            .iter()
+            .find(|rule| rule.name == "frontend-build")
+            .expect("frontend-build must match");
+        assert_eq!(
+            frontend.origin, "group",
+            "group-inherited patterns must be reported with group origin"
+        );
         let names: Vec<&str> = matched
             .matched
             .iter()

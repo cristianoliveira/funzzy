@@ -1,3 +1,4 @@
+use crate::diagnostics;
 use crate::logging;
 use crate::plan::TaskContext;
 use crate::stdout;
@@ -250,13 +251,16 @@ impl LoggedChild {
         }
 
         let pgid = self.child.id() as i32;
-        stdout::verbose(
-            &format!(
-                "---- signalling process group -{} with {:?} ----",
-                pgid, signal
-            ),
-            verbose,
-        );
+        if verbose {
+            diagnostics::debug(&diagnostics::Record {
+                decision: Some("cancel"),
+                note: Some(format!(
+                    "signalling process group -{} with {:?}",
+                    pgid, signal
+                )),
+                ..Default::default()
+            });
+        }
 
         // 2. Signal the whole process group (negative pid).
         let _ = signal::kill(Pid::from_raw(-pgid), signal);
@@ -275,13 +279,16 @@ impl LoggedChild {
         }
 
         // 4. Grace elapsed: escalate to SIGKILL on the group and reap.
-        stdout::verbose(
-            &format!(
-                "---- grace of {:?} elapsed; force-killing process group -{} ----",
-                grace, pgid
-            ),
-            verbose,
-        );
+        if verbose {
+            diagnostics::debug(&diagnostics::Record {
+                decision: Some("cancel"),
+                note: Some(format!(
+                    "grace of {:?} elapsed; force-killing process group -{}",
+                    grace, pgid
+                )),
+                ..Default::default()
+            });
+        }
         let _ = signal::kill(Pid::from_raw(-pgid), Signal::SIGKILL);
         let status = self.child.wait().ok();
         self.join_forwarding_threads();

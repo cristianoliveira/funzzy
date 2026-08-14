@@ -8,6 +8,7 @@ pub mod cmd;
 pub mod config;
 pub mod control;
 pub mod control_client;
+pub mod diagnostics;
 pub mod duration_history;
 pub mod duration_recorder;
 pub mod duration_store;

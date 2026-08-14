@@ -31,6 +31,10 @@ pub struct Rules {
     cwd: Option<String>,
     /// Per-task environment overlay. Values are never applied globally.
     environment: BTreeMap<String, String>,
+    /// Patterns inherited from a group `on` section (TASK-0023). Diagnostics
+    /// use this to report `rule_origin=group` vs `task` for the effective
+    /// rule responsible for a decision. Empty for plain task lists.
+    inherited: Vec<String>,
 }
 
 impl Rules {
@@ -51,6 +55,7 @@ impl Rules {
             parallel: None,
             cwd: None,
             environment: BTreeMap::new(),
+            inherited: vec![],
         }
     }
 
@@ -74,6 +79,7 @@ impl Rules {
             parallel: None,
             cwd: None,
             environment: BTreeMap::new(),
+            inherited: vec![],
         }
     }
 
@@ -94,6 +100,19 @@ impl Rules {
 
     pub fn environment(&self) -> &BTreeMap<String, String> {
         &self.environment
+    }
+
+    /// Marks patterns inherited from a group `on` section (TASK-0023): the
+    /// effective rule origin for diagnostics. Set by the config parser when
+    /// merging group scope into tasks.
+    pub fn with_inherited_patterns(mut self, inherited: Vec<String>) -> Self {
+        self.inherited = inherited;
+        self
+    }
+
+    /// Patterns inherited from a group `on` section, if any.
+    pub fn inherited_patterns(&self) -> &[String] {
+        &self.inherited
     }
 
     /// Declares the task as a member of the named `parallel` group. Only

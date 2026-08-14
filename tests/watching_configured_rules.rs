@@ -57,7 +57,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose") && output.contains("Watching...")
+                    output.contains("Funzzy debug:") && output.contains("Watching...")
                 },
                 "Funzzy has not been started with verbose mode {}",
                 output
@@ -73,10 +73,10 @@ fn test_it_is_not_triggered_by_ignored_files() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose: Events Ok")
+                    output.contains("source=filesystem")
                         && output.contains("examples/workdir/ignored/modifyme.txt")
                 },
-                "Failed to find Events Ok: {}",
+                "Failed to find the event record: {}",
                 output
             );
 
@@ -214,8 +214,7 @@ fn accepts_full_or_relativepaths() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose: Verbose mode enabled.")
-                        && output.contains("Watching...")
+                    output.contains("decision=startup") && output.contains("Watching...")
                 },
                 "fzz not started in verbose {}",
                 output
@@ -236,7 +235,8 @@ fn accepts_full_or_relativepaths() {
                     output
                         .split("\n")
                         .filter(|line| {
-                            line.starts_with("Funzzy verbose: Triggered")
+                            line.starts_with("Funzzy debug:")
+                                && line.contains("decision=matched")
                                 && (line.contains(&f1)
                                     || line.contains(&f2)
                                     || line.contains("examples/workdir/trigger-watcher.txt"))
@@ -246,7 +246,8 @@ fn accepts_full_or_relativepaths() {
                         && output
                             .split("\n")
                             .find(|line| {
-                                line.starts_with("Funzzy verbose: Triggered")
+                                line.starts_with("Funzzy debug:")
+                                    && line.contains("decision=matched")
                                     && (line.contains(&f3)
                                         || line.contains("examples/workdir/ignored/modify.txt"))
                             })
@@ -290,7 +291,7 @@ fn fails_with_unkown_paths() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("Funzzy verbose: Verbose mode enabled.")
+                    output.contains("decision=startup")
                 },
                 "fzz not started in verbose {}",
                 output

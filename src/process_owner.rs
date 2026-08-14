@@ -18,7 +18,7 @@ use nix::unistd::Pid;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::stdout;
+use crate::diagnostics;
 
 /// Registered owned process-group IDs (each equals the leader's PID, since
 /// tasks call `setpgid(0, 0)` before exec).
@@ -72,13 +72,16 @@ pub fn shutdown_all(signal: Signal, grace: Duration, verbose: bool) -> ShutdownT
 
     // 1. Initial signal to every owned group.
     for pgid in &groups {
-        stdout::verbose(
-            &format!(
-                "---- signalling process group -{} with {:?} ----",
-                pgid, signal
-            ),
-            verbose,
-        );
+        if verbose {
+            diagnostics::debug(&diagnostics::Record {
+                decision: Some("cancel"),
+                note: Some(format!(
+                    "signalling process group -{} with {:?}",
+                    pgid, signal
+                )),
+                ..Default::default()
+            });
+        }
         let _ = signal::kill(Pid::from_raw(-*pgid), signal);
     }
 
@@ -94,13 +97,16 @@ pub fn shutdown_all(signal: Signal, grace: Duration, verbose: bool) -> ShutdownT
 
     // 3. Escalate: SIGKILL any group still alive.
     for pgid in &pending {
-        stdout::verbose(
-            &format!(
-                "---- grace of {:?} elapsed; force-killing process group -{} ----",
-                grace, pgid
-            ),
-            verbose,
-        );
+        if verbose {
+            diagnostics::debug(&diagnostics::Record {
+                decision: Some("cancel"),
+                note: Some(format!(
+                    "grace of {:?} elapsed; force-killing process group -{}",
+                    grace, pgid
+                )),
+                ..Default::default()
+            });
+        }
         let _ = signal::kill(Pid::from_raw(-*pgid), Signal::SIGKILL);
     }
     tally.force_killed = pending.len() as u32;

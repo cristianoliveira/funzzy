@@ -12,7 +12,7 @@ use crate::duration_store::{state_file_path, DurationStore, STATE_SCHEMA_VERSION
 use crate::errors;
 use crate::errors::FzzError;
 use crate::watches::Watches;
-use crate::{config, environment, logging, rules, stdout, watcher};
+use crate::{config, diagnostics, environment, logging, rules, stdout, watcher};
 
 use nix::{
     sys::signal::{self, Signal},
@@ -29,6 +29,10 @@ use std::sync::Arc;
 /// start the watcher or exit with a message.
 pub fn run() {
     let args = Arguments::parse();
+
+    // Diagnostics (TASK-0023): one process-wide sink gated on the verbose
+    // flag; records render identically to terminal and log file.
+    diagnostics::init(args.verbose);
 
     if args.log_truncate_on_change && args.log_file.is_none() {
         stdout::failure(
@@ -339,13 +343,17 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
                 .map(|modified| (path.clone(), modified))
         })
         .collect();
+    let startup_config_paths = config_file_paths.clone();
     let th = std::thread::spawn(move || {
         let baselines = std::sync::Mutex::new(baselines);
         watcher::events(
-            config_file_paths,
+            startup_config_paths,
             || {},
-            move |changed_paths: &[String]| {
-                let file_changed = changed_paths.first().cloned().unwrap_or_default();
+            move |_batch_id: u64, events: &[watcher::FileEvent]| {
+                let file_changed = events
+                    .first()
+                    .map(|event| event.path.clone())
+                    .unwrap_or_default();
 
                 // Ignore events that do not reflect a real modification since
                 // the watcher started (historical FSEvents replays).
@@ -406,6 +414,16 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
         || args.control_socket.is_some();
 
     let run_on_init = !args.no_run_on_init;
+    if verbose {
+        emit_startup_record(
+            &watches,
+            &config_file_paths,
+            args.control_socket.as_deref(),
+            args.log_file.as_deref(),
+            run_on_init,
+            non_block,
+        );
+    }
     if non_block {
         // Task children lead their own process groups (cmd::spawn_configured),
         // so SIGINT/SIGTERM to funzzy's foreground group no longer reaches
@@ -424,6 +442,42 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");
+}
+
+/// One deterministic startup record (TASK-0023): config path, workspace
+/// root, watch roots, task count, busy policy, run-on-init state, log
+/// destination, and control socket. The summary is compact and never dumps
+/// the full configuration.
+fn emit_startup_record(
+    watches: &Watches,
+    config_file_paths: &[String],
+    control_socket: Option<&str>,
+    log_file: Option<&str>,
+    run_on_init: bool,
+    non_block: bool,
+) {
+    let config_path = config_file_paths
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".to_owned());
+    let watch_roots = watches.paths_to_watch().unwrap_or_default().join(",");
+    let policy = if non_block { "restart" } else { "wait" };
+    diagnostics::debug(&diagnostics::Record {
+        source: Some("config"),
+        decision: Some("startup"),
+        path: Some(config_path),
+        note: Some(format!(
+            "workspace={} tasks={} policy={} run_on_init={} log={} socket={} watch_roots={}",
+            watches.root().display(),
+            watches.targets().len(),
+            policy,
+            run_on_init,
+            log_file.unwrap_or("none"),
+            control_socket.unwrap_or("none"),
+            watch_roots,
+        )),
+        ..Default::default()
+    });
 }
 
 /// Catches SIGINT and SIGTERM on a dedicated thread and routes them through

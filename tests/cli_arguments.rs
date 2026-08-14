@@ -559,7 +559,7 @@ fn verbose_short_flag_starts_watcher_in_verbose() {
     });
     let output = wait_for_output(&log_name, "Running on init commands.");
     assert!(
-        output.contains("Funzzy verbose"),
+        output.contains("Funzzy debug:"),
         "verbose watch must enable diagnostics before its init run:\n{}",
         output
     );

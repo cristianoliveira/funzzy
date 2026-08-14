@@ -6,7 +6,6 @@ use crate::duration_store::{state_file_path, DurationStore, STATE_SCHEMA_VERSION
 use crate::errors::FzzError;
 use crate::output::OutputRegistry;
 use crate::snapshot::SnapshotBroker;
-use crate::stdout;
 use crate::watch_loop::{watch_loop, NonBlockStrategy};
 use crate::watches::Watches;
 use crate::workers;
@@ -35,8 +34,6 @@ impl WatchNonBlockCommand {
         run_on_init: bool,
         control_socket: Option<PathBuf>,
     ) -> Self {
-        stdout::verbose(&watches.diagnostic_summary(), verbose);
-
         WatchNonBlockCommand {
             watches,
             verbose,
@@ -49,8 +46,6 @@ impl WatchNonBlockCommand {
 
 impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), FzzError> {
-        stdout::verbose("Verbose mode enabled.", self.verbose);
-
         let control_state = Arc::new(Mutex::new(ControlState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         let outputs = Arc::new(OutputRegistry::new());

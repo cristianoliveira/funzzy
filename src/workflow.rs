@@ -4,6 +4,7 @@
 //! resolve task context, expand templates, execute the plan, and report a
 //! combined outcome. Filesystem watching and control IPC stay outside.
 
+use crate::diagnostics;
 use crate::duration_recorder::DurationRecorder;
 use crate::executor::{CompletedRun, Executor, RunMetadata, SystemClock, SystemProcessRunner};
 use crate::plan::RunPlan;
@@ -71,7 +72,25 @@ impl WorkflowRunner {
             filepath: filepath.map(str::to_owned),
             current_dir: self.root.display().to_string(),
         });
-        stdout::verbose(&plan.context_summary(), self.verbose);
+        if self.verbose {
+            // Blocking strategy: one in-process run per decision; the record
+            // carries the debounce batch when scheduled from a file change.
+            diagnostics::debug(&diagnostics::Record {
+                batch: metadata.batch,
+                source: if metadata.target.is_some() {
+                    Some("control")
+                } else if metadata.batch.is_some() {
+                    Some("filesystem")
+                } else {
+                    Some("init")
+                },
+                decision: Some("scheduled"),
+                generation: Some(metadata.run_id),
+                policy: Some("wait"),
+                commands: Some(plan.commands().len()),
+                ..Default::default()
+            });
+        }
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }

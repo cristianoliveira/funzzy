@@ -197,7 +197,6 @@ pub struct Worker {
     scheduler: Option<Arc<Scheduler>>,
     next_run_id: AtomicU64,
     root: PathBuf,
-    verbose: bool,
     /// Task concurrency bound; part of the execution signature (TASK-0054).
     concurrency: usize,
     /// Fail-fast policy; part of the execution signature (TASK-0054).
@@ -266,11 +265,7 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
-        stdout::verbose("Worker in verbose mode.", verbose);
         let events: Arc<dyn EventSink> = Arc::new(move |event: Event| {
-            if let Event::Tick { task, .. } = &event {
-                stdout::verbose(&format!("waiting next tick for task: {}", task), verbose);
-            }
             on_event(event);
         });
         let scheduler = Arc::new(Scheduler::new(Arc::clone(&events)));
@@ -393,7 +388,6 @@ impl Worker {
             scheduler: Some(scheduler),
             next_run_id: AtomicU64::new(0),
             root,
-            verbose,
             concurrency,
             fail_fast,
             consumer: Some(consumer),
@@ -526,7 +520,6 @@ impl Worker {
             filepath: filepath.map(str::to_string),
             current_dir: format!("{}", self.root.display()),
         });
-        stdout::verbose(&plan.context_summary(), self.verbose);
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }

@@ -5,6 +5,7 @@
 //! policies only decide how plans are submitted or replaced.
 
 use crate::cmd::{self, CaptureHandle, LoggedChild, ShutdownOutcome};
+use crate::diagnostics;
 use crate::output::OutputRegistry;
 use crate::plan::{
     ExecutionSignature, RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan,
@@ -277,6 +278,10 @@ struct ActiveTask {
     /// Bounded per-stream output capture for this task, when the executor
     /// feeds a retention registry (TASK-0045).
     capture: Option<Arc<CaptureHandle>>,
+    /// Position of the next command to spawn within this task (1-based),
+    /// and the total command count; drive the `command=1/3` diagnostics.
+    command_index: usize,
+    command_total: usize,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -284,7 +289,7 @@ impl From<TaskPlan> for ActiveTask {
         Self {
             name: task.name,
             position: task.position,
-            commands: task.commands.into(),
+            commands: task.commands.clone().into(),
             child: None,
             current_command: None,
             failures: vec![],
@@ -293,6 +298,8 @@ impl From<TaskPlan> for ActiveTask {
             group_occurrence: task.group_occurrence,
             started: None,
             capture: None,
+            command_index: 0,
+            command_total: task.commands.len(),
         }
     }
 }
@@ -436,7 +443,11 @@ impl Executor {
             let mut task_finished = false;
             let mut index = 0;
             while index < run.active.len() {
-                match self.advance_task(&mut run.active[index], &mut run.results) {
+                match self.advance_task(
+                    &mut run.active[index],
+                    &mut run.results,
+                    run.metadata.run_id,
+                ) {
                     TaskStep::Running => index += 1,
                     TaskStep::Finished => {
                         let task = run.active.remove(index);
@@ -477,6 +488,7 @@ impl Executor {
         &self,
         task: &mut ActiveTask,
         results: &mut Vec<Result<(), String>>,
+        run_id: u64,
     ) -> TaskStep {
         if !task.context_validated {
             task.context_validated = true;
@@ -515,8 +527,18 @@ impl Executor {
                 {
                     Ok(child) => {
                         task.child = Some(child);
+                        task.command_index += 1;
                         if task.started.is_none() {
                             task.started = Some(self.clock.now());
+                        }
+                        if self.verbose {
+                            diagnostics::debug(&diagnostics::Record {
+                                generation: Some(run_id),
+                                command_position: Some((task.command_index, task.command_total)),
+                                state: Some("started"),
+                                command: Some(display.clone()),
+                                ..Default::default()
+                            });
                         }
                         self.events.emit(Event::Tick {
                             task: task.name.clone(),
@@ -678,6 +700,18 @@ impl Executor {
                 .collect(),
         );
         let failures = outcome.failures();
+        if self.verbose {
+            diagnostics::debug(&diagnostics::Record {
+                generation: Some(run.metadata.run_id),
+                state: Some(if outcome.is_success() {
+                    "passed"
+                } else {
+                    "failed"
+                }),
+                duration: Some(format!("{:.3}s", elapsed.as_secs_f64())),
+                ..Default::default()
+            });
+        }
         self.events.emit(Event::Finished {
             run_id: run.metadata.run_id,
             superseded_by: run.superseded_by,
@@ -741,6 +775,18 @@ impl Executor {
         run.active.clear();
         run.queued.clear();
         run.stages.clear();
+        if self.verbose {
+            diagnostics::debug(&diagnostics::Record {
+                generation: Some(run.metadata.run_id),
+                state: Some("cancelled"),
+                reason: Some(if superseded_by.is_some() {
+                    "replaced".to_owned()
+                } else {
+                    "requested".to_owned()
+                }),
+                ..Default::default()
+            });
+        }
         self.events.emit(Event::Cancelled {
             run_id: run.metadata.run_id,
             superseded_by,
@@ -758,30 +804,8 @@ impl Executor {
             return false;
         };
         let (signal, grace) = crate::process_owner::shutdown_policy();
-        stdout::verbose(
-            &format!("---- cancelling task: {:?} ----", task.name),
-            self.verbose,
-        );
         let outcome = child.shutdown(signal, grace, self.verbose);
         let escalated = matches!(outcome, ShutdownOutcome::Escalated { .. });
-        let report = match outcome {
-            ShutdownOutcome::AlreadyExited(status) | ShutdownOutcome::Terminated(status) => {
-                format!(
-                    "---- finished task: {:?} status: {} ----",
-                    task.name, status
-                )
-            }
-            ShutdownOutcome::Escalated { status } => {
-                let detail = status
-                    .map(|status| status.to_string())
-                    .unwrap_or_else(|| "(reap failed)".to_owned());
-                format!(
-                    "---- force-killed task: {:?} status: {} ----",
-                    task.name, detail
-                )
-            }
-        };
-        stdout::verbose(&report, self.verbose);
         task.child = None;
         task.commands.clear();
         escalated
