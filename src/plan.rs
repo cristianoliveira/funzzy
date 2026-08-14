@@ -11,14 +11,32 @@
 
 use crate::rules::{CommandLine, Rules};
 use crate::template::{self, TemplateOptions};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+
+/// Schema version of the canonical signature encoding (contract §5). Bump
+/// only on a breaking encoding change; bumping invalidates all old profiles.
+pub const SIGNATURE_SCHEMA_VERSION: u64 = 1;
 
 /// Process context applied only to one task's child commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskContext {
     pub cwd: Option<PathBuf>,
     pub environment: BTreeMap<String, String>,
+}
+
+/// Stable execution identity (contract §5): canonical SHA-256 over the run
+/// plan, topology, cwd, declared environment content, jobs, fail-fast, and
+/// schema version. Never displays command or environment content; safe to
+/// persist as a profile key.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExecutionSignature(pub String);
+
+impl std::fmt::Display for ExecutionSignature {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
 }
 
 /// One task selected for execution, with stable identity and sequential
@@ -362,6 +380,149 @@ impl RunPlan {
             })
             .collect()
     }
+
+    /// Stable execution identity (contract §5): canonical SHA-256 over stage
+    /// order and barriers, task/group identity, shell-vs-argv boundaries,
+    /// resolved cwd, declared environment content, jobs, fail-fast, and
+    /// schema version. Deterministic across restarts and map insertion
+    /// order; environment **values** participate only as hash input and are
+    /// never part of the displayable signature or persisted metadata.
+    ///
+    /// `DefaultHasher` is deliberately not used: its output is not a
+    /// compatibility contract across processes or releases.
+    pub fn execution_signature(&self, jobs: usize, fail_fast: bool) -> ExecutionSignature {
+        execution_signature_for(self, jobs, fail_fast, SIGNATURE_SCHEMA_VERSION)
+    }
+}
+
+/// Internal signature builder with an explicit schema version so tests can
+/// prove a version bump invalidates old profiles.
+fn execution_signature_for(
+    plan: &RunPlan,
+    jobs: usize,
+    fail_fast: bool,
+    schema_version: u64,
+) -> ExecutionSignature {
+    let mut canonical = CanonicalEncoder::new();
+    canonical.u64(schema_version);
+    canonical.u64(jobs as u64);
+    canonical.bool(fail_fast);
+
+    canonical.u64(plan.stages.len() as u64);
+    for stage in &plan.stages {
+        match stage {
+            Stage::Serial(task) => {
+                canonical.byte(0); // serial stage tag
+                task.encode(&mut canonical);
+            }
+            Stage::Parallel { group, tasks } => {
+                canonical.byte(1); // parallel stage tag
+                canonical.string(group);
+                canonical.u64(tasks.len() as u64);
+                for task in tasks {
+                    task.encode(&mut canonical);
+                }
+            }
+        }
+    }
+
+    ExecutionSignature(hex(&Sha256::digest(&canonical.bytes)))
+}
+
+/// Canonical, ambiguity-free byte encoder for signature material. Lengths are
+/// u64 little-endian prefixes so concatenations cannot collide; strings are
+/// UTF-8 bytes; environment maps iterate in sorted key order (BTreeMap), so
+/// insertion order cannot change the digest.
+struct CanonicalEncoder {
+    bytes: Vec<u8>,
+}
+
+impl CanonicalEncoder {
+    fn new() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn byte(&mut self, value: u8) {
+        self.bytes.push(value);
+    }
+
+    fn bool(&mut self, value: bool) {
+        self.bytes.push(value as u8);
+    }
+
+    fn len_prefixed(&mut self, data: &[u8]) {
+        self.u64(data.len() as u64);
+        self.bytes.extend_from_slice(data);
+    }
+
+    fn string(&mut self, value: &str) {
+        self.len_prefixed(value.as_bytes());
+    }
+
+    fn optional_string(&mut self, value: Option<&str>) {
+        match value {
+            Some(value) => {
+                self.byte(1);
+                self.string(value);
+            }
+            None => self.byte(0),
+        }
+    }
+}
+
+impl TaskPlan {
+    /// Encodes one task's identity and execution-relevant content in canonical
+    /// form: name, group/occurrence identity, command shell-vs-argv boundary
+    /// and content, resolved cwd, and declared environment key/value content
+    /// (values hashed, never displayed).
+    fn encode(&self, canonical: &mut CanonicalEncoder) {
+        canonical.string(&self.name);
+        canonical.optional_string(self.parallel.as_deref());
+        canonical.optional_string(self.group_occurrence.as_deref());
+        canonical.u64(self.commands.len() as u64);
+        for command in &self.commands {
+            match command {
+                CommandLine::Shell(command) => {
+                    canonical.byte(0); // shell tag
+                    canonical.string(command);
+                }
+                CommandLine::Argv(argv) => {
+                    canonical.byte(1); // argv tag
+                    canonical.u64(argv.len() as u64);
+                    for argument in argv {
+                        canonical.string(argument);
+                    }
+                }
+            }
+        }
+        match &self.context.cwd {
+            Some(cwd) => {
+                canonical.byte(1);
+                canonical.string(&cwd.display().to_string());
+            }
+            None => canonical.byte(0),
+        }
+        canonical.u64(self.context.environment.len() as u64);
+        for (key, value) in &self.context.environment {
+            canonical.string(key);
+            canonical.string(value);
+        }
+    }
+}
+
+/// Lowercase hex encoding of a digest, stable and dependency-free.
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(DIGITS[(byte >> 4) as usize] as char);
+        output.push(DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 impl RunOutcome {
@@ -806,5 +967,191 @@ mod tests {
         );
         // Unknown template variables are reported without side effects.
         assert_eq!(unknown, vec!["oops".to_owned()]);
+    }
+
+    // --- Execution signature (contract §5, matrix in §8) ---
+
+    fn env_rule(name: &str, cwd: Option<&str>, env: BTreeMap<String, String>) -> Rules {
+        Rules::new(
+            name.to_owned(),
+            vec!["echo hi".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_execution_context(cwd.map(str::to_owned), env)
+    }
+
+    #[test]
+    fn signature_is_deterministic_for_identical_plan() {
+        let plan = RunPlan::from_rules(vec![rule("A", None, false), rule("B", Some("g"), false)]);
+        let first = plan.execution_signature(4, false);
+        let second = plan.execution_signature(4, false);
+        assert_eq!(first, second);
+        assert_eq!(first.to_string().len(), 64, "sha256 lowercase hex");
+    }
+
+    #[test]
+    fn signature_ignores_environment_map_insertion_order() {
+        let mut env_a = BTreeMap::new();
+        env_a.insert("A".to_owned(), "1".to_owned());
+        env_a.insert("B".to_owned(), "2".to_owned());
+        let mut env_b = BTreeMap::new();
+        env_b.insert("B".to_owned(), "2".to_owned());
+        env_b.insert("A".to_owned(), "1".to_owned());
+        let plan_a = RunPlan::from_rules(vec![env_rule("A", None, env_a)]);
+        let plan_b = RunPlan::from_rules(vec![env_rule("A", None, env_b)]);
+        assert_eq!(
+            plan_a.execution_signature(1, false),
+            plan_b.execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_command_content() {
+        let a = Rules::new(
+            "t".to_owned(),
+            vec!["make build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let b = Rules::new(
+            "t".to_owned(),
+            vec!["make test".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        assert_ne!(
+            RunPlan::from_rules(vec![a]).execution_signature(1, false),
+            RunPlan::from_rules(vec![b]).execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_distinguishes_shell_from_argv_boundaries() {
+        let shell = Rules::new(
+            "t".to_owned(),
+            vec!["cargo fmt".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let argv = Rules::from_argv(
+            "t".to_owned(),
+            vec!["cargo".to_owned(), "fmt".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        assert_ne!(
+            RunPlan::from_rules(vec![shell]).execution_signature(1, false),
+            RunPlan::from_rules(vec![argv]).execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_resolved_cwd() {
+        let plan_a = RunPlan::from_rules(vec![env_rule("A", Some("packages/a"), BTreeMap::new())]);
+        let plan_b = RunPlan::from_rules(vec![env_rule("A", Some("packages/b"), BTreeMap::new())]);
+        assert_ne!(
+            plan_a.execution_signature(1, false),
+            plan_b.execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_environment_content() {
+        let plan_a = RunPlan::from_rules(vec![env_rule(
+            "A",
+            None,
+            BTreeMap::from([("ROLE".to_owned(), "web".to_owned())]),
+        )]);
+        let plan_b = RunPlan::from_rules(vec![env_rule(
+            "A",
+            None,
+            BTreeMap::from([("ROLE".to_owned(), "worker".to_owned())]),
+        )]);
+        assert_ne!(
+            plan_a.execution_signature(1, false),
+            plan_b.execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_topology_and_group_identity() {
+        // Two serial tasks vs one parallel group of two: topology differs.
+        let serial = RunPlan::from_rules(vec![rule("A", None, false), rule("B", None, false)]);
+        let parallel = RunPlan::from_rules(vec![
+            rule("A", Some("g"), false),
+            rule("B", Some("g"), false),
+        ]);
+        assert_ne!(
+            serial.execution_signature(2, false),
+            parallel.execution_signature(2, false)
+        );
+
+        // Group name change differs even with same task names.
+        let group_one = RunPlan::from_rules(vec![rule("A", Some("one"), false)]);
+        let group_two = RunPlan::from_rules(vec![rule("A", Some("two"), false)]);
+        assert_ne!(
+            group_one.execution_signature(1, false),
+            group_two.execution_signature(1, false)
+        );
+
+        // Reused group name after a barrier gets a new occurrence identity.
+        let split = RunPlan::from_rules(vec![
+            rule("A", Some("x"), false),
+            rule("B", None, false),
+            rule("C", Some("x"), false),
+        ]);
+        let contiguous = RunPlan::from_rules(vec![
+            rule("A", Some("x"), false),
+            rule("B", Some("x"), false),
+            rule("C", Some("x"), false),
+        ]);
+        assert_ne!(
+            split.execution_signature(1, false),
+            contiguous.execution_signature(1, false)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_jobs_and_fail_fast() {
+        let plan = RunPlan::from_rules(vec![rule("A", None, false), rule("B", None, false)]);
+        assert_ne!(
+            plan.execution_signature(1, false),
+            plan.execution_signature(2, false)
+        );
+        assert_ne!(
+            plan.execution_signature(1, false),
+            plan.execution_signature(1, true)
+        );
+    }
+
+    #[test]
+    fn signature_changes_with_schema_version() {
+        let plan = RunPlan::from_rules(vec![rule("A", None, false)]);
+        assert_ne!(
+            execution_signature_for(&plan, 1, false, 1),
+            execution_signature_for(&plan, 1, false, 2)
+        );
+    }
+
+    #[test]
+    fn signature_hashes_secret_environment_values_without_displaying_them() {
+        let secret = "super-secret-token-123";
+        let plan = RunPlan::from_rules(vec![env_rule(
+            "A",
+            None,
+            BTreeMap::from([("API_TOKEN".to_owned(), secret.to_owned())]),
+        )]);
+        let signature = plan.execution_signature(1, false);
+        // The signature is opaque hex: the secret never appears in it, and
+        // the signature carries no readable command/env content.
+        assert!(!signature.to_string().contains(secret));
+        assert!(!signature.to_string().contains("API_TOKEN"));
+        assert!(!signature.to_string().contains("echo"));
     }
 }

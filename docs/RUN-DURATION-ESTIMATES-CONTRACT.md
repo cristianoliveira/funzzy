@@ -61,7 +61,7 @@ Locked formulas (implemented and tested in TASK-0052):
 
 | Field | Formula |
 | --- | --- |
-| `typicalMs` | median of successful durations (nearest-rank, sorted copy) |
+| `typicalMs` | median of successful durations (mean of the two middle values for even counts, on a sorted copy) |
 | `upperMs` | nearest-rank p90 of successful durations |
 | `recommendedTimeoutMs` | `clamp(max(configured_floor, 10_000, upperMs * 1.5 + 2_000), 15 * 60_000)` |
 | `samples` | count of retained success samples |
