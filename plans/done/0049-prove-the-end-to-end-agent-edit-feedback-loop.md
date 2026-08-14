@@ -1,7 +1,7 @@
 ---
 id: TASK-0049
 title: Prove the end-to-end agent edit feedback loop
-status: todo
+status: done
 depends_on: [TASK-0034, TASK-0045, TASK-0046, TASK-0048, TASK-0050]
 priority: high
 tags: [integration-tests, axi, control-socket, reliability, performance]
