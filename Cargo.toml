@@ -24,6 +24,7 @@ serde = "1.0" # if you're using `derive(Deserialize)`
 serde_derive = "1.0" # if you're using `derive(Deserialize)`
 serde_json = "1.0"
 toon = { version = "0.1.2", default-features = false }
+ignore = "0.4.33"
 notify = "4.0.0"
 yaml-rust = "0.4.5"
 glob="^0.3"

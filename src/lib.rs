@@ -16,6 +16,7 @@ pub mod environment;
 pub mod errors;
 pub mod event_stream;
 pub mod executor;
+pub mod gitignore;
 pub mod identity;
 pub mod logging;
 pub mod output;

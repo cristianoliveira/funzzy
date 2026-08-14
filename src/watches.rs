@@ -92,6 +92,12 @@ pub struct Watches {
     debounce: Duration,
     /// Filesystem backend policy (TASK-0037): native, poll, or auto.
     backend: crate::watcher::WatchBackend,
+    /// Whether workspace `.gitignore` rules are respected (TASK-0036).
+    respect_gitignore: bool,
+    /// Root-anchored gitignore matcher; rebuilt when the gitignore changes.
+    /// Interior mutability so routing can refresh before each batch without
+    /// an event-loss gap (TASK-0036 §4).
+    gitignore: Option<std::sync::Arc<std::sync::Mutex<crate::gitignore::GitignoreMatcher>>>,
 }
 impl Watches {
     /// Convenience constructor resolving the workspace root from the process
@@ -121,6 +127,8 @@ impl Watches {
             concurrency,
             debounce: Duration::from_millis(1000),
             backend: crate::watcher::WatchBackend::Auto,
+            respect_gitignore: false,
+            gitignore: None,
         }
     }
 
@@ -147,6 +155,39 @@ impl Watches {
         self.backend
     }
 
+    /// Enables gitignore respect and builds the root-anchored matcher
+    /// (TASK-0036). Explicit config `ignore` rules stay strongest.
+    pub fn with_gitignore(mut self, respect: bool) -> Self {
+        self.respect_gitignore = respect;
+        self.gitignore = respect.then(|| {
+            std::sync::Arc::new(std::sync::Mutex::new(
+                crate::gitignore::GitignoreMatcher::new(self.root.clone()),
+            ))
+        });
+        self
+    }
+
+    /// Whether a root-relative path is excluded by workspace gitignore rules,
+    /// refreshing the matcher first when the workspace gitignore changed (no
+    /// event-loss gap).
+    pub fn gitignored(&self, relative: &std::path::Path) -> bool {
+        self.gitignore
+            .as_ref()
+            .map(|matcher| {
+                let mut matcher = matcher.lock().unwrap();
+                if matcher.needs_rebuild() {
+                    matcher.rebuild();
+                }
+                matcher.is_ignored(relative)
+            })
+            .unwrap_or(false)
+    }
+
+    /// True when gitignore respect is enabled.
+    pub fn respects_gitignore(&self) -> bool {
+        self.respect_gitignore
+    }
+
     /// Narrows visible rules while retaining barriers from original topology.
     pub fn select_target(&self, target: &str) -> Option<Self> {
         let rules: Vec<Rules> = self
@@ -168,6 +209,8 @@ impl Watches {
             concurrency: self.concurrency,
             debounce: self.debounce,
             backend: self.backend,
+            respect_gitignore: self.respect_gitignore,
+            gitignore: self.gitignore.clone(),
         })
     }
 
@@ -295,6 +338,20 @@ impl Watches {
                 .unwrap_or(false);
             if ignored_by_absolute || ignored_by_relative {
                 return false;
+            }
+
+            // TASK-0036: gitignore applies only when enabled and never beats
+            // the explicit config `ignore` (checked above). Root-relative
+            // matching keeps behavior identical for absolute inputs.
+            if self.respect_gitignore {
+                if let Some(relative) = relative_path.as_deref() {
+                    // The normalized relative form has a leading '/' that the
+                    // ignore crate rejects; strip it for root-relative input.
+                    let relative = relative.trim_start_matches('/');
+                    if self.gitignored(Path::new(relative)) {
+                        return false;
+                    }
+                }
             }
 
             let watched_by_absolute = rule.watch_absolute(absolute_path_str);
@@ -425,7 +482,17 @@ impl Watches {
                 .display()
                 .to_string();
             let environment_keys = rule.environment().keys().cloned().collect();
-            if ignore_patterns.is_empty() {
+            // TASK-0036: gitignore applies only when enabled and a change
+            // pattern matched; the explicit config `ignore` (above) stays
+            // strongest. The source label tells the user exactly where the
+            // exclusion came from.
+            let gitignored = ignore_patterns.is_empty()
+                && self.respect_gitignore
+                && relative_path
+                    .as_deref()
+                    .map(|rel| self.gitignored(Path::new(rel.trim_start_matches('/'))))
+                    .unwrap_or(false);
+            if ignore_patterns.is_empty() && !gitignored {
                 let origin = Self::origin_for(rule, change_patterns.first(), None);
                 matched.push(ExplainRule {
                     name: rule.name.clone(),
@@ -436,11 +503,15 @@ impl Watches {
                     origin,
                 });
             } else {
-                let origin = Self::origin_for(rule, None, ignore_patterns.first());
+                let mut effective_ignores = ignore_patterns;
+                if gitignored {
+                    effective_ignores.push(".gitignore".to_owned());
+                }
+                let origin = Self::origin_for(rule, None, effective_ignores.first());
                 ignored.push(ExplainRule {
                     name: rule.name.clone(),
                     change_patterns,
-                    ignore_patterns,
+                    ignore_patterns: effective_ignores,
                     cwd,
                     environment_keys,
                     origin,

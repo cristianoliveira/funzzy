@@ -114,7 +114,8 @@ pub fn run() {
                 concurrency,
             )
             .with_debounce(debounce)
-            .with_backend(backend);
+            .with_backend(backend)
+            .with_gitignore(load_respect_gitignore(&args.config));
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
@@ -193,7 +194,8 @@ pub fn run() {
                 effective_concurrency(&args, &args.config),
             )
             .with_debounce(load_debounce(&args.config))
-            .with_backend(load_watch_backend(&args.config));
+            .with_backend(load_watch_backend(&args.config))
+            .with_gitignore(load_respect_gitignore(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
                 concurrency: watches.concurrency(),
@@ -466,6 +468,25 @@ fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBack
     config::watch_backend_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid watch backend config", err))
         .unwrap_or(crate::watcher::WatchBackend::Auto)
+}
+
+/// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.
+fn load_respect_gitignore(config_file: &Option<String>) -> bool {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return false;
+    };
+    config::respect_gitignore_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid gitignore config", err))
 }
 
 fn load_concurrency(config_file: &Option<String>) -> usize {

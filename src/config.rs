@@ -257,10 +257,11 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                             && key_str != "debounce"
                             && key_str != "watch_backend"
                             && key_str != "poll_interval"
+                            && key_str != "respect_gitignore"
                         {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', 'debounce', 'watch_backend', and 'poll_interval' are allowed.",
+                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', 'debounce', 'watch_backend', 'poll_interval', and 'respect_gitignore' are allowed.",
                                     key_str
                                 ),
                                 None,
@@ -1943,4 +1944,58 @@ pub fn watch_backend_from_file(
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
     watch_backend_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod gitignore_config_tests {
+    use super::*;
+
+    #[test]
+    fn respect_gitignore_defaults_to_false() {
+        assert_eq!(
+            respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn respect_gitignore_parses_boolean() {
+        assert_eq!(
+            respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap(),
+            true
+        );
+        assert_eq!(
+            respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn respect_gitignore_rejects_non_boolean() {
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: yes-please\n").is_err());
+    }
+}
+
+/// Parses the optional `on.respect_gitignore` boolean (default false).
+pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+    if on == &Yaml::BadValue || on["respect_gitignore"] == Yaml::BadValue {
+        return Ok(false);
+    }
+    match &on["respect_gitignore"] {
+        Yaml::Boolean(value) => Ok(*value),
+        _ => Err("Property 'on.respect_gitignore' must be a boolean".to_owned()),
+    }
+}
+
+pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    respect_gitignore_from_yaml(&content)
 }

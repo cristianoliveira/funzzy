@@ -383,3 +383,68 @@ fn poll_backend_detects_changes_and_runs_tasks() {
     );
     std::fs::remove_dir_all(&scratch).unwrap();
 }
+
+#[cfg(feature = "test-integration")]
+#[test]
+fn gitignored_paths_do_not_trigger_tasks_when_respected() {
+    // TASK-0036: `on.respect_gitignore: true` excludes paths matched by
+    // `.gitignore` from triggering tasks; explicit config `ignore` still wins
+    // and works without the knob.
+    use std::time::Duration;
+
+    let scratch = std::env::temp_dir().join(format!(
+        "funzzy-gitignore-watch-{}-{}",
+        std::process::id(),
+        "gitignore-backend"
+    ));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join(".gitignore"), "generated/\n").unwrap();
+    std::fs::create_dir_all(scratch.join("generated")).unwrap();
+    std::fs::write(
+        scratch.join(".watch.yaml"),
+        "on:\n  change: '**/*'\n  respect_gitignore: true\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: 'captured.txt'\n",
+    )
+    .unwrap();
+
+    let output_log = std::fs::File::create(scratch.join("child.out")).unwrap();
+    let error_log = std::fs::File::create(scratch.join("child.err")).unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&scratch)
+        .env("FUNZZY_COLORED", "false")
+        .stdout(std::process::Stdio::from(output_log))
+        .stderr(std::process::Stdio::from(error_log))
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(600));
+
+    // A gitignored file change must NOT run the task.
+    std::fs::write(scratch.join("generated/out.txt"), "change").unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(
+        !scratch.join("captured.txt").exists(),
+        "gitignored path must not trigger the task"
+    );
+
+    // A normal file change DOES run the task.
+    std::fs::write(scratch.join("real.txt"), "change").unwrap();
+    let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut ran = false;
+    while std::time::Instant::now() < deadline {
+        if scratch.join("captured.txt").exists() {
+            ran = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    if !ran {
+        let log = std::fs::read_to_string(scratch.join("child.out")).unwrap_or_default();
+        let err = std::fs::read_to_string(scratch.join("child.err")).unwrap_or_default();
+        eprintln!("watcher log: {log}");
+        eprintln!("watcher err: {err}");
+    }
+    assert!(ran, "non-gitignored change must trigger the task");
+    std::fs::remove_dir_all(&scratch).unwrap();
+}

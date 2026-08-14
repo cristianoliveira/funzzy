@@ -36,9 +36,7 @@ pub fn events(
 ) -> Result<(), String> {
     match backend {
         WatchBackend::Native => run_native(watch_path_list, on_ready, handler, debounce, verbose),
-        WatchBackend::Poll { interval } => {
-            run_poll(watch_path_list, on_ready, handler, debounce, interval)
-        }
+        WatchBackend::Poll { interval } => run_poll(watch_path_list, on_ready, handler, interval),
         WatchBackend::Auto => {
             // Try native first; on failure warn once and fall back to
             // deterministic polling (TASK-0037). The probe registers the
@@ -54,7 +52,6 @@ pub fn events(
                         watch_path_list,
                         on_ready,
                         handler,
-                        debounce,
                         Duration::from_millis(500),
                     )
                 }
@@ -208,7 +205,6 @@ fn run_poll(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
-    debounce: Duration,
     interval: Duration,
 ) -> Result<(), String> {
     let batch_sequence = AtomicSequence::new();
