@@ -13,6 +13,7 @@ pub mod errors;
 pub mod executor;
 pub mod identity;
 pub mod logging;
+pub mod output;
 pub mod plan;
 pub mod process_owner;
 pub mod rules;

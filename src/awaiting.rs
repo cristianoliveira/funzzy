@@ -8,6 +8,7 @@
 
 use crate::control::{ControlState, ExecutionState};
 use crate::executor::Event;
+use crate::output::{FailureEvidence, OutputRegistry};
 use serde_derive::Serialize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -73,6 +74,11 @@ pub struct AwaitResult {
     pub latest_batch: Option<u64>,
     pub pending_work: PendingWork,
     pub freshness: Freshness,
+    /// Concise deterministic failure evidence (contract §6), when the awaited
+    /// generation failed and retained output exists. Additive: absent for
+    /// passed/superseded/timeout outcomes and legacy servers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_evidence: Option<FailureEvidence>,
 }
 
 #[derive(Clone, Debug)]
@@ -197,22 +203,23 @@ impl AwaitCoordinator {
         timeout: Duration,
         snapshot: &Arc<Mutex<ControlState>>,
         mut probe: Option<&mut dyn FnMut() -> bool>,
+        outputs: Option<&OutputRegistry>,
     ) -> AwaitResult {
         let deadline = Instant::now() + timeout;
         loop {
             let inner = self.inner.lock().unwrap();
-            if let Some(reason) = Self::evaluate(&inner, mode) {
-                return Self::build(inner, snapshot, reason);
+            if let Some((reason, generation)) = Self::evaluate(&inner, mode) {
+                return Self::build(inner, snapshot, reason, generation, outputs);
             }
             let now = Instant::now();
             if now >= deadline {
-                return Self::build(inner, snapshot, TerminalReason::Timeout);
+                return Self::build(inner, snapshot, TerminalReason::Timeout, 0, outputs);
             }
             let slice = (deadline - now).min(Duration::from_millis(500));
             let (guard, _) = self.changed.wait_timeout(inner, slice).unwrap();
             if let Some(probe) = probe.as_deref_mut() {
                 if probe() {
-                    return Self::build(guard, snapshot, TerminalReason::Disconnected);
+                    return Self::build(guard, snapshot, TerminalReason::Disconnected, 0, outputs);
                 }
             }
             // Loop re-evaluates: no transition can be lost between the
@@ -221,7 +228,7 @@ impl AwaitCoordinator {
         }
     }
 
-    fn evaluate(inner: &AwaitInner, mode: AwaitMode) -> Option<TerminalReason> {
+    fn evaluate(inner: &AwaitInner, mode: AwaitMode) -> Option<(TerminalReason, u64)> {
         let record = match mode {
             AwaitMode::Exact(generation) => inner
                 .terminal
@@ -234,7 +241,7 @@ impl AwaitCoordinator {
                 .rev()
                 .find(|record| record.generation > generation),
         };
-        record.map(|record| record.reason)
+        record.map(|record| (record.reason, record.generation))
     }
 
     /// Reads one consistent snapshot while holding the observation lock, so
@@ -243,6 +250,8 @@ impl AwaitCoordinator {
         inner: MutexGuard<'_, AwaitInner>,
         snapshot: &Arc<Mutex<ControlState>>,
         terminal_reason: TerminalReason,
+        generation: u64,
+        outputs: Option<&OutputRegistry>,
     ) -> AwaitResult {
         let snapshot = snapshot.lock().unwrap().clone();
         let latest_generation = inner.latest_generation;
@@ -250,6 +259,13 @@ impl AwaitCoordinator {
         let pending_work = inner.pending_work.clone();
         drop(inner);
         let freshness = classify(&snapshot, latest_generation, &pending_work);
+        let failure_evidence = if terminal_reason == TerminalReason::Failed {
+            outputs.and_then(|outputs| {
+                outputs.failure_evidence(generation, crate::control::MAX_EVIDENCE_LINES)
+            })
+        } else {
+            None
+        };
         AwaitResult {
             snapshot,
             terminal_reason,
@@ -257,6 +273,7 @@ impl AwaitCoordinator {
             latest_batch,
             pending_work,
             freshness,
+            failure_evidence,
         }
     }
 }
@@ -319,7 +336,7 @@ mod tests {
         mode: AwaitMode,
         state: &Arc<Mutex<ControlState>>,
     ) -> AwaitResult {
-        coordinator.await_generation(mode, Duration::from_secs(30), state, None)
+        coordinator.await_generation(mode, Duration::from_secs(30), state, None, None)
     }
 
     fn spawn_wait(
@@ -347,6 +364,7 @@ mod tests {
             AwaitMode::Exact(7),
             Duration::from_millis(100),
             &state,
+            None,
             None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
@@ -423,6 +441,7 @@ mod tests {
             Duration::from_millis(100),
             &state,
             None,
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
         assert_eq!(result.latest_generation, 2);
@@ -438,6 +457,7 @@ mod tests {
             AwaitMode::Exact(99),
             Duration::from_millis(50),
             &state,
+            None,
             None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
@@ -475,10 +495,12 @@ mod tests {
             Duration::from_millis(10),
             &state,
             None,
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
         // A zero timeout returns immediately too (bounded, never unbounded).
-        let zero = coordinator.await_generation(AwaitMode::Exact(1), Duration::ZERO, &state, None);
+        let zero =
+            coordinator.await_generation(AwaitMode::Exact(1), Duration::ZERO, &state, None, None);
         assert_eq!(zero.terminal_reason, TerminalReason::Timeout);
     }
 
@@ -497,6 +519,7 @@ mod tests {
             AwaitMode::Exact(1),
             Duration::from_millis(50),
             &state,
+            None,
             None,
         );
         assert_eq!(result.latest_batch, Some(5));
@@ -517,6 +540,7 @@ mod tests {
             AwaitMode::Exact(1),
             Duration::from_millis(50),
             &state,
+            None,
             None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Superseded);
@@ -562,6 +586,7 @@ mod tests {
             AwaitMode::Exact(6),
             Duration::from_millis(50),
             &state,
+            None,
             None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Cancelled);

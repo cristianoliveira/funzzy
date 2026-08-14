@@ -4,7 +4,8 @@
 //! collection, timing, lifecycle events, and stage barriers. Wait and restart
 //! policies only decide how plans are submitted or replaced.
 
-use crate::cmd::{self, LoggedChild, ShutdownOutcome};
+use crate::cmd::{self, CaptureHandle, LoggedChild, ShutdownOutcome};
+use crate::output::OutputRegistry;
 use crate::plan::{RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan};
 use crate::rules::CommandLine;
 use crate::stdout;
@@ -93,6 +94,7 @@ pub trait ProcessRunner: Send + Sync {
         task: &str,
         command: &CommandLine,
         context: &TaskContext,
+        capture: Option<Arc<CaptureHandle>>,
     ) -> Result<Box<dyn ChildProcess>, String>;
 }
 
@@ -104,9 +106,10 @@ impl ProcessRunner for SystemProcessRunner {
         _task: &str,
         command: &CommandLine,
         context: &TaskContext,
+        capture: Option<Arc<CaptureHandle>>,
     ) -> Result<Box<dyn ChildProcess>, String> {
         let child = match command {
-            CommandLine::Shell(command) => cmd::spawn_in(command, context),
+            CommandLine::Shell(command) => cmd::spawn_in_with_capture(command, context, capture),
             CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
         }?;
         Ok(Box::new(child))
@@ -202,6 +205,9 @@ struct ActiveTask {
     context: TaskContext,
     context_validated: bool,
     group_occurrence: Option<String>,
+    /// Bounded per-stream output capture for this task, when the executor
+    /// feeds a retention registry (TASK-0045).
+    capture: Option<Arc<CaptureHandle>>,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -216,6 +222,7 @@ impl From<TaskPlan> for ActiveTask {
             context: task.context,
             context_validated: false,
             group_occurrence: task.group_occurrence,
+            capture: None,
         }
     }
 }
@@ -252,6 +259,9 @@ pub struct Executor {
     events: Arc<dyn EventSink>,
     fail_fast: bool,
     verbose: bool,
+    /// Retained-output registry fed at task terminal (TASK-0045); None keeps
+    /// capture disabled (no control surface consumes it).
+    outputs: Option<Arc<OutputRegistry>>,
 }
 
 impl Executor {
@@ -274,6 +284,34 @@ impl Executor {
             events,
             fail_fast,
             verbose,
+            outputs: None,
+        })
+    }
+
+    /// Like [`Executor::new`], additionally feeding a retained-output
+    /// registry (TASK-0045): each task's stdout/stderr is captured bounded
+    /// and recorded for the generation when the task terminates.
+    pub fn with_outputs(
+        runner: Arc<dyn ProcessRunner>,
+        clock: Arc<dyn Clock>,
+        concurrency_limit: usize,
+        events: Arc<dyn EventSink>,
+        fail_fast: bool,
+        verbose: bool,
+        outputs: Option<Arc<OutputRegistry>>,
+    ) -> Result<Self, String> {
+        if concurrency_limit == 0 {
+            return Err("executor concurrency limit must be positive".to_owned());
+        }
+
+        Ok(Self {
+            runner,
+            clock,
+            concurrency_limit,
+            events,
+            fail_fast,
+            verbose,
+            outputs,
         })
     }
 
@@ -330,12 +368,12 @@ impl Executor {
                     TaskStep::Running => index += 1,
                     TaskStep::Finished => {
                         let task = run.active.remove(index);
-                        Self::record_task_outcome(run, task);
+                        self.record_task_outcome(run, task);
                         task_finished = true;
                     }
                     TaskStep::FailedFast => {
                         let task = run.active.remove(index);
-                        Self::record_task_outcome(run, task);
+                        self.record_task_outcome(run, task);
                         self.stop_after_failure(run);
                         return Step::Finished;
                     }
@@ -396,7 +434,13 @@ impl Executor {
                 };
                 let display = command.display();
                 task.current_command = Some(display.clone());
-                match self.runner.spawn(&task.name, &command, &task.context) {
+                if task.capture.is_none() && self.outputs.is_some() {
+                    task.capture = Some(Arc::new(CaptureHandle::new()));
+                }
+                match self
+                    .runner
+                    .spawn(&task.name, &command, &task.context, task.capture.clone())
+                {
                     Ok(child) => {
                         task.child = Some(child);
                         self.events.emit(Event::Tick {
@@ -457,7 +501,10 @@ impl Executor {
         }
     }
 
-    fn record_task_outcome(run: &mut Run, task: ActiveTask) {
+    fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
+        if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
+            outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+        }
         let outcome = if task.failures.is_empty() {
             TaskOutcome::Passed
         } else {
@@ -471,6 +518,9 @@ impl Executor {
     fn stop_after_failure(&self, run: &mut Run) {
         for mut task in run.active.drain(..) {
             self.shutdown_task(&mut task);
+            if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
+                outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+            }
             run.outcomes
                 .push((task.position, task.name, TaskOutcome::Cancelled));
         }
@@ -516,6 +566,9 @@ impl Executor {
         run.superseded_by = superseded_by;
         for task in &mut run.active {
             self.shutdown_task(task);
+            if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
+                outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+            }
         }
         run.active.clear();
         run.queued.clear();
@@ -699,12 +752,13 @@ mod tests {
             task: &str,
             command: &CommandLine,
             context: &TaskContext,
+            capture: Option<Arc<CaptureHandle>>,
         ) -> Result<Box<dyn ChildProcess>, String> {
             self.commands
                 .lock()
                 .unwrap()
                 .push(format!("{}:{}", task, command.display()));
-            SystemProcessRunner.spawn(task, command, context)
+            SystemProcessRunner.spawn(task, command, context, capture)
         }
     }
 
@@ -841,6 +895,7 @@ mod tests {
             task: &str,
             command: &CommandLine,
             _context: &TaskContext,
+            _capture: Option<Arc<CaptureHandle>>,
         ) -> Result<Box<dyn ChildProcess>, String> {
             let command = command.display();
             if command == "spawn-error" {
@@ -1027,6 +1082,42 @@ mod tests {
         runner.complete("b", true);
         assert!(matches!(executor.advance(&mut run), Step::Finished));
         assert!(executor.finish(run).outcome.has_failures());
+    }
+
+    #[test]
+    fn executor_records_captured_output_per_generation() {
+        use crate::output::OutputRegistry;
+        let outputs = Arc::new(OutputRegistry::new());
+        let executor = Executor::with_outputs(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+            Some(outputs.clone()),
+        )
+        .expect("concurrency one is supported");
+
+        let plan = RunPlan::from_rules(vec![Rules::new(
+            "t".to_owned(),
+            vec!["echo hello".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )]);
+        let completed = executor.run_to_completion(RunMetadata::new(5, "test"), plan);
+        assert!(completed.outcome.is_success());
+
+        let retrieved = outputs.retrieve(5, Some("t"), None, None, false).unwrap();
+        assert_eq!(
+            retrieved.tasks[0].stdout.as_ref().expect("stdout").content,
+            "hello\n"
+        );
+        assert!(retrieved.tasks[0]
+            .stderr
+            .as_ref()
+            .is_none_or(|stream| stream.content.is_empty()));
     }
 
     #[test]

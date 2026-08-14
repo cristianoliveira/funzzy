@@ -220,6 +220,63 @@ pub struct AwaitSnapshot {
     pub pending_work: PendingWorkSnapshot,
     pub freshness: String,
     pub snapshot: StatusSnapshot,
+    /// Concise failure evidence (contract §6), present when the awaited
+    /// generation failed and retained output exists (additive; absent on
+    /// legacy servers).
+    pub failure_evidence: Option<FailureEvidenceSnapshot>,
+}
+
+/// Concise deterministic failure excerpt plus bounds and retrieval hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailureEvidenceSnapshot {
+    pub excerpt: String,
+    pub lines: u64,
+    pub truncated: bool,
+    pub total_observed_bytes: u64,
+    pub retained_bytes: u64,
+    pub retrieve: String,
+}
+
+impl FailureEvidenceSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "failureEvidence must be an object".to_string())?;
+        let excerpt = object
+            .get("excerpt")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "failureEvidence must carry \"excerpt\"".to_string())?;
+        let lines = object
+            .get("lines")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "failureEvidence must carry a numeric \"lines\"".to_string())?;
+        let truncated = object
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "failureEvidence must carry \"truncated\"".to_string())?;
+        let total_observed_bytes = object
+            .get("totalObservedBytes")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "failureEvidence must carry \"totalObservedBytes\"".to_string())?;
+        let retained_bytes = object
+            .get("retainedBytes")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "failureEvidence must carry \"retainedBytes\"".to_string())?;
+        let retrieve = object
+            .get("retrieve")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "failureEvidence must carry \"retrieve\"".to_string())?;
+        Ok(Self {
+            excerpt,
+            lines,
+            truncated,
+            total_observed_bytes,
+            retained_bytes,
+            retrieve,
+        })
+    }
 }
 
 impl AwaitSnapshot {
@@ -285,6 +342,10 @@ impl AwaitSnapshot {
             .cloned()
             .ok_or_else(|| "await result must carry a \"snapshot\" object".to_string())?;
         let snapshot = StatusSnapshot::from_value(snapshot)?;
+        let failure_evidence = match object.get("failureEvidence") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(FailureEvidenceSnapshot::from_value(value.clone())?),
+        };
         Ok(Self {
             terminal_reason,
             latest_generation,
@@ -292,7 +353,107 @@ impl AwaitSnapshot {
             pending_work,
             freshness,
             snapshot,
+            failure_evidence,
         })
+    }
+}
+
+/// One retrieved stream plus bounds metadata (contract §6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamSnapshot {
+    pub content: String,
+    pub lines: u64,
+    pub retained_bytes: u64,
+    pub observed_bytes: u64,
+    pub truncated: bool,
+}
+
+impl StreamSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "output stream must be an object".to_string())?;
+        let content = object
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "output stream must carry \"content\"".to_string())?;
+        let lines = object
+            .get("lines")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "output stream must carry a numeric \"lines\"".to_string())?;
+        let retained_bytes = object
+            .get("retainedBytes")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "output stream must carry \"retainedBytes\"".to_string())?;
+        let observed_bytes = object
+            .get("observedBytes")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "output stream must carry \"observedBytes\"".to_string())?;
+        let truncated = object
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "output stream must carry \"truncated\"".to_string())?;
+        Ok(Self {
+            content,
+            lines,
+            retained_bytes,
+            observed_bytes,
+            truncated,
+        })
+    }
+}
+
+/// One retrieved task's streams.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetrievedTaskSnapshot {
+    pub id: String,
+    pub stdout: Option<StreamSnapshot>,
+    pub stderr: Option<StreamSnapshot>,
+}
+
+/// Retrieval domain result (contract §6): consumed by the renderers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputSnapshot {
+    pub generation: u64,
+    pub tasks: Vec<RetrievedTaskSnapshot>,
+}
+
+impl OutputSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "output result must be an object".to_string())?;
+        let generation = object
+            .get("generation")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "output result must carry a numeric \"generation\"".to_string())?;
+        let tasks = object
+            .get("tasks")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "output result must carry a \"tasks\" array".to_string())?
+            .iter()
+            .map(|task| {
+                let task = task
+                    .as_object()
+                    .ok_or_else(|| "task must be an object".to_string())?;
+                let id = task
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| "task must carry \"id\"".to_string())?;
+                let stdout = match task.get("stdout") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(StreamSnapshot::from_value(value.clone())?),
+                };
+                let stderr = match task.get("stderr") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => Some(StreamSnapshot::from_value(value.clone())?),
+                };
+                Ok(RetrievedTaskSnapshot { id, stdout, stderr })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self { generation, tasks })
     }
 }
 
@@ -475,6 +636,32 @@ impl ControlClient {
             .set_read_timeout(Some(Duration::from_millis(DEFAULT_IO_TIMEOUT_MS)));
         let result = result?;
         AwaitSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
+    /// Retrieves bounded retained output for one generation (contract §6).
+    pub fn output(
+        &mut self,
+        generation: u64,
+        task: Option<&str>,
+        stream: Option<&str>,
+        tail: Option<u64>,
+        full: bool,
+    ) -> Result<OutputSnapshot, ControlClientError> {
+        let mut params = serde_json::json!({ "generation": generation });
+        if let Some(task) = task {
+            params["task"] = serde_json::json!(task);
+        }
+        if let Some(stream) = stream {
+            params["stream"] = serde_json::json!(stream);
+        }
+        if let Some(tail) = tail {
+            params["tail"] = serde_json::json!(tail);
+        }
+        if full {
+            params["full"] = serde_json::json!(true);
+        }
+        let result = self.call("output", params)?;
+        OutputSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
     /// Framing, request ID, error-object handling, and response validation.
@@ -906,6 +1093,86 @@ mod tests {
             matches!(err, ControlClientError::Malformed(_)),
             "unexpected: {err:?}"
         );
+    }
+
+    #[test]
+    fn output_roundtrip_parses_tasks_and_streams() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "generation": 7,
+                "tasks": [{
+                    "id": "my tests",
+                    "stdout": {
+                        "content": "line one\nline two\n",
+                        "lines": 2,
+                        "retainedBytes": 18,
+                        "observedBytes": 100,
+                        "truncated": true
+                    },
+                    "stderr": null
+                }]
+            }
+        })
+        .to_string();
+        let (path, handle) = serving_socket(response);
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let retrieved = client
+            .output(7, Some("my tests"), Some("stdout"), Some(80), false)
+            .expect("output");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(retrieved.generation, 7);
+        assert_eq!(retrieved.tasks.len(), 1);
+        let task = &retrieved.tasks[0];
+        assert_eq!(task.id, "my tests");
+        let stdout = task.stdout.as_ref().expect("stdout");
+        assert_eq!(stdout.content, "line one\nline two\n");
+        assert_eq!(stdout.lines, 2);
+        assert_eq!(stdout.retained_bytes, 18);
+        assert_eq!(stdout.observed_bytes, 100);
+        assert!(stdout.truncated);
+        assert!(task.stderr.is_none());
+    }
+
+    #[test]
+    fn await_parses_failure_evidence_when_present() {
+        let mut result = serde_json::from_str::<serde_json::Value>(&await_result()).unwrap();
+        result["result"]["failureEvidence"] = serde_json::json!({
+            "excerpt": "error: boom\n",
+            "lines": 1,
+            "truncated": false,
+            "totalObservedBytes": 12,
+            "retainedBytes": 12,
+            "retrieve": "fzz control output --generation 7 --task 'my tests' --tail 80"
+        });
+        let (path, handle) = serving_socket(result.to_string());
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let observation = client
+            .await_generation(AwaitMode::Exact(7), 100)
+            .expect("await");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let evidence = observation.failure_evidence.expect("evidence");
+        assert_eq!(evidence.excerpt, "error: boom\n");
+        assert_eq!(evidence.lines, 1);
+        assert_eq!(evidence.total_observed_bytes, 12);
+        assert!(evidence.retrieve.contains("--generation 7"));
+    }
+
+    #[test]
+    fn await_tolerates_absent_failure_evidence() {
+        let (path, handle) = serving_socket(await_result());
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let observation = client
+            .await_generation(AwaitMode::Exact(7), 100)
+            .expect("await");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(observation.failure_evidence.is_none());
     }
 
     #[test]

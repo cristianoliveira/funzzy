@@ -1,5 +1,6 @@
 use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
 use crate::executor::Event;
+use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
 use crate::stdout;
 use serde_derive::Serialize;
 use std::fs;
@@ -210,7 +211,7 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, vec![], None, None, None)
+        Self::start_internal(path, state, vec![], None, None, None, None)
     }
 
     pub fn start_with_runner<F>(
@@ -222,7 +223,15 @@ impl ControlServer {
     where
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
     {
-        Self::start_internal(path, state, targets, Some(Arc::new(run_target)), None, None)
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(Arc::new(run_target)),
+            None,
+            None,
+            None,
+        )
     }
 
     /// Extends the runner surface with the `emit` method (TASK-0022): the
@@ -240,7 +249,7 @@ impl ControlServer {
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
-        Self::start_with_coordinator(path, state, targets, run_target, emit_path, None)
+        Self::start_with_coordinator(path, state, targets, run_target, emit_path, None, None)
     }
 
     /// Extends the surface with the atomic `await` coordinator (TASK-0044):
@@ -254,6 +263,7 @@ impl ControlServer {
         run_target: F,
         emit_path: E,
         coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
     ) -> io::Result<Self>
     where
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
@@ -266,6 +276,7 @@ impl ControlServer {
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
             coordinator,
+            outputs,
         )
     }
 
@@ -276,6 +287,7 @@ impl ControlServer {
         run_target: Option<RunTarget>,
         emit_path: Option<EmitPath>,
         coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -311,6 +323,7 @@ impl ControlServer {
                         let run_target = run_target.clone();
                         let emit_path = emit_path.clone();
                         let coordinator = coordinator.clone();
+                        let outputs = outputs.clone();
                         let instance = instance.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
@@ -321,6 +334,7 @@ impl ControlServer {
                                 run_target.as_ref(),
                                 emit_path.as_ref(),
                                 coordinator.as_ref(),
+                                outputs.as_deref(),
                                 &instance,
                             );
                             clients.fetch_sub(1, Ordering::Relaxed);
@@ -406,6 +420,7 @@ fn handle_client(
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
+    outputs: Option<&OutputRegistry>,
     instance: &ControlInstance,
 ) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
@@ -454,13 +469,13 @@ fn handle_client(
                 .get("params")
                 .is_some_and(|params| params.is_object())
         {
-            handle_await(&mut stream, request, state, coordinator);
+            handle_await(&mut stream, request, state, coordinator, outputs);
             continue;
         }
 
-        if let Some(response) =
-            process_payload(request, state, targets, run_target, emit_path, instance)
-        {
+        if let Some(response) = process_payload(
+            request, state, targets, run_target, emit_path, outputs, instance,
+        ) {
             write_response(&mut stream, response);
         }
     }
@@ -475,6 +490,7 @@ fn handle_await(
     request: serde_json::Value,
     state: &Arc<Mutex<ControlState>>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
+    outputs: Option<&OutputRegistry>,
 ) {
     let id = request_id(&request);
     if request.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
@@ -513,8 +529,13 @@ fn handle_await(
             Err(_) => true,
         }
     };
-    let result: AwaitResult =
-        coordinator.await_generation(params.mode, params.timeout, state, Some(&mut probe));
+    let result: AwaitResult = coordinator.await_generation(
+        params.mode,
+        params.timeout,
+        state,
+        Some(&mut probe),
+        outputs,
+    );
     let _ = stream.set_nonblocking(false);
     write_response(
         stream,
@@ -577,10 +598,13 @@ fn process_payload(
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
+    outputs: Option<&OutputRegistry>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
-        return process_request(request, state, targets, run_target, emit_path, instance);
+        return process_request(
+            request, state, targets, run_target, emit_path, outputs, instance,
+        );
     };
 
     if requests.is_empty() {
@@ -595,7 +619,9 @@ fn process_payload(
     let responses: Vec<_> = requests
         .into_iter()
         .filter_map(|request| {
-            process_request(request, state, targets, run_target, emit_path, instance)
+            process_request(
+                request, state, targets, run_target, emit_path, outputs, instance,
+            )
         })
         .collect();
     if responses.is_empty() {
@@ -610,6 +636,7 @@ fn process_request(
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
+    outputs: Option<&OutputRegistry>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
@@ -630,10 +657,11 @@ fn process_request(
     }
 
     let result = match method {
-        "status" => Ok(serde_json::json!(state.lock().unwrap().clone())),
+        "status" => status_result(state, outputs),
         "targets" => Ok(serde_json::json!(targets)),
         "run" => run_requested_target(&request, run_target),
         "emit" => emit_requested_path(&request, emit_path),
+        "output" => output_retrieval(&request, outputs),
         // Honest negotiated profile (contract §8): methods list only what this
         // server implements; features stay false until the additive contract
         // (subscribe, cancel, output, correlated snapshots) lands. The
@@ -646,10 +674,10 @@ fn process_request(
                 "token": instance.token,
                 "startedAtEpochMs": instance.started_at_epoch_ms,
             },
-            "methods": ["status", "targets", "run", "emit", "await", "capabilities"],
+            "methods": ["status", "targets", "run", "emit", "await", "output", "capabilities"],
             "optionalFields": [],
             "limits": {
-                "outputRetentionBytes": 0,
+                "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
                 "maxResponseBytes": MAX_RESPONSE_BYTES,
                 "maxEvidenceLines": MAX_EVIDENCE_LINES,
             },
@@ -657,7 +685,7 @@ fn process_request(
                 "atomicAwait": true,
                 "subscription": false,
                 "correlatedSnapshots": false,
-                "outputRetrieval": false,
+                "outputRetrieval": true,
                 "pendingWork": false,
             },
         })),
@@ -688,6 +716,97 @@ fn request_id(request: &serde_json::Value) -> serde_json::Value {
         .filter(|id| id.is_null() || id.is_string() || id.is_number())
         .cloned()
         .unwrap_or(serde_json::Value::Null)
+}
+
+/// `status` result: the legacy snapshot plus additive failure evidence when
+/// the latest generation failed and retained output exists (contract §6).
+fn status_result(
+    state: &Arc<Mutex<ControlState>>,
+    outputs: Option<&OutputRegistry>,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let snapshot = state.lock().unwrap().clone();
+    let mut value = serde_json::to_value(snapshot.clone()).map_err(|_| {
+        (
+            -32000,
+            "Server error",
+            Some(serde_json::json!("status serialization failed")),
+        )
+    })?;
+    if snapshot.state() == &ExecutionState::Failed {
+        if let (Some(outputs), Some(evidence)) = (
+            outputs,
+            outputs.and_then(|outputs| {
+                outputs.failure_evidence(snapshot.generation(), MAX_EVIDENCE_LINES)
+            }),
+        ) {
+            let _ = outputs;
+            if let Ok(evidence) = serde_json::to_value(evidence) {
+                value["failureEvidence"] = evidence;
+            }
+        }
+    }
+    Ok(value)
+}
+
+/// `output` retrieval (contract §6): bounded, per generation/task/stream,
+/// tail or full. Missing generations/tasks are actionable errors naming the
+/// retained range.
+fn output_retrieval(
+    request: &serde_json::Value,
+    outputs: Option<&OutputRegistry>,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let Some(outputs) = outputs else {
+        return Err((
+            -32000,
+            "Server error",
+            Some(serde_json::json!("output retrieval is unavailable")),
+        ));
+    };
+    let params = request.get("params").and_then(serde_json::Value::as_object);
+    let Some(generation) = params
+        .and_then(|params| params.get("generation"))
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return Err((
+            -32602,
+            "Invalid params",
+            Some(serde_json::json!(
+                "output requires a numeric params.generation"
+            )),
+        ));
+    };
+    let task = params
+        .and_then(|params| params.get("task"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|task| !task.trim().is_empty());
+    let stream = params
+        .and_then(|params| params.get("stream"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|stream| matches!(*stream, "stdout" | "stderr"));
+    let tail = params
+        .and_then(|params| params.get("tail"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|tail| *tail > 0)
+        .map(|tail| tail as usize);
+    let full = params
+        .and_then(|params| params.get("full"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if tail.is_some() && full {
+        return Err((
+            -32602,
+            "Invalid params",
+            Some(serde_json::json!(
+                "output requires at most one of params.tail or params.full"
+            )),
+        ));
+    }
+
+    outputs
+        .retrieve(generation, task, stream, tail, full)
+        .map(serde_json::to_value)
+        .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
+        .and_then(|result| result.map_err(|_| (-32000, "Server error", None)))
 }
 
 fn run_requested_target(

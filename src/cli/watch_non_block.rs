@@ -2,6 +2,7 @@ use crate::awaiting::AwaitCoordinator;
 use crate::cli::Command;
 use crate::control::ControlState;
 use crate::errors::FzzError;
+use crate::output::OutputRegistry;
 use crate::stdout;
 use crate::watch_loop::{watch_loop, NonBlockStrategy};
 use crate::watches::Watches;
@@ -49,9 +50,11 @@ impl Command for WatchNonBlockCommand {
 
         let control_state = Arc::new(Mutex::new(ControlState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
+        let outputs = Arc::new(OutputRegistry::new());
         let worker_state = Arc::clone(&control_state);
         let coordinator_state = Arc::clone(&coordinator);
-        let worker = Arc::new(workers::Worker::with_root_and_concurrency(
+        let worker_outputs = Arc::clone(&outputs);
+        let worker = Arc::new(workers::Worker::with_root_and_concurrency_and_outputs(
             self.verbose,
             self.fail_fast,
             self.watches.root().to_path_buf(),
@@ -60,6 +63,7 @@ impl Command for WatchNonBlockCommand {
                 coordinator_state.observe(&event);
                 worker_state.lock().unwrap().apply(event);
             },
+            Some(worker_outputs),
         ));
 
         let strategy = NonBlockStrategy::new_arc(
@@ -68,6 +72,7 @@ impl Command for WatchNonBlockCommand {
             self.control_socket.clone(),
             control_state,
             Some(coordinator),
+            Some(outputs),
         );
         watch_loop(&self.watches, self.run_on_init, &*strategy, self.verbose)
     }

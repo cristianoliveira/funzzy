@@ -5,8 +5,134 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Per-stream byte bound for retained task output (contract §6). The tail up
+/// to this size is kept; anything older is evicted and marked truncated.
+pub const CAPTURE_STREAM_BYTES: usize = 64 * 1024;
+
+/// Bounded per-stream capture buffer (contract §6): keeps the newest bytes up
+/// to [`CAPTURE_STREAM_BYTES`], always marks truncation, and reports the
+/// total observed size. Never infers secrets — raw bytes only.
+#[derive(Clone, Debug)]
+pub struct CaptureBuffer {
+    bound: usize,
+    bytes: Vec<u8>,
+    observed: u64,
+    truncated: bool,
+}
+
+impl CaptureBuffer {
+    fn new(bound: usize) -> Self {
+        Self {
+            bound,
+            bytes: Vec::new(),
+            observed: 0,
+            truncated: false,
+        }
+    }
+
+    fn append(&mut self, chunk: &[u8]) {
+        self.observed += chunk.len() as u64;
+        self.bytes.extend_from_slice(chunk);
+        let over = self.bytes.len().saturating_sub(self.bound);
+        if over > 0 {
+            self.bytes.drain(..over);
+            self.truncated = true;
+        }
+    }
+
+    /// Final retained bytes (raw, lossy-rendered at retrieval).
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn observed_bytes(&self) -> u64 {
+        self.observed
+    }
+
+    pub fn retained_bytes(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+
+    pub fn truncated(&self) -> bool {
+        self.truncated
+    }
+}
+
+/// Final per-stream capture of one task (contract §6).
+pub struct CaptureData {
+    pub stdout: CaptureBuffer,
+    pub stderr: CaptureBuffer,
+}
+
+impl Default for CaptureData {
+    fn default() -> Self {
+        Self {
+            stdout: CaptureBuffer::new(CAPTURE_STREAM_BYTES),
+            stderr: CaptureBuffer::new(CAPTURE_STREAM_BYTES),
+        }
+    }
+}
+
+impl CaptureData {
+    fn new(stdout_bound: usize, stderr_bound: usize) -> Self {
+        Self {
+            stdout: CaptureBuffer::new(stdout_bound),
+            stderr: CaptureBuffer::new(stderr_bound),
+        }
+    }
+}
+
+/// Shared capture sink fed by the child's forwarding threads (single read,
+/// multiple consumers: live print + log file + bounded capture).
+pub struct CaptureHandle {
+    data: Mutex<CaptureData>,
+}
+
+impl CaptureHandle {
+    pub fn new() -> Self {
+        Self {
+            data: Mutex::new(CaptureData::new(CAPTURE_STREAM_BYTES, CAPTURE_STREAM_BYTES)),
+        }
+    }
+
+    pub fn append(&self, bytes: &[u8], is_stderr: bool) {
+        let mut data = self.data.lock().unwrap();
+        if is_stderr {
+            data.stderr.append(bytes);
+        } else {
+            data.stdout.append(bytes);
+        }
+    }
+
+    /// Extracts the final captured data (cloned; bounded by the stream caps).
+    pub fn finish(&self) -> CaptureData {
+        let data = self.data.lock().unwrap();
+        CaptureData {
+            stdout: CaptureBuffer {
+                bound: data.stdout.bound,
+                bytes: data.stdout.bytes.clone(),
+                observed: data.stdout.observed,
+                truncated: data.stdout.truncated,
+            },
+            stderr: CaptureBuffer {
+                bound: data.stderr.bound,
+                bytes: data.stderr.bytes.clone(),
+                observed: data.stderr.observed,
+                truncated: data.stderr.truncated,
+            },
+        }
+    }
+}
+
+impl Default for CaptureHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Keeps track of the threads that forward the child's stdout/stderr so they
 /// can be joined once the child process exits.
@@ -61,8 +187,8 @@ pub enum ShutdownOutcome {
 }
 
 impl LoggedChild {
-    fn new(mut child: Child) -> Self {
-        let forward_handles = forward_child_output(&mut child);
+    fn new(mut child: Child, capture: Option<Arc<CaptureHandle>>) -> Self {
+        let forward_handles = forward_child_output(&mut child, capture);
         Self {
             child,
             forward_handles,
@@ -214,7 +340,7 @@ fn run_to_completion(cmd: &mut Command, display: &str) -> Result<(), String> {
             .spawn()
             .map_err(|error| format!("Command {} has errored with {}", display, error))?;
 
-        let mut handles = forward_child_output(&mut child);
+        let mut handles = forward_child_output(&mut child, None);
 
         match child.wait() {
             Ok(status) if status.success() => {
@@ -249,6 +375,17 @@ pub fn spawn(command: &String) -> Result<LoggedChild, String> {
 }
 
 pub fn spawn_in(command: &String, context: &TaskContext) -> Result<LoggedChild, String> {
+    spawn_in_with_capture(command, context, None)
+}
+
+/// Spawns with an optional bounded output capture (TASK-0045, contract §6).
+/// The capture shares the child's pipe reads: live forwarding and the log
+/// file keep working exactly as before, with one read, multiple sinks.
+pub fn spawn_in_with_capture(
+    command: &String,
+    context: &TaskContext,
+    capture: Option<Arc<CaptureHandle>>,
+) -> Result<LoggedChild, String> {
     println!();
     logging::log_line("");
     stdout::info(&format!("{} \n", String::from(command)));
@@ -256,7 +393,7 @@ pub fn spawn_in(command: &String, context: &TaskContext) -> Result<LoggedChild, 
     let mut cmd = prepare_command(command);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, command)
+    spawn_configured(&mut cmd, command, capture)
 }
 
 /// Spawns an exact argv (program plus arguments) directly, without a shell.
@@ -274,7 +411,7 @@ pub fn spawn_argv_in(argv: &[String], context: &TaskContext) -> Result<LoggedChi
     let mut cmd = prepare_argv_command(argv);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, &display)
+    spawn_configured(&mut cmd, &display, None)
 }
 
 fn apply_context(command: &mut Command, context: &TaskContext) {
@@ -284,8 +421,12 @@ fn apply_context(command: &mut Command, context: &TaskContext) {
     command.envs(&context.environment);
 }
 
-fn spawn_configured(cmd: &mut Command, display: &str) -> Result<LoggedChild, String> {
-    if logging::is_enabled() {
+fn spawn_configured(
+    cmd: &mut Command,
+    display: &str,
+    capture: Option<Arc<CaptureHandle>>,
+) -> Result<LoggedChild, String> {
+    if logging::is_enabled() || capture.is_some() {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
     }
@@ -324,7 +465,7 @@ fn spawn_configured(cmd: &mut Command, display: &str) -> Result<LoggedChild, Str
             // shutdown path can reach the whole task tree (TASK-0030).
             let pid = child.id() as i32;
             crate::process_owner::register(pid);
-            Ok(LoggedChild::new(child))
+            Ok(LoggedChild::new(child, capture))
         }
         Err(error) => Err(format!("Command {} has errored with {}", display, error)),
     }
@@ -454,15 +595,15 @@ fn prepare_argv_command(argv: &[String]) -> Command {
     cmd
 }
 
-fn forward_child_output(child: &mut Child) -> ForwardHandles {
+fn forward_child_output(child: &mut Child, capture: Option<Arc<CaptureHandle>>) -> ForwardHandles {
     let mut handles = ForwardHandles::new();
 
     if let Some(stdout) = child.stdout.take() {
-        handles.stdout = Some(spawn_forwarding_thread(stdout, false));
+        handles.stdout = Some(spawn_forwarding_thread(stdout, false, capture.clone()));
     }
 
     if let Some(stderr) = child.stderr.take() {
-        handles.stderr = Some(spawn_forwarding_thread(stderr, true));
+        handles.stderr = Some(spawn_forwarding_thread(stderr, true, capture));
     }
 
     handles
@@ -471,6 +612,7 @@ fn forward_child_output(child: &mut Child) -> ForwardHandles {
 fn spawn_forwarding_thread<R: std::io::Read + Send + 'static>(
     reader: R,
     is_stderr: bool,
+    capture: Option<Arc<CaptureHandle>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = BufReader::new(reader);
@@ -491,6 +633,11 @@ fn spawn_forwarding_thread<R: std::io::Read + Send + 'static>(
                     }
 
                     logging::log_plain(&line);
+                    if let Some(capture) = &capture {
+                        // Raw bytes: no secret inference, no UTF-8 validation
+                        // here (retrieval renders lossy).
+                        capture.append(line.as_bytes(), is_stderr);
+                    }
                 }
                 Err(_) => break,
             }

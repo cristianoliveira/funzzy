@@ -1,6 +1,7 @@
 use crate::executor::{
     Event, EventSink, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner,
 };
+use crate::output::OutputRegistry;
 use crate::plan::RunPlan;
 use crate::rules::Rules;
 use crate::stdout;
@@ -147,6 +148,30 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
+        Self::with_root_and_concurrency_and_outputs(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            None,
+        )
+    }
+
+    /// Like [`Worker::with_root_and_concurrency`], additionally feeding a
+    /// retained-output registry (TASK-0045): each task's stdout/stderr is
+    /// captured bounded and recorded per generation.
+    pub fn with_root_and_concurrency_and_outputs<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
         stdout::verbose("Worker in verbose mode.", verbose);
         let events: Arc<dyn EventSink> = Arc::new(move |event: Event| {
             if let Event::Tick { task, .. } = &event {
@@ -156,13 +181,14 @@ impl Worker {
         });
         let scheduler = Arc::new(Scheduler::new(Arc::clone(&events)));
         let consumer_scheduler = Arc::clone(&scheduler);
-        let executor = Executor::new(
+        let executor = Executor::with_outputs(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
             concurrency,
             events,
             fail_fast,
             verbose,
+            outputs,
         )
         .expect("worker concurrency must be positive");
 

@@ -176,10 +176,11 @@ mod unix {
         assert_eq!(result["features"]["atomicAwait"], true);
         assert_eq!(result["features"]["subscription"], false);
         assert_eq!(result["features"]["correlatedSnapshots"], false);
-        assert_eq!(result["features"]["outputRetrieval"], false);
+        assert_eq!(result["features"]["outputRetrieval"], true);
         assert_eq!(result["features"]["pendingWork"], false);
         assert_eq!(result["limits"]["maxResponseBytes"], 65536);
         assert_eq!(result["limits"]["maxEvidenceLines"], 40);
+        assert_eq!(result["limits"]["outputRetentionBytes"], 1048576);
     }
 
     #[test]

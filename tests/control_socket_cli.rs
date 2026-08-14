@@ -45,6 +45,8 @@ tasks:
     let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
         .stdout(Stdio::from(child_log.try_clone().unwrap()))
         .stderr(Stdio::from(child_log))
         .spawn()
@@ -153,6 +155,8 @@ tasks:
     let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
         .stdout(Stdio::from(child_log.try_clone().unwrap()))
         .stderr(Stdio::from(child_log))
         .spawn()
@@ -208,6 +212,8 @@ tasks:
     let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
         .stdout(Stdio::from(child_log.try_clone().unwrap()))
         .stderr(Stdio::from(child_log))
         .spawn()
@@ -257,6 +263,8 @@ tasks:
     let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         .current_dir(&directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
         .stdout(Stdio::from(child_log.try_clone().unwrap()))
         .stderr(Stdio::from(child_log))
         .spawn()

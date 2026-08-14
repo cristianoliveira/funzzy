@@ -1,8 +1,8 @@
 use crate::cli::Command;
 use crate::config;
 use crate::control_client::{
-    AwaitMode, AwaitSnapshot, ControlClient, ControlClientError, EmitSnapshot, StatusSnapshot,
-    TargetSnapshot,
+    AwaitMode, AwaitSnapshot, ControlClient, ControlClientError, EmitSnapshot, OutputSnapshot,
+    StatusSnapshot, TargetSnapshot,
 };
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,13 @@ pub enum ControlAction {
         after: Option<u64>,
         generation: Option<u64>,
         timeout: Duration,
+    },
+    Output {
+        generation: u64,
+        task: Option<String>,
+        stream: Option<String>,
+        tail: Option<u64>,
+        full: bool,
     },
 }
 
@@ -218,6 +225,24 @@ impl Command for ControlCommand {
                 };
                 return self.finish_await(&mut client, &path, mode, timeout);
             }
+            ControlAction::Output {
+                generation,
+                task,
+                stream,
+                tail,
+                full,
+            } => {
+                let retrieved = client
+                    .output(
+                        *generation,
+                        task.as_deref(),
+                        stream.as_deref(),
+                        *tail,
+                        *full,
+                    )
+                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                print!("{}", render_output(&retrieved));
+            }
         }
         Ok(())
     }
@@ -373,7 +398,53 @@ pub fn render_await(observation: &AwaitSnapshot) -> String {
     ));
     output.push_str("snapshot:\n");
     output.push_str(&render_status(&observation.snapshot));
+    if let Some(evidence) = &observation.failure_evidence {
+        output.push_str("failure evidence:\n");
+        output.push_str(&format!("  truncated: {}\n", evidence.truncated));
+        output.push_str(&format!(
+            "  observed_bytes: {}\n",
+            evidence.total_observed_bytes
+        ));
+        output.push_str(&format!("  retained_bytes: {}\n", evidence.retained_bytes));
+        output.push_str(&format!("  retrieve: {}\n", evidence.retrieve));
+        output.push_str("  excerpt:\n");
+        for line in evidence.excerpt.lines() {
+            output.push_str(&format!("    {}\n", line));
+        }
+    }
     output
+}
+
+/// Bounded retrieval rendering (contract §6): per task and stream, the
+/// content plus bounds metadata. Command output may contain secrets — the
+/// socket permission (0600) is the security boundary.
+pub fn render_output(output: &OutputSnapshot) -> String {
+    let mut rendered = format!("output: generation {}\n", output.generation);
+    if output.tasks.is_empty() {
+        rendered.push_str("tasks: (none)\n");
+        return rendered;
+    }
+    for task in &output.tasks {
+        rendered.push_str(&format!("task: {}\n", task.id));
+        for (name, stream) in [("stdout", &task.stdout), ("stderr", &task.stderr)] {
+            let Some(stream) = stream else { continue };
+            rendered.push_str(&format!(
+                "  {name}: {} lines, retained {} bytes, observed {} bytes{}:\n",
+                stream.lines,
+                stream.retained_bytes,
+                stream.observed_bytes,
+                if stream.truncated { " (truncated)" } else { "" }
+            ));
+            rendered.push_str("  ---\n");
+            for line in stream.content.lines() {
+                rendered.push_str(&format!("  {}\n", line));
+            }
+            if !stream.content.is_empty() && !stream.content.ends_with('\n') {
+                rendered.push_str("\n");
+            }
+        }
+    }
+    rendered
 }
 
 /// Compact deterministic `emit` rendering: outcome, matched tasks, and the
@@ -455,6 +526,7 @@ mod tests {
                 duration_ms: Some(42),
                 failures: vec![],
             },
+            failure_evidence: None,
         };
         let rendered = render_await(&observation);
         assert!(rendered.contains("terminal reason: passed"));
@@ -466,6 +538,67 @@ mod tests {
         assert!(rendered.contains("snapshot:"));
         assert!(rendered.contains("generation: 7"));
         assert!(rendered.contains("state: passed"));
+    }
+
+    #[test]
+    fn render_output_shows_tasks_streams_and_bounds() {
+        use crate::control_client::{OutputSnapshot, RetrievedTaskSnapshot, StreamSnapshot};
+        let output = OutputSnapshot {
+            generation: 7,
+            tasks: vec![RetrievedTaskSnapshot {
+                id: "my tests".to_string(),
+                stdout: Some(StreamSnapshot {
+                    content: "line one\nline two\n".to_string(),
+                    lines: 2,
+                    retained_bytes: 18,
+                    observed_bytes: 18,
+                    truncated: false,
+                }),
+                stderr: None,
+            }],
+        };
+        let rendered = render_output(&output);
+        assert!(rendered.contains("output: generation 7"));
+        assert!(rendered.contains("task: my tests"));
+        assert!(rendered.contains("stdout: 2 lines, retained 18 bytes, observed 18 bytes:"));
+        assert!(rendered.contains("line one"));
+        assert!(rendered.contains("line two"));
+    }
+
+    #[test]
+    fn render_await_includes_failure_evidence_when_present() {
+        use crate::control_client::FailureEvidenceSnapshot;
+        let mut observation = AwaitSnapshot {
+            terminal_reason: "failed".to_string(),
+            latest_generation: 7,
+            latest_batch: None,
+            pending_work: crate::control_client::PendingWorkSnapshot {
+                debounce_active: false,
+                queued_batches: 0,
+            },
+            freshness: "current".to_string(),
+            snapshot: StatusSnapshot {
+                generation: 7,
+                state: "failed".to_string(),
+                trigger: Some("src/main.rs".to_string()),
+                commands: vec!["cargo test".to_string()],
+                duration_ms: Some(42),
+                failures: vec!["boom".to_string()],
+            },
+            failure_evidence: Some(FailureEvidenceSnapshot {
+                excerpt: "error: boom\ndetail\n".to_string(),
+                lines: 2,
+                truncated: false,
+                total_observed_bytes: 24,
+                retained_bytes: 24,
+                retrieve: "fzz control output --generation 7 --task 'my tests' --tail 80"
+                    .to_string(),
+            }),
+        };
+        let rendered = render_await(&mut observation);
+        assert!(rendered.contains("failure evidence:"));
+        assert!(rendered.contains("error: boom"));
+        assert!(rendered.contains("retrieve: fzz control output --generation 7"));
     }
 
     #[test]

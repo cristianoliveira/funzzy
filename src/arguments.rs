@@ -134,6 +134,22 @@ impl Arguments {
                             .copied()
                             .expect("timeout is required by clap"),
                     },
+                    Some(("output", output_sub)) => ControlAction::Output {
+                        generation: output_sub
+                            .get_one::<u64>("generation")
+                            .copied()
+                            .expect("generation is required by clap"),
+                        task: output_sub.get_one::<String>("task").cloned(),
+                        stream: if output_sub.get_flag("stdout") {
+                            Some("stdout".to_string())
+                        } else if output_sub.get_flag("stderr") {
+                            Some("stderr".to_string())
+                        } else {
+                            None
+                        },
+                        tail: output_sub.get_one::<u64>("tail").copied(),
+                        full: output_sub.get_flag("full"),
+                    },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
                 (Action::Control { action, socket }, false)
@@ -473,6 +489,58 @@ fn command() -> Command {
                                 .required(true)
                                 .multiple(false),
                         ),
+                )
+                .subcommand(
+                    Command::new("output")
+                        .about("Retrieve bounded retained task output for a generation.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Retrieve bounded retained task output for a generation.\n\nOutput is captured per task and per stream (stdout/stderr) up to a declared per-stream byte bound, and retained globally across generations up to a declared byte budget with oldest-generation-first eviction. Truncation is always marked. `--full` returns everything still retained — bounded by the declared retention limit. Command output may contain secrets: the control socket permission (0600) is the security boundary, not this tool.",
+                        )
+                        .arg(
+                            Arg::new("generation")
+                                .long("generation")
+                                .value_name("GENERATION")
+                                .required(true)
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Generation whose retained output to retrieve."),
+                        )
+                        .arg(
+                            Arg::new("task")
+                                .long("task")
+                                .value_name("TASK")
+                                .value_parser(clap::builder::ValueParser::string())
+                                .help("Task name to restrict retrieval to (default: all retained tasks)."),
+                        )
+                        .arg(
+                            Arg::new("stdout")
+                                .long("stdout")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("stderr")
+                                .help("Restrict to stdout only."),
+                        )
+                        .arg(
+                            Arg::new("stderr")
+                                .long("stderr")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("stdout")
+                                .help("Restrict to stderr only."),
+                        )
+                        .arg(
+                            Arg::new("tail")
+                                .long("tail")
+                                .value_name("LINES")
+                                .conflicts_with("full")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Last N lines per stream (default: 40)."),
+                        )
+                        .arg(
+                            Arg::new("full")
+                                .long("full")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with("tail")
+                                .help("Return everything still retained (bounded by the declared retention limit)."),
+                        ),
                 ),
         )
 }
@@ -794,6 +862,58 @@ mod tests {
                 socket: None,
             }
         );
+    }
+
+    #[test]
+    fn control_output_carries_generation_and_filters() {
+        let action = parse_action(&[
+            "control",
+            "output",
+            "--generation",
+            "7",
+            "--task",
+            "my tests",
+            "--stderr",
+            "--tail",
+            "80",
+        ]);
+        assert_eq!(
+            action,
+            Action::Control {
+                action: ControlAction::Output {
+                    generation: 7,
+                    task: Some("my tests".to_string()),
+                    stream: Some("stderr".to_string()),
+                    tail: Some(80),
+                    full: false,
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_output_requires_generation_and_rejects_conflicts() {
+        assert!(parse(&["control", "output"]).is_err());
+        assert!(parse(&[
+            "control",
+            "output",
+            "--generation",
+            "1",
+            "--stdout",
+            "--stderr"
+        ])
+        .is_err());
+        assert!(parse(&[
+            "control",
+            "output",
+            "--generation",
+            "1",
+            "--tail",
+            "5",
+            "--full"
+        ])
+        .is_err());
     }
 
     #[test]
