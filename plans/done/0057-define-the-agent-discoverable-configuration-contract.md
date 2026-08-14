@@ -1,7 +1,7 @@
 ---
 id: TASK-0057
 title: Define the agent-discoverable configuration contract
-status: todo
+status: done
 depends_on: [TASK-0042, TASK-0075]
 priority: high
 tags: [design, axi, config, schema, agents, determinism]
