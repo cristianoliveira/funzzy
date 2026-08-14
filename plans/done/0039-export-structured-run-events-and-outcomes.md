@@ -1,7 +1,7 @@
 ---
 id: TASK-0039
 title: Export structured run events and outcomes
-status: todo
+status: done
 depends_on: [TASK-0028, TASK-0043]
 priority: normal
 tags: [rust, output, ndjson, agents, editors, protocol, tdd]
