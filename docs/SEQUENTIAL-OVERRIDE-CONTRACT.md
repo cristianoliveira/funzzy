@@ -122,3 +122,59 @@ The diagnostic conclusion must be conservative:
 - Races inside one command/service/filesystem/external dependency.
 - Automatic retry or fallback of any kind.
 - Changing execution semantics beyond scheduler concurrency.
+
+## §10 Copyable comparison recipe
+
+A parallel failure is only worth investigating as a concurrency problem after
+a comparable sequential run passes. Both runs must select the same target and
+run the same commands; only the effective concurrency differs.
+
+Manual:
+
+```sh
+# 1. Reproduce under the configured (parallel) run.
+fzz run @checks --wait --timeout 5m 2>&1 | tee parallel.log
+
+# 2. Rerun the exact same target sequentially.
+fzz run @checks --sequential 2>&1 | tee sequential.log
+
+# 3. Compare the two result blocks: same task list and commands; the
+#    parallel one failed, the sequential one passed.
+```
+
+Agent (control socket, one exact generation at a time):
+
+```sh
+# Parallel baseline through the running watcher.
+fzz ctl run @checks --wait --timeout 5m
+
+# Exact comparison generation with effective concurrency one.
+fzz ctl run @checks --sequential --wait --timeout 5m
+```
+
+Each `--wait` prints `terminal reason`, `effectiveConcurrency`, and
+`concurrencySource` on the snapshot. Confirm the two runs selected the same
+generation and that only `effectiveConcurrency` differs (1 vs configured)
+before drawing any conclusion.
+
+### Reading the evidence
+
+- Parallel fail + sequential pass = **`parallel-sensitive` evidence**: the
+  failure depends on concurrency.
+- It is **not** proof of a race root cause, stuck process, or data-race
+  location. State that caveat explicitly in any report.
+- Sequential mode cannot remove races internal to one command, a managed
+  service, the filesystem, or an external dependency; those must be
+  diagnosed separately.
+- Never automatically retry a failed parallel run sequentially — commands
+  may have side effects. The comparison run is an explicit, deliberate
+  request.
+
+### Limitations
+
+- Only scheduler concurrency changes; everything else is identical.
+- Sequential and parallel duration histories are separate signatures, so a
+  sequential sample never contaminates the parallel estimate.
+- A legacy server that does not advertise `sequentialOverride` rejects the
+  flag with an actionable error before scheduling; the client never strips
+  the flag and retries parallel.

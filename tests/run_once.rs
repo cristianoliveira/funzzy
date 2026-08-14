@@ -327,3 +327,42 @@ fn parallel_partial_final_line_without_newline_is_emitted() {
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn parallel_sensitive_workflow_fails_when_overlapping_and_passes_sequential() {
+    // TASK-0074: deterministic parallel-vs-sequential proof. Two probe tasks
+    // in one parallel group each touch a `running` marker and poll for their
+    // sibling's marker; seeing it proves overlap and writes an `overlap`
+    // file. A serial gate task fails when that file exists. Under configured
+    // concurrency 2 the probes overlap and the gate fails; under the explicit
+    // `--sequential` override nothing overlaps and the gate passes. No wall
+    // clocks or probabilities: the outcome is a deterministic function of
+    // whether the two probes ran concurrently.
+    let config = "on:\n  change: '**/*'\n  concurrency: 2\ntasks:\n  - name: probe a @quick\n    parallel: checks\n    run: 'touch a.running; i=0; while [ ! -f b.running ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i + 1)); done; if [ -f b.running ]; then echo overlap > overlap; fi; rm -f a.running; exit 0'\n  - name: probe b @quick\n    parallel: checks\n    run: 'touch b.running; i=0; while [ ! -f a.running ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i + 1)); done; if [ -f a.running ]; then echo overlap > overlap; fi; rm -f b.running; exit 0'\n  - name: gate @quick\n    run: 'test ! -f overlap && exit 0 || exit 1'\n";
+
+    // Parallel baseline: the two probes overlap, the gate fails, run fails.
+    let directory = fixture("parallel-sensitive");
+    write_config(&directory, config);
+    fzz(&directory)
+        .args(["run", "@quick"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("gate @quick: failed"))
+        .stdout(predicate::str::contains("Failed: 1;"));
+    assert!(directory.join("overlap").exists());
+    std::fs::remove_file(directory.join("overlap")).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+
+    // Sequential override: same target, same commands, only effective
+    // concurrency differs; the gate passes and the run succeeds.
+    let directory = fixture("parallel-sensitive-seq");
+    write_config(&directory, config);
+    fzz(&directory)
+        .args(["run", "@quick", "--sequential"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("gate @quick: passed"))
+        .stdout(predicate::str::contains("Success"));
+    assert!(!directory.join("overlap").exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}

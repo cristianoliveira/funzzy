@@ -386,6 +386,12 @@ pub fn render_status(status: &StatusSnapshot) -> String {
     let mut output = String::new();
     output.push_str(&format!("generation: {}\n", status.generation));
     output.push_str(&format!("state: {}\n", status.state));
+    if let Some(effective) = status.effective_concurrency {
+        output.push_str(&format!("effectiveConcurrency: {}\n", effective));
+        if let Some(source) = &status.concurrency_source {
+            output.push_str(&format!("concurrencySource: {}\n", source));
+        }
+    }
     if let Some(trigger) = &status.trigger {
         output.push_str(&format!("trigger: {}\n", trigger));
     }
@@ -661,6 +667,8 @@ mod tests {
             commands: vec!["cargo test".to_string()],
             duration_ms: Some(42),
             failures: vec!["invalid concurrency value".to_string()],
+            effective_concurrency: Some(1),
+            concurrency_source: Some("control".to_string()),
         };
         let rendered = render_status(&status);
         assert!(rendered.contains("generation: 4"));
@@ -681,6 +689,8 @@ mod tests {
             commands: vec![],
             duration_ms: None,
             failures: vec![],
+            effective_concurrency: None,
+            concurrency_source: None,
         };
         let rendered = render_status(&status);
         assert!(rendered.contains("state: idle"));
@@ -708,6 +718,8 @@ mod tests {
                 commands: vec!["cargo test".to_string()],
                 duration_ms: Some(42),
                 failures: vec![],
+                effective_concurrency: Some(1),
+                concurrency_source: Some("control".to_string()),
             },
             failure_evidence: None,
         };
@@ -767,6 +779,8 @@ mod tests {
                 commands: vec!["cargo test".to_string()],
                 duration_ms: Some(42),
                 failures: vec!["boom".to_string()],
+                effective_concurrency: None,
+                concurrency_source: None,
             },
             failure_evidence: Some(FailureEvidenceSnapshot {
                 excerpt: "error: boom\ndetail\n".to_string(),

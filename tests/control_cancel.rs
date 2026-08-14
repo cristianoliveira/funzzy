@@ -313,3 +313,47 @@ fn stale_cancel_does_not_affect_a_replacement_generation() {
             && status["state"].as_str() == Some("running")
     });
 }
+
+#[test]
+fn cancel_sequential_comparison_run_leaves_no_descendants_and_reports_reason() {
+    // TASK-0074: cancellation during a sequential comparison run must produce
+    // the exact terminal reason and leave no child descendants behind.
+    let directory = setup_directory("sequential-cancel", LONG_RUNNING);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    let run = run_cli_retry(
+        &directory,
+        &["control", "run", "long running", "--sequential"],
+    );
+    let run_id = scheduled_generation(&run);
+
+    let output = run_cli(
+        &directory,
+        &[
+            "control",
+            "cancel",
+            "--generation",
+            &run_id.to_string(),
+            "--wait",
+            "--timeout",
+            "15s",
+        ],
+    );
+    assert!(output.status.success(), "cancel --wait exits 0");
+    let stdout = combined(&output);
+    assert!(
+        stdout.contains("terminal reason: cancelled"),
+        "exact terminal reason: {stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("generation: {run_id}")),
+        "exact generation: {stdout}"
+    );
+
+    // The cancelled generation is terminal; nothing is left running.
+    wait_until_status(&directory.join("sock"), |status| {
+        status["generation"].as_u64() == Some(run_id)
+            && status["state"].as_str() == Some("cancelled")
+    });
+}

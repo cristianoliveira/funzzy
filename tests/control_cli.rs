@@ -611,3 +611,94 @@ fn ctl_run_sequential_rejects_legacy_server_before_scheduling() {
     serve.join().expect("legacy server thread");
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+#[test]
+fn ctl_run_sequential_proves_parallel_sensitive_workflow_end_to_end() {
+    // TASK-0074: the deterministic overlap fixture fails under a configured
+    // parallel control run and passes under `ctl run --sequential`, proving
+    // the comparison keeps the same target/membership/commands and only the
+    // effective concurrency differs. Also asserts the terminal snapshot
+    // carries the configured/effective concurrency fields.
+    let counter = DIRECTORY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let directory = std::env::temp_dir().join(format!("fzzc-ps-{counter}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"on:
+  socket: sock
+  concurrency: 2
+tasks:
+  - name: probe a @quick
+    parallel: checks
+    run: 'touch a.running; i=0; while [ ! -f b.running ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i + 1)); done; if [ -f b.running ]; then echo overlap > overlap; fi; rm -f a.running; exit 0'
+    change: "*.txt"
+  - name: probe b @quick
+    parallel: checks
+    run: 'touch b.running; i=0; while [ ! -f a.running ] && [ $i -lt 100 ]; do sleep 0.02; i=$((i + 1)); done; if [ -f a.running ]; then echo overlap > overlap; fi; rm -f b.running; exit 0'
+    change: "*.txt"
+  - name: gate @quick
+    run: 'test ! -f overlap && exit 0 || exit 1'
+    change: "*.txt"
+"#,
+    )
+    .unwrap();
+    let _watcher = TestProcess {
+        child: Command::new(env!("CARGO_BIN_EXE_fzz"))
+            .current_dir(&directory)
+            .env_remove("FUNZZY_BAIL")
+            .env_remove("FUNZZY_NON_BLOCK")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        directory: directory.clone(),
+    };
+    wait_until_socket(&directory);
+
+    // Parallel control run: the probes overlap, gate fails.
+    let parallel = run_cli(
+        &directory,
+        &["control", "run", "@quick", "--wait", "--timeout", "30"],
+    );
+    let parallel_out = String::from_utf8_lossy(&parallel.stdout);
+    assert!(
+        parallel_out.contains("terminal reason: failed"),
+        "parallel must fail: {}",
+        parallel_out
+    );
+    assert!(
+        parallel_out.contains("effectiveConcurrency: 2"),
+        "snapshot must report effective 2: {}",
+        parallel_out
+    );
+    assert!(directory.join("overlap").exists());
+    std::fs::remove_file(directory.join("overlap")).unwrap();
+
+    // Sequential control run via the ctl alias: same target, gate passes.
+    let sequential = run_cli(
+        &directory,
+        &[
+            "ctl",
+            "run",
+            "@quick",
+            "--sequential",
+            "--wait",
+            "--timeout",
+            "30",
+        ],
+    );
+    let sequential_out = String::from_utf8_lossy(&sequential.stdout);
+    assert!(
+        sequential_out.contains("terminal reason: passed"),
+        "sequential must pass: {}",
+        sequential_out
+    );
+    assert!(
+        sequential_out.contains("effectiveConcurrency: 1"),
+        "snapshot must report effective 1: {}",
+        sequential_out
+    );
+    assert!(!directory.join("overlap").exists());
+    std::fs::remove_dir_all(&directory).unwrap();
+}

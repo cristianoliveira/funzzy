@@ -97,6 +97,12 @@ pub struct StatusSnapshot {
     pub commands: Vec<String>,
     pub duration_ms: Option<u64>,
     pub failures: Vec<String>,
+    /// Effective concurrency of the latest generation (TASK-0073): None on
+    /// legacy servers or when the configured bound applied (additive).
+    pub effective_concurrency: Option<u64>,
+    /// Override source label (TASK-0073): "control" for an exact control
+    /// generation override; None otherwise (additive).
+    pub concurrency_source: Option<String>,
 }
 
 impl StatusSnapshot {
@@ -136,6 +142,24 @@ impl StatusSnapshot {
             }
         };
         let failures = read_string_array(object, "failures")?;
+        let effective_concurrency = match object.get("effectiveConcurrency") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
+                "status result field \"effectiveConcurrency\" must be a number".to_string()
+            })?,
+            Some(_) => {
+                return Err(
+                    "status result field \"effectiveConcurrency\" must be a number".to_string(),
+                )
+            }
+        };
+        let concurrency_source = match object.get("concurrencySource") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err("status result field \"concurrencySource\" must be a string".to_string())
+            }
+        };
         Ok(Self {
             generation,
             state,
@@ -143,6 +167,8 @@ impl StatusSnapshot {
             commands,
             duration_ms,
             failures,
+            effective_concurrency,
+            concurrency_source,
         })
     }
 }
@@ -1042,6 +1068,8 @@ mod tests {
                 commands: vec!["cargo test".to_string()],
                 duration_ms: Some(42),
                 failures: vec![],
+                effective_concurrency: None,
+                concurrency_source: None,
             }
         );
     }

@@ -94,13 +94,11 @@ pub struct ControlState {
     #[serde(skip)]
     tasks: Vec<TaskSnapshot>,
     /// Per-generation effective concurrency (TASK-0073): Some(1) for a
-    /// sequential override generation; None = configured bound. Reported in
-    /// the correlated snapshot; never in the legacy status result.
-    #[serde(skip)]
+    /// sequential override generation; None = configured bound. Additive
+    /// field on the legacy status result and the correlated snapshot.
     effective_concurrency: Option<usize>,
     /// Override source label (TASK-0073): "control" for an exact control
     /// generation override; None for configured/native runs.
-    #[serde(skip)]
     concurrency_source: Option<&'static str>,
 }
 
