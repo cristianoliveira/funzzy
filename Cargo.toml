@@ -1,6 +1,6 @@
 [package]
 name = "funzzy"
-version = "1.6.0"
+version = "2.0.0-beta.1"
 authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "A lightweight blazingly fast file watcher"
 license = "MIT"
