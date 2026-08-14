@@ -44,13 +44,13 @@ fn test_it_creates_the_config_file_with_cmd_init() {
                 "## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
-# List here the tasks and the commands for this workflow
+# List here the jobs and the commands for this workflow
 # then run `fzz` to start to work.
 
 on:
   socket: .tmp/funzzy/control.sock
 
-tasks:
+jobs:
   - name: hello world
     run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
     run_on_init: true

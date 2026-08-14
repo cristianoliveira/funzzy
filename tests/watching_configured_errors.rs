@@ -74,7 +74,7 @@ fn it_fails_using_an_config_with_non_list() -> Result<(), Box<dyn std::error::Er
                 "Hint: Example:",
                 "on:",
                 "  change: [\"src/**\"]",
-                "tasks:",
+                "jobs:",
                 "  - name: build",
                 "    run: cargo build",
                 "",

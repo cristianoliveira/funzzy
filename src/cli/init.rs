@@ -9,13 +9,13 @@ use yaml_rust::{Yaml, YamlLoader};
 pub const DEFAULT_CONTENT: &str = "## Funzzy events file
 # more details see: https://github.com/cristianoliveira/funzzy
 #
-# List here the tasks and the commands for this workflow
+# List here the jobs and the commands for this workflow
 # then run `fzz` to start to work.
 
 on:
   socket: .tmp/funzzy/control.sock
 
-tasks:
+jobs:
   - name: hello world
     run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"
     run_on_init: true
@@ -71,6 +71,11 @@ impl InitCommand {
     }
 }
 
+/// Migrates an accepted legacy config to the preferred V2 `jobs:` format
+/// (TASK-0075/0076): a root task list is wrapped into an ordered `jobs:`
+/// list preserving declaration order and comments; a grouped `tasks:` root is
+/// renamed to `jobs:`. Idempotent and atomic — never starts a watcher or
+/// runs tasks.
 fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     let documents = YamlLoader::load_from_str(legacy).map_err(|err| {
         FzzError::InvalidConfigError(
@@ -88,10 +93,14 @@ fn migrate_content(legacy: &str) -> Result<String, FzzError> {
 
     match documents.first() {
         Some(Yaml::Array(_)) => {}
-        Some(document) if document["tasks"] != Yaml::BadValue => {
+        Some(document) if document["jobs"] != Yaml::BadValue => {
             return Err(FzzError::GenericError(
-                "Configuration already uses the current .watch.yaml format".to_string(),
+                "Configuration already uses the preferred jobs format".to_string(),
             ));
+        }
+        Some(document) if document["tasks"] != Yaml::BadValue => {
+            // Grouped tasks: rename the root key to jobs, preserving order.
+            return Ok(rename_root_key(legacy, "tasks", "jobs"));
         }
         _ => {
             return Err(FzzError::GenericError(
@@ -121,7 +130,7 @@ fn migrate_content(legacy: &str) -> Result<String, FzzError> {
         }
     }
 
-    migrated.push_str("tasks:\n");
+    migrated.push_str("jobs:\n");
     for line in lines {
         if line.trim().is_empty() {
             migrated.push_str(line);
@@ -134,29 +143,58 @@ fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     Ok(migrated)
 }
 
+/// Renames a root `old_key:` line to `new_key:` (same indentation), leaving
+/// everything else byte-identical so order, comments, and commands survive.
+fn rename_root_key(content: &str, old_key: &str, new_key: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed == format!("{}:", old_key) && line.starts_with(trimmed) {
+                let indent = &line[..line.len() - trimmed.len()];
+                format!("{}{}:", indent, new_key)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if content.ends_with('\n') { "\n" } else { "" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::migrate_content;
 
     #[test]
-    fn it_wraps_legacy_tasks_and_preserves_comments() {
+    fn it_wraps_legacy_tasks_into_jobs_and_preserves_comments() {
         let legacy = "# project tasks\n\n- name: test\n  run: cargo test\n  change: src/**\n\n# final task\n- name: lint\n  run: cargo fmt -- --check\n  run_on_init: true\n";
 
         assert_eq!(
             migrate_content(legacy).unwrap(),
-            "# project tasks\n\ntasks:\n  - name: test\n    run: cargo test\n    change: src/**\n\n  # final task\n  - name: lint\n    run: cargo fmt -- --check\n    run_on_init: true\n"
+            "# project tasks\n\njobs:\n  - name: test\n    run: cargo test\n    change: src/**\n\n  # final task\n  - name: lint\n    run: cargo fmt -- --check\n    run_on_init: true\n"
         );
     }
 
     #[test]
-    fn it_rejects_config_already_using_new_format() {
+    fn it_renames_grouped_tasks_root_to_jobs() {
         let current = "on:\n  socket: .tmp/funzzy.sock\ntasks:\n  - name: test\n    run: cargo test\n    run_on_init: true\n";
+
+        assert_eq!(
+            migrate_content(current).unwrap(),
+            "on:\n  socket: .tmp/funzzy.sock\njobs:\n  - name: test\n    run: cargo test\n    run_on_init: true\n"
+        );
+    }
+
+    #[test]
+    fn it_rejects_config_already_using_jobs_format() {
+        let current = "on:\n  socket: .tmp/funzzy.sock\njobs:\n  - name: test\n    run: cargo test\n    run_on_init: true\n";
 
         let error = migrate_content(current).unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "Reason: Configuration already uses the current .watch.yaml format"
+            "Reason: Configuration already uses the preferred jobs format"
         );
     }
 

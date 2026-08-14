@@ -103,7 +103,7 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
                 match item {
                     Yaml::Hash(_) if item["tasks"] != Yaml::BadValue => {
                         // This is a group with on/tasks format
-                        match parse_hash_format(item) {
+                        match parse_hash_format(item, true) {
                             Ok(group_rules) => rules.extend(group_rules),
                             Err(err) => return Err(err),
                         }
@@ -121,7 +121,7 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
         },
         Yaml::Hash(ref _hash) => {
             // New format: { on: {...}, tasks: [...] }
-            parse_hash_format(&items[0])
+            parse_hash_format(&items[0], false)
         },
         other => Err(errors::FzzError::InvalidConfigError(
             format!(
@@ -141,42 +141,92 @@ struct CommonRules {
     ignore: Vec<String>,
 }
 
-/// Parse the new hash format: { on: {...}, tasks: [...] }
-fn parse_hash_format(yaml: &Yaml) -> errors::Result<Vec<Rules>> {
-    // Extract the 'tasks' array
-    let tasks_yaml = &yaml["tasks"];
+/// Parse the grouped root format: `{ on: {...}, jobs: [...] }` (preferred V2,
+/// TASK-0075) or the explicitly accepted legacy `tasks:` spelling. Mixed keys
+/// are an error, never a silent merge; jobs must be an ordered list.
+fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules>> {
+    let has_jobs = yaml["jobs"] != Yaml::BadValue;
+    let has_tasks = yaml["tasks"] != Yaml::BadValue;
+    if has_jobs && has_tasks {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Configuration file is invalid: use exactly one of 'jobs' (preferred) or 'tasks' (compatibility), not both".to_owned(),
+            None,
+            Some("Example:\non:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build".to_owned()),
+        ));
+    }
+    let key = if has_jobs { "jobs" } else { "tasks" };
+
+    // Extract the jobs/tasks array (ordered list; mapping form is rejected so
+    // declaration order can never be reordered implicitly).
+    let tasks_yaml = &yaml[key];
     let tasks_array = match tasks_yaml {
         Yaml::Array(ref items) => items,
         Yaml::BadValue => {
             return Err(errors::FzzError::InvalidConfigError(
-                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array".to_owned(),
+                format!(
+                    "Configuration file is invalid. When using the 'on' format, you must provide a '{}' array",
+                    key
+                ),
                 None,
-                Some("Example:\non:\n  change: [\"src/**\"]\ntasks:\n  - name: build\n    run: cargo build".to_owned()),
+                Some("Example:\non:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build".to_owned()),
+            ));
+        }
+        Yaml::Hash(_) => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Configuration file is invalid. '{}' must be an ordered list, not a mapping — Funzzy job order is semantic (barriers and group occurrences derive from declaration order)",
+                    key
+                ),
+                None,
+                Some("Example:\non:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build".to_owned()),
             ));
         }
         _ => {
             return Err(errors::FzzError::InvalidConfigError(
                 format!(
-                    "Configuration file is invalid. 'tasks' must be an Array/List, got: {}\n```yaml\n{}\n```",
+                    "Configuration file is invalid. '{}' must be an Array/List, got: {}\n```yaml\n{}\n```",
+                    key,
                     yaml::get_type(tasks_yaml),
                     yaml::yaml_to_string(tasks_yaml, 0),
                 ),
                 None,
-                Some("Make sure 'tasks' is defined as a list of task objects".to_owned()),
+                Some("Make sure '{}' is defined as a list of job objects".to_owned()),
             ));
         }
     };
 
+    if tasks_array.is_empty() && !allow_empty {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Configuration file is invalid. '{}' cannot be empty", key),
+            None,
+            Some("Add at least one job with a name and run command".to_owned()),
+        ));
+    }
+
     // Extract common rules from the 'on' section (optional)
     let common_rules = extract_common_rules(&yaml["on"])?;
 
-    // Parse each task and merge with common rules
+    // Parse each task and merge with common rules; duplicate names are a
+    // config bug (TASK-0075/0076), never a silent merge or reorder.
     let mut rules = vec![];
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for task_yaml in tasks_array {
-        match rule_from_with_common(task_yaml, &common_rules) {
-            Ok(rule) => rules.push(rule),
+        let rule = match rule_from_with_common(task_yaml, &common_rules) {
+            Ok(rule) => rule,
             Err(err) => return Err(err),
+        };
+        if !seen.insert(rule.name.clone()) {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Configuration file is invalid. Duplicate {} name '{}'",
+                    key.trim_end_matches('s'),
+                    rule.name
+                ),
+                None,
+                Some("Each job needs a unique name; rename one of the duplicates".to_owned()),
+            ));
         }
+        rules.push(rule);
     }
 
     Ok(rules)
@@ -816,7 +866,7 @@ tasks:
                 "Hint: Example:",
                 "on:",
                 "  change: [\"src/**\"]",
-                "tasks:",
+                "jobs:",
                 "  - name: build",
                 "    run: cargo build",
             ]
@@ -1092,7 +1142,10 @@ tasks:
         let result = from_yaml(file_content);
         assert!(result.is_err());
         let err = result.err().unwrap().to_string();
-        assert!(err.contains("'tasks' must be an Array/List"));
+        assert!(
+            err.contains("'tasks' must be an Array/List")
+                || err.contains("'tasks' must be an ordered list")
+        );
     }
 
     #[test]
@@ -1716,5 +1769,86 @@ mod debounce_tests {
         assert!(debounce_from_yaml("on:\n  debounce: -1\n").is_err());
         assert!(debounce_from_yaml("on:\n  debounce: fast\n").is_err());
         assert!(debounce_from_yaml("on:\n  debounce: 1h\n").is_err());
+    }
+}
+
+#[cfg(test)]
+mod jobs_tests {
+    use super::*;
+
+    #[test]
+    fn jobs_root_parses_to_the_same_rules_as_tasks() {
+        let jobs = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: lint\n    run: cargo clippy\n  - name: test\n    run: cargo test\n",
+        )
+        .expect("jobs parse");
+        let tasks = from_yaml(
+            "on:\n  change: '**/*'\ntasks:\n  - name: lint\n    run: cargo clippy\n  - name: test\n    run: cargo test\n",
+        )
+        .expect("tasks parse");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].name, "lint");
+        assert_eq!(jobs[0].commands(), tasks[0].commands());
+        assert_eq!(jobs[1].name, "test");
+        assert_eq!(jobs[1].commands(), tasks[1].commands());
+    }
+
+    #[test]
+    fn jobs_preserves_declaration_order_and_parallel_groups() {
+        let rules = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    parallel: checks\n    run: echo a\n  - name: b\n    parallel: checks\n    run: echo b\n  - name: c\n    run: echo c\n",
+        )
+        .expect("jobs parse");
+        let names: Vec<&str> = rules.iter().map(|rule| rule.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+        assert_eq!(
+            rules[0].parallel().map(str::to_string),
+            Some("checks".to_string())
+        );
+        assert_eq!(
+            rules[1].parallel().map(str::to_string),
+            Some("checks".to_string())
+        );
+        assert_eq!(rules[2].parallel(), None);
+    }
+
+    #[test]
+    fn mixed_tasks_and_jobs_is_an_error() {
+        let err = from_yaml(
+            "on:\n  change: '**/*'\ntasks:\n  - name: a\n    run: echo a\njobs:\n  - name: b\n    run: echo b\n",
+        )
+        .expect_err("mixed keys must fail");
+        assert!(format!("{:?}", err).contains("tasks"), "{err:?}");
+        assert!(format!("{:?}", err).contains("jobs"), "{err:?}");
+    }
+
+    #[test]
+    fn mapping_form_jobs_is_rejected_with_ordered_list_hint() {
+        let err = from_yaml("on:\n  change: '**/*'\njobs:\n  lint: { run: cargo clippy }\n")
+            .expect_err("mapping form must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("jobs"), "{message}");
+    }
+
+    #[test]
+    fn empty_jobs_is_an_error() {
+        assert!(from_yaml("on:\n  change: '**/*'\njobs: []\n").is_err());
+        assert!(from_yaml("on:\n  change: '**/*'\njobs:\n").is_err());
+    }
+
+    #[test]
+    fn scalar_and_null_job_entries_are_rejected() {
+        assert!(from_yaml("on:\n  change: '**/*'\njobs:\n  - hello\n").is_err());
+        assert!(from_yaml("on:\n  change: '**/*'\njobs:\n  - null\n").is_err());
+    }
+
+    #[test]
+    fn duplicate_job_names_are_rejected() {
+        assert!(
+            from_yaml(
+                "on:\n  change: '**/*'\njobs:\n  - name: dup\n    run: echo a\n  - name: dup\n    run: echo b\n"
+            )
+            .is_err()
+        );
     }
 }

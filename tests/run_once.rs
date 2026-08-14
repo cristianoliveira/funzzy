@@ -366,3 +366,50 @@ fn parallel_sensitive_workflow_fails_when_overlapping_and_passes_sequential() {
     assert!(!directory.join("overlap").exists());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn jobs_config_runs_identically_to_tasks() {
+    // TASK-0076: the preferred `jobs:` vocabulary flows through the same
+    // matching, execution, and combined-result paths as `tasks:` — identical
+    // semantics, identical outcome.
+    let directory = fixture("jobs-config");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: lint @quick\n    run: 'echo lint-done > lint.txt'\n  - name: test @quick\n    run: 'echo test-done > test.txt'\n",
+    );
+
+    fzz(&directory)
+        .args(["run", "@quick"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Completed: 2"));
+    assert_eq!(
+        std::fs::read_to_string(directory.join("lint.txt")).unwrap(),
+        "lint-done\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.join("test.txt")).unwrap(),
+        "test-done\n"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn jobs_parallel_group_keeps_barriers_and_execution_semantics() {
+    // TASK-0076: `parallel:` groups inside `jobs:` behave exactly as with
+    // `tasks:` — declaration order and contiguous barriers are preserved.
+    let directory = fixture("jobs-parallel");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  concurrency: 2\njobs:\n  - name: a @quick\n    parallel: checks\n    run: 'touch a.ready; i=0; while [ $i -lt 100 ]; do test -f b.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n  - name: b @quick\n    parallel: checks\n    run: 'touch b.ready; i=0; while [ $i -lt 100 ]; do test -f a.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n",
+    );
+
+    fzz(&directory)
+        .args(["run", "@quick"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Completed: 2"));
+    assert!(directory.join("a.ready").exists());
+    assert!(directory.join("b.ready").exists());
+    std::fs::remove_dir_all(directory).unwrap();
+}
