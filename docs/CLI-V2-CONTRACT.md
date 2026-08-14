@@ -89,6 +89,8 @@ Replaces V1 `--non-block`.
 
 ## 8. Control socket
 
+> Normative identity, state, freshness, await, evidence, and exit-code contract: `docs/AGENT-FEEDBACK-CONTRACT.md` (TASK-0042). This section states CLI-visible behavior; the contract owns protocol semantics.
+
 - Path resolution: `--socket` > `--control-socket` > `.watch.yaml` `on.socket` > error.
 - Wire format unchanged: JSON-RPC 2.0 framed as NDJSON. Existing `status`, `targets`, `run` contracts preserved.
 - New `emit` method (TASK-0022): `{"method":"emit","params":{"path":"..."}}` → result names matched tasks and run identity or an explicit `unmatched`/`ignored` outcome with no scheduled generation.
