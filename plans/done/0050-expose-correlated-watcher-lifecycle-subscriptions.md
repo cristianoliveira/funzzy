@@ -1,7 +1,7 @@
 ---
 id: TASK-0050
 title: Expose correlated watcher lifecycle subscriptions
-status: todo
+status: done
 depends_on: [TASK-0042, TASK-0043, TASK-0044, TASK-0047]
 priority: high
 tags: [rust, control-socket, subscription, events, pi-watcher, tdd]
