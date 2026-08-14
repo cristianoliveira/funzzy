@@ -85,12 +85,17 @@ pub fn run() {
         Action::Check => check_config(&args.config),
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
-        Action::Control { action, socket } => {
-            let command = ControlCommand::new(
+        Action::Control {
+            action,
+            socket,
+            format,
+        } => {
+            let command = ControlCommand::with_format(
                 action,
                 socket,
                 args.control_socket.clone(),
                 args.config.clone(),
+                format,
             );
             execute(command);
         }

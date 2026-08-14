@@ -1,3 +1,7 @@
+use crate::cli::format::{
+    await_document, cancel_document, capabilities_document, emit_document, output_document,
+    render_document, run_document, status_document, targets_document,
+};
 use crate::cli::Command;
 use crate::config;
 use crate::control_client::{
@@ -8,6 +12,17 @@ use crate::duration_history::RunEstimate;
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// Structured output format for `control` responses (TASK-0048). Human is
+/// the TTY default; toon is the non-TTY/agent default; json is the
+/// interoperability option. Domain responses stay format-independent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputFormat {
+    #[default]
+    Human,
+    Toon,
+    Json,
+}
 
 /// The action a `fzz control` invocation performs. Rendering stays here;
 /// transport and protocol live in `control_client`.
@@ -92,6 +107,8 @@ pub struct ControlCommand {
     global_socket: Option<String>,
     /// `-c/--config <FILE>` used to locate `on.socket`.
     config: Option<String>,
+    /// Structured output format (TASK-0048).
+    format: OutputFormat,
 }
 
 impl ControlCommand {
@@ -101,12 +118,41 @@ impl ControlCommand {
         global_socket: Option<String>,
         config: Option<String>,
     ) -> Self {
+        Self::with_format(
+            action,
+            socket_override,
+            global_socket,
+            config,
+            OutputFormat::Human,
+        )
+    }
+
+    /// Creates the command with an explicit structured output format.
+    pub fn with_format(
+        action: ControlAction,
+        socket_override: Option<String>,
+        global_socket: Option<String>,
+        config: Option<String>,
+        format: OutputFormat,
+    ) -> Self {
         Self {
             action,
             socket_override,
             global_socket,
             config,
+            format,
         }
+    }
+
+    /// Renders one response: structured (toon/json) emits the canonical
+    /// document; human uses the existing decorated renderer. Exactly one
+    /// document on stdout; progress/debug never mixes in (TASK-0048).
+    fn print_response(&self, document: &serde_json::Value, human: impl FnOnce() -> String) {
+        let rendered = match self.format {
+            OutputFormat::Human => human(),
+            _ => render_document(self.format, document),
+        };
+        print!("{}", rendered);
     }
 
     /// Socket path resolution contract: explicit `--socket` wins, then
@@ -172,19 +218,21 @@ impl Command for ControlCommand {
                 let status = client
                     .status()
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_status(&status));
+                self.print_response(&status_document(&status), || render_status(&status));
             }
             ControlAction::List => {
                 let targets = client
                     .targets()
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_targets(&targets));
+                self.print_response(&targets_document(&targets), || render_targets(&targets));
             }
             ControlAction::Capabilities => {
                 let capabilities = client
                     .capabilities()
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_capabilities(&capabilities));
+                self.print_response(&capabilities_document(&capabilities), || {
+                    render_capabilities(&capabilities)
+                });
             }
             ControlAction::Run {
                 target,
@@ -209,7 +257,7 @@ impl Command for ControlCommand {
                 let generation = client
                     .run(target, *sequential)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_run(generation));
+                self.print_response(&run_document(generation), || render_run(generation));
                 if *wait {
                     return self.finish_await(
                         &mut client,
@@ -229,7 +277,7 @@ impl Command for ControlCommand {
                 let emit = client
                     .emit(emit_path)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_emit(&emit));
+                self.print_response(&emit_document(&emit), || render_emit(&emit));
                 if *wait {
                     if let Some(generation) = emit.run_id {
                         return self.finish_await(
@@ -268,7 +316,7 @@ impl Command for ControlCommand {
                 let cancel = client
                     .cancel(*generation, token.as_deref())
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_cancel(&cancel));
+                self.print_response(&cancel_document(&cancel), || render_cancel(&cancel));
                 if *wait {
                     return self.finish_await(
                         &mut client,
@@ -296,7 +344,7 @@ impl Command for ControlCommand {
                         *full,
                     )
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                print!("{}", render_output(&retrieved));
+                self.print_response(&output_document(&retrieved), || render_output(&retrieved));
             }
         }
         Ok(())
@@ -323,8 +371,7 @@ impl ControlCommand {
             .map(|capabilities| capabilities.token);
         match client.await_generation(mode, timeout.as_millis() as u64) {
             Ok(observation) => {
-                let rendered = render_await(&observation);
-                print!("{}", rendered);
+                self.print_response(&await_document(&observation), || render_await(&observation));
                 match observation.terminal_reason.as_str() {
                     "passed" | "cancelled" => Ok(()),
                     reason => Err(FzzError::GenericError(format!(

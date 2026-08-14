@@ -756,3 +756,44 @@ tasks:
     );
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+#[test]
+fn control_format_json_and_toon_produce_one_structured_document() {
+    // TASK-0048: `control --format json|toon` emits exactly one valid
+    // structured document (no human decorations); human stays the default.
+    let directory = setup_watcher_directory("format");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    // JSON: one parseable object with the status fields.
+    let json_out = run_cli(&directory, &["control", "--format", "json", "status"]);
+    assert!(json_out.status.success());
+    let stdout = String::from_utf8_lossy(&json_out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one json document");
+    // The watcher runs its init task, so state may be running or already idle.
+    assert!(
+        doc["state"] == "idle" || doc["state"] == "running",
+        "state: {}",
+        doc["state"]
+    );
+    assert!(doc["generation"].is_number());
+
+    // TOON: encodes the same canonical value (spot-check content).
+    let toon_out = run_cli(&directory, &["ctl", "--format", "toon", "status"]);
+    assert!(toon_out.status.success());
+    let toon_stdout = String::from_utf8_lossy(&toon_out.stdout);
+    assert!(toon_stdout.contains("state"), "toon: {toon_stdout}");
+    assert!(
+        toon_stdout.contains("idle") || toon_stdout.contains("running"),
+        "toon: {toon_stdout}"
+    );
+
+    // Human is the default and is decorated.
+    let human_out = run_cli(&directory, &["control", "status"]);
+    assert!(human_out.status.success());
+    let human_stdout = String::from_utf8_lossy(&human_out.stdout);
+    assert!(
+        human_stdout.contains("generation: "),
+        "human: {human_stdout}"
+    );
+}

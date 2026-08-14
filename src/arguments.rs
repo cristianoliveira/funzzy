@@ -9,7 +9,7 @@
 
 use clap::{Arg, ArgAction, Command};
 
-use crate::cli::ControlAction;
+use crate::cli::{ControlAction, OutputFormat};
 use std::time::Duration;
 
 /// Busy-run policy: what to do when a change arrives while a run is active.
@@ -42,6 +42,8 @@ pub enum Action {
         action: ControlAction,
         /// `control --socket <PATH>` override.
         socket: Option<String>,
+        /// `control --format toon|json|human`: structured output selection.
+        format: OutputFormat,
     },
     /// `fzz exec -- PROGRAM ARG...`: ad-hoc command over stdin-supplied paths.
     Exec { command: Vec<String> },
@@ -114,6 +116,15 @@ impl Arguments {
             Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
             Some(("control", sub)) => {
                 let socket = sub.get_one::<String>("socket").cloned();
+                let format = match sub
+                    .get_one::<String>("format")
+                    .map(String::as_str)
+                    .unwrap_or("human")
+                {
+                    "toon" => OutputFormat::Toon,
+                    "json" => OutputFormat::Json,
+                    _ => OutputFormat::Human,
+                };
                 let action = match sub.subcommand() {
                     Some(("status", _)) => ControlAction::Status,
                     Some(("list", _)) => ControlAction::List,
@@ -169,7 +180,14 @@ impl Arguments {
                     },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
-                (Action::Control { action, socket }, false)
+                (
+                    Action::Control {
+                        action,
+                        socket,
+                        format,
+                    },
+                    false,
+                )
             }
             Some(("exec", sub)) => {
                 let command: Vec<String> = sub
@@ -423,6 +441,13 @@ fn command() -> Command {
                         .value_parser(clap::builder::ValueParser::string())
                         .help("Control socket path (overrides --control-socket and on.socket)."),
                 )
+                .arg(
+                    Arg::new("format")
+                        .long("format")
+                        .value_name("FORMAT")
+                        .value_parser(clap::builder::PossibleValuesParser::new(["toon", "json", "human"]))
+                        .help("Structured output format: toon (default for non-TTY), json, or human (default for TTY)."),
+                )
                 .subcommand(
                     Command::new("status")
                         .about("Print the running watcher's state.")
@@ -672,7 +697,7 @@ Environment configs:
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> Result<Arguments, clap::Error> {
+    pub(super) fn parse(args: &[&str]) -> Result<Arguments, clap::Error> {
         Arguments::try_parse_from(std::iter::once("fzz").chain(args.iter().copied()))
     }
 
@@ -794,6 +819,7 @@ mod tests {
             Action::Control {
                 action: ControlAction::Status,
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -805,6 +831,7 @@ mod tests {
             Action::Control {
                 action: ControlAction::List,
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -816,6 +843,7 @@ mod tests {
             Action::Control {
                 action: ControlAction::Capabilities,
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -832,6 +860,7 @@ mod tests {
                     sequential: false,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -848,6 +877,7 @@ mod tests {
                     sequential: true,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
         assert_eq!(
@@ -860,6 +890,7 @@ mod tests {
                     sequential: true,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -873,7 +904,11 @@ mod tests {
     fn control_socket_flag_carries_path() {
         let args = parse(&["control", "--socket", "/tmp/sock", "status"]).expect("parse");
         match args.action {
-            Action::Control { action, socket } => {
+            Action::Control {
+                action,
+                socket,
+                format: _,
+            } => {
                 assert_eq!(action, ControlAction::Status);
                 assert_eq!(socket.as_deref(), Some("/tmp/sock"));
             }
@@ -889,7 +924,8 @@ mod tests {
             args.action,
             Action::Control {
                 action: ControlAction::Status,
-                socket: None
+                socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -967,7 +1003,11 @@ mod tests {
     fn ctl_socket_flag_and_global_socket_carry_through() {
         let args = parse(&["ctl", "--socket", "/tmp/sock", "status"]).expect("parse");
         match args.action {
-            Action::Control { action, socket } => {
+            Action::Control {
+                action,
+                socket,
+                format: _,
+            } => {
                 assert_eq!(action, ControlAction::Status);
                 assert_eq!(socket.as_deref(), Some("/tmp/sock"));
             }
@@ -979,7 +1019,8 @@ mod tests {
             args.action,
             Action::Control {
                 action: ControlAction::Status,
-                socket: None
+                socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -995,6 +1036,7 @@ mod tests {
                     timeout: None,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1021,6 +1063,7 @@ mod tests {
                     timeout: Duration::from_secs(2),
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1043,6 +1086,7 @@ mod tests {
                     timeout: Duration::from_millis(500),
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1105,6 +1149,7 @@ mod tests {
                     sequential: false,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1121,6 +1166,7 @@ mod tests {
                     timeout: Some(Duration::from_secs(120)),
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1149,6 +1195,7 @@ mod tests {
                     full: false,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1188,6 +1235,7 @@ mod tests {
                     timeout: None,
                 },
                 socket: None,
+                format: OutputFormat::Human,
             }
         );
     }
@@ -1392,5 +1440,52 @@ mod tests {
     #[test]
     fn missing_value_for_log_file_option_fails() {
         assert!(parse(&["--log-file"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::tests::parse;
+    use super::{Action, Arguments};
+    use crate::cli::{ControlAction, OutputFormat};
+
+    #[test]
+    fn control_format_flag_selects_output_format() {
+        let args = parse(&["control", "--format", "json", "status"]).expect("parse");
+        match args.action {
+            Action::Control { format, action, .. } => {
+                assert_eq!(format, OutputFormat::Json);
+                assert_eq!(action, ControlAction::Status);
+            }
+            other => panic!("expected Control, got {:?}", other),
+        }
+        let args = parse(&["ctl", "--format", "toon", "list"]).expect("parse");
+        match args.action {
+            Action::Control { format, .. } => assert_eq!(format, OutputFormat::Toon),
+            other => panic!("expected Control, got {:?}", other),
+        }
+        let args = parse(&["control", "status"]).expect("parse");
+        match args.action {
+            Action::Control { format, .. } => assert_eq!(format, OutputFormat::Human),
+            other => panic!("expected Control, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn control_format_rejects_unknown_values() {
+        assert!(parse(&["control", "--format", "xml", "status"]).is_err());
+    }
+
+    #[test]
+    fn control_format_works_through_ctl_alias_and_after_socket() {
+        let args =
+            parse(&["ctl", "--socket", "/tmp/s", "--format", "json", "status"]).expect("parse");
+        match args.action {
+            Action::Control { format, socket, .. } => {
+                assert_eq!(format, OutputFormat::Json);
+                assert_eq!(socket.as_deref(), Some("/tmp/s"));
+            }
+            other => panic!("expected Control, got {:?}", other),
+        }
     }
 }

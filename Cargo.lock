@@ -295,6 +295,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "sha2",
+ "toon",
  "yaml-rust",
 ]
 
@@ -771,6 +772,16 @@ name = "termtree"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
+
+[[package]]
+name = "toon"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fa605a2aa68fefdedc9560bd765ce3ad89d45ac1d3ebad43724621098c9299a"
+dependencies = [
+ "regex",
+ "serde_json",
+]
 
 [[package]]
 name = "typenum"
