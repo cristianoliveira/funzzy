@@ -116,7 +116,8 @@ impl BlockingStrategy {
         }
     }
 
-    fn expand(&self, plan: RunPlan, filepath: Option<&str>) -> RunPlan {
+    fn expand(&self, plan: RunPlan, filepath: Option<&str>) -> Result<RunPlan, String> {
+        let plan = plan.resolve_context(&self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_string),
             current_dir: format!("{}", self.root.display()),
@@ -124,7 +125,7 @@ impl BlockingStrategy {
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
-        plan
+        Ok(plan)
     }
 
     fn execute_tasks(&self, metadata: RunMetadata, plan: RunPlan) -> crate::executor::CompletedRun {
@@ -134,15 +135,27 @@ impl BlockingStrategy {
 
 impl RunStrategy for BlockingStrategy {
     fn run_init(&self, plan: RunPlan) {
-        let plan = self.expand(plan, None);
+        let plan = match self.expand(plan, None) {
+            Ok(plan) => plan,
+            Err(error) => {
+                stdout::error(&error);
+                return;
+            }
+        };
+        stdout::verbose(&plan.context_summary(), self.verbose);
         let completed = self.execute_tasks(RunMetadata::new(0, "init"), plan);
         stdout::present_results(completed.results, completed.elapsed);
     }
 
     fn run_change(&self, plan: RunPlan, filepath: &str) {
-        stdout::verbose(&format!("Run plan: {:?}", plan), self.verbose);
-
-        let plan = self.expand(plan, Some(filepath));
+        let plan = match self.expand(plan, Some(filepath)) {
+            Ok(plan) => plan,
+            Err(error) => {
+                stdout::error(&error);
+                return;
+            }
+        };
+        stdout::verbose(&plan.context_summary(), self.verbose);
         let completed = self.execute_tasks(RunMetadata::new(0, filepath), plan);
         stdout::present_results(completed.results, completed.elapsed);
     }

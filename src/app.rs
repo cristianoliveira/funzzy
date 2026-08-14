@@ -162,6 +162,11 @@ fn explain_output(path: &str, result: &crate::watches::ExplainResult) -> String 
         output.push_str("  matched:\n");
         for rule in &result.matched {
             output.push_str(&format!("    - {}\n", rule.name));
+            output.push_str(&format!("        cwd: {}\n", rule.cwd));
+            output.push_str(&format!(
+                "        env keys: [{}]\n",
+                rule.environment_keys.join(", ")
+            ));
             for change in &rule.change_patterns {
                 output.push_str(&format!("        change: {}\n", change));
             }
@@ -172,6 +177,11 @@ fn explain_output(path: &str, result: &crate::watches::ExplainResult) -> String 
         output.push_str("  ignored:\n");
         for rule in &result.ignored {
             output.push_str(&format!("    - {}\n", rule.name));
+            output.push_str(&format!("        cwd: {}\n", rule.cwd));
+            output.push_str(&format!(
+                "        env keys: [{}]\n",
+                rule.environment_keys.join(", ")
+            ));
             for change in &rule.change_patterns {
                 output.push_str(&format!("        change: {}\n", change));
             }

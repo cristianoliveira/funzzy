@@ -20,7 +20,7 @@ pub struct WatchCommand {
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
-        stdout::verbose(&format!("watches {:?}", watches), verbose);
+        stdout::verbose(&watches.diagnostic_summary(), verbose);
 
         WatchCommand {
             watches,

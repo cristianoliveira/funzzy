@@ -11,6 +11,10 @@ pub struct ExplainRule {
     pub change_patterns: Vec<String>,
     /// Ignore patterns that matched and win over the change match.
     pub ignore_patterns: Vec<String>,
+    /// Effective task cwd for diagnostics.
+    pub cwd: String,
+    /// Task-local environment names; values remain redacted.
+    pub environment_keys: Vec<String>,
 }
 
 /// Result of explaining a path against the configured rules.
@@ -92,6 +96,21 @@ impl Watches {
     /// Maximum simultaneously active tasks within one parallel group.
     pub fn jobs(&self) -> usize {
         self.jobs
+    }
+
+    /// Redacted configuration summary for verbose diagnostics.
+    pub fn diagnostic_summary(&self) -> String {
+        let contexts = self
+            .topology
+            .resolve_context(&self.root)
+            .map(|plan| plan.context_summary())
+            .unwrap_or_else(|error| error);
+        format!(
+            "workspace={} jobs={}\n{}",
+            self.root.display(),
+            self.jobs,
+            contexts
+        )
     }
 
     fn normalize_paths<'a>(&'a self, path: &'a str) -> (PathBuf, Option<String>) {
@@ -262,17 +281,28 @@ impl Watches {
             if let Some(rel) = relative_path.as_ref() {
                 ignore_patterns.extend(rule.ignore_relative_patterns(rel));
             }
+            let cwd = rule
+                .cwd()
+                .map(|cwd| self.root.join(cwd))
+                .unwrap_or_else(|| self.root.clone())
+                .display()
+                .to_string();
+            let environment_keys = rule.environment().keys().cloned().collect();
             if ignore_patterns.is_empty() {
                 matched.push(ExplainRule {
                     name: rule.name.clone(),
                     change_patterns,
                     ignore_patterns: vec![],
+                    cwd,
+                    environment_keys,
                 });
             } else {
                 ignored.push(ExplainRule {
                     name: rule.name.clone(),
                     change_patterns,
                     ignore_patterns,
+                    cwd,
+                    environment_keys,
                 });
             }
         }
@@ -429,6 +459,8 @@ mod tests {
     fn it_explains_matched_ignored_and_unmatched_paths() {
         let file_content = "
         - name: my tests
+          cwd: crates/tests
+          env: { TOKEN: secret }
           run: 'cargo tests'
           change: 'tests/**'
           ignore: 'tests/ignored/**'
@@ -444,6 +476,9 @@ mod tests {
         assert_eq!(matched.matched[0].name, "my tests");
         assert_eq!(matched.matched[0].change_patterns, vec!["tests/**"]);
         assert!(matched.matched[0].ignore_patterns.is_empty());
+        assert!(matched.matched[0].cwd.ends_with("crates/tests"));
+        assert_eq!(matched.matched[0].environment_keys, vec!["TOKEN"]);
+        assert!(!format!("{:?}", matched.matched[0]).contains("secret"));
         assert!(matched.ignored.is_empty());
 
         let ignored = watches.explain(&get_absolute_path("tests/ignored/foo.rs"));

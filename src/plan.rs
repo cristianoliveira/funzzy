@@ -11,6 +11,15 @@
 
 use crate::rules::{CommandLine, Rules};
 use crate::template::{self, TemplateOptions};
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
+
+/// Process context applied only to one task's child commands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskContext {
+    pub cwd: Option<PathBuf>,
+    pub environment: BTreeMap<String, String>,
+}
 
 /// One task selected for execution, with stable identity and sequential
 /// command order preserved.
@@ -26,6 +35,8 @@ pub struct TaskPlan {
     pub parallel: Option<String>,
     /// The original rule, kept for matching/presentation consumers.
     pub rule: Rules,
+    /// Effective child process context. Relative cwd is resolved before spawn.
+    pub context: TaskContext,
 }
 
 /// One stage of a run: a serial task or a named parallel-group occurrence.
@@ -65,11 +76,15 @@ impl TaskPlan {
     /// variables. Pure: no process, stdout, or control-socket side effects.
     pub fn expand(&self, opts: &TemplateOptions) -> (Vec<CommandLine>, Vec<String>) {
         let mut unknown = vec![];
+        let mut task_options = opts.clone();
+        if let Some(cwd) = &self.context.cwd {
+            task_options.current_dir = cwd.display().to_string();
+        }
         let expanded = self
             .commands
             .iter()
             .map(|cmd| {
-                let out = template::template_line(cmd.clone(), opts.clone());
+                let out = template::template_line(cmd.clone(), task_options.clone());
                 unknown.extend(out.unknown_variables);
                 out.command
             })
@@ -79,6 +94,84 @@ impl TaskPlan {
 }
 
 impl RunPlan {
+    /// Resolves every task cwd from injected workspace root. Absolute paths
+    /// and any `..` component are rejected; tasks cannot escape workspace.
+    /// Existence is validated by executor immediately before first spawn.
+    pub fn resolve_context(&self, workspace_root: &Path) -> Result<RunPlan, String> {
+        let resolve_task = |task: &TaskPlan| -> Result<TaskPlan, String> {
+            let mut resolved = task.clone();
+            let cwd = match &task.context.cwd {
+                None => workspace_root.to_path_buf(),
+                Some(cwd) if cwd.is_absolute() => {
+                    return Err(format!(
+                        "Task '{}' cwd must be relative to workspace root: {}",
+                        task.name,
+                        cwd.display()
+                    ));
+                }
+                Some(cwd)
+                    if cwd
+                        .components()
+                        .any(|component| component == Component::ParentDir) =>
+                {
+                    return Err(format!(
+                        "Task '{}' cwd cannot escape workspace root: {}",
+                        task.name,
+                        cwd.display()
+                    ));
+                }
+                Some(cwd) => {
+                    let candidate = workspace_root.join(cwd);
+                    if candidate.symlink_metadata().is_ok() {
+                        let canonical_root = workspace_root.canonicalize().map_err(|error| {
+                            format!(
+                                "Task '{}' workspace root cannot be resolved: {} ({})",
+                                task.name,
+                                workspace_root.display(),
+                                error
+                            )
+                        })?;
+                        let canonical_candidate = candidate.canonicalize().map_err(|error| {
+                            format!(
+                                "Task '{}' cwd cannot be resolved: {} ({})",
+                                task.name,
+                                candidate.display(),
+                                error
+                            )
+                        })?;
+                        if !canonical_candidate.starts_with(&canonical_root) {
+                            return Err(format!(
+                                "Task '{}' cwd cannot escape workspace root through a symlink: {}",
+                                task.name,
+                                cwd.display()
+                            ));
+                        }
+                    }
+                    candidate
+                }
+            };
+            resolved.context.cwd = Some(cwd);
+            Ok(resolved)
+        };
+
+        let stages = self
+            .stages
+            .iter()
+            .map(|stage| match stage {
+                Stage::Serial(task) => resolve_task(task).map(Stage::Serial),
+                Stage::Parallel { group, tasks } => tasks
+                    .iter()
+                    .map(resolve_task)
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|tasks| Stage::Parallel {
+                        group: group.clone(),
+                        tasks,
+                    }),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(RunPlan { stages })
+    }
+
     /// Builds the plan from parsed rules, preserving config order and group
     /// occurrence boundaries. Consecutive rules sharing the same non-empty
     /// `parallel` group form one occurrence; a serial rule, a different group
@@ -93,6 +186,10 @@ impl RunPlan {
                 position,
                 commands: rule.command_lines(),
                 parallel: rule.parallel().map(str::to_string),
+                context: TaskContext {
+                    cwd: rule.cwd().map(PathBuf::from),
+                    environment: rule.environment().clone(),
+                },
                 rule,
             };
 
@@ -187,6 +284,35 @@ impl RunPlan {
             })
             .collect();
         (RunPlan { stages }, unknown)
+    }
+
+    /// Human diagnostics expose effective cwd and environment names, never
+    /// environment values.
+    pub fn context_summary(&self) -> String {
+        self.stages
+            .iter()
+            .flat_map(|stage| match stage {
+                Stage::Serial(task) => vec![task],
+                Stage::Parallel { tasks, .. } => tasks.iter().collect(),
+            })
+            .map(|task| {
+                let cwd = task
+                    .context
+                    .cwd
+                    .as_ref()
+                    .map(|cwd| cwd.display().to_string())
+                    .unwrap_or_else(|| "<workspace>".to_owned());
+                let keys = task
+                    .context
+                    .environment
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("task={} cwd={} env=[{}]", task.name, cwd, keys)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// True when no stage remains.
@@ -466,6 +592,105 @@ mod tests {
             ])]
         );
         assert_eq!(plan.commands().len(), 1);
+    }
+
+    #[test]
+    fn resolves_task_context_and_expands_relative_path_from_task_cwd() {
+        let mut environment = BTreeMap::new();
+        environment.insert("ROLE".to_owned(), "web".to_owned());
+        let rule = Rules::new(
+            "web".to_owned(),
+            vec!["echo {{relative_filepath}}".to_owned()],
+            vec!["packages/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_execution_context(Some("packages/web app".to_owned()), environment.clone());
+        let root = PathBuf::from("/tmp/work space");
+        let plan = RunPlan::from_rules(vec![rule])
+            .resolve_context(&root)
+            .expect("relative cwd");
+        let (expanded, unknown) = plan.expand(&TemplateOptions {
+            filepath: Some("/tmp/work space/packages/web app/src/main.rs".to_owned()),
+            current_dir: root.display().to_string(),
+        });
+        let Stage::Serial(task) = &expanded.stages[0] else {
+            panic!("serial task");
+        };
+
+        assert_eq!(task.context.cwd, Some(root.join("packages/web app")));
+        assert_eq!(task.context.environment, environment);
+        assert_eq!(
+            task.commands,
+            vec![CommandLine::Shell("echo src/main.rs".to_owned())]
+        );
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn rejects_absolute_and_parent_task_working_directories() {
+        for cwd in ["/tmp/outside", "../outside"] {
+            let rule = Rules::new(
+                "unsafe".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            )
+            .with_execution_context(Some(cwd.to_owned()), BTreeMap::new());
+            let error = RunPlan::from_rules(vec![rule])
+                .resolve_context(Path::new("/workspace"))
+                .expect_err("cwd escape must fail");
+            assert!(error.contains("Task 'unsafe' cwd"), "unexpected: {error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_task_working_directory_symlinks_outside_workspace() {
+        use std::os::unix::fs::symlink;
+
+        let fixture =
+            std::env::temp_dir().join(format!("funzzy-task-cwd-escape-{}", std::process::id()));
+        let workspace = fixture.join("workspace");
+        let outside = fixture.join("outside");
+        let _ = std::fs::remove_dir_all(&fixture);
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, workspace.join("linked-outside")).unwrap();
+
+        let rule = Rules::new(
+            "unsafe".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_execution_context(Some("linked-outside".to_owned()), BTreeMap::new());
+        let error = RunPlan::from_rules(vec![rule])
+            .resolve_context(&workspace)
+            .expect_err("cwd symlink escape must fail");
+
+        assert!(error.contains("Task 'unsafe' cwd"), "unexpected: {error}");
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn context_summary_redacts_environment_values() {
+        let rule = Rules::new(
+            "secret".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_execution_context(
+            Some("service".to_owned()),
+            BTreeMap::from([("TOKEN".to_owned(), "do-not-print".to_owned())]),
+        );
+        let summary = RunPlan::from_rules(vec![rule]).context_summary();
+        assert!(summary.contains("env=[TOKEN]"));
+        assert!(!summary.contains("do-not-print"));
     }
 
     #[test]

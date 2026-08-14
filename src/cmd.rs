@@ -1,4 +1,5 @@
 use crate::logging;
+use crate::plan::TaskContext;
 use crate::stdout;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
@@ -244,11 +245,16 @@ fn run_to_completion(cmd: &mut Command, display: &str) -> Result<(), String> {
 }
 
 pub fn spawn(command: &String) -> Result<LoggedChild, String> {
+    spawn_in(command, &TaskContext::default())
+}
+
+pub fn spawn_in(command: &String, context: &TaskContext) -> Result<LoggedChild, String> {
     println!();
     logging::log_line("");
     stdout::info(&format!("{} \n", String::from(command)));
 
     let mut cmd = prepare_command(command);
+    apply_context(&mut cmd, context);
 
     spawn_configured(&mut cmd, command)
 }
@@ -256,14 +262,26 @@ pub fn spawn(command: &String) -> Result<LoggedChild, String> {
 /// Spawns an exact argv (program plus arguments) directly, without a shell.
 /// Returns a child that can be cancelled; used by ad-hoc `exec` mode.
 pub fn spawn_argv(argv: &[String]) -> Result<LoggedChild, String> {
+    spawn_argv_in(argv, &TaskContext::default())
+}
+
+pub fn spawn_argv_in(argv: &[String], context: &TaskContext) -> Result<LoggedChild, String> {
     let display = argv.join(" ");
     println!();
     logging::log_line("");
     stdout::info(&format!("{} \n", display));
 
     let mut cmd = prepare_argv_command(argv);
+    apply_context(&mut cmd, context);
 
     spawn_configured(&mut cmd, &display)
+}
+
+fn apply_context(command: &mut Command, context: &TaskContext) {
+    if let Some(cwd) = &context.cwd {
+        command.current_dir(cwd);
+    }
+    command.envs(&context.environment);
 }
 
 fn spawn_configured(cmd: &mut Command, display: &str) -> Result<LoggedChild, String> {

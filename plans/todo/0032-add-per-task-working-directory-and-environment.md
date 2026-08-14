@@ -1,7 +1,7 @@
 ---
 id: TASK-0032
 title: Add per-task working directory and environment
-status: todo
+status: doing
 depends_on: [TASK-0025]
 priority: high
 tags: [rust, workflow, process, monorepo, config, tdd]
@@ -18,14 +18,14 @@ Add execution context to task plan, resolved from injected workspace root. Do no
 
 ## Acceptance criteria
 
-- [ ] Parser tests cover optional `cwd` and string-to-string `env`, wrong types, empty names, and legacy configs.
-- [ ] Relative `cwd` resolves against config workspace root; absolute/path-escape policy is explicit.
-- [ ] Missing/non-directory `cwd` fails before command spawn with task-attributed error.
-- [ ] Task environment overlays inherited environment without leaking into siblings or later runs.
-- [ ] Template expansion uses task working directory where contract says it should.
-- [ ] Parallel tasks with distinct cwd/env execute independently.
-- [ ] Verbose/explain output shows effective cwd and environment keys while redacting values by default.
-- [ ] Integration tests cover paths with spaces and deterministic inheritance/removal semantics.
+- [x] Parser tests cover optional `cwd` and string-to-string `env`, wrong types, empty names, and legacy configs.
+- [x] Relative `cwd` resolves against config workspace root; absolute/path-escape policy is explicit.
+- [x] Missing/non-directory `cwd` fails before command spawn with task-attributed error.
+- [x] Task environment overlays inherited environment without leaking into siblings or later runs.
+- [x] Template expansion uses task working directory where contract says it should.
+- [x] Parallel tasks with distinct cwd/env execute independently.
+- [x] Verbose/explain output shows effective cwd and environment keys while redacting values by default.
+- [x] Integration tests cover paths with spaces and deterministic inheritance/removal semantics.
 
 ## Notes
 

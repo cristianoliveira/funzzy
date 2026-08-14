@@ -30,8 +30,11 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
     )?;
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
+    let cwd = yaml::extract_optional_string(yaml, "cwd")?;
+    let environment = yaml::extract_optional_string_map(yaml, "env")?;
 
-    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init);
+    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
+        .with_execution_context(cwd, environment);
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
@@ -243,8 +246,11 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
 
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
+    let cwd = yaml::extract_optional_string(yaml, "cwd")?;
+    let environment = yaml::extract_optional_string_map(yaml, "env")?;
 
-    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init);
+    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
+        .with_execution_context(cwd, environment);
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
@@ -1105,6 +1111,8 @@ tasks:
         tasks:
           - name: lint
             parallel: checks
+            cwd: crates/lint
+            env: { MODE: strict }
             run: make lint
           - name: test
             run: make test
@@ -1112,7 +1120,69 @@ tasks:
 
         let rules = from_yaml(file_content).expect("Failed to parse yaml");
         assert_eq!(rules[0].parallel(), Some("checks"));
+        assert_eq!(rules[0].cwd(), Some("crates/lint"));
+        assert_eq!(
+            rules[0].environment().get("MODE").map(String::as_str),
+            Some("strict")
+        );
         assert_eq!(rules[1].parallel(), None, "no parallel means serial");
+    }
+
+    #[test]
+    fn it_parses_optional_task_cwd_and_string_environment() {
+        let file_content = "
+        - name: web
+          cwd: packages/web app
+          env:
+            NODE_ENV: test
+            EMPTY: ''
+          run: npm test
+          change: 'packages/**'
+        ";
+
+        let rules = from_yaml(file_content).expect("task context must parse");
+        assert_eq!(rules[0].cwd(), Some("packages/web app"));
+        assert_eq!(
+            rules[0].environment().get("NODE_ENV").map(String::as_str),
+            Some("test")
+        );
+        assert_eq!(
+            rules[0].environment().get("EMPTY").map(String::as_str),
+            Some("")
+        );
+    }
+
+    #[test]
+    fn legacy_task_defaults_to_workspace_cwd_and_inherited_environment() {
+        let rules =
+            from_yaml("- name: test\n  run: cargo test\n  change: src/**\n").expect("legacy task");
+        assert_eq!(rules[0].cwd(), None);
+        assert!(rules[0].environment().is_empty());
+    }
+
+    #[test]
+    fn it_rejects_wrong_task_context_types_and_empty_environment_names() {
+        let wrong_cwd =
+            from_yaml("- name: test\n  cwd: true\n  run: cargo test\n  change: src/**\n")
+                .expect_err("cwd must be a string");
+        assert!(format!("{}", wrong_cwd).contains("'cwd'"));
+
+        let wrong_env =
+            from_yaml("- name: test\n  env: [A]\n  run: cargo test\n  change: src/**\n")
+                .expect_err("env must be a map");
+        assert!(format!("{}", wrong_env).contains("Property 'env'"));
+
+        let non_string_value =
+            from_yaml("- name: test\n  env: { A: 1 }\n  run: cargo test\n  change: src/**\n")
+                .expect_err("env values must be strings");
+        assert!(
+            format!("{}", non_string_value).contains("Environment value for 'A' must be a string")
+        );
+
+        let empty_name =
+            from_yaml("- name: test\n  env: { '': value }\n  run: cargo test\n  change: src/**\n")
+                .expect_err("env names must be non-empty");
+        assert!(format!("{}", empty_name).contains("Environment variable name cannot be empty"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ extern crate yaml_rust;
 use crate::errors::{FzzError, Result};
 
 use self::yaml_rust::Yaml;
+use std::collections::BTreeMap;
 
 pub fn extract_list(yaml: &Yaml, prop: &str) -> Result<Vec<String>> {
     match &yaml[prop] {
@@ -78,6 +79,51 @@ Expected 'String' but got: {:?}
             Some(
                 "Check if the property is defined, with the right type and identation".to_string(),
             ),
+        )),
+    }
+}
+
+/// Extracts an optional string-to-string map. Missing values yield an empty
+/// map; names must be non-empty strings and values must be strings.
+pub fn extract_optional_string_map(yaml: &Yaml, prop: &str) -> Result<BTreeMap<String, String>> {
+    let mut values = BTreeMap::new();
+    match &yaml[prop] {
+        Yaml::BadValue => return Ok(values),
+        Yaml::Hash(items) => {
+            for (name, value) in items {
+                let Some(name) = name.as_str() else {
+                    return Err(FzzError::InvalidConfigError(
+                        format!("Property '{}' environment names must be strings", prop),
+                        None,
+                        None,
+                    ));
+                };
+                if name.trim().is_empty() {
+                    return Err(FzzError::InvalidConfigError(
+                        "Environment variable name cannot be empty".to_owned(),
+                        None,
+                        None,
+                    ));
+                }
+                let Some(value) = value.as_str() else {
+                    return Err(FzzError::InvalidConfigError(
+                        format!("Environment value for '{}' must be a string", name),
+                        None,
+                        None,
+                    ));
+                };
+                values.insert(name.to_owned(), value.to_owned());
+            }
+            Ok(values)
+        }
+        unknown => Err(FzzError::InvalidConfigError(
+            format!(
+                "Property '{}' must be a string-to-string object, got {}",
+                prop,
+                get_type(unknown)
+            ),
+            None,
+            None,
         )),
     }
 }

@@ -67,6 +67,7 @@ pub struct Worker {
     scheduler: Option<Arc<Scheduler>>,
     next_run_id: AtomicU64,
     root: PathBuf,
+    verbose: bool,
 
     consumer: Option<JoinHandle<()>>,
 }
@@ -181,6 +182,7 @@ impl Worker {
             scheduler: Some(scheduler),
             next_run_id: AtomicU64::new(0),
             root,
+            verbose,
             consumer: Some(consumer),
         }
     }
@@ -217,10 +219,12 @@ impl Worker {
         filepath: Option<&str>,
     ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
+            let plan = plan.resolve_context(&self.root)?;
             let (plan, unknown_variables) = plan.expand(&TemplateOptions {
                 filepath: filepath.map(str::to_string),
                 current_dir: format!("{}", self.root.display()),
             });
+            stdout::verbose(&plan.context_summary(), self.verbose);
             for variable in unknown_variables {
                 stdout::warn(&format!("Unknown template variable '{}'.", variable));
             }
@@ -512,6 +516,7 @@ mod tests {
 
         let root =
             std::env::temp_dir().join(format!("funzzy root with spaces {}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create injected root");
         let (tx, rx) = channel();
         let worker = Worker::with_root(false, false, root.clone(), move |event| {
             tx.send(event).unwrap();
@@ -546,6 +551,7 @@ mod tests {
             "template expansion must be relative to the injected root"
         );
         let _ = std::fs::remove_file(&marker);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

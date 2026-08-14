@@ -30,7 +30,7 @@ impl WatchNonBlockCommand {
         run_on_init: bool,
         control_socket: Option<PathBuf>,
     ) -> Self {
-        stdout::verbose(&format!("watches {:?}", watches), verbose);
+        stdout::verbose(&watches.diagnostic_summary(), verbose);
 
         WatchNonBlockCommand {
             watches,

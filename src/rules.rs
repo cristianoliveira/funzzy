@@ -9,6 +9,7 @@
 extern crate glob;
 
 use self::glob::Pattern;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
@@ -25,6 +26,11 @@ pub struct Rules {
     /// Optional named `parallel` group (TASK-0024/0025). `None` means the
     /// task is serial and never runs concurrently with siblings.
     parallel: Option<String>,
+    /// Optional task working directory, resolved against workspace root when
+    /// building executable plan.
+    cwd: Option<String>,
+    /// Per-task environment overlay. Values are never applied globally.
+    environment: BTreeMap<String, String>,
 }
 
 impl Rules {
@@ -43,6 +49,8 @@ impl Rules {
             ignore_patterns: ignores,
             run_on_init,
             parallel: None,
+            cwd: None,
+            environment: BTreeMap::new(),
         }
     }
 
@@ -64,7 +72,28 @@ impl Rules {
             ignore_patterns: ignores,
             run_on_init,
             parallel: None,
+            cwd: None,
+            environment: BTreeMap::new(),
         }
+    }
+
+    /// Adds task-local process context without mutating parent process.
+    pub fn with_execution_context(
+        mut self,
+        cwd: Option<String>,
+        environment: BTreeMap<String, String>,
+    ) -> Self {
+        self.cwd = cwd;
+        self.environment = environment;
+        self
+    }
+
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
+    }
+
+    pub fn environment(&self) -> &BTreeMap<String, String> {
+        &self.environment
     }
 
     /// Declares the task as a member of the named `parallel` group. Only

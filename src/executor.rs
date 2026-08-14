@@ -5,7 +5,7 @@
 //! policies only decide how plans are submitted or replaced.
 
 use crate::cmd::{self, LoggedChild, ShutdownOutcome};
-use crate::plan::{RunOutcome, RunPlan, Stage, TaskOutcome, TaskPlan};
+use crate::plan::{RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan};
 use crate::rules::CommandLine;
 use crate::stdout;
 use std::collections::VecDeque;
@@ -72,16 +72,26 @@ impl ChildProcess for LoggedChild {
 }
 
 pub trait ProcessRunner: Send + Sync {
-    fn spawn(&self, task: &str, command: &CommandLine) -> Result<Box<dyn ChildProcess>, String>;
+    fn spawn(
+        &self,
+        task: &str,
+        command: &CommandLine,
+        context: &TaskContext,
+    ) -> Result<Box<dyn ChildProcess>, String>;
 }
 
 pub struct SystemProcessRunner;
 
 impl ProcessRunner for SystemProcessRunner {
-    fn spawn(&self, _task: &str, command: &CommandLine) -> Result<Box<dyn ChildProcess>, String> {
+    fn spawn(
+        &self,
+        _task: &str,
+        command: &CommandLine,
+        context: &TaskContext,
+    ) -> Result<Box<dyn ChildProcess>, String> {
         let child = match command {
-            CommandLine::Shell(command) => cmd::spawn(command),
-            CommandLine::Argv(argv) => cmd::spawn_argv(argv),
+            CommandLine::Shell(command) => cmd::spawn_in(command, context),
+            CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
         }?;
         Ok(Box::new(child))
     }
@@ -142,6 +152,8 @@ struct ActiveTask {
     child: Option<Box<dyn ChildProcess>>,
     current_command: Option<String>,
     failures: Vec<String>,
+    context: TaskContext,
+    context_validated: bool,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -153,6 +165,8 @@ impl From<TaskPlan> for ActiveTask {
             child: None,
             current_command: None,
             failures: vec![],
+            context: task.context,
+            context_validated: false,
         }
     }
 }
@@ -291,6 +305,27 @@ impl Executor {
         task: &mut ActiveTask,
         results: &mut Vec<Result<(), String>>,
     ) -> TaskStep {
+        if !task.context_validated {
+            task.context_validated = true;
+            if let Some(cwd) = &task.context.cwd {
+                if !cwd.is_dir() {
+                    let failure = format!(
+                        "Task '{}' cwd is missing or not a directory: {}",
+                        task.name,
+                        cwd.display()
+                    );
+                    task.failures.push(failure.clone());
+                    results.push(Err(failure));
+                    task.commands.clear();
+                    return if self.fail_fast {
+                        TaskStep::FailedFast
+                    } else {
+                        TaskStep::Finished
+                    };
+                }
+            }
+        }
+
         loop {
             if task.child.is_none() {
                 let Some(command) = task.commands.pop_front() else {
@@ -298,7 +333,7 @@ impl Executor {
                 };
                 let display = command.display();
                 task.current_command = Some(display.clone());
-                match self.runner.spawn(&task.name, &command) {
+                match self.runner.spawn(&task.name, &command, &task.context) {
                     Ok(child) => {
                         task.child = Some(child);
                         self.events.emit(Event::Tick {
@@ -509,6 +544,7 @@ mod tests {
                 commands,
                 parallel: None,
                 rule,
+                context: crate::plan::TaskContext::default(),
             })],
         };
         Executor::new(
@@ -587,12 +623,13 @@ mod tests {
             &self,
             task: &str,
             command: &CommandLine,
+            context: &TaskContext,
         ) -> Result<Box<dyn ChildProcess>, String> {
             self.commands
                 .lock()
                 .unwrap()
                 .push(format!("{}:{}", task, command.display()));
-            SystemProcessRunner.spawn(task, command)
+            SystemProcessRunner.spawn(task, command, context)
         }
     }
 
@@ -728,6 +765,7 @@ mod tests {
             &self,
             task: &str,
             command: &CommandLine,
+            _context: &TaskContext,
         ) -> Result<Box<dyn ChildProcess>, String> {
             let command = command.display();
             if command == "spawn-error" {

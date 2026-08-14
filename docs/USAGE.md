@@ -99,6 +99,27 @@ tasks:
 
 See [examples/common-rules.yml](../examples/common-rules.yml) for a complete example.
 
+### Per-task working directory and environment
+
+A task may run from a workspace-relative directory and overlay inherited environment variables:
+
+```yaml
+tasks:
+  - name: test web package
+    cwd: packages/web app
+    env:
+      NODE_ENV: test
+      API_ORIGIN: http://localhost:8080
+    run: npm test
+```
+
+- `cwd` must be a non-empty relative path. Absolute paths, any `..` component, and symlinks resolving outside workspace are rejected, so tasks cannot escape workspace root.
+- Directory must exist before task starts. A missing or non-directory path fails task before command spawn.
+- `env` must be a string-to-string map with non-empty names. Empty string sets an empty value; variable removal is not supported.
+- Task variables overlay inherited child environment only. They do not mutate Funzzy process, sibling tasks, or later runs.
+- `{{relative_filepath}}` is relative to effective task directory.
+- Verbose and `explain` output show effective directory and environment names, but redact values.
+
 ### Nested Groups Format
 
 **Minimal version**: v1.6.0
