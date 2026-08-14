@@ -1,7 +1,7 @@
 ---
 id: TASK-0071
 title: Define the sequential debugging override contract
-status: todo
+status: done
 depends_on: [TASK-0024, TASK-0042]
 priority: high
 tags: [design, concurrency, debugging, control-socket, agents, determinism]
