@@ -1,7 +1,7 @@
 ---
 id: TASK-0065
 title: Audit V2 documentation and define one information architecture
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [docs, v2, information-architecture, audit, source-of-truth]
