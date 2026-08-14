@@ -85,7 +85,7 @@ fn test_it_list_the_available_tasks_when_nothing_matches() {
         .failure()
         .stdout(predicate::str::contains(
             "Error: No target found for 'unknown_task_name'
-Available tasks
+Available jobs
   - run my test @quick
     change: examples/workdir/*.txt
   - run my build
@@ -106,7 +106,7 @@ fn test_list_subcommand_lists_available_tasks() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Available tasks
+            "Available jobs
   - run my test @quick
     change: examples/workdir/*.txt
   - run my build

@@ -291,14 +291,14 @@ impl Rules {
 
         if self.command_lines().len() == 0 {
             return Err(format!(
-                "Rule '{}' contains no command to run. Empty 'run' property.",
+                "job '{}' contains no command to run. Empty 'run' property.",
                 name
             ));
         }
 
         if self.watch_patterns().len() == 0 && !self.run_on_init() {
             return Err(format!(
-                "Rule '{}' must contain a `change` and/or `run_on_init` property.",
+                "job '{}' must contain a `change` and/or `run_on_init` property.",
                 name
             ));
         }
@@ -309,7 +309,7 @@ impl Rules {
                 Err(err) => {
                     return Err(vec![
                         format!(
-                            "Rule '{}' contains an invalid `change` glob pattern '{}'.",
+                            "job '{}' contains an invalid `change` glob pattern '{}'.",
                             name, watch_pattern
                         ),
                         format!("  {}", err),
@@ -326,7 +326,7 @@ impl Rules {
                 Err(err) => {
                     return Err(vec![
                         format!(
-                            "Rule '{}' contains an invalid `ignore` glob pattern '{}'.",
+                            "job '{}' contains an invalid `ignore` glob pattern '{}'.",
                             name, ignore_pattern
                         ),
                         format!("  {}", err),
@@ -422,7 +422,9 @@ pub fn validate_rules(rule: &Vec<Rules>) -> Result<(), String> {
 }
 
 pub fn available_targets(rules: &[Rules]) -> String {
-    let mut output = String::from("Available tasks\n");
+    // TASK-0077: the list names configured entries, so the vocabulary is
+    // "jobs" at this boundary; runtime executions remain "tasks".
+    let mut output = String::from("Available jobs\n");
     if rules.is_empty() {
         output.push_str("  (none)\n");
         return output;
@@ -478,13 +480,13 @@ mod tests {
 
         assert_eq!(
             super::available_targets(&rules),
-            "Available tasks\n  - my tests @quick\n    change: tests/**, src/**\n  - startup\n    run_on_init: true\n"
+            "Available jobs\n  - my tests @quick\n    change: tests/**, src/**\n  - startup\n    run_on_init: true\n"
         );
     }
 
     #[test]
     fn available_targets_handles_empty_config() {
-        assert_eq!(super::available_targets(&[]), "Available tasks\n  (none)\n");
+        assert_eq!(super::available_targets(&[]), "Available jobs\n  (none)\n");
     }
 
     #[test]
@@ -681,7 +683,7 @@ mod tests {
         assert!(second_rule.validate().is_err());
         assert_eq!(
             second_rule.validate().err().unwrap(),
-            "Rule 'this is an invalid pattern' contains an invalid `change` glob pattern '**/foo_**.go'.
+            "job 'this is an invalid pattern' contains an invalid `change` glob pattern '**/foo_**.go'.
   Pattern syntax error near position 6: recursive wildcards must form a single path component
   Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
         );
@@ -690,7 +692,7 @@ mod tests {
         assert!(third_rule.validate().is_err());
         assert_eq!(
             third_rule.validate().err().unwrap(),
-            "Rule 'this is an invalid pattern 2' contains an invalid `ignore` glob pattern '**/**.*'.
+            "job 'this is an invalid pattern 2' contains an invalid `ignore` glob pattern '**/**.*'.
   Pattern syntax error near position 5: recursive wildcards must form a single path component
   Read more: https://en.wikipedia.org/wiki/Glob_(programming)"
         );
@@ -699,7 +701,7 @@ mod tests {
         assert!(fourth_rule.validate().is_err());
         assert_eq!(
             fourth_rule.validate().err().unwrap(),
-            "Rule 'missing trigger property' must contain a `change` and/or `run_on_init` property."
+            "job 'missing trigger property' must contain a `change` and/or `run_on_init` property."
         );
     }
 }

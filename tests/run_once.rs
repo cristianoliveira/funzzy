@@ -147,7 +147,7 @@ fn missing_and_ambiguous_targets_are_actionable() {
         .assert()
         .code(1)
         .stdout(predicate::str::contains("No target found for 'missing'"))
-        .stdout(predicate::str::contains("Available tasks"));
+        .stdout(predicate::str::contains("Available jobs"));
 
     fzz(&directory)
         .args(["run", "lint"])

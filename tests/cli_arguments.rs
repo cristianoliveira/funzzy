@@ -265,7 +265,7 @@ fn list_subcommand_lists_available_tasks() {
         .args(["-c", FILTER_EXAMPLE, "list"])
         .assert()
         .code(0)
-        .stdout(predicate::str::contains("Available tasks"))
+        .stdout(predicate::str::contains("Available jobs"))
         .stdout(predicate::str::contains("run my test @quick"))
         .stdout(predicate::str::contains("Usage").not());
 }
@@ -282,7 +282,7 @@ fn list_handles_empty_custom_config() {
             .arg("list")
             .assert()
             .code(0)
-            .stdout(predicate::str::contains("Available tasks\n  (none)"));
+            .stdout(predicate::str::contains("Available jobs\n  (none)"));
     });
 }
 
@@ -360,7 +360,7 @@ fn watch_unknown_target_fails_listing_available_tasks() {
         .stdout(predicate::str::contains(
             "No target found for 'no-such-target'",
         ))
-        .stdout(predicate::str::contains("Available tasks"));
+        .stdout(predicate::str::contains("Available jobs"));
 }
 
 // ---------------------------------------------------------------------------
