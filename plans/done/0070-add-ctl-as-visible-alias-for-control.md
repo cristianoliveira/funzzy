@@ -1,7 +1,7 @@
 ---
 id: TASK-0070
 title: Add ctl as visible alias for control
-status: todo
+status: done
 depends_on: [TASK-0015, TASK-0021]
 priority: high
 tags: [rust, cli, clap, control-socket, axi, tdd]
