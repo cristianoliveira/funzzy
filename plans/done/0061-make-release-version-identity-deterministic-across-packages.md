@@ -1,7 +1,7 @@
 ---
 id: TASK-0061
 title: Make release version identity deterministic across packages
-status: todo
+status: done
 depends_on: [TASK-0060]
 priority: high
 tags: [rust, release, versioning, nix, ci, determinism, tdd]
