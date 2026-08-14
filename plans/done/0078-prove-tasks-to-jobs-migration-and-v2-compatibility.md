@@ -1,7 +1,7 @@
 ---
 id: TASK-0078
 title: Prove tasks to jobs migration and V2 compatibility
-status: todo
+status: done
 depends_on: [TASK-0076, TASK-0077, TASK-0033]
 priority: high
 tags: [integration-tests, config, migration, compatibility, jobs, v2]
