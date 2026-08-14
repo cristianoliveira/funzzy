@@ -1,7 +1,7 @@
 ---
 id: TASK-0066
 title: Rewrite V2 getting started configuration and daily workflows
-status: todo
+status: done
 depends_on: [TASK-0065, TASK-0058, TASK-0033]
 priority: high
 tags: [docs, readme, configuration, workflows, onboarding, v2]
