@@ -1,7 +1,7 @@
 ---
 id: TASK-0028
 title: Attribute and combine parallel output and results
-status: todo
+status: done
 depends_on: [TASK-0027, TASK-0023, TASK-0043]
 priority: high
 tags: [rust, concurrency, output, control-socket, diagnostics, tdd]
