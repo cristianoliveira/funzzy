@@ -1,7 +1,7 @@
 ---
 id: TASK-0058
 title: Expose configuration schema and runnable examples through fzz
-status: todo
+status: done
 depends_on: [TASK-0057, TASK-0005, TASK-0076]
 priority: high
 tags: [rust, cli, axi, config, json-schema, examples, tdd]
