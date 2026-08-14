@@ -1,12 +1,13 @@
+use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
 use crate::executor::Event;
 use crate::stdout;
 use serde_derive::Serialize;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -96,6 +97,21 @@ impl Default for ControlState {
 }
 
 impl ControlState {
+    /// The latest started generation identity.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The latest execution state.
+    pub fn state(&self) -> &ExecutionState {
+        &self.state
+    }
+
+    /// The superseded-by relation of the latest generation, when replaced.
+    pub fn superseded_by(&self) -> Option<u64> {
+        self.superseded_by
+    }
+
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::Started {
@@ -182,6 +198,9 @@ impl EmitOutcome {
 type RunTarget = Arc<dyn Fn(String) -> Result<u64, String> + Send + Sync>;
 type EmitPath = Arc<dyn Fn(String) -> Result<EmitOutcome, String> + Send + Sync>;
 
+/// Bounded concurrent client threads; waiters never starve the accept loop.
+const MAX_CLIENT_THREADS: usize = 64;
+
 pub struct ControlServer {
     path: PathBuf,
     stop: Arc<AtomicBool>,
@@ -191,7 +210,7 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, vec![], None, None)
+        Self::start_internal(path, state, vec![], None, None, None)
     }
 
     pub fn start_with_runner<F>(
@@ -203,7 +222,7 @@ impl ControlServer {
     where
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
     {
-        Self::start_internal(path, state, targets, Some(Arc::new(run_target)), None)
+        Self::start_internal(path, state, targets, Some(Arc::new(run_target)), None, None)
     }
 
     /// Extends the runner surface with the `emit` method (TASK-0022): the
@@ -221,12 +240,32 @@ impl ControlServer {
         F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
+        Self::start_with_coordinator(path, state, targets, run_target, emit_path, None)
+    }
+
+    /// Extends the surface with the atomic `await` coordinator (TASK-0044):
+    /// the `await` method observes and waits under one lock, returns one
+    /// consistent snapshot plus terminal reason and freshness, and never
+    /// blocks the watcher's scheduling.
+    pub fn start_with_coordinator<F, E>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        run_target: F,
+        emit_path: E,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+    {
         Self::start_internal(
             path,
             state,
             targets,
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
+            coordinator,
         )
     }
 
@@ -236,6 +275,7 @@ impl ControlServer {
         targets: Vec<ControlTarget>,
         run_target: Option<RunTarget>,
         emit_path: Option<EmitPath>,
+        coordinator: Option<Arc<AwaitCoordinator>>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -245,17 +285,47 @@ impl ControlServer {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let instance = ControlInstance::new();
+        let active_clients = Arc::new(AtomicUsize::new(0));
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_client(
-                        stream,
-                        &state,
-                        &targets,
-                        run_target.as_ref(),
-                        emit_path.as_ref(),
-                        &instance,
-                    ),
+                    Ok((stream, _)) => {
+                        // One thread per client so long `await` waits never
+                        // block other clients or the accept loop (TASK-0044).
+                        let client_count = active_clients.fetch_add(1, Ordering::Relaxed) + 1;
+                        if client_count > MAX_CLIENT_THREADS {
+                            active_clients.fetch_sub(1, Ordering::Relaxed);
+                            let _ = write_response_ref(
+                                &stream,
+                                rpc_error(
+                                    serde_json::Value::Null,
+                                    -32000,
+                                    "Server error",
+                                    Some(serde_json::json!("too many concurrent control clients")),
+                                ),
+                            );
+                            continue;
+                        }
+                        let state = Arc::clone(&state);
+                        let targets = targets.clone();
+                        let run_target = run_target.clone();
+                        let emit_path = emit_path.clone();
+                        let coordinator = coordinator.clone();
+                        let instance = instance.clone();
+                        let clients = Arc::clone(&active_clients);
+                        std::thread::spawn(move || {
+                            handle_client(
+                                stream,
+                                &state,
+                                &targets,
+                                run_target.as_ref(),
+                                emit_path.as_ref(),
+                                coordinator.as_ref(),
+                                &instance,
+                            );
+                            clients.fetch_sub(1, Ordering::Relaxed);
+                        });
+                    }
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
@@ -315,34 +385,170 @@ fn handle_client(
     targets: &[ControlTarget],
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
+    coordinator: Option<&Arc<AwaitCoordinator>>,
     instance: &ControlInstance,
 ) {
-    let mut request = String::new();
-    if BufReader::new(&stream).read_line(&mut request).is_err() {
+    // One NDJSON connection serves multiple requests (JSON-RPC over the
+    // socket): the client adapter keeps one connection and increments ids.
+    // `await` may hold the connection for its whole bound; per-connection
+    // threads keep other clients unblocked.
+    //
+    // Accepted streams inherit O_NONBLOCK from the nonblocking listener on
+    // macOS, so restore blocking reads first; `handle_await` temporarily
+    // re-enables nonblocking for disconnect detection and restores it.
+    if let Err(err) = stream.set_nonblocking(false) {
+        stdout::error(&format!(
+            "Control client stream could not be made blocking: {}",
+            err
+        ));
         return;
     }
+    loop {
+        let mut request = String::new();
+        match BufReader::new(&stream).read_line(&mut request) {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
 
-    let request = match serde_json::from_str(&request) {
-        Ok(request) => request,
-        Err(error) => {
-            write_response(
-                &mut stream,
-                rpc_error(
-                    serde_json::Value::Null,
-                    -32700,
-                    "Parse error",
-                    Some(serde_json::json!(error.to_string())),
-                ),
-            );
+        let request: serde_json::Value = match serde_json::from_str(&request) {
+            Ok(request) => request,
+            Err(error) => {
+                write_response(
+                    &mut stream,
+                    rpc_error(
+                        serde_json::Value::Null,
+                        -32700,
+                        "Parse error",
+                        Some(serde_json::json!(error.to_string())),
+                    ),
+                );
+                return;
+            }
+        };
+
+        // `await` blocks for up to its timeout, so it needs the live stream
+        // for disconnect detection and is handled outside the dispatcher; it
+        // restores blocking mode before returning to the loop.
+        if request.get("method").and_then(serde_json::Value::as_str) == Some("await")
+            && request
+                .get("params")
+                .is_some_and(|params| params.is_object())
+        {
+            handle_await(&mut stream, request, state, coordinator);
+            continue;
+        }
+
+        if let Some(response) =
+            process_payload(request, state, targets, run_target, emit_path, instance)
+        {
+            write_response(&mut stream, response);
+        }
+    }
+}
+
+/// Validates one `await` request (contract §4): exactly one of `after` /
+/// `generation` plus a positive `timeoutMs`. Waits with the shared atomic
+/// primitive, probing the socket between wake slices to free waiters whose
+/// client disconnected. Timeouts perform no cancellation.
+fn handle_await(
+    stream: &mut UnixStream,
+    request: serde_json::Value,
+    state: &Arc<Mutex<ControlState>>,
+    coordinator: Option<&Arc<AwaitCoordinator>>,
+) {
+    let id = request_id(&request);
+    if request.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
+        write_response(stream, rpc_error(id, -32600, "Invalid Request", None));
+        return;
+    }
+    let Some(coordinator) = coordinator else {
+        write_response(
+            stream,
+            rpc_error(
+                id,
+                -32000,
+                "Server error",
+                Some(serde_json::json!("await is unavailable")),
+            ),
+        );
+        return;
+    };
+
+    let params = match await_params(&request) {
+        Ok(params) => params,
+        Err(data) => {
+            write_response(stream, rpc_error(id, -32602, "Invalid params", Some(data)));
             return;
         }
     };
 
-    if let Some(response) =
-        process_payload(request, state, targets, run_target, emit_path, instance)
-    {
-        write_response(&mut stream, response);
+    // Nonblocking so the waiter can detect client disconnect between slices.
+    let _ = stream.set_nonblocking(true);
+    let mut probe = || {
+        let mut buffer = [0u8; 16];
+        match stream.read(&mut buffer) {
+            Ok(0) => true,
+            Ok(_) => true,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => false,
+            Err(_) => true,
+        }
+    };
+    let result: AwaitResult =
+        coordinator.await_generation(params.mode, params.timeout, state, Some(&mut probe));
+    let _ = stream.set_nonblocking(false);
+    write_response(
+        stream,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": serde_json::to_value(result).unwrap_or(serde_json::Value::Null),
+        }),
+    );
+}
+
+struct AwaitParams {
+    mode: AwaitMode,
+    timeout: Duration,
+}
+
+fn await_params(request: &serde_json::Value) -> Result<AwaitParams, serde_json::Value> {
+    let params = request.get("params").and_then(serde_json::Value::as_object);
+    let after = params
+        .and_then(|params| params.get("after"))
+        .and_then(serde_json::Value::as_u64);
+    let generation = params
+        .and_then(|params| params.get("generation"))
+        .and_then(serde_json::Value::as_u64);
+    let timeout_ms = params
+        .and_then(|params| params.get("timeoutMs"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|timeout| *timeout > 0);
+
+    match (after, generation, timeout_ms) {
+        (Some(after), None, Some(timeout)) => Ok(AwaitParams {
+            mode: AwaitMode::After(after),
+            timeout: Duration::from_millis(timeout),
+        }),
+        (None, Some(generation), Some(timeout)) => Ok(AwaitParams {
+            mode: AwaitMode::Exact(generation),
+            timeout: Duration::from_millis(timeout),
+        }),
+        (Some(_), Some(_), _) => Err(serde_json::json!(
+            "await requires exactly one of params.after or params.generation"
+        )),
+        (_, _, None) => Err(serde_json::json!(
+            "await requires a positive numeric params.timeoutMs"
+        )),
+        _ => Err(serde_json::json!(
+            "await requires exactly one of params.after or params.generation and a positive params.timeoutMs"
+        )),
     }
+}
+
+fn write_response_ref(stream: &UnixStream, response: serde_json::Value) -> io::Result<()> {
+    use std::io::Write as _;
+    let mut stream = stream.try_clone()?;
+    writeln!(stream, "{}", response)
 }
 
 fn process_payload(
@@ -420,7 +626,7 @@ fn process_request(
                 "token": instance.token,
                 "startedAtEpochMs": instance.started_at_epoch_ms,
             },
-            "methods": ["status", "targets", "run", "emit", "capabilities"],
+            "methods": ["status", "targets", "run", "emit", "await", "capabilities"],
             "optionalFields": [],
             "limits": {
                 "outputRetentionBytes": 0,
@@ -428,7 +634,7 @@ fn process_request(
                 "maxEvidenceLines": MAX_EVIDENCE_LINES,
             },
             "features": {
-                "atomicAwait": false,
+                "atomicAwait": true,
                 "subscription": false,
                 "correlatedSnapshots": false,
                 "outputRetrieval": false,
@@ -652,5 +858,45 @@ mod tests {
         assert_eq!(object["changed"], serde_json::json!(["src/main.rs"]));
         assert_eq!(object["predecessor"], serde_json::json!(null));
         assert_eq!(object["supersededBy"], serde_json::json!(null));
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn one_connection_serves_multiple_requests() {
+        let path = std::env::temp_dir().join(format!(
+            "fzz-loop-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
+
+        let mut stream = UnixStream::connect(&path).expect("connect");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("read timeout");
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"status","params":{}}"#;
+        for id in 1..=2 {
+            writeln!(
+                stream,
+                "{}",
+                request.replace("\"id\":1", &format!("\"id\":{}", id))
+            )
+            .expect("write request");
+            let mut line = String::new();
+            BufReader::new(&stream)
+                .read_line(&mut line)
+                .expect("read response");
+            let response: serde_json::Value = serde_json::from_str(&line).expect("parse");
+            assert_eq!(response["id"], id, "response for request {id}: {line}");
+        }
     }
 }

@@ -2,6 +2,7 @@
 // #![plugin(clippy)]
 pub mod app;
 pub mod arguments;
+pub mod awaiting;
 pub mod cli;
 pub mod cmd;
 pub mod config;

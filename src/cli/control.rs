@@ -1,8 +1,12 @@
 use crate::cli::Command;
 use crate::config;
-use crate::control_client::{ControlClient, EmitSnapshot, StatusSnapshot, TargetSnapshot};
+use crate::control_client::{
+    AwaitMode, AwaitSnapshot, ControlClient, ControlClientError, EmitSnapshot, StatusSnapshot,
+    TargetSnapshot,
+};
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The action a `fzz control` invocation performs. Rendering stays here;
 /// transport and protocol live in `control_client`.
@@ -10,8 +14,53 @@ use std::path::{Path, PathBuf};
 pub enum ControlAction {
     Status,
     List,
-    Run { target: String },
-    Emit { path: String },
+    Run {
+        target: String,
+        /// Await the exact scheduled generation before returning (TASK-0044).
+        wait: bool,
+        /// Required with `--wait`; bounds the server-side await.
+        timeout: Option<Duration>,
+    },
+    Emit {
+        path: String,
+        /// Await the scheduled generation before returning, when one exists.
+        wait: bool,
+        /// Required with `--wait`; bounds the server-side await.
+        timeout: Option<Duration>,
+    },
+    Await {
+        after: Option<u64>,
+        generation: Option<u64>,
+        timeout: Duration,
+    },
+}
+
+/// Parses a CLI duration bound: `<number>` (seconds), or `<number>ms`/`s`/`m`.
+/// Zero is rejected; waits are always positive and bounded.
+pub fn parse_duration(input: &str) -> Result<Duration, String> {
+    let input = input.trim();
+    let (digits, multiplier) = if let Some(stripped) = input.strip_suffix("ms") {
+        (stripped, 1u64)
+    } else if let Some(stripped) = input.strip_suffix('s') {
+        (stripped, 1_000u64)
+    } else if let Some(stripped) = input.strip_suffix('m') {
+        (stripped, 60_000u64)
+    } else {
+        (input, 1_000u64)
+    };
+    let value: u64 = digits.trim().parse().map_err(|_| {
+        format!(
+            "invalid duration '{}': expected <number> with optional ms/s/m suffix (bare number = seconds)",
+            input
+        )
+    })?;
+    if value == 0 {
+        return Err(format!("invalid duration '{}': must be positive", input));
+    }
+    let millis = value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("invalid duration '{}': bound is too large", input))?;
+    Ok(Duration::from_millis(millis))
 }
 
 /// `fzz control` client command group (TASK-0021/0022). Consumes the
@@ -113,20 +162,140 @@ impl Command for ControlCommand {
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_targets(&targets));
             }
-            ControlAction::Run { target } => {
+            ControlAction::Run {
+                target,
+                wait,
+                timeout,
+            } => {
                 let generation = client
                     .run(target)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_run(generation));
+                if *wait {
+                    return self.finish_await(
+                        &mut client,
+                        &path,
+                        AwaitMode::Exact(generation),
+                        timeout
+                            .as_ref()
+                            .expect("--wait requires --timeout (validated by clap)"),
+                    );
+                }
             }
-            ControlAction::Emit { path } => {
+            ControlAction::Emit {
+                path: emit_path,
+                wait,
+                timeout,
+            } => {
                 let emit = client
-                    .emit(path)
+                    .emit(emit_path)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_emit(&emit));
+                if *wait {
+                    if let Some(generation) = emit.run_id {
+                        return self.finish_await(
+                            &mut client,
+                            &path,
+                            AwaitMode::Exact(generation),
+                            timeout
+                                .as_ref()
+                                .expect("--wait requires --timeout (validated by clap)"),
+                        );
+                    }
+                    // No generation was scheduled: the explicit no-op outcome
+                    // is the observation (exit 0).
+                }
+            }
+            ControlAction::Await {
+                after,
+                generation,
+                timeout,
+            } => {
+                let mode = match (after, generation) {
+                    (Some(after), None) => AwaitMode::After(*after),
+                    (None, Some(generation)) => AwaitMode::Exact(*generation),
+                    _ => unreachable!("validated mutually exclusive await modes"),
+                };
+                return self.finish_await(&mut client, &path, mode, timeout);
             }
         }
         Ok(())
+    }
+}
+
+impl ControlCommand {
+    /// Runs the await and maps the outcome to the AXI exit-code contract
+    /// (contract §8): passed/cancelled -> 0; failed/superseded/timeout -> 1;
+    /// disconnected/restarted -> 1 with the reason surfaced. The observation
+    /// always renders first; the trailing error line carries the exit code.
+    fn finish_await(
+        &self,
+        client: &mut ControlClient,
+        path: &Path,
+        mode: AwaitMode,
+        timeout: &Duration,
+    ) -> Result<(), FzzError> {
+        // Capture the instance token before waiting so a transport failure
+        // can distinguish restart (token changed) from disconnect.
+        let token_before = client
+            .capabilities()
+            .ok()
+            .map(|capabilities| capabilities.token);
+        match client.await_generation(mode, timeout.as_millis() as u64) {
+            Ok(observation) => {
+                let rendered = render_await(&observation);
+                print!("{}", rendered);
+                match observation.terminal_reason.as_str() {
+                    "passed" | "cancelled" => Ok(()),
+                    reason => Err(FzzError::GenericError(format!(
+                        "await: generation {} {}",
+                        observation.snapshot.generation, reason
+                    ))),
+                }
+            }
+            Err(
+                ControlClientError::Unavailable { .. }
+                | ControlClientError::Io(_)
+                | ControlClientError::Timeout
+                | ControlClientError::Disconnected,
+            ) => {
+                // Re-negotiate capabilities to tell restart from disconnect
+                // (contract §5).
+                // Re-negotiation reconnects fresh and retries briefly, so a
+                // restarting watcher that rebinds the same socket path within
+                // the window is detected as `restarted` instead of
+                // `disconnected`. The dead connection can never be reused.
+                let restarted = if let Some(before) = &token_before {
+                    let mut renegotiated = false;
+                    for _ in 0..20 {
+                        match ControlClient::connect(path) {
+                            Ok(mut fresh) => match fresh.capabilities() {
+                                Ok(caps) => {
+                                    renegotiated = caps.token != *before;
+                                    break;
+                                }
+                                Err(_) => {}
+                            },
+                            Err(_) => {}
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    renegotiated
+                } else {
+                    false
+                };
+                let reason = if restarted {
+                    "restarted"
+                } else {
+                    "disconnected"
+                };
+                Err(FzzError::GenericError(format!(
+                    "await: watcher {} while waiting",
+                    reason
+                )))
+            }
+            Err(err) => Err(FzzError::GenericError(err.to_string())),
+        }
     }
 }
 
@@ -180,6 +349,31 @@ pub fn render_targets(targets: &[TargetSnapshot]) -> String {
 /// Scheduled-generation identity returned by `control run TARGET`.
 pub fn render_run(generation: u64) -> String {
     format!("scheduled generation: {}\n", generation)
+}
+
+/// One consistent await observation (contract §4): terminal reason, freshness,
+/// pending debounce state, and the snapshot it belongs to.
+pub fn render_await(observation: &AwaitSnapshot) -> String {
+    let mut output = format!("terminal reason: {}\n", observation.terminal_reason);
+    output.push_str(&format!("freshness: {}\n", observation.freshness));
+    output.push_str(&format!(
+        "latest generation: {}\n",
+        observation.latest_generation
+    ));
+    if let Some(batch) = observation.latest_batch {
+        output.push_str(&format!("latest batch: {}\n", batch));
+    }
+    output.push_str(&format!(
+        "pending debounce: {}\n",
+        observation.pending_work.debounce_active
+    ));
+    output.push_str(&format!(
+        "queued batches: {}\n",
+        observation.pending_work.queued_batches
+    ));
+    output.push_str("snapshot:\n");
+    output.push_str(&render_status(&observation.snapshot));
+    output
 }
 
 /// Compact deterministic `emit` rendering: outcome, matched tasks, and the
@@ -240,6 +434,54 @@ mod tests {
         assert!(!rendered.contains("duration_ms:"));
         assert!(rendered.contains("commands: (none)"));
         assert!(rendered.contains("failures: (none)"));
+    }
+
+    #[test]
+    fn render_await_includes_reason_freshness_and_snapshot() {
+        let observation = AwaitSnapshot {
+            terminal_reason: "passed".to_string(),
+            latest_generation: 7,
+            latest_batch: Some(3),
+            pending_work: crate::control_client::PendingWorkSnapshot {
+                debounce_active: false,
+                queued_batches: 0,
+            },
+            freshness: "current".to_string(),
+            snapshot: StatusSnapshot {
+                generation: 7,
+                state: "passed".to_string(),
+                trigger: Some("src/main.rs".to_string()),
+                commands: vec!["cargo test".to_string()],
+                duration_ms: Some(42),
+                failures: vec![],
+            },
+        };
+        let rendered = render_await(&observation);
+        assert!(rendered.contains("terminal reason: passed"));
+        assert!(rendered.contains("freshness: current"));
+        assert!(rendered.contains("latest generation: 7"));
+        assert!(rendered.contains("latest batch: 3"));
+        assert!(rendered.contains("pending debounce: false"));
+        assert!(rendered.contains("queued batches: 0"));
+        assert!(rendered.contains("snapshot:"));
+        assert!(rendered.contains("generation: 7"));
+        assert!(rendered.contains("state: passed"));
+    }
+
+    #[test]
+    fn parse_duration_accepts_units_and_bare_seconds() {
+        assert_eq!(parse_duration("500ms").unwrap(), Duration::from_millis(500));
+        assert_eq!(parse_duration("2s").unwrap(), Duration::from_secs(2));
+        assert_eq!(parse_duration("3m").unwrap(), Duration::from_secs(180));
+        assert_eq!(parse_duration("30").unwrap(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn parse_duration_rejects_unknown_and_zero_bounds() {
+        assert!(parse_duration("1h").is_err());
+        assert!(parse_duration("abc").is_err());
+        assert!(parse_duration("0s").is_err());
+        assert!(parse_duration("").is_err());
     }
 
     #[test]

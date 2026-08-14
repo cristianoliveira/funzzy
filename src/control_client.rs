@@ -17,6 +17,10 @@ use std::time::Duration;
 /// Default bound for a single socket read/write operation.
 pub const DEFAULT_IO_TIMEOUT_MS: u64 = 3_000;
 
+/// Extra read bound beyond the requested server-side await, so a legitimate
+/// wait is never mistaken for a client-side timeout.
+pub const AWAIT_READ_MARGIN_MS: u64 = 2_000;
+
 /// A client-visible control failure with a deterministic, actionable message.
 #[derive(Debug)]
 pub enum ControlClientError {
@@ -24,6 +28,9 @@ pub enum ControlClientError {
     Unavailable { path: PathBuf, reason: String },
     /// I/O failure while communicating (other than timeout).
     Io(String),
+    /// The server closed the connection without a response (watcher died or
+    /// a restart replaced the instance mid-call).
+    Disconnected,
     /// No response arrived within the bounded read timeout.
     Timeout,
     /// Response is not valid JSON-RPC 2.0 or drifted from the contract shape.
@@ -46,6 +53,9 @@ impl fmt::Display for ControlClientError {
                 reason
             ),
             ControlClientError::Io(reason) => write!(f, "control socket I/O error: {}", reason),
+            ControlClientError::Disconnected => {
+                write!(f, "control socket closed the connection")
+            }
             ControlClientError::Timeout => {
                 write!(f, "control socket timed out waiting for a response")
             }
@@ -146,6 +156,143 @@ impl TargetSnapshot {
             .ok_or_else(|| "target entry field \"name\" must be a string".to_string())?;
         let commands = read_string_array(object, "commands")?;
         Ok(Self { name, commands })
+    }
+}
+
+/// What the client asks the server to await (contract §4): the next terminal
+/// generation after `N`, or the exact generation `N`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AwaitMode {
+    After(u64),
+    Exact(u64),
+}
+
+/// Negotiated capabilities (contract §6): the instance token identifies one
+/// watcher process so clients can detect restarts instead of assuming
+/// continuity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilitiesSnapshot {
+    pub token: String,
+    pub protocol_version: String,
+}
+
+impl CapabilitiesSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "capabilities result must be an object".to_string())?;
+        let instance = object
+            .get("instance")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "capabilities result must carry \"instance\"".to_string())?;
+        let token = instance
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "capabilities instance must carry a \"token\" string".to_string())?;
+        let protocol_version = object
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_default();
+        Ok(Self {
+            token,
+            protocol_version,
+        })
+    }
+}
+
+/// Pending debounce work (contract §3 freshness rule).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingWorkSnapshot {
+    pub debounce_active: bool,
+    pub queued_batches: u32,
+}
+
+/// One consistent await observation (contract §4): a snapshot plus the
+/// terminal reason, latest observed batch/generation, pending debounce state,
+/// and freshness classification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwaitSnapshot {
+    pub terminal_reason: String,
+    pub latest_generation: u64,
+    pub latest_batch: Option<u64>,
+    pub pending_work: PendingWorkSnapshot,
+    pub freshness: String,
+    pub snapshot: StatusSnapshot,
+}
+
+impl AwaitSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "await result must be an object".to_string())?;
+        let terminal_reason = object
+            .get("terminalReason")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|reason| {
+                matches!(
+                    reason.as_str(),
+                    "passed"
+                        | "failed"
+                        | "cancelled"
+                        | "superseded"
+                        | "timeout"
+                        | "disconnected"
+                        | "restarted"
+                )
+            })
+            .ok_or_else(|| "await result field \"terminalReason\" is invalid".to_string())?;
+        let latest_generation = object
+            .get("latestGeneration")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                "await result field \"latestGeneration\" must be a number".to_string()
+            })?;
+        let latest_batch = match object.get("latestBatch") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(number)) => number.as_u64(),
+            Some(_) => {
+                return Err(
+                    "await result field \"latestBatch\" must be a number or null".to_string(),
+                )
+            }
+        };
+        let pending = object
+            .get("pendingWork")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "await result must carry a \"pendingWork\" object".to_string())?;
+        let pending_work = PendingWorkSnapshot {
+            debounce_active: pending
+                .get("debounceActive")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| "pendingWork.debounceActive must be a boolean".to_string())?,
+            queued_batches: pending
+                .get("queuedBatches")
+                .and_then(Value::as_u64)
+                .map(|count| count as u32)
+                .ok_or_else(|| "pendingWork.queuedBatches must be a number".to_string())?,
+        };
+        let freshness = object
+            .get("freshness")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .filter(|freshness| matches!(freshness.as_str(), "current" | "stale" | "unknown"))
+            .ok_or_else(|| "await result field \"freshness\" is invalid".to_string())?;
+        let snapshot = object
+            .get("snapshot")
+            .cloned()
+            .ok_or_else(|| "await result must carry a \"snapshot\" object".to_string())?;
+        let snapshot = StatusSnapshot::from_value(snapshot)?;
+        Ok(Self {
+            terminal_reason,
+            latest_generation,
+            latest_batch,
+            pending_work,
+            freshness,
+            snapshot,
+        })
     }
 }
 
@@ -292,6 +439,44 @@ impl ControlClient {
         EmitSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
+    /// Negotiates `capabilities` (contract §6): returns the instance token so
+    /// callers can detect watcher restarts.
+    pub fn capabilities(&mut self) -> Result<CapabilitiesSnapshot, ControlClientError> {
+        let result = self.call("capabilities", serde_json::json!({}))?;
+        CapabilitiesSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
+    /// Atomic await (contract §4): blocks server-side until the mode's
+    /// condition or the bound, then returns one consistent snapshot with
+    /// terminal reason and freshness. The socket read bound is extended to
+    /// cover the wait, so a legitimate wait is never a client timeout.
+    pub fn await_generation(
+        &mut self,
+        mode: AwaitMode,
+        timeout_ms: u64,
+    ) -> Result<AwaitSnapshot, ControlClientError> {
+        let params = match mode {
+            AwaitMode::After(generation) => {
+                serde_json::json!({ "after": generation, "timeoutMs": timeout_ms })
+            }
+            AwaitMode::Exact(generation) => {
+                serde_json::json!({ "generation": generation, "timeoutMs": timeout_ms })
+            }
+        };
+        let read_bound = Duration::from_millis(timeout_ms + AWAIT_READ_MARGIN_MS);
+        self.reader
+            .get_mut()
+            .set_read_timeout(Some(read_bound))
+            .map_err(|err| ControlClientError::Io(err.to_string()))?;
+        let result = self.call("await", params);
+        let _ = self
+            .reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(DEFAULT_IO_TIMEOUT_MS)));
+        let result = result?;
+        AwaitSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
     /// Framing, request ID, error-object handling, and response validation.
     /// Notifications are never produced; every call has an id.
     fn call(&mut self, method: &str, params: Value) -> Result<Value, ControlClientError> {
@@ -306,11 +491,10 @@ impl ControlClient {
         self.writer.flush().map_err(io_timeout)?;
 
         let mut response = String::new();
-        self.reader.read_line(&mut response).map_err(io_timeout)?;
-        if response.trim().is_empty() {
-            return Err(ControlClientError::Malformed(
-                "server closed the connection without a response".to_string(),
-            ));
+        match self.reader.read_line(&mut response) {
+            Err(err) => return Err(io_timeout(err)),
+            Ok(0) if response.trim().is_empty() => return Err(ControlClientError::Disconnected),
+            Ok(_) => {}
         }
 
         let value: Value = serde_json::from_str(&response)
@@ -652,6 +836,97 @@ mod tests {
             "timeout took too long: {:?}",
             elapsed
         );
+    }
+
+    fn await_result() -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "snapshot": {
+                    "generation": 7,
+                    "state": "passed",
+                    "trigger": "src/main.rs",
+                    "commands": ["cargo test"],
+                    "durationMs": 42,
+                    "failures": []
+                },
+                "terminalReason": "passed",
+                "latestGeneration": 7,
+                "latestBatch": 3,
+                "pendingWork": {"debounceActive": false, "queuedBatches": 0},
+                "freshness": "current"
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn await_exact_parses_one_consistent_observation() {
+        let (path, handle) = serving_socket(await_result());
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let result = client
+            .await_generation(AwaitMode::Exact(7), 100)
+            .expect("await");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(result.terminal_reason, "passed");
+        assert_eq!(result.latest_generation, 7);
+        assert_eq!(result.latest_batch, Some(3));
+        assert_eq!(result.freshness, "current");
+        assert_eq!(result.snapshot.generation, 7);
+        assert_eq!(result.snapshot.state, "passed");
+        assert!(!result.pending_work.debounce_active);
+    }
+
+    #[test]
+    fn await_after_sends_after_and_timeout_params() {
+        let (path, handle) = serving_socket(await_result());
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let _ = client
+            .await_generation(AwaitMode::After(0), 250)
+            .expect("await");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn await_rejects_unknown_terminal_reason() {
+        let mut response = serde_json::from_str::<serde_json::Value>(&await_result()).unwrap();
+        response["result"]["terminalReason"] = serde_json::json!("hung");
+        let (path, handle) = serving_socket(response.to_string());
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let err = client
+            .await_generation(AwaitMode::Exact(7), 100)
+            .expect_err("invalid terminal reason must fail closed");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            matches!(err, ControlClientError::Malformed(_)),
+            "unexpected: {err:?}"
+        );
+    }
+
+    #[test]
+    fn capabilities_expose_the_instance_token() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": "1.0",
+                "instance": {"token": "fz-abc", "startedAtEpochMs": 1},
+                "methods": ["status"]
+            }
+        })
+        .to_string();
+        let (path, handle) = serving_socket(response);
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let caps = client.capabilities().expect("capabilities");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(caps.token, "fz-abc");
+        assert_eq!(caps.protocol_version, "1.0");
     }
 
     #[test]

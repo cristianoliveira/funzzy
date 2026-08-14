@@ -164,15 +164,16 @@ mod unix {
             .iter()
             .map(|method| method.as_str().unwrap())
             .collect();
-        for method in ["status", "targets", "run", "emit", "capabilities"] {
+        for method in ["status", "targets", "run", "emit", "await", "capabilities"] {
             assert!(
                 methods.contains(&method),
                 "missing method {method}: {methods:?}"
             );
         }
-        // Honest current profile: none of the additive features exist yet, so
-        // the extension keeps the legacy polling fallback (contract §8).
-        assert_eq!(result["features"]["atomicAwait"], false);
+        // Honest current profile: `atomicAwait` landed with TASK-0044; the
+        // remaining additive features stay false so the extension keeps the
+        // legacy polling fallback for them (contract §6).
+        assert_eq!(result["features"]["atomicAwait"], true);
         assert_eq!(result["features"]["subscription"], false);
         assert_eq!(result["features"]["correlatedSnapshots"], false);
         assert_eq!(result["features"]["outputRetrieval"], false);

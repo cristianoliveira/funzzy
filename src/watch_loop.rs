@@ -6,6 +6,7 @@
 //! preparation path. CLI commands stay thin: build a strategy and call
 //! [`watch_loop`].
 
+use crate::awaiting::AwaitCoordinator;
 use crate::control::{ControlServer, ControlState, ControlTarget, EmitOutcome};
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
@@ -50,6 +51,13 @@ pub trait RunStrategy {
     /// debounce identity and complete changed-path set (contract §1); the
     /// trigger path is the deterministic first match.
     fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch);
+
+    /// Called with each normalized batch before routing (default no-op), so
+    /// the pending-debounce observation reflects open windows.
+    fn on_batch(&self, _batch: &Batch) {}
+
+    /// Called after the batch finished routing (scheduled or explicit no-op).
+    fn on_batch_complete(&self) {}
 }
 
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
@@ -84,6 +92,7 @@ pub fn watch_loop(
             if batch.is_empty() {
                 return;
             }
+            strategy.on_batch(&batch);
             if let Some((plan, trigger)) = watches.watch_plan_batch(&batch.changed) {
                 stdout::clear_screen();
 
@@ -91,6 +100,7 @@ pub fn watch_loop(
 
                 strategy.run_change(plan, &trigger, &batch);
             }
+            strategy.on_batch_complete();
         },
         verbose,
     )
@@ -137,6 +147,7 @@ pub struct NonBlockStrategy {
     watches: Watches,
     control_socket: Option<PathBuf>,
     control_state: Arc<Mutex<ControlState>>,
+    coordinator: Option<Arc<AwaitCoordinator>>,
     control_server: Mutex<Option<ControlServer>>,
     self_arc: Mutex<Option<Arc<NonBlockStrategy>>>,
 }
@@ -149,12 +160,14 @@ impl NonBlockStrategy {
         watches: Watches,
         control_socket: Option<PathBuf>,
         control_state: Arc<Mutex<ControlState>>,
+        coordinator: Option<Arc<AwaitCoordinator>>,
     ) -> Arc<Self> {
         let strategy = Arc::new(NonBlockStrategy {
             worker,
             watches,
             control_socket,
             control_state,
+            coordinator,
             control_server: Mutex::new(None),
             self_arc: Mutex::new(None),
         });
@@ -190,12 +203,14 @@ impl NonBlockStrategy {
 
         let run_runner = Arc::clone(&runner);
         let emit_runner = Arc::clone(&runner);
-        match ControlServer::start_with_emit(
+        let coordinator = self.coordinator.clone();
+        match ControlServer::start_with_coordinator(
             path,
             Arc::clone(&self.control_state),
             targets,
             move |target| run_runner.run_target(&target),
             move |path| emit_runner.emit_path(&path),
+            coordinator,
         ) {
             Ok(server) => {
                 stdout::info(&format!("Control socket listening at {}", path.display()));
@@ -262,6 +277,18 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
+    fn on_batch(&self, batch: &Batch) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.note_batch(batch.id.0);
+        }
+    }
+
+    fn on_batch_complete(&self) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.note_batch_complete();
+        }
+    }
+
     fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) {
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
@@ -287,6 +314,7 @@ mod tests {
     use super::init_action;
     use super::InitAction;
     use super::NonBlockStrategy;
+    use super::RunStrategy;
     use crate::control::{ControlServer, ControlState};
     use crate::plan::RunPlan;
     use crate::rules::Rules;
@@ -355,6 +383,7 @@ mod tests {
             Watches::new(vec![]),
             Some(path.clone()),
             control_state,
+            None,
         );
 
         // The watcher must NOT die just because its control socket is taken.
@@ -376,6 +405,7 @@ mod tests {
             Watches::new(vec![]),
             Some(path.clone()),
             control_state,
+            None,
         );
 
         let server = strategy.start_control_server();
@@ -391,7 +421,7 @@ mod tests {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let run_id = strategy
             .run_target("my tests")
@@ -404,7 +434,7 @@ mod tests {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let err = strategy.run_target("nope").expect_err("unknown target");
         assert!(
@@ -419,7 +449,7 @@ mod tests {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let outcome = strategy
             .emit_path("src/main.rs")
@@ -434,7 +464,7 @@ mod tests {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let relative = strategy.emit_path("src/main.rs").expect("relative");
         let absolute = strategy
@@ -453,7 +483,7 @@ mod tests {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let outcome = strategy
             .emit_path("docs/readme.md")
@@ -468,7 +498,7 @@ mod tests {
         let watches = Watches::new(vec![rule_with_ignore("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let outcome = strategy
             .emit_path("src/generated/out.rs")
@@ -479,11 +509,44 @@ mod tests {
     }
 
     #[test]
+    fn it_marks_pending_debounce_through_the_coordinator() {
+        use crate::awaiting::AwaitCoordinator;
+        use crate::identity::Batch;
+
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        let strategy = NonBlockStrategy::new_arc(
+            worker,
+            watches,
+            None,
+            control_state,
+            Some(coordinator.clone()),
+        );
+
+        let batch = Batch::normalized(crate::identity::BatchId(9), vec!["src/main.rs".to_owned()]);
+        strategy.on_batch(&batch);
+        strategy.on_batch_complete();
+
+        // The coordinator observed the open window and its completion; the
+        // await surface can classify freshness around pending debounce.
+        let result = coordinator.await_generation(
+            crate::awaiting::AwaitMode::Exact(1),
+            std::time::Duration::from_millis(10),
+            &Arc::new(Mutex::new(ControlState::default())),
+            None,
+        );
+        assert_eq!(result.latest_batch, Some(9));
+        assert!(!result.pending_work.debounce_active);
+    }
+
+    #[test]
     fn it_does_not_schedule_when_only_ignored_rules_exist() {
         let watches = Watches::new(vec![rule_with_ignore("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(ControlState::default()));
-        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state);
+        let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None);
 
         let outcome = strategy
             .emit_path("src/generated/out.rs")

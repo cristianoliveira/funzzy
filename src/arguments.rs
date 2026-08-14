@@ -10,6 +10,7 @@
 use clap::{Arg, ArgAction, Command};
 
 use crate::cli::ControlAction;
+use std::time::Duration;
 
 /// Busy-run policy: what to do when a change arrives while a run is active.
 /// Replaces the V1 `--non-block` flag (TASK-0018).
@@ -114,12 +115,24 @@ impl Arguments {
                             .get_one::<String>("target")
                             .cloned()
                             .expect("target is required by clap"),
+                        wait: run_sub.get_flag("wait"),
+                        timeout: run_sub.get_one::<Duration>("timeout").copied(),
                     },
                     Some(("emit", emit_sub)) => ControlAction::Emit {
                         path: emit_sub
                             .get_one::<String>("path")
                             .cloned()
                             .expect("path is required by clap"),
+                        wait: emit_sub.get_flag("wait"),
+                        timeout: emit_sub.get_one::<Duration>("timeout").copied(),
+                    },
+                    Some(("await", await_sub)) => ControlAction::Await {
+                        after: await_sub.get_one::<u64>("after").copied(),
+                        generation: await_sub.get_one::<u64>("generation").copied(),
+                        timeout: await_sub
+                            .get_one::<Duration>("timeout")
+                            .copied()
+                            .expect("timeout is required by clap"),
                     },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
@@ -358,7 +371,7 @@ fn command() -> Command {
                         .about("Trigger a named target on the running watcher and report the scheduled generation.")
                         .version(env!("CARGO_PKG_VERSION"))
                         .long_about(
-                            "Trigger a named target on the running watcher and report the scheduled generation.\n\nThis is remote execution: an existing watcher owns the work. Local execution is `fzz run TARGET`. Atomic await and `--wait` land with TASK-0044.",
+                            "Trigger a named target on the running watcher and report the scheduled generation.\n\nThis is remote execution: an existing watcher owns the work. Local execution is `fzz run TARGET`. With `--wait` the exact scheduled generation is awaited atomically and its terminal observation is returned in one round trip.",
                         )
                         .arg(
                             Arg::new("target")
@@ -367,6 +380,21 @@ fn command() -> Command {
                                 .required(true)
                                 .value_parser(clap::builder::ValueParser::string())
                                 .help("Exact task name, @tag, or name substring on the running watcher."),
+                        )
+                        .arg(
+                            Arg::new("wait")
+                                .long("wait")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("timeout")
+                                .help("Await the scheduled generation to terminal and return its observation."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .requires("wait")
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Bound for the await: <number> seconds, or <number>ms/s/m (required with --wait)."),
                         ),
                 )
                 .subcommand(
@@ -374,7 +402,22 @@ fn command() -> Command {
                         .about("Report a synthetic path change to the running watcher.")
                         .version(env!("CARGO_PKG_VERSION"))
                         .long_about(
-                            "Report that a logical project path changed without a reliable filesystem event.\n\nThe watcher routes the path through its configured change/ignore rules exactly like a native change: matched tasks run under the same ordering, templates, and busy policy. The path need not exist, so deletions and remote logical events are representable. This is not a generic event bus and it does not mutate the filesystem. Atomic await and `--wait` land with TASK-0044.",
+                            "Report that a logical project path changed without a reliable filesystem event.\n\nThe watcher routes the path through its configured change/ignore rules exactly like a native change: matched tasks run under the same ordering, templates, and busy policy. The path need not exist, so deletions and remote logical events are representable. This is not a generic event bus and it does not mutate the filesystem. With `--wait` the scheduled generation is awaited atomically and its terminal observation returned; a no-op (unmatched/ignored) emit stays an explicit no-op.",
+                        )
+                        .arg(
+                            Arg::new("wait")
+                                .long("wait")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("timeout")
+                                .help("Await the scheduled generation to terminal and return its observation."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .requires("wait")
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Bound for the await: <number> seconds, or <number>ms/s/m (required with --wait)."),
                         )
                         .arg(
                             Arg::new("path")
@@ -389,6 +432,46 @@ fn command() -> Command {
                                     }
                                 }))
                                 .help("Project path that changed (relative or absolute)."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("await")
+                        .about("Atomically await a generation to terminal and return one consistent observation.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Atomically await a generation to terminal and return one consistent observation.\n\nThe server observes the current sequence and registers the waiter under one lock, so no transition is lost between snapshot read and waiter registration; waiters never block watcher scheduling. `--after N` returns the next terminal generation after N (or immediately when one exists); `--generation N` returns when the exact generation N reaches terminal. Superseded generations return immediately with reason `superseded`. Timeouts bound the wait, perform no cancellation, and report the latest snapshot.",
+                        )
+                        .arg(
+                            Arg::new("after")
+                                .long("after")
+                                .value_name("GENERATION")
+                                .conflicts_with("generation")
+                                .requires("timeout")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Await the next terminal generation strictly after this one."),
+                        )
+                        .arg(
+                            Arg::new("generation")
+                                .long("generation")
+                                .value_name("GENERATION")
+                                .conflicts_with("after")
+                                .requires("timeout")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Await this exact generation to terminal."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .required(true)
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Bound for the await: <number> seconds, or <number>ms/s/m (always required; awaits are never unbounded)."),
+                        )
+                        .group(
+                            clap::ArgGroup::new("mode")
+                                .args(["after", "generation"])
+                                .required(true)
+                                .multiple(false),
                         ),
                 ),
         )
@@ -530,6 +613,8 @@ mod tests {
             Action::Control {
                 action: ControlAction::Run {
                     target: "@agent-final".to_string(),
+                    wait: false,
+                    timeout: None,
                 },
                 socket: None,
             }
@@ -578,6 +663,8 @@ mod tests {
             Action::Control {
                 action: ControlAction::Emit {
                     path: "src/main.rs".to_string(),
+                    wait: false,
+                    timeout: None,
                 },
                 socket: None,
             }
@@ -593,6 +680,120 @@ mod tests {
     fn control_emit_rejects_empty_path() {
         assert!(parse(&["control", "emit", ""]).is_err());
         assert!(parse(&["control", "emit", "   "]).is_err());
+    }
+
+    #[test]
+    fn control_await_after_carries_mode_and_timeout() {
+        assert_eq!(
+            parse_action(&["control", "await", "--after", "3", "--timeout", "2s"]),
+            Action::Control {
+                action: ControlAction::Await {
+                    after: Some(3),
+                    generation: None,
+                    timeout: Duration::from_secs(2),
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_await_generation_carries_mode_and_timeout() {
+        assert_eq!(
+            parse_action(&[
+                "control",
+                "await",
+                "--generation",
+                "9",
+                "--timeout",
+                "500ms"
+            ]),
+            Action::Control {
+                action: ControlAction::Await {
+                    after: None,
+                    generation: Some(9),
+                    timeout: Duration::from_millis(500),
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_await_without_timeout_fails() {
+        assert!(parse(&["control", "await", "--after", "3"]).is_err());
+        assert!(parse(&["control", "await", "--generation", "3"]).is_err());
+    }
+
+    #[test]
+    fn control_await_both_modes_conflict() {
+        assert!(parse(&[
+            "control",
+            "await",
+            "--after",
+            "1",
+            "--generation",
+            "2",
+            "--timeout",
+            "1s"
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn control_await_without_mode_fails() {
+        assert!(parse(&["control", "await", "--timeout", "1s"]).is_err());
+    }
+
+    #[test]
+    fn control_await_rejects_invalid_duration() {
+        assert!(parse(&["control", "await", "--after", "1", "--timeout", "1h"]).is_err());
+        assert!(parse(&["control", "await", "--after", "1", "--timeout", "0s"]).is_err());
+    }
+
+    #[test]
+    fn control_run_wait_requires_timeout() {
+        assert!(parse(&["control", "run", "target", "--wait"]).is_err());
+        assert!(parse(&["control", "run", "target", "--timeout", "1s"]).is_err());
+    }
+
+    #[test]
+    fn control_run_wait_carries_timeout() {
+        let action = parse_action(&[
+            "control",
+            "run",
+            "@agent-final",
+            "--wait",
+            "--timeout",
+            "30",
+        ]);
+        assert_eq!(
+            action,
+            Action::Control {
+                action: ControlAction::Run {
+                    target: "@agent-final".to_string(),
+                    wait: true,
+                    timeout: Some(Duration::from_secs(30)),
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_emit_wait_carries_timeout() {
+        let action = parse_action(&["control", "emit", "x.txt", "--wait", "--timeout", "2m"]);
+        assert_eq!(
+            action,
+            Action::Control {
+                action: ControlAction::Emit {
+                    path: "x.txt".to_string(),
+                    wait: true,
+                    timeout: Some(Duration::from_secs(120)),
+                },
+                socket: None,
+            }
+        );
     }
 
     #[test]
