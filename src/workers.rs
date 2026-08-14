@@ -1,18 +1,12 @@
-extern crate nix;
-
-use crate::cmd::spawn;
-use crate::cmd::LoggedChild;
+use crate::executor::{Run, Step};
 use crate::rules::{self, Rules};
 use crate::stdout;
 use crate::template;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub enum WorkerEvent {
@@ -42,130 +36,6 @@ struct RunRequest {
 enum WorkerCommand {
     Run(RunRequest),
     Cancel,
-}
-
-/// A run being executed. `advance` spawns commands in order and polls the
-/// active child; `cancel` gracefully terminates the current child and discards
-/// the remaining commands.
-struct ActiveRun {
-    commands: VecDeque<rules::CommandLine>,
-    results: Vec<Result<(), String>>,
-    started: Instant,
-    child: Option<LoggedChild>,
-    current_task: Option<String>,
-    fail_fast: bool,
-}
-
-enum Step {
-    /// A child is executing; the consumer may poll for replacements.
-    Running,
-    /// Every command finished (or fail-fast stopped the run).
-    Finished,
-}
-
-impl ActiveRun {
-    fn new(req: RunRequest, fail_fast: bool) -> Self {
-        ActiveRun {
-            commands: req.commands.into(),
-            results: vec![],
-            started: Instant::now(),
-            child: None,
-            current_task: None,
-            fail_fast,
-        }
-    }
-
-    /// Advance this run by one step: spawn the next command or poll the active
-    /// child. Returns `Running` whenever a child is executing.
-    fn advance(&mut self) -> Step {
-        loop {
-            if self.child.is_none() {
-                let Some(task) = self.commands.pop_front() else {
-                    return Step::Finished;
-                };
-                let display = task.display();
-                self.current_task = Some(display.clone());
-                let spawn_result = match task {
-                    rules::CommandLine::Shell(command) => spawn(&command),
-                    rules::CommandLine::Argv(argv) => crate::cmd::spawn_argv(&argv),
-                };
-                match spawn_result {
-                    Ok(child) => {
-                        self.child = Some(child);
-                        return Step::Running;
-                    }
-                    Err(err) => {
-                        let failure = format!("Command {} failed to start: {}", display, err);
-                        stdout::error(&failure);
-                        self.results.push(Err(failure));
-                        if self.fail_fast {
-                            return Step::Finished;
-                        }
-                        continue;
-                    }
-                }
-            }
-
-            let task = self.current_task.clone().unwrap_or_default();
-            match self.child.as_mut().expect("child is running").try_wait() {
-                Ok(None) => return Step::Running,
-                Ok(Some(status)) => {
-                    self.child = None;
-                    self.current_task = None;
-                    if status.success() {
-                        self.results.push(Ok(()));
-                    } else {
-                        self.results
-                            .push(Err(format!("Command {} has failed with {}", task, status)));
-                        if self.fail_fast {
-                            return Step::Finished;
-                        }
-                    }
-                }
-                Err(err) => {
-                    self.child = None;
-                    self.current_task = None;
-                    self.results
-                        .push(Err(format!("Command {} has errored with {}", task, err)));
-                    if self.fail_fast {
-                        return Step::Finished;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Gracefully terminate the active child, if any. The run never finishes
-    /// normally after this; remaining commands are discarded.
-    fn cancel(&mut self, verbose: bool) {
-        if let Some(child) = self.child.as_mut() {
-            let task = self.current_task.clone().unwrap_or_default();
-            stdout::verbose(&format!("---- cancelling: {:?} ----", task), verbose);
-
-            if let Err(err) = signal::kill(
-                Pid::from_raw(child.id() as i32),
-                // Sends a SIGTERM signal to the process
-                // and allows it to exit gracefully.
-                Signal::SIGTERM,
-            ) {
-                stdout::error(&format!("failed to terminate task {:?}: {:?}", task, err));
-            }
-
-            if let Ok(status) = child.wait() {
-                stdout::verbose(
-                    &format!("---- finished: {:?} status: {} ----", task, status),
-                    verbose,
-                );
-            } else {
-                stdout::error(&format!(
-                    "failed to wait for the task to finish: {:?}",
-                    task
-                ));
-            }
-        }
-        self.child = None;
-        self.commands.clear();
-    }
 }
 
 /// Drain the command stream keeping only the newest message, so intermediate
@@ -209,7 +79,7 @@ impl Worker {
         let (tscheduler, rscheduler) = channel::<WorkerCommand>();
 
         let consumer = std::thread::spawn(move || {
-            let mut active: Option<ActiveRun> = None;
+            let mut active: Option<Run> = None;
             let mut pending: Option<RunRequest> = None;
 
             loop {
@@ -226,7 +96,7 @@ impl Worker {
                                 .map(|command| command.display())
                                 .collect(),
                         });
-                        active = Some(ActiveRun::new(req, fail_fast));
+                        active = Some(Run::new(req.commands, fail_fast));
                         continue;
                     }
 
@@ -241,7 +111,7 @@ impl Worker {
                                     .map(|command| command.display())
                                     .collect(),
                             });
-                            active = Some(ActiveRun::new(req, fail_fast));
+                            active = Some(Run::new(req.commands, fail_fast));
                         }
                         Ok(WorkerCommand::Cancel) => {}
                         Err(_) => break,
@@ -266,7 +136,7 @@ impl Worker {
                         None => {
                             let current_task = active
                                 .as_ref()
-                                .and_then(|run| run.current_task.clone())
+                                .and_then(|run| run.current_task().map(str::to_string))
                                 .unwrap_or_default();
                             stdout::verbose(
                                 &format!("waiting next tick for task: {}", current_task),
@@ -278,13 +148,13 @@ impl Worker {
                     },
                     Step::Finished => {
                         let finished = active.take().expect("active run");
-                        let elapsed = finished.started.elapsed();
-                        let failures = finished
-                            .results
+                        let elapsed = finished.elapsed();
+                        let results = finished.into_results();
+                        let failures = results
                             .iter()
                             .filter_map(|result| result.as_ref().err().cloned())
                             .collect();
-                        stdout::present_results(finished.results, elapsed);
+                        stdout::present_results(results, elapsed);
                         on_event(WorkerEvent::Finished { elapsed, failures });
                     }
                 }

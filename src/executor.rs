@@ -10,8 +10,13 @@
 //! clock, concurrency limit, and event sink explicitly; blocking and restart
 //! strategies only decide busy-run policy and submit/cancel plans.
 
-use crate::cmd;
+use crate::cmd::{self, LoggedChild};
 use crate::rules::CommandLine;
+use crate::stdout;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// Runs commands synchronously in declared order with fail-fast semantics,
 /// collecting one result per command that actually ran.
@@ -37,6 +42,152 @@ fn run_one(command: &CommandLine) -> Result<(), String> {
     match command {
         CommandLine::Shell(command) => cmd::execute(command),
         CommandLine::Argv(argv) => cmd::execute_argv(argv),
+    }
+}
+
+/// One step of an async (cancel-aware) run.
+pub enum Step {
+    /// A child is executing; the caller may poll for replacements.
+    Running,
+    /// Every command finished (or fail-fast stopped the run).
+    Finished,
+}
+
+/// A run being executed by the shared engine. Owns process spawn
+/// (`cmd::spawn`/`spawn_argv`), polling/waiting, fail-fast, cancellation
+/// (SIGTERM + reap), and per-command outcome collection at concurrency one.
+///
+/// The restart busy-run policy drives this with `advance`/`cancel` so it can
+/// replace the newest generation; the blocking policy uses the synchronous
+/// `run_commands` entry point. Both share one engine instead of duplicating
+/// the command loop.
+pub struct Run {
+    commands: VecDeque<CommandLine>,
+    results: Vec<Result<(), String>>,
+    started: Instant,
+    child: Option<LoggedChild>,
+    current_task: Option<String>,
+    fail_fast: bool,
+}
+
+impl Run {
+    pub fn new(commands: Vec<CommandLine>, fail_fast: bool) -> Self {
+        Run {
+            commands: commands.into(),
+            results: vec![],
+            started: Instant::now(),
+            child: None,
+            current_task: None,
+            fail_fast,
+        }
+    }
+
+    /// Elapsed wall time since the run started.
+    pub fn elapsed(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    /// Display form of the command currently executing, if any.
+    pub fn current_task(&self) -> Option<&str> {
+        self.current_task.as_deref()
+    }
+
+    /// Consumes the run, returning the collected per-command results.
+    pub fn into_results(self) -> Vec<Result<(), String>> {
+        self.results
+    }
+
+    /// Advance this run by one step: spawn the next command or poll the active
+    /// child. Returns `Running` whenever a child is executing, so the restart
+    /// policy can check for a superseding generation between polls.
+    pub fn advance(&mut self) -> Step {
+        loop {
+            if self.child.is_none() {
+                let Some(task) = self.commands.pop_front() else {
+                    return Step::Finished;
+                };
+                let display = task.display();
+                self.current_task = Some(display.clone());
+                let spawn_result = match task {
+                    CommandLine::Shell(command) => cmd::spawn(&command),
+                    CommandLine::Argv(argv) => cmd::spawn_argv(&argv),
+                };
+                match spawn_result {
+                    Ok(child) => {
+                        self.child = Some(child);
+                        return Step::Running;
+                    }
+                    Err(err) => {
+                        let failure = format!("Command {} failed to start: {}", display, err);
+                        stdout::error(&failure);
+                        self.results.push(Err(failure));
+                        if self.fail_fast {
+                            return Step::Finished;
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            let task = self.current_task.clone().unwrap_or_default();
+            match self.child.as_mut().expect("child is running").try_wait() {
+                Ok(None) => return Step::Running,
+                Ok(Some(status)) => {
+                    self.child = None;
+                    self.current_task = None;
+                    if status.success() {
+                        self.results.push(Ok(()));
+                    } else {
+                        self.results
+                            .push(Err(format!("Command {} has failed with {}", task, status)));
+                        if self.fail_fast {
+                            return Step::Finished;
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.child = None;
+                    self.current_task = None;
+                    self.results
+                        .push(Err(format!("Command {} has errored with {}", task, err)));
+                    if self.fail_fast {
+                        return Step::Finished;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Gracefully terminate the active child, if any, and discard remaining
+    /// commands. The run never finishes normally after this.
+    pub fn cancel(&mut self, verbose: bool) {
+        if let Some(child) = self.child.as_mut() {
+            let task = self.current_task.clone().unwrap_or_default();
+            stdout::verbose(&format!("---- cancelling: {:?} ----", task), verbose);
+
+            if let Err(err) = signal::kill(
+                Pid::from_raw(child.id() as i32),
+                // Sends a SIGTERM signal to the process
+                // and allows it to exit gracefully.
+                Signal::SIGTERM,
+            ) {
+                stdout::error(&format!("failed to terminate task {:?}: {:?}", task, err));
+            }
+
+            if let Ok(status) = child.wait() {
+                stdout::verbose(
+                    &format!("---- finished: {:?} status: {} ----", task, status),
+                    verbose,
+                );
+            } else {
+                stdout::error(&format!(
+                    "failed to wait for the task to finish: {:?}",
+                    task
+                ));
+            }
+        }
+        self.child = None;
+        self.commands.clear();
     }
 }
 
