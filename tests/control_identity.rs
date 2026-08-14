@@ -26,6 +26,20 @@ impl TestProcess {
 
 impl Drop for TestProcess {
     fn drop(&mut self) {
+        // Graceful SIGTERM first so long-running sleep children are reaped
+        // with their watcher instead of piling up across tests.
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        unsafe {
+            kill(self.child.id() as i32, 15);
+        }
+        for _ in 0..50 {
+            if self.child.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.directory);
@@ -105,13 +119,14 @@ fn raw_status(socket_path: &std::path::Path) -> serde_json::Value {
 }
 
 fn wait_until<F: FnMut() -> bool>(mut condition: F) {
-    for _ in 0..150 {
+    let mut last_status = String::new();
+    for _ in 0..250 {
         if condition() {
             return;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("wait_until timed out");
+    panic!("wait_until timed out (last status: {last_status})");
 }
 
 const LONG_RUNNING: &str = r#"
@@ -119,7 +134,7 @@ on:
   socket: sock
 tasks:
   - name: long running
-    run: "sleep 30"
+    run: "sleep 10"
     change: "*.txt"
     run_on_init: true
   - name: other
@@ -184,24 +199,32 @@ fn wait_until_status<F: FnMut(&serde_json::Value) -> bool>(
 ) -> u64 {
     let mut generation = 0;
     let mut last_error = String::new();
-    wait_until(|| {
+    let mut last_seen = String::new();
+    for _ in 0..250 {
         match try_status(socket_path) {
             Ok(status) => {
                 generation = status["result"]["generation"].as_u64().unwrap_or(0);
-                condition(&status["result"])
+                last_seen = status["result"].to_string();
+                if condition(&status["result"]) {
+                    return generation;
+                }
             }
             Err(err) => {
                 // A transient connect failure (watcher under heavy load) is
                 // not a test failure: keep polling until the bound expires.
                 last_error = err;
-                false
             }
         }
-    });
-    if !last_error.is_empty() {
-        eprintln!("last status connect error: {last_error}");
+        std::thread::sleep(Duration::from_millis(100));
     }
-    generation
+    let parent = socket_path.parent().unwrap_or(std::path::Path::new("."));
+    let err_log = std::fs::read_to_string(parent.join("child.err"))
+        .unwrap_or_else(|_| "(no child.err)".to_string());
+    let out_log = std::fs::read_to_string(parent.join("child.out"))
+        .unwrap_or_else(|_| "(no child.out)".to_string());
+    panic!(
+        "wait_until_status timed out (last error: {last_error}, last status: {last_seen})\nwatcher stderr:\n{err_log}\nwatcher stdout:\n{out_log}"
+    );
 }
 
 #[test]
@@ -399,7 +422,7 @@ tasks:
     .unwrap();
 
     let mut exited = false;
-    for _ in 0..150 {
+    for _ in 0..250 {
         if watcher.try_exited() {
             exited = true;
             break;

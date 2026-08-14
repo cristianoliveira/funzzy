@@ -310,14 +310,47 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
             .flatten();
     }
 
-    // This here restarts the watcher if the config file changes
+    // This here restarts the watcher if the config file changes. The baseline
+    // mtime guard rejects stale/historical filesystem events (macOS FSEvents
+    // can replay pre-registration writes), so a watcher started right after
+    // writing its config never spuriously terminates itself.
     let watcher_pid = std::process::id();
+    let baselines: std::collections::HashMap<String, std::time::SystemTime> = config_file_paths
+        .iter()
+        .filter_map(|path| {
+            std::fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .map(|modified| (path.clone(), modified))
+        })
+        .collect();
     let th = std::thread::spawn(move || {
+        let baselines = std::sync::Mutex::new(baselines);
         watcher::events(
             config_file_paths,
             || {},
             move |changed_paths: &[String]| {
                 let file_changed = changed_paths.first().cloned().unwrap_or_default();
+
+                // Ignore events that do not reflect a real modification since
+                // the watcher started (historical FSEvents replays).
+                let mut baselines = baselines.lock().unwrap();
+                let current = std::fs::metadata(&file_changed)
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                let baseline = baselines.get(&file_changed).copied();
+                let changed = match (current, baseline) {
+                    (Some(current), Some(baseline)) => current != baseline,
+                    // Unknown path or missing metadata: treat as real.
+                    _ => true,
+                };
+                if !changed {
+                    return;
+                }
+                if let Some(current) = current {
+                    baselines.insert(file_changed.clone(), current);
+                }
+                drop(baselines);
 
                 let truncation_status = if truncate_on_config_change {
                     Some(logging::truncate())

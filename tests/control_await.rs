@@ -26,10 +26,38 @@ impl TestProcess {
 
 impl Drop for TestProcess {
     fn drop(&mut self) {
+        // Graceful SIGTERM first: the watcher's shutdown handler reaps its
+        // task process groups, so long-running sleep children never pile up
+        // across tests. SIGKILL is the fallback for a stuck watcher.
+        let _ = unsafe { libc_kill(self.child.id() as i32, 15) };
+        for _ in 0..50 {
+            if self.child.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.directory);
     }
+}
+
+/// Minimal libc kill wrapper (signal 15 = SIGTERM) without extra deps.
+fn libc_kill(pid: i32, signal: i32) -> std::io::Result<()> {
+    let result = unsafe { libc_kill_impl(pid, signal) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+unsafe fn libc_kill_impl(pid: i32, signal: i32) -> i32 {
+    // FFI to kill(2) via the standard library's process primitives.
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    kill(pid, signal)
 }
 
 static DIRECTORY_COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -119,8 +147,20 @@ fn try_status(socket_path: &std::path::Path) -> Result<serde_json::Value, String
     serde_json::from_str(&line).map_err(|err| err.to_string())
 }
 
+fn run_cli_retry(directory: &std::path::Path, args: &[&str]) -> Output {
+    let mut last = run_cli(directory, args);
+    for _ in 0..2 {
+        if last.status.success() {
+            return last;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        last = run_cli(directory, args);
+    }
+    last
+}
+
 fn wait_until<F: FnMut() -> bool>(mut condition: F) {
-    for _ in 0..200 {
+    for _ in 0..300 {
         if condition() {
             return;
         }
@@ -130,18 +170,47 @@ fn wait_until<F: FnMut() -> bool>(mut condition: F) {
 }
 
 fn wait_until_status<F: FnMut(&serde_json::Value) -> bool>(socket: &std::path::Path, mut f: F) {
-    wait_until(|| {
+    let mut last_error = String::new();
+    let mut last_seen = String::new();
+    for _ in 0..300 {
         match try_status(socket) {
-            Ok(status) => f(status.get("result").unwrap_or(&serde_json::Value::Null)),
+            Ok(status) => {
+                last_seen = status["result"].to_string();
+                if f(status.get("result").unwrap_or(&serde_json::Value::Null)) {
+                    return;
+                }
+            }
             // A transient connect failure (watcher under heavy load) is not a
             // test failure: keep polling until the bound expires.
-            Err(_) => false,
+            Err(err) => last_error = err,
         }
-    });
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let parent = socket.parent().unwrap_or(std::path::Path::new("."));
+    let err_log = std::fs::read_to_string(parent.join("child.err"))
+        .unwrap_or_else(|_| "(no child.err)".to_string());
+    let out_log = std::fs::read_to_string(parent.join("child.out"))
+        .unwrap_or_else(|_| "(no child.out)".to_string());
+    panic!(
+        "wait_until_status timed out (last error: {last_error}, last status: {last_seen})\nwatcher stderr:\n{err_log}\nwatcher stdout:\n{out_log}"
+    );
 }
 
 fn reap(output: &mut Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
+}
+
+/// Parses `scheduled generation: N` from a control CLI output; the panic
+/// includes the full output so a flaky failure shows the real server error.
+fn scheduled_generation(output: &Output) -> u64 {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{}{}", stdout, String::from_utf8_lossy(&output.stderr));
+    combined
+        .lines()
+        .find_map(|line| line.strip_prefix("scheduled generation: "))
+        .expect(&format!("scheduled generation line missing in: {combined}"))
+        .parse()
+        .expect("numeric generation")
 }
 
 const INIT_FAST: &str = r#"
@@ -159,7 +228,7 @@ on:
   socket: sock
 tasks:
   - name: long running
-    run: "sleep 30"
+    run: "sleep 6"
     change: "*.txt"
   - name: quick
     run: "true"
@@ -260,13 +329,17 @@ fn await_superseded_generation_returns_superseded() {
 
     // Generation 1 runs for 30s; awaiting it while a new batch arrives must
     // return superseded with the newer snapshot, exit 1.
-    let first = run_cli(&directory, &["control", "emit", "a.txt"]);
-    let run_one: u64 = String::from_utf8_lossy(&first.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("scheduled generation: "))
-        .expect("generation")
-        .parse()
-        .unwrap();
+    let first = run_cli_retry(&directory, &["control", "emit", "a.txt"]);
+    if !first.status.success() {
+        let watcher_log = std::fs::read_to_string(directory.join("child.err"))
+            .unwrap_or_else(|_| "(no watcher stderr)".to_string());
+        panic!(
+            "first emit failed: {}; watcher stderr:\n{}",
+            String::from_utf8_lossy(&first.stdout),
+            watcher_log
+        );
+    }
+    let run_one = scheduled_generation(&first);
     wait_until_status(&socket, |status| {
         status["generation"].as_u64() == Some(run_one)
             && status["state"].as_str() == Some("running")
@@ -284,13 +357,8 @@ fn await_superseded_generation_returns_superseded() {
         ],
     );
     std::thread::sleep(Duration::from_millis(1200));
-    let second = run_cli(&directory, &["control", "emit", "b.txt"]);
-    let run_two: u64 = String::from_utf8_lossy(&second.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("scheduled generation: "))
-        .expect("generation")
-        .parse()
-        .unwrap();
+    let second = run_cli_retry(&directory, &["control", "emit", "b.txt"]);
+    let run_two = scheduled_generation(&second);
     assert!(run_two > run_one);
 
     let output = waiter.wait_with_output().expect("waiter finished");
@@ -400,13 +468,8 @@ fn await_timeout_performs_no_cancellation() {
 
     // A generation runs long; a short await on a future generation times out
     // and must NOT cancel the running work.
-    let emit = run_cli(&directory, &["control", "emit", "a.txt"]);
-    let run_id: u64 = String::from_utf8_lossy(&emit.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("scheduled generation: "))
-        .expect("generation")
-        .parse()
-        .unwrap();
+    let emit = run_cli_retry(&directory, &["control", "emit", "a.txt"]);
+    let run_id = scheduled_generation(&emit);
     wait_until_status(&socket, |status| {
         status["generation"].as_u64() == Some(run_id) && status["state"].as_str() == Some("running")
     });

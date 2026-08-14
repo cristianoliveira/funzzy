@@ -329,6 +329,26 @@ impl ControlServer {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         std::thread::sleep(Duration::from_millis(20));
                     }
+                    Err(err)
+                        if matches!(
+                            err.raw_os_error(),
+                            Some(
+                                nix::libc::EMFILE
+                                    | nix::libc::ENFILE
+                                    | nix::libc::ENOBUFS
+                                    | nix::libc::ENOMEM
+                            )
+                        ) =>
+                    {
+                        // Resource exhaustion under load is transient: fd/pipe
+                        // pressure must never kill the control surface. Back
+                        // off briefly and keep accepting.
+                        stdout::warn(&format!(
+                            "Control socket accept backed off on resource pressure: {}",
+                            err
+                        ));
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
                     Err(err) => {
                         stdout::error(&format!(
                             "Control socket stopped accepting clients: {}",
