@@ -1,7 +1,7 @@
 ---
 id: TASK-0037
 title: Add native watcher polling fallback
-status: todo
+status: done
 depends_on: [TASK-0031]
 priority: normal
 tags: [rust, watcher, polling, portability, reliability, tdd]
