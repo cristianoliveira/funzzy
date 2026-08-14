@@ -1,7 +1,7 @@
 ---
 id: TASK-0077
 title: Separate configured jobs from runtime task identities
-status: todo
+status: done
 depends_on: [TASK-0075, TASK-0076, TASK-0043]
 priority: high
 tags: [rust, domain, naming, jobs, tasks, protocol, refactor]
