@@ -1,7 +1,7 @@
 ---
 id: TASK-0047
 title: Expose control protocol capabilities and schema versions
-status: todo
+status: done
 depends_on: [TASK-0021, TASK-0042]
 priority: normal
 tags: [rust, cli, control-socket, protocol, discovery, tdd]
