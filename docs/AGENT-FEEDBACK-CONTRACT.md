@@ -324,6 +324,33 @@ marked (now) are already true today.
 | 24 | malformed request | bad JSON/params | standard JSON-RPC error codes | now |
 | 25 | full loop | observe→edit→await→diagnose→act | ≤ status+await or one run/emit --wait; fixtures within declared budget | impl (TASK-0049) |
 
+### Copyable agent loop (TASK-0049, proven end-to-end)
+
+A successful edit-verify round trip needs at most **one emit + one await**
+(or one `run/emit --wait`), and each structured response stays well under the
+declared budget. Failures add one `output` retrieval call.
+
+```sh
+# 1. Baseline observe (optional; skip when the agent already knows state).
+fzz ctl --format toon status
+
+# 2. Edit the file, then trigger and await the exact generation.
+fzz ctl emit <path> --format toon          # -> {outcome, matched, runId}
+fzz ctl await --generation <runId> --timeout 5m --format toon
+#    -> {terminalReason, snapshot:{generation,state,failures}, freshness}
+
+# 3. On failure: retrieve task-attributed evidence, fix, re-await.
+fzz ctl output --generation <runId> --tail 80 --format toon
+fzz ctl await --generation <newRunId> --timeout 5m --format toon
+```
+
+Freshness guarantees (contract §4): the awaited snapshot is exactly the
+requested generation and `freshness: current` only when no newer batch
+superseded it. `terminalReason` distinguishes `passed`, `failed`,
+`cancelled`, `superseded`, `timeout`, `restarted`, and `disconnected` — an
+agent never has to guess from stdout. Structured formats emit exactly one
+document; progress and debug never mix into stdout.
+
 ## §10 Out of scope for this contract
 
 - Subscription transport mechanics (TASK-0050) — the contract keeps
