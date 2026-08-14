@@ -545,10 +545,10 @@ fn verbose_short_flag_starts_watcher_in_verbose() {
         let _ = child.kill();
         let _ = std::fs::remove_file(&log_name);
     });
-    let output = wait_for_output(&log_name, "Funzzy verbose");
+    let output = wait_for_output(&log_name, "Running on init commands.");
     assert!(
-        output.contains("Running on init commands."),
-        "verbose watch must still start its init run:\n{}",
+        output.contains("Funzzy verbose"),
+        "verbose watch must enable diagnostics before its init run:\n{}",
         output
     );
 }

@@ -9,6 +9,7 @@
 use crate::config;
 use crate::control::{ControlServer, ControlState, ControlTarget};
 use crate::errors::FzzError;
+use crate::executor::{Executor, RunMetadata, SystemClock, SystemProcessRunner};
 use crate::rules::{self, Rules};
 use crate::stdout;
 use crate::template;
@@ -95,15 +96,24 @@ pub fn watch_loop(
 pub struct BlockingStrategy {
     root: PathBuf,
     verbose: bool,
-    fail_fast: bool,
+    executor: Executor,
 }
 
 impl BlockingStrategy {
     pub fn new(root: PathBuf, verbose: bool, fail_fast: bool) -> Self {
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            fail_fast,
+            verbose,
+        )
+        .expect("concurrency one is supported");
         BlockingStrategy {
             root,
             verbose,
-            fail_fast,
+            executor,
         }
     }
 
@@ -126,18 +136,20 @@ impl BlockingStrategy {
             .collect()
     }
 
-    fn execute_tasks(&self, tasks: Vec<rules::CommandLine>) -> Vec<Result<(), String>> {
-        crate::executor::run_commands(tasks, self.fail_fast)
+    fn execute_tasks(
+        &self,
+        metadata: RunMetadata,
+        tasks: Vec<rules::CommandLine>,
+    ) -> crate::executor::CompletedRun {
+        self.executor.run_to_completion(metadata, tasks)
     }
 }
 
 impl RunStrategy for BlockingStrategy {
     fn run_init(&self, rules: Vec<Rules>) {
-        let time_execution_started = std::time::Instant::now();
         let tasks = self.expand(rules, None);
-        let results = self.execute_tasks(tasks);
-        let time_elapsed = time_execution_started.elapsed();
-        stdout::present_results(results, time_elapsed);
+        let completed = self.execute_tasks(RunMetadata::new(0, "init"), tasks);
+        stdout::present_results(completed.results, completed.elapsed);
     }
 
     fn run_change(&self, rules: Vec<Rules>, filepath: &str) {
@@ -147,11 +159,9 @@ impl RunStrategy for BlockingStrategy {
             self.verbose,
         );
 
-        let time_execution_started = std::time::Instant::now();
         let tasks = self.expand(rules, Some(filepath));
-        let results = self.execute_tasks(tasks);
-        let time_elapsed = time_execution_started.elapsed();
-        stdout::present_results(results, time_elapsed);
+        let completed = self.execute_tasks(RunMetadata::new(0, filepath), tasks);
+        stdout::present_results(completed.results, completed.elapsed);
     }
 }
 

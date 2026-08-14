@@ -1,5 +1,5 @@
+use crate::executor::Event;
 use crate::stdout;
-use crate::workers::WorkerEvent;
 use serde_derive::Serialize;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
@@ -53,9 +53,9 @@ impl Default for ControlState {
 }
 
 impl ControlState {
-    pub fn apply(&mut self, event: WorkerEvent) {
+    pub fn apply(&mut self, event: Event) {
         match event {
-            WorkerEvent::Started {
+            Event::Started {
                 run_id,
                 trigger,
                 commands,
@@ -67,7 +67,7 @@ impl ControlState {
                 self.duration_ms = None;
                 self.failures.clear();
             }
-            WorkerEvent::Finished { elapsed, failures } => {
+            Event::Finished { elapsed, failures } => {
                 self.state = if failures.is_empty() {
                     ExecutionState::Passed
                 } else {
@@ -76,11 +76,11 @@ impl ControlState {
                 self.duration_ms = Some(elapsed.as_millis() as u64);
                 self.failures = failures;
             }
-            WorkerEvent::Cancelled => {
+            Event::Cancelled => {
                 self.state = ExecutionState::Cancelled;
                 self.duration_ms = None;
             }
-            WorkerEvent::Tick => {}
+            Event::Tick { .. } => {}
         }
     }
 }

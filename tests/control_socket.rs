@@ -1,7 +1,7 @@
 #[cfg(unix)]
 mod unix {
     use funzzy::control::{ControlServer, ControlState, ControlTarget};
-    use funzzy::workers::WorkerEvent;
+    use funzzy::executor::Event as WorkerEvent;
     use serde_json::Value;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;

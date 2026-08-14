@@ -1,27 +1,13 @@
-use crate::executor::{Run, Step};
+use crate::executor::{Event, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner};
 use crate::rules::{self, Rules};
 use crate::stdout;
 use crate::template;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
-
-#[derive(Debug, Clone)]
-pub enum WorkerEvent {
-    Started {
-        run_id: u64,
-        trigger: String,
-        commands: Vec<String>,
-    },
-    Finished {
-        elapsed: Duration,
-        failures: Vec<String>,
-    },
-    Cancelled,
-    Tick,
-}
 
 /// A run requested through the worker's command stream.
 struct RunRequest {
@@ -63,7 +49,7 @@ impl Worker {
     /// on hidden process state.
     pub fn new<F>(verbose: bool, fail_fast: bool, on_event: F) -> Self
     where
-        F: Fn(WorkerEvent) + Send + 'static,
+        F: Fn(Event) + Send + Sync + 'static,
     {
         let root = std::env::current_dir().expect("Unable to get current directory");
         Self::with_root(verbose, fail_fast, root, on_event)
@@ -73,10 +59,25 @@ impl Worker {
     /// workspace root.
     pub fn with_root<F>(verbose: bool, fail_fast: bool, root: PathBuf, on_event: F) -> Self
     where
-        F: Fn(WorkerEvent) + Send + 'static,
+        F: Fn(Event) + Send + Sync + 'static,
     {
         stdout::verbose("Worker in verbose mode.", verbose);
         let (tscheduler, rscheduler) = channel::<WorkerCommand>();
+        let events = Arc::new(move |event: Event| {
+            if let Event::Tick { task } = &event {
+                stdout::verbose(&format!("waiting next tick for task: {}", task), verbose);
+            }
+            on_event(event);
+        });
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            events,
+            fail_fast,
+            verbose,
+        )
+        .expect("concurrency one is supported");
 
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
@@ -87,31 +88,18 @@ impl Worker {
                     // Promote the newest superseding run, or block on the next
                     // command when idle.
                     if let Some(req) = pending.take() {
-                        on_event(WorkerEvent::Started {
-                            run_id: req.run_id,
-                            trigger: req.trigger.clone(),
-                            commands: req
-                                .commands
-                                .iter()
-                                .map(|command| command.display())
-                                .collect(),
-                        });
-                        active = Some(Run::new(req.commands, fail_fast));
+                        active = Some(
+                            executor.start(RunMetadata::new(req.run_id, req.trigger), req.commands),
+                        );
                         continue;
                     }
 
                     match rscheduler.recv() {
                         Ok(WorkerCommand::Run(req)) => {
-                            on_event(WorkerEvent::Started {
-                                run_id: req.run_id,
-                                trigger: req.trigger.clone(),
-                                commands: req
-                                    .commands
-                                    .iter()
-                                    .map(|command| command.display())
-                                    .collect(),
-                            });
-                            active = Some(Run::new(req.commands, fail_fast));
+                            active = Some(
+                                executor
+                                    .start(RunMetadata::new(req.run_id, req.trigger), req.commands),
+                            );
                         }
                         Ok(WorkerCommand::Cancel) => {}
                         Err(_) => break,
@@ -119,43 +107,23 @@ impl Worker {
                     continue;
                 }
 
-                let step = active.as_mut().expect("active run").advance();
+                let step = executor.advance(active.as_mut().expect("active run"));
                 match step {
                     Step::Running => match drain_newest(&rscheduler) {
                         Some(WorkerCommand::Run(req)) => {
                             let mut replaced = active.take().expect("active run");
-                            replaced.cancel(verbose);
-                            on_event(WorkerEvent::Cancelled);
+                            executor.cancel(&mut replaced);
                             pending = Some(req);
                         }
                         Some(WorkerCommand::Cancel) => {
                             let mut cancelled = active.take().expect("active run");
-                            cancelled.cancel(verbose);
-                            on_event(WorkerEvent::Cancelled);
+                            executor.cancel(&mut cancelled);
                         }
-                        None => {
-                            let current_task = active
-                                .as_ref()
-                                .and_then(|run| run.current_task().map(str::to_string))
-                                .unwrap_or_default();
-                            stdout::verbose(
-                                &format!("waiting next tick for task: {}", current_task),
-                                verbose,
-                            );
-                            on_event(WorkerEvent::Tick);
-                            std::thread::sleep(Duration::from_millis(200));
-                        }
+                        None => std::thread::sleep(Duration::from_millis(200)),
                     },
                     Step::Finished => {
-                        let finished = active.take().expect("active run");
-                        let elapsed = finished.elapsed();
-                        let results = finished.into_results();
-                        let failures = results
-                            .iter()
-                            .filter_map(|result| result.as_ref().err().cloned())
-                            .collect();
-                        stdout::present_results(results, elapsed);
-                        on_event(WorkerEvent::Finished { elapsed, failures });
+                        let completed = executor.finish(active.take().expect("active run"));
+                        stdout::present_results(completed.results, completed.elapsed);
                     }
                 }
             }
@@ -242,6 +210,7 @@ impl Drop for Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::Event as WorkerEvent;
     use std::path::PathBuf;
     use std::sync::mpsc::{channel, Receiver};
     use std::time::Instant;
@@ -324,7 +293,9 @@ mod tests {
         );
         // The consumer is now polling the active child; wait for a tick so both
         // follow-up schedules are queued before the next replacement drain.
-        expect_event(&rx, "worker tick", |e| matches!(e, WorkerEvent::Tick));
+        expect_event(&rx, "worker tick", |e| {
+            matches!(e, WorkerEvent::Tick { .. })
+        });
 
         let second = worker.schedule(vec![slow], "b.txt").unwrap();
         let third = worker.schedule(vec![quick], "c.txt").unwrap();
