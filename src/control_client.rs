@@ -66,6 +66,15 @@ impl fmt::Display for ControlClientError {
                 code,
                 message,
                 data,
+            } if *code == -32601 => write!(
+                f,
+                "control socket server error -32601: {} — the running watcher may be an older version without this method; upgrade funzzy to enable it",
+                message
+            ),
+            ControlClientError::Server {
+                code,
+                message,
+                data,
             } => match data {
                 Some(Value::String(detail)) if !detail.is_empty() => write!(
                     f,
@@ -167,13 +176,40 @@ pub enum AwaitMode {
     Exact(u64),
 }
 
-/// Negotiated capabilities (contract §6): the instance token identifies one
-/// watcher process so clients can detect restarts instead of assuming
-/// continuity.
+/// Negotiated capabilities (contract §6): protocol facts a client uses to
+/// gate methods and shapes instead of guessing from package versions. The
+/// instance token identifies one watcher process so clients can detect
+/// restarts instead of assuming continuity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilitiesSnapshot {
     pub token: String,
     pub protocol_version: String,
+    pub schema_version: u64,
+    pub watcher_version: String,
+    pub methods: Vec<String>,
+    pub optional_fields: Vec<String>,
+    pub output_formats: Vec<String>,
+    pub limits: CapabilityLimits,
+    pub features: CapabilityFeatures,
+}
+
+/// Declared bounds a client must respect (contract §6); `0` = absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapabilityLimits {
+    pub output_retention_bytes: u64,
+    pub max_response_bytes: u64,
+    pub max_evidence_lines: u64,
+}
+
+/// Negotiated feature flags: each stays false until its implementation lands,
+/// so clients keep the legacy fallback for anything not yet supported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CapabilityFeatures {
+    pub atomic_await: bool,
+    pub subscription: bool,
+    pub correlated_snapshots: bool,
+    pub output_retrieval: bool,
+    pub pending_work: bool,
 }
 
 impl CapabilitiesSnapshot {
@@ -195,11 +231,72 @@ impl CapabilitiesSnapshot {
             .and_then(Value::as_str)
             .map(str::to_owned)
             .unwrap_or_default();
+        let schema_version = object
+            .get("schemaVersion")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let watcher_version = object
+            .get("watcherVersion")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_default();
+        let methods = read_string_array(object, "methods")?;
+        let optional_fields = read_string_array(object, "optionalFields")?;
+        let output_formats = read_string_array(object, "outputFormats")?;
+        let limits = CapabilityLimits {
+            output_retention_bytes: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("outputRetentionBytes"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            max_response_bytes: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("maxResponseBytes"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            max_evidence_lines: object
+                .get("limits")
+                .and_then(Value::as_object)
+                .and_then(|limits| limits.get("maxEvidenceLines"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+        };
+        let features = CapabilityFeatures {
+            atomic_await: read_feature(object, "atomicAwait"),
+            subscription: read_feature(object, "subscription"),
+            correlated_snapshots: read_feature(object, "correlatedSnapshots"),
+            output_retrieval: read_feature(object, "outputRetrieval"),
+            pending_work: read_feature(object, "pendingWork"),
+        };
         Ok(Self {
             token,
             protocol_version,
+            schema_version,
+            watcher_version,
+            methods,
+            optional_fields,
+            output_formats,
+            limits,
+            features,
         })
     }
+
+    /// Whether the negotiated profile advertises a method, so clients gate
+    /// await/emit/cancel/output on facts rather than trial side effects.
+    pub fn has_method(&self, method: &str) -> bool {
+        self.methods.iter().any(|m| m == method)
+    }
+}
+
+fn read_feature(object: &serde_json::Map<String, Value>, key: &str) -> bool {
+    object
+        .get("features")
+        .and_then(Value::as_object)
+        .and_then(|features| features.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// Pending debounce work (contract §3 freshness rule).
@@ -1301,6 +1398,82 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(caps.token, "fz-abc");
         assert_eq!(caps.protocol_version, "1.0");
+    }
+
+    #[test]
+    fn capabilities_roundtrip_parses_the_full_profile() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": "1.0",
+                "schemaVersion": 1,
+                "watcherVersion": "1.6.0",
+                "instance": {"token": "fz-abc", "startedAtEpochMs": 1},
+                "methods": ["status", "targets", "run", "cancel"],
+                "optionalFields": ["batch", "changed"],
+                "outputFormats": ["toon", "json"],
+                "limits": {
+                    "outputRetentionBytes": 1048576,
+                    "maxResponseBytes": 65536,
+                    "maxEvidenceLines": 40
+                },
+                "features": {
+                    "atomicAwait": true,
+                    "subscription": false,
+                    "correlatedSnapshots": false,
+                    "outputRetrieval": true,
+                    "pendingWork": false
+                }
+            }
+        })
+        .to_string();
+        let (path, handle) = serving_socket(response);
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let caps = client.capabilities().expect("capabilities");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(caps.token, "fz-abc");
+        assert_eq!(caps.protocol_version, "1.0");
+        assert_eq!(caps.schema_version, 1);
+        assert_eq!(caps.watcher_version, "1.6.0");
+        assert_eq!(caps.methods, vec!["status", "targets", "run", "cancel"]);
+        assert_eq!(caps.optional_fields, vec!["batch", "changed"]);
+        assert_eq!(caps.output_formats, vec!["toon", "json"]);
+        assert_eq!(caps.limits.output_retention_bytes, 1_048_576);
+        assert_eq!(caps.limits.max_response_bytes, 65_536);
+        assert_eq!(caps.limits.max_evidence_lines, 40);
+        assert!(caps.features.atomic_await);
+        assert!(caps.features.output_retrieval);
+        assert!(!caps.features.subscription);
+        assert!(caps.has_method("cancel"));
+        assert!(!caps.has_method("subscribe"));
+    }
+
+    #[test]
+    fn capabilities_default_absent_fields_for_legacy_servers() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": "1.0",
+                "instance": {"token": "fz-legacy"}
+            }
+        })
+        .to_string();
+        let (path, handle) = serving_socket(response);
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let caps = client.capabilities().expect("capabilities");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(caps.token, "fz-legacy");
+        assert_eq!(caps.schema_version, 0);
+        assert!(caps.watcher_version.is_empty());
+        assert!(caps.methods.is_empty());
+        assert!(!caps.has_method("cancel"));
+        assert_eq!(caps.limits.output_retention_bytes, 0);
+        assert!(!caps.features.atomic_await);
     }
 
     #[test]

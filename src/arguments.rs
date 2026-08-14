@@ -110,6 +110,7 @@ impl Arguments {
                 let action = match sub.subcommand() {
                     Some(("status", _)) => ControlAction::Status,
                     Some(("list", _)) => ControlAction::List,
+                    Some(("capabilities", _)) => ControlAction::Capabilities,
                     Some(("run", run_sub)) => ControlAction::Run {
                         target: run_sub
                             .get_one::<String>("target")
@@ -389,6 +390,14 @@ fn command() -> Command {
                     Command::new("list")
                         .about("List targets from the running watcher.")
                         .version(env!("CARGO_PKG_VERSION")),
+                )
+                .subcommand(
+                    Command::new("capabilities")
+                        .about("Print the running watcher's protocol capabilities.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Print protocol facts about the running watcher: protocol/schema/watcher versions, supported methods, optional fields, output formats, limits, and feature flags.\n\nThese are static negotiation facts, not dynamic watcher state; the request performs no config reload or filesystem scan and works whether the watcher is idle or busy.",
+                        ),
                 )
                 .subcommand(
                     Command::new("run")
@@ -708,6 +717,17 @@ mod tests {
             parse_action(&["control", "list"]),
             Action::Control {
                 action: ControlAction::List,
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_capabilities_selects_capabilities() {
+        assert_eq!(
+            parse_action(&["control", "capabilities"]),
+            Action::Control {
+                action: ControlAction::Capabilities,
                 socket: None,
             }
         );

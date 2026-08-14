@@ -1,8 +1,8 @@
 use crate::cli::Command;
 use crate::config;
 use crate::control_client::{
-    AwaitMode, AwaitSnapshot, CancelSnapshot, ControlClient, ControlClientError, EmitSnapshot,
-    OutputSnapshot, StatusSnapshot, TargetSnapshot,
+    AwaitMode, AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ControlClient,
+    ControlClientError, EmitSnapshot, OutputSnapshot, StatusSnapshot, TargetSnapshot,
 };
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use std::time::Duration;
 pub enum ControlAction {
     Status,
     List,
+    Capabilities,
     Run {
         target: String,
         /// Await the exact scheduled generation before returning (TASK-0044).
@@ -175,6 +176,12 @@ impl Command for ControlCommand {
                     .targets()
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_targets(&targets));
+            }
+            ControlAction::Capabilities => {
+                let capabilities = client
+                    .capabilities()
+                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                print!("{}", render_capabilities(&capabilities));
             }
             ControlAction::Run {
                 target,
@@ -383,6 +390,54 @@ pub fn render_status(status: &StatusSnapshot) -> String {
             output.push_str(&format!("  - {}\n", failure));
         }
     }
+    output
+}
+
+/// Compact deterministic `capabilities` rendering: protocol facts a client
+/// gates on, not dynamic watcher state.
+pub fn render_capabilities(caps: &CapabilitiesSnapshot) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("protocol version: {}\n", caps.protocol_version));
+    output.push_str(&format!("schema version: {}\n", caps.schema_version));
+    output.push_str(&format!("watcher version: {}\n", caps.watcher_version));
+    output.push_str(&format!("instance token: {}\n", caps.token));
+    output.push_str("methods:\n");
+    for method in &caps.methods {
+        output.push_str(&format!("  - {}\n", method));
+    }
+    output.push_str("output formats:\n");
+    for format in &caps.output_formats {
+        output.push_str(&format!("  - {}\n", format));
+    }
+    output.push_str("optional fields:\n");
+    for field in &caps.optional_fields {
+        output.push_str(&format!("  - {}\n", field));
+    }
+    output.push_str("limits:\n");
+    output.push_str(&format!(
+        "  output retention bytes: {}\n",
+        caps.limits.output_retention_bytes
+    ));
+    output.push_str(&format!(
+        "  max response bytes: {}\n",
+        caps.limits.max_response_bytes
+    ));
+    output.push_str(&format!(
+        "  max evidence lines: {}\n",
+        caps.limits.max_evidence_lines
+    ));
+    output.push_str("features:\n");
+    output.push_str(&format!("  atomic await: {}\n", caps.features.atomic_await));
+    output.push_str(&format!("  subscription: {}\n", caps.features.subscription));
+    output.push_str(&format!(
+        "  correlated snapshots: {}\n",
+        caps.features.correlated_snapshots
+    ));
+    output.push_str(&format!(
+        "  output retrieval: {}\n",
+        caps.features.output_retrieval
+    ));
+    output.push_str(&format!("  pending work: {}\n", caps.features.pending_work));
     output
 }
 
@@ -689,6 +744,41 @@ mod tests {
     #[test]
     fn render_run_returns_generation_identity() {
         assert_eq!(render_run(7), "scheduled generation: 7\n");
+    }
+
+    #[test]
+    fn render_capabilities_lists_protocol_facts() {
+        use crate::control_client::{CapabilityFeatures, CapabilityLimits};
+        let caps = CapabilitiesSnapshot {
+            token: "fz-token".to_string(),
+            protocol_version: "1.0".to_string(),
+            schema_version: 1,
+            watcher_version: "1.6.0".to_string(),
+            methods: vec!["status".to_string(), "cancel".to_string()],
+            optional_fields: vec!["batch".to_string()],
+            output_formats: vec!["toon".to_string(), "json".to_string()],
+            limits: CapabilityLimits {
+                output_retention_bytes: 1_048_576,
+                max_response_bytes: 65_536,
+                max_evidence_lines: 40,
+            },
+            features: CapabilityFeatures {
+                atomic_await: true,
+                subscription: false,
+                correlated_snapshots: false,
+                output_retrieval: true,
+                pending_work: false,
+            },
+        };
+        let rendered = render_capabilities(&caps);
+        assert!(rendered.contains("protocol version: 1.0"));
+        assert!(rendered.contains("watcher version: 1.6.0"));
+        assert!(rendered.contains("instance token: fz-token"));
+        assert!(rendered.contains("  - cancel"));
+        assert!(rendered.contains("  - json"));
+        assert!(rendered.contains("output retention bytes: 1048576"));
+        assert!(rendered.contains("atomic await: true"));
+        assert!(rendered.contains("subscription: false"));
     }
 
     #[test]

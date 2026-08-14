@@ -290,3 +290,49 @@ tasks:
     );
     assert_eq!(empty["error"]["code"], -32602);
 }
+
+fn run_cli(directory: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(directory)
+        .args(args)
+        .output()
+        .expect("fzz control client should run")
+}
+
+#[test]
+fn it_prints_capabilities_over_the_control_socket() {
+    let directory = std::env::temp_dir().join(format!("funzzy-caps-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        "on:\n  socket: .tmp/control.sock\ntasks:\n  - name: t\n    run: \"true\"\n    change: \"*.txt\"\n",
+    )
+    .unwrap();
+
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
+        .spawn()
+        .unwrap();
+    let _process = TestProcess {
+        child,
+        directory: directory.clone(),
+    };
+
+    let socket_path = directory.join(".tmp/control.sock");
+    wait_until(Duration::from_secs(5), || socket_path.exists());
+
+    let output = run_cli(&directory, &["control", "capabilities"]);
+    assert!(output.status.success(), "capabilities exits 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("watcher version:"), "stdout: {stdout}");
+    assert!(stdout.contains("methods:"), "stdout: {stdout}");
+    assert!(stdout.contains("  - cancel"), "stdout: {stdout}");
+    assert!(stdout.contains("output formats:"), "stdout: {stdout}");
+    assert!(stdout.contains("  - json"), "stdout: {stdout}");
+}

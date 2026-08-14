@@ -271,10 +271,46 @@ mod unix {
             .iter()
             .map(|method| method.as_str().unwrap())
             .collect();
-        for method in ["status", "targets", "run", "emit", "await", "capabilities"] {
+        for method in [
+            "status",
+            "targets",
+            "run",
+            "emit",
+            "await",
+            "output",
+            "cancel",
+            "capabilities",
+        ] {
             assert!(
                 methods.contains(&method),
                 "missing method {method}: {methods:?}"
+            );
+        }
+        // watcherVersion and outputFormats are protocol facts (TASK-0047).
+        assert_eq!(result["watcherVersion"], env!("CARGO_PKG_VERSION"));
+        let formats: Vec<_> = result["outputFormats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|format| format.as_str().unwrap())
+            .collect();
+        assert_eq!(formats, vec!["toon", "json"]);
+        let optional: Vec<_> = result["optionalFields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field.as_str().unwrap())
+            .collect();
+        for field in [
+            "batch",
+            "changed",
+            "predecessor",
+            "supersededBy",
+            "failureEvidence",
+        ] {
+            assert!(
+                optional.contains(&field),
+                "missing optional field {field}: {optional:?}"
             );
         }
         // Honest current profile: `atomicAwait` landed with TASK-0044; the

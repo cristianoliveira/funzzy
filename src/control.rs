@@ -733,6 +733,7 @@ fn process_request(
         "capabilities" => Ok(serde_json::json!({
             "protocolVersion": "1.0",
             "schemaVersion": 1,
+            "watcherVersion": env!("CARGO_PKG_VERSION"),
             "instance": {
                 "token": instance.token,
                 "startedAtEpochMs": instance.started_at_epoch_ms,
@@ -747,7 +748,14 @@ fn process_request(
                 "cancel",
                 "capabilities"
             ],
-            "optionalFields": [],
+            "optionalFields": [
+                "batch",
+                "changed",
+                "predecessor",
+                "supersededBy",
+                "failureEvidence"
+            ],
+            "outputFormats": ["toon", "json"],
             "limits": {
                 "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
                 "maxResponseBytes": MAX_RESPONSE_BYTES,
