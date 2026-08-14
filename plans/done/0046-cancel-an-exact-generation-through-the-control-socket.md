@@ -1,7 +1,7 @@
 ---
 id: TASK-0046
 title: Cancel an exact generation through the control socket
-status: todo
+status: done
 depends_on: [TASK-0030, TASK-0044]
 priority: high
 tags: [rust, cli, control-socket, cancellation, process, tdd]
