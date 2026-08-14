@@ -257,6 +257,22 @@ impl Watches {
         Some(plan)
     }
 
+    /// Routes one normalized event batch to zero or one generation (contract
+    /// §1): scans the changed paths in deterministic order and returns the
+    /// plan of the FIRST path that matches (change matched, not ignored),
+    /// plus that trigger path for template expansion. A batch whose paths are
+    /// all unmatched or ignored yields None.
+    pub fn watch_plan_batch(&self, paths: &[String]) -> Option<(RunPlan, String)> {
+        let mut sorted = paths.to_vec();
+        sorted.sort();
+        for path in sorted {
+            if let Some(plan) = self.watch_plan(&path) {
+                return Some((plan, path));
+            }
+        }
+        None
+    }
+
     /// Returns the commands for first rule found for the given path
     ///
     pub fn watch(&self, path: &str) -> Option<Vec<Rules>> {
@@ -974,6 +990,85 @@ mod tests {
             .stages
             .iter()
             .all(|stage| matches!(stage, Stage::Parallel { tasks, .. } if tasks.len() == 1)));
+    }
+
+    #[test]
+    fn one_batch_maps_to_one_generation_via_first_deterministic_match() {
+        let rules = vec![
+            Rules::new(
+                "build".to_owned(),
+                vec!["echo build".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "docs".to_owned(),
+                vec!["echo docs".to_owned()],
+                vec!["docs/**".to_owned()],
+                vec![],
+                false,
+            ),
+        ];
+        let watches = Watches::with_root_and_concurrency(rules, env::current_dir().unwrap(), 1);
+
+        // Deterministic order: docs/** sorts before src/**, so "docs/a.md" is
+        // the trigger even though "src/main.rs" also matches.
+        let (plan, trigger) = watches
+            .watch_plan_batch(&["src/main.rs".to_owned(), "docs/a.md".to_owned()])
+            .expect("batch matches");
+        assert_eq!(trigger, "docs/a.md");
+        assert_eq!(plan.task_names(), vec!["docs".to_owned()]);
+    }
+
+    #[test]
+    fn batch_with_only_ignored_paths_yields_no_generation() {
+        let rules = vec![Rules::new(
+            "build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec!["src/generated/**".to_owned()],
+            false,
+        )];
+        let watches = Watches::with_root_and_concurrency(rules, env::current_dir().unwrap(), 1);
+
+        assert!(
+            watches
+                .watch_plan_batch(&["src/generated/out.rs".to_owned()])
+                .is_none(),
+            "ignored-only batch must not schedule"
+        );
+    }
+
+    #[test]
+    fn batch_with_ignored_and_matching_paths_uses_the_matching_one() {
+        let rules = vec![Rules::new(
+            "build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec!["src/generated/**".to_owned()],
+            false,
+        )];
+        let watches = Watches::with_root_and_concurrency(rules, env::current_dir().unwrap(), 1);
+
+        let (plan, trigger) = watches
+            .watch_plan_batch(&["src/generated/out.rs".to_owned(), "src/main.rs".to_owned()])
+            .expect("matching path must win");
+        assert_eq!(trigger, "src/main.rs");
+        assert_eq!(plan.task_names(), vec!["build".to_owned()]);
+    }
+
+    #[test]
+    fn empty_batch_never_schedules() {
+        let rules = vec![Rules::new(
+            "build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root_and_concurrency(rules, env::current_dir().unwrap(), 1);
+        assert!(watches.watch_plan_batch(&[]).is_none());
     }
 
     #[test]

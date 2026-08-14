@@ -12,7 +12,7 @@ use std::time::Duration;
 pub fn events(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
-    handler: impl Fn(&str),
+    handler: impl Fn(&[String]),
     verbose: bool,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
@@ -58,16 +58,16 @@ pub fn events(
                 stdout::verbose(&format!("Events {:?}", debounced_evts), verbose);
                 stdout::verbose(&format_events(&debounced_evts), verbose);
                 if let Ok(file_change_event) = debounced_evts {
-                    file_change_event.iter().for_each(|event| {
-                        if let Some(path_string) = event.path.to_str() {
-                            handler(path_string);
-                        } else {
-                            stdout::error(&format!(
-                                "failed to convert path {:?} to string",
-                                event.path
-                            ));
-                        }
-                    });
+                    // One debounce window is one normalized event batch (contract
+                    // §1): forward every path together so the batch maps to zero
+                    // or one generation and retains its complete changed-path set.
+                    let paths: Vec<String> = file_change_event
+                        .iter()
+                        .filter_map(|event| event.path.to_str().map(str::to_owned))
+                        .collect();
+                    if !paths.is_empty() {
+                        handler(&paths);
+                    }
                 }
             }
 

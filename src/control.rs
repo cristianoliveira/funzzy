@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionState {
     Idle,
@@ -68,6 +68,14 @@ pub struct ControlState {
     commands: Vec<String>,
     duration_ms: Option<u64>,
     failures: Vec<String>,
+    /// Additive correlation fields (contract §1, TASK-0043): legacy fields
+    /// above stay verbatim for old clients; these are new keys only.
+    /// One state read can never mix generations: all fields are set from the
+    /// same event under the same lock.
+    batch: Option<u64>,
+    changed: Vec<String>,
+    predecessor: Option<u64>,
+    superseded_by: Option<u64>,
 }
 
 impl Default for ControlState {
@@ -79,6 +87,10 @@ impl Default for ControlState {
             commands: vec![],
             duration_ms: None,
             failures: vec![],
+            batch: None,
+            changed: vec![],
+            predecessor: None,
+            superseded_by: None,
         }
     }
 }
@@ -89,16 +101,28 @@ impl ControlState {
             Event::Started {
                 run_id,
                 trigger,
+                batch,
+                predecessor,
+                changed,
                 commands,
             } => {
                 self.generation = run_id;
                 self.state = ExecutionState::Running;
                 self.trigger = Some(trigger);
+                self.batch = batch;
+                self.changed = changed;
+                self.predecessor = predecessor;
+                self.superseded_by = None;
                 self.commands = commands;
                 self.duration_ms = None;
                 self.failures.clear();
             }
-            Event::Finished { elapsed, failures } => {
+            Event::Finished {
+                superseded_by,
+                elapsed,
+                failures,
+                ..
+            } => {
                 self.state = if failures.is_empty() {
                     ExecutionState::Passed
                 } else {
@@ -106,10 +130,12 @@ impl ControlState {
                 };
                 self.duration_ms = Some(elapsed.as_millis() as u64);
                 self.failures = failures;
+                self.superseded_by = superseded_by;
             }
-            Event::Cancelled => {
+            Event::Cancelled { superseded_by, .. } => {
                 self.state = ExecutionState::Cancelled;
                 self.duration_ms = None;
+                self.superseded_by = superseded_by;
             }
             Event::Tick { .. } => {}
         }
@@ -394,7 +420,7 @@ fn process_request(
                 "token": instance.token,
                 "startedAtEpochMs": instance.started_at_epoch_ms,
             },
-            "methods": ["status", "targets", "run", "capabilities"],
+            "methods": ["status", "targets", "run", "emit", "capabilities"],
             "optionalFields": [],
             "limits": {
                 "outputRetentionBytes": 0,
@@ -518,4 +544,113 @@ fn rpc_error(
 
 fn write_response(stream: &mut UnixStream, response: serde_json::Value) {
     let _ = writeln!(stream, "{}", response);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::Event;
+    use std::time::Duration;
+
+    fn started(run_id: u64, batch: Option<u64>, predecessor: Option<u64>) -> Event {
+        Event::Started {
+            run_id,
+            trigger: "src/main.rs".to_owned(),
+            batch,
+            predecessor,
+            changed: vec!["src/main.rs".to_owned()],
+            commands: vec!["echo hi".to_owned()],
+        }
+    }
+
+    #[test]
+    fn started_sets_all_correlation_fields_coherently() {
+        let mut state = ControlState::default();
+        state.apply(started(42, Some(7), Some(41)));
+
+        assert_eq!(state.generation, 42);
+        assert_eq!(state.state, ExecutionState::Running);
+        assert_eq!(state.trigger.as_deref(), Some("src/main.rs"));
+        assert_eq!(state.batch, Some(7));
+        assert_eq!(state.changed, vec!["src/main.rs".to_owned()]);
+        assert_eq!(state.predecessor, Some(41));
+        assert_eq!(state.superseded_by, None);
+        assert_eq!(state.duration_ms, None);
+        assert!(state.failures.is_empty());
+    }
+
+    #[test]
+    fn finished_records_terminal_state_and_superseded_relation() {
+        let mut state = ControlState::default();
+        state.apply(started(42, None, None));
+        state.apply(Event::Finished {
+            run_id: 42,
+            superseded_by: Some(43),
+            elapsed: Duration::from_millis(9),
+            failures: vec!["boom".to_owned()],
+        });
+
+        assert_eq!(state.state, ExecutionState::Failed);
+        assert_eq!(state.duration_ms, Some(9));
+        assert_eq!(state.failures, vec!["boom".to_owned()]);
+        assert_eq!(state.superseded_by, Some(43));
+        // Correlation fields still describe generation 42, never a mix.
+        assert_eq!(state.generation, 42);
+    }
+
+    #[test]
+    fn cancelled_records_generation_and_superseded_by() {
+        let mut state = ControlState::default();
+        state.apply(started(1, None, None));
+        state.apply(Event::Cancelled {
+            run_id: 1,
+            superseded_by: Some(2),
+        });
+
+        assert_eq!(state.state, ExecutionState::Cancelled);
+        assert_eq!(state.superseded_by, Some(2));
+        assert_eq!(state.duration_ms, None);
+        assert_eq!(state.generation, 1);
+    }
+
+    #[test]
+    fn replacement_transition_keeps_latest_generation_consistent() {
+        let mut state = ControlState::default();
+        state.apply(started(1, None, None));
+        state.apply(Event::Cancelled {
+            run_id: 1,
+            superseded_by: Some(2),
+        });
+        state.apply(started(2, Some(5), Some(1)));
+
+        // One state read: generation 2, its batch, and its predecessor —
+        // never a mixture of the superseded generation's fields.
+        assert_eq!(state.generation, 2);
+        assert_eq!(state.batch, Some(5));
+        assert_eq!(state.predecessor, Some(1));
+        assert_eq!(state.superseded_by, None);
+        assert_eq!(state.state, ExecutionState::Running);
+    }
+
+    #[test]
+    fn legacy_fields_serialize_verbatim_with_additive_correlation_keys() {
+        let mut state = ControlState::default();
+        state.apply(started(42, Some(7), None));
+        let json = serde_json::to_value(state.clone()).unwrap();
+        let object = json.as_object().unwrap();
+
+        // Legacy keys preserved.
+        assert_eq!(object["generation"], serde_json::json!(42));
+        assert_eq!(object["state"], serde_json::json!("running"));
+        assert_eq!(object["trigger"], serde_json::json!("src/main.rs"));
+        assert!(object.contains_key("commands"));
+        assert!(object.contains_key("durationMs"));
+        assert!(object.contains_key("failures"));
+
+        // Additive correlation keys, camelCase.
+        assert_eq!(object["batch"], serde_json::json!(7));
+        assert_eq!(object["changed"], serde_json::json!(["src/main.rs"]));
+        assert_eq!(object["predecessor"], serde_json::json!(null));
+        assert_eq!(object["supersededBy"], serde_json::json!(null));
+    }
 }

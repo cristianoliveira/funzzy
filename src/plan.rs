@@ -33,6 +33,10 @@ pub struct TaskPlan {
     pub commands: Vec<CommandLine>,
     /// Optional named `parallel` group this task belongs to.
     pub parallel: Option<String>,
+    /// Stable group-occurrence identity `name#N` (contract §1): the named
+    /// parallel group plus its contiguous occurrence index within the plan.
+    /// None for serial tasks. Stable from plan build through serialization.
+    pub group_occurrence: Option<String>,
     /// The original rule, kept for matching/presentation consumers.
     pub rule: Rules,
     /// Effective child process context. Relative cwd is resolved before spawn.
@@ -179,6 +183,21 @@ impl RunPlan {
     pub fn from_rules(rules: Vec<Rules>) -> RunPlan {
         let mut stages: Vec<Stage> = vec![];
         let mut open_group: Option<(String, Vec<TaskPlan>)> = None;
+        let mut group_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        let mut close_group = |group: String, tasks: Vec<TaskPlan>, stages: &mut Vec<Stage>| {
+            let occurrence = group_counts.entry(group.clone()).or_insert(0);
+            *occurrence += 1;
+            let tasks = tasks
+                .into_iter()
+                .map(|mut task| {
+                    task.group_occurrence = Some(format!("{}#{}", group, occurrence));
+                    task
+                })
+                .collect();
+            stages.push(Stage::Parallel { group, tasks });
+        };
 
         for (position, rule) in rules.into_iter().enumerate() {
             let plan = TaskPlan {
@@ -186,6 +205,7 @@ impl RunPlan {
                 position,
                 commands: rule.command_lines(),
                 parallel: rule.parallel().map(str::to_string),
+                group_occurrence: None,
                 context: TaskContext {
                     cwd: rule.cwd().map(PathBuf::from),
                     environment: rule.environment().clone(),
@@ -199,16 +219,13 @@ impl RunPlan {
                 }
                 (Some(group), _) => {
                     if let Some((open_name, tasks)) = open_group.take() {
-                        stages.push(Stage::Parallel {
-                            group: open_name,
-                            tasks,
-                        });
+                        close_group(open_name, tasks, &mut stages);
                     }
                     open_group = Some((group.to_string(), vec![plan]));
                 }
                 (None, _) => {
                     if let Some((group, tasks)) = open_group.take() {
-                        stages.push(Stage::Parallel { group, tasks });
+                        close_group(group, tasks, &mut stages);
                     }
                     stages.push(Stage::Serial(plan));
                 }
@@ -216,7 +233,7 @@ impl RunPlan {
         }
 
         if let Some((group, tasks)) = open_group.take() {
-            stages.push(Stage::Parallel { group, tasks });
+            close_group(group, tasks, &mut stages);
         }
 
         RunPlan { stages }
@@ -527,6 +544,67 @@ mod tests {
         let legacy: Vec<CommandLine> = rules.iter().flat_map(|r| r.command_lines()).collect();
         assert_eq!(plan.commands(), legacy);
         assert_eq!(plan.commands().len(), 4);
+    }
+
+    #[test]
+    fn serial_tasks_have_no_group_occurrence_identity() {
+        let plan = RunPlan::from_rules(vec![rule("A", None, false), rule("B", None, false)]);
+        for stage in &plan.stages {
+            let Stage::Serial(task) = stage else {
+                panic!("expected serial stage");
+            };
+            assert_eq!(task.group_occurrence, None);
+        }
+    }
+
+    #[test]
+    fn one_parallel_occurrence_is_numbered_one() {
+        let plan = RunPlan::from_rules(vec![
+            rule("B", Some("checks"), false),
+            rule("C", Some("checks"), false),
+        ]);
+        let Stage::Parallel { tasks, .. } = &plan.stages[0] else {
+            panic!("expected parallel stage");
+        };
+        for task in tasks {
+            assert_eq!(task.group_occurrence.as_deref(), Some("checks#1"));
+        }
+    }
+
+    #[test]
+    fn reused_group_name_after_barrier_gets_a_new_occurrence_id() {
+        let plan = RunPlan::from_rules(vec![
+            rule("A", Some("x"), false),
+            rule("B", None, false),
+            rule("C", Some("x"), false),
+        ]);
+        let parallel_stages: Vec<&Stage> = plan
+            .stages
+            .iter()
+            .filter(|s| matches!(s, Stage::Parallel { .. }))
+            .collect();
+        assert_eq!(parallel_stages.len(), 2);
+        let Stage::Parallel { tasks: first, .. } = &plan.stages[0] else {
+            panic!("parallel stage");
+        };
+        let Stage::Parallel { tasks: second, .. } = &plan.stages[2] else {
+            panic!("parallel stage");
+        };
+        assert_eq!(first[0].group_occurrence.as_deref(), Some("x#1"));
+        assert_eq!(second[0].group_occurrence.as_deref(), Some("x#2"));
+    }
+
+    #[test]
+    fn filtering_keeps_group_occurrence_identity_stable() {
+        let plan = RunPlan::from_rules(vec![
+            rule("A", Some("x"), false),
+            rule("B", Some("x"), false),
+        ]);
+        let filtered = plan.filter(|r| r.name == "B");
+        let Stage::Parallel { tasks, .. } = &filtered.stages[0] else {
+            panic!("expected parallel stage");
+        };
+        assert_eq!(tasks[0].group_occurrence.as_deref(), Some("x#1"));
     }
 
     #[test]

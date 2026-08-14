@@ -9,6 +9,7 @@
 use crate::control::{ControlServer, ControlState, ControlTarget, EmitOutcome};
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
+use crate::identity::{AtomicSequence, Batch, BatchId};
 use crate::plan::RunPlan;
 use crate::stdout;
 use crate::watcher;
@@ -45,8 +46,10 @@ pub trait RunStrategy {
     /// Executes plan selected for init.
     fn run_init(&self, plan: RunPlan);
 
-    /// Executes plan selected for a file change.
-    fn run_change(&self, plan: RunPlan, filepath: &str);
+    /// Executes plan selected for a file change. The batch carries the
+    /// debounce identity and complete changed-path set (contract §1); the
+    /// trigger path is the deterministic first match.
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch);
 }
 
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
@@ -59,6 +62,7 @@ pub fn watch_loop(
     verbose: bool,
 ) -> Result<(), FzzError> {
     let list_of_watched_paths = watches.paths_to_watch().unwrap_or_default();
+    let batch_sequence = AtomicSequence::new();
 
     watcher::events(
         list_of_watched_paths,
@@ -73,16 +77,19 @@ pub fn watch_loop(
                 InitAction::Wait => stdout::info("Watching..."),
             }
         },
-        |file_changed| {
-            if let Some(plan) = watches.watch_plan(file_changed) {
+        |changed_paths: &[String]| {
+            // One debounce window is one normalized event batch: deduplicated
+            // and deterministically ordered, mapped to zero or one generation.
+            let batch = Batch::normalized(BatchId(batch_sequence.next()), changed_paths.to_vec());
+            if batch.is_empty() {
+                return;
+            }
+            if let Some((plan, trigger)) = watches.watch_plan_batch(&batch.changed) {
                 stdout::clear_screen();
 
-                stdout::verbose(
-                    &format!("Triggered by change in: {}", file_changed),
-                    verbose,
-                );
+                stdout::verbose(&format!("Triggered by change in: {}", trigger), verbose);
 
-                strategy.run_change(plan, file_changed);
+                strategy.run_change(plan, &trigger, &batch);
             }
         },
         verbose,
@@ -112,11 +119,10 @@ impl RunStrategy for BlockingStrategy {
         }
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str) {
-        match self
-            .workflow
-            .run(plan, RunMetadata::new(0, filepath), Some(filepath))
-        {
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) {
+        let metadata =
+            RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
+        match self.workflow.run(plan, metadata, Some(filepath)) {
             Ok(completed) => stdout::present_results(completed.results, completed.elapsed),
             Err(error) => stdout::error(&error),
         }
@@ -256,7 +262,7 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str) {
+    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) {
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
                 "failed to cancel current running tasks: {:?}",
@@ -264,7 +270,13 @@ impl RunStrategy for NonBlockStrategy {
             ));
         }
 
-        if let Err(err) = self.worker.schedule_plan(plan, filepath) {
+        if let Err(err) = self.worker.schedule_plan_correlated(
+            plan,
+            filepath,
+            Some(filepath),
+            Some(batch.id.0),
+            batch.changed.clone(),
+        ) {
             stdout::error(&format!("failed to initiate next run: {:?}", err));
         }
     }

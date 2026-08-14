@@ -14,6 +14,13 @@ struct RunRequest {
     run_id: u64,
     plan: RunPlan,
     trigger: String,
+    /// Debounce batch identity, when scheduled from a filesystem batch.
+    batch: Option<u64>,
+    /// Complete normalized changed-path set of the triggering batch.
+    changed: Vec<String>,
+    /// Generation identity this request replaces; set when it supersedes an
+    /// active run (restart policy), so the relation survives to start.
+    predecessor: Option<u64>,
 }
 
 /// Scheduling and replacement flow through one ordered stream, so a newer run
@@ -112,7 +119,7 @@ impl Worker {
         let scheduler = Arc::new(Scheduler::default());
         let consumer_scheduler = Arc::clone(&scheduler);
         let events = Arc::new(move |event: Event| {
-            if let Event::Tick { task } = &event {
+            if let Event::Tick { task, .. } = &event {
                 stdout::verbose(&format!("waiting next tick for task: {}", task), verbose);
             }
             on_event(event);
@@ -136,17 +143,31 @@ impl Worker {
                     // Promote the newest superseding run, or block on the next
                     // command when idle.
                     if let Some(req) = pending.take() {
-                        active = Some(
-                            executor.start(RunMetadata::new(req.run_id, req.trigger), req.plan),
-                        );
+                        active = Some(executor.start(
+                            RunMetadata::correlated(
+                                req.run_id,
+                                req.trigger,
+                                req.batch,
+                                req.predecessor,
+                                req.changed,
+                            ),
+                            req.plan,
+                        ));
                         continue;
                     }
 
                     match consumer_scheduler.receive() {
                         Some(WorkerCommand::Run(req)) => {
-                            active = Some(
-                                executor.start(RunMetadata::new(req.run_id, req.trigger), req.plan),
-                            );
+                            active = Some(executor.start(
+                                RunMetadata::correlated(
+                                    req.run_id,
+                                    req.trigger,
+                                    req.batch,
+                                    req.predecessor,
+                                    req.changed,
+                                ),
+                                req.plan,
+                            ));
                         }
                         Some(WorkerCommand::Cancel) => {}
                         None => break,
@@ -159,12 +180,15 @@ impl Worker {
                     Step::Running => match consumer_scheduler.take_newest() {
                         Some(WorkerCommand::Run(req)) => {
                             let mut replaced = active.take().expect("active run");
-                            executor.cancel(&mut replaced);
-                            pending = Some(req);
+                            let replaced_id = replaced.run_id();
+                            executor.cancel(&mut replaced, Some(req.run_id));
+                            let mut superseding = req;
+                            superseding.predecessor = Some(replaced_id);
+                            pending = Some(superseding);
                         }
                         Some(WorkerCommand::Cancel) => {
                             let mut cancelled = active.take().expect("active run");
-                            executor.cancel(&mut cancelled);
+                            executor.cancel(&mut cancelled, None);
                         }
                         None => std::thread::sleep(Duration::from_millis(200)),
                     },
@@ -218,6 +242,21 @@ impl Worker {
         trigger: &str,
         filepath: Option<&str>,
     ) -> Result<u64, String> {
+        self.schedule_plan_correlated(plan, trigger, filepath, None, vec![])
+    }
+
+    /// Schedules a run with its batch correlation (contract §1): the debounce
+    /// batch identity and complete changed-path set ride on the generation
+    /// from scheduling through start. The predecessor relation is filled by
+    /// the consumer when this run supersedes an active one.
+    pub(crate) fn schedule_plan_correlated(
+        &self,
+        plan: RunPlan,
+        trigger: &str,
+        filepath: Option<&str>,
+        batch: Option<u64>,
+        changed: Vec<String>,
+    ) -> Result<u64, String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
             let plan = plan.resolve_context(&self.root)?;
             let (plan, unknown_variables) = plan.expand(&TemplateOptions {
@@ -233,6 +272,9 @@ impl Worker {
                 run_id,
                 plan,
                 trigger: trigger.to_string(),
+                batch,
+                changed,
+                predecessor: None,
             };
             scheduler.send(WorkerCommand::Run(request));
             return Ok(run_id);
@@ -369,7 +411,9 @@ mod tests {
             "intermediate generations must be discarded before process spawn"
         );
         assert!(
-            events.iter().any(|e| matches!(e, WorkerEvent::Cancelled)),
+            events
+                .iter()
+                .any(|e| matches!(e, WorkerEvent::Cancelled { .. })),
             "the superseded run must be cancelled"
         );
         assert!(
@@ -431,7 +475,7 @@ mod tests {
         worker.cancel_running_tasks().unwrap();
 
         expect_event(&rx, "run to be cancelled", |e| {
-            matches!(e, WorkerEvent::Cancelled)
+            matches!(e, WorkerEvent::Cancelled { .. })
         });
         drop(worker);
         assert!(
@@ -576,6 +620,82 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(1500));
         assert!(!output.exists(), "dropped worker should not run hooks");
+    }
+
+    #[test]
+    fn replacement_records_predecessor_and_superseded_relations() {
+        let (worker, rx) = worker_with_events(false, false);
+        let first = worker
+            .schedule(vec![rule(vec!["sleep 5"])], "a.txt")
+            .unwrap();
+        expect_event(
+            &rx,
+            "first run to start",
+            |e| matches!(e, WorkerEvent::Started { run_id, .. } if *run_id == first),
+        );
+        expect_event(&rx, "worker tick", |e| {
+            matches!(e, WorkerEvent::Tick { .. })
+        });
+
+        let second = worker
+            .schedule(vec![rule(vec!["echo ok"])], "b.txt")
+            .unwrap();
+        let events = collect_until_finished(&rx);
+        drop(worker);
+
+        let cancelled = events
+            .iter()
+            .find_map(|e| match e {
+                WorkerEvent::Cancelled {
+                    run_id,
+                    superseded_by,
+                } => Some((*run_id, *superseded_by)),
+                _ => None,
+            })
+            .expect("replacement cancellation must be recorded");
+        assert_eq!(
+            cancelled,
+            (first, Some(second)),
+            "the superseded generation names its successor"
+        );
+
+        let predecessor = events
+            .iter()
+            .find_map(|e| match e {
+                WorkerEvent::Started {
+                    run_id,
+                    predecessor,
+                    ..
+                } if *run_id == second => Some(*predecessor),
+                _ => None,
+            })
+            .expect("superseding generation must start");
+        assert_eq!(
+            predecessor,
+            Some(first),
+            "the superseding generation names its predecessor"
+        );
+    }
+
+    #[test]
+    fn generation_ids_are_never_reused_after_terminal() {
+        let (worker, rx) = worker_with_events(false, false);
+
+        let first = worker
+            .schedule(vec![rule(vec!["echo ok"])], "a.txt")
+            .unwrap();
+        collect_until_finished(&rx);
+
+        let second = worker
+            .schedule(vec![rule(vec!["echo ok"])], "b.txt")
+            .unwrap();
+        collect_until_finished(&rx);
+        drop(worker);
+
+        assert!(
+            second > first,
+            "generation ids must be strictly increasing across terminal outcomes"
+        );
     }
 
     #[test]

@@ -44,9 +44,14 @@ mod unix {
         state.lock().unwrap().apply(WorkerEvent::Started {
             run_id: 1,
             trigger: "src/main.rs".to_string(),
+            batch: None,
+            predecessor: None,
+            changed: vec![],
             commands: vec!["cargo test".to_string()],
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
+            run_id: 1,
+            superseded_by: None,
             elapsed: Duration::from_millis(42),
             failures: vec![],
         });
@@ -69,9 +74,14 @@ mod unix {
         state.lock().unwrap().apply(WorkerEvent::Started {
             run_id: 1,
             trigger: "tests/auth.rs".to_string(),
+            batch: None,
+            predecessor: None,
+            changed: vec![],
             commands: vec!["cargo test auth".to_string()],
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
+            run_id: 1,
+            superseded_by: None,
             elapsed: Duration::from_secs(1),
             failures: vec!["cargo test auth exited with status 1".to_string()],
         });
@@ -154,7 +164,7 @@ mod unix {
             .iter()
             .map(|method| method.as_str().unwrap())
             .collect();
-        for method in ["status", "targets", "run", "capabilities"] {
+        for method in ["status", "targets", "run", "emit", "capabilities"] {
             assert!(
                 methods.contains(&method),
                 "missing method {method}: {methods:?}"

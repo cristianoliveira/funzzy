@@ -21,15 +21,31 @@ pub enum Event {
     Started {
         run_id: u64,
         trigger: String,
+        /// Debounce batch identity (contract §1), when this generation was
+        /// scheduled from a filesystem batch. None for init, target runs, and
+        /// synthetic emits without a debounce batch.
+        batch: Option<u64>,
+        /// Generation identity this run replaces, when known at start.
+        predecessor: Option<u64>,
+        /// Complete normalized changed-path set of the triggering batch.
+        changed: Vec<String>,
         commands: Vec<String>,
     },
     Finished {
+        run_id: u64,
+        /// Generation identity that superseded this one, when replaced.
+        superseded_by: Option<u64>,
         elapsed: Duration,
         failures: Vec<String>,
     },
-    Cancelled,
+    Cancelled {
+        run_id: u64,
+        /// Generation identity that superseded this one, when replaced.
+        superseded_by: Option<u64>,
+    },
     Tick {
         task: String,
+        group_occurrence: Option<String>,
     },
 }
 
@@ -123,6 +139,14 @@ impl Clock for SystemClock {
 pub struct RunMetadata {
     pub run_id: u64,
     pub trigger: String,
+    /// Debounce batch identity when this run was scheduled from a batch.
+    pub batch: Option<u64>,
+    /// Generation identity this run replaces (restart policy).
+    pub predecessor: Option<u64>,
+    /// Generation identity that replaced this one; filled at cancellation.
+    pub superseded_by: Option<u64>,
+    /// Complete normalized changed-path set of the triggering batch.
+    pub changed: Vec<String>,
 }
 
 impl RunMetadata {
@@ -130,6 +154,29 @@ impl RunMetadata {
         Self {
             run_id,
             trigger: trigger.into(),
+            batch: None,
+            predecessor: None,
+            superseded_by: None,
+            changed: vec![],
+        }
+    }
+
+    /// Builds metadata for a generation scheduled from a debounce batch,
+    /// retaining the batch identity and complete changed-path set.
+    pub fn correlated(
+        run_id: u64,
+        trigger: impl Into<String>,
+        batch: Option<u64>,
+        predecessor: Option<u64>,
+        changed: Vec<String>,
+    ) -> Self {
+        Self {
+            run_id,
+            trigger: trigger.into(),
+            batch,
+            predecessor,
+            superseded_by: None,
+            changed,
         }
     }
 }
@@ -154,6 +201,7 @@ struct ActiveTask {
     failures: Vec<String>,
     context: TaskContext,
     context_validated: bool,
+    group_occurrence: Option<String>,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -167,6 +215,7 @@ impl From<TaskPlan> for ActiveTask {
             failures: vec![],
             context: task.context,
             context_validated: false,
+            group_occurrence: task.group_occurrence,
         }
     }
 }
@@ -178,7 +227,16 @@ pub struct Run {
     stage_limit: usize,
     results: Vec<Result<(), String>>,
     outcomes: Vec<(usize, String, TaskOutcome)>,
+    metadata: RunMetadata,
+    superseded_by: Option<u64>,
     started: Instant,
+}
+
+impl Run {
+    /// The generation identity of this run.
+    pub fn run_id(&self) -> u64 {
+        self.metadata.run_id
+    }
 }
 
 enum TaskStep {
@@ -226,7 +284,10 @@ impl Executor {
     pub fn start(&self, metadata: RunMetadata, plan: RunPlan) -> Run {
         self.events.emit(Event::Started {
             run_id: metadata.run_id,
-            trigger: metadata.trigger,
+            trigger: metadata.trigger.clone(),
+            batch: metadata.batch,
+            predecessor: metadata.predecessor,
+            changed: metadata.changed.clone(),
             commands: plan.commands().iter().map(CommandLine::display).collect(),
         });
 
@@ -237,6 +298,8 @@ impl Executor {
             stage_limit: 0,
             results: vec![],
             outcomes: vec![],
+            metadata,
+            superseded_by: None,
             started: self.clock.now(),
         }
     }
@@ -338,6 +401,7 @@ impl Executor {
                         task.child = Some(child);
                         self.events.emit(Event::Tick {
                             task: task.name.clone(),
+                            group_occurrence: task.group_occurrence.clone(),
                         });
                         return TaskStep::Running;
                     }
@@ -360,6 +424,7 @@ impl Executor {
                 Ok(None) => {
                     self.events.emit(Event::Tick {
                         task: task.name.clone(),
+                        group_occurrence: task.group_occurrence.clone(),
                     });
                     return TaskStep::Running;
                 }
@@ -432,6 +497,8 @@ impl Executor {
         );
         let failures = outcome.failures();
         self.events.emit(Event::Finished {
+            run_id: run.metadata.run_id,
+            superseded_by: run.superseded_by,
             elapsed,
             failures: failures.clone(),
         });
@@ -442,14 +509,21 @@ impl Executor {
         }
     }
 
-    pub fn cancel(&self, run: &mut Run) {
+    /// Cancels the run and records which generation superseded it, when any.
+    /// The replacement relation (contract §1) is carried on the Cancelled
+    /// event so superseded generations are never reported as passed/failed.
+    pub fn cancel(&self, run: &mut Run, superseded_by: Option<u64>) {
+        run.superseded_by = superseded_by;
         for task in &mut run.active {
             self.shutdown_task(task);
         }
         run.active.clear();
         run.queued.clear();
         run.stages.clear();
-        self.events.emit(Event::Cancelled);
+        self.events.emit(Event::Cancelled {
+            run_id: run.metadata.run_id,
+            superseded_by,
+        });
     }
 
     fn shutdown_task(&self, task: &mut ActiveTask) {
@@ -543,6 +617,7 @@ mod tests {
                 position: 0,
                 commands,
                 parallel: None,
+                group_occurrence: None,
                 rule,
                 context: crate::plan::TaskContext::default(),
             })],
@@ -677,7 +752,7 @@ mod tests {
         ));
         assert!(matches!(
             events.last(),
-            Some(Event::Finished { elapsed, failures })
+            Some(Event::Finished { elapsed, failures, .. })
                 if *elapsed == Duration::from_millis(42) && failures.is_empty()
         ));
     }
@@ -927,7 +1002,7 @@ mod tests {
         let mut run = executor.start(RunMetadata::new(1, "test"), plan);
         executor.advance(&mut run);
 
-        executor.cancel(&mut run);
+        executor.cancel(&mut run, None);
         let state = runner.state.lock().unwrap();
         assert_eq!(
             state.shutdown,
@@ -952,6 +1027,54 @@ mod tests {
         runner.complete("b", true);
         assert!(matches!(executor.advance(&mut run), Step::Finished));
         assert!(executor.finish(run).outcome.has_failures());
+    }
+
+    #[test]
+    fn started_event_carries_batch_predecessor_and_changed_set() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&events);
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(move |event| recorded.lock().unwrap().push(event)),
+            false,
+            false,
+        )
+        .expect("concurrency one is supported");
+
+        let metadata = RunMetadata::correlated(
+            9,
+            "src/a.rs",
+            Some(3),
+            Some(8),
+            vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()],
+        );
+        let completed = executor.run_to_completion(
+            metadata,
+            RunPlan::from_rules(vec![task("task", None, &["true"])]),
+        );
+        assert!(completed.outcome.is_success());
+
+        let events = events.lock().unwrap();
+        match events.first() {
+            Some(Event::Started {
+                run_id: 9,
+                batch: Some(3),
+                predecessor: Some(8),
+                changed,
+                ..
+            }) => assert_eq!(changed, &vec!["src/a.rs".to_owned(), "src/b.rs".to_owned()]),
+            other => panic!("unexpected started event: {:?}", other),
+        }
+        match events.last() {
+            Some(Event::Finished {
+                run_id: 9,
+                superseded_by: None,
+                ..
+            }) => {}
+            other => panic!("unexpected finished event: {:?}", other),
+        }
     }
 
     #[test]

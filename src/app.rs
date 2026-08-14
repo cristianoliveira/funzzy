@@ -316,7 +316,9 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
         watcher::events(
             config_file_paths,
             || {},
-            move |file_changed| {
+            move |changed_paths: &[String]| {
+                let file_changed = changed_paths.first().cloned().unwrap_or_default();
+
                 let truncation_status = if truncate_on_config_change {
                     Some(logging::truncate())
                 } else {
