@@ -1,7 +1,7 @@
 ---
 id: TASK-0033
 title: Validate configuration without starting a watcher
-status: todo
+status: done
 depends_on: [TASK-0015, TASK-0025, TASK-0031, TASK-0032, TASK-0076]
 priority: high
 tags: [rust, cli, config, validation, diagnostics, tdd]
