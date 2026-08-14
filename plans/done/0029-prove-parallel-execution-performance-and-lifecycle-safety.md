@@ -1,7 +1,7 @@
 ---
 id: TASK-0029
 title: Prove parallel execution performance and lifecycle safety
-status: todo
+status: done
 depends_on: [TASK-0028]
 priority: high
 tags: [rust, concurrency, performance, reliability, integration-tests]
