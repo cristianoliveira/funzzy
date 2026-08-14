@@ -1,7 +1,7 @@
 ---
 id: TASK-0031
 title: Make filesystem event batching configurable
-status: todo
+status: done
 depends_on: [TASK-0022, TASK-0023]
 priority: high
 tags: [rust, watcher, debounce, events, determinism, tdd]
