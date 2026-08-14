@@ -1,7 +1,7 @@
 ---
 id: TASK-0060
 title: Define the Funzzy v2.0.0 release boundary
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [release, semver, v2, compatibility, design]
