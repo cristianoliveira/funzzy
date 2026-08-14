@@ -403,6 +403,38 @@ mod tests {
     }
 
     #[test]
+    fn parallel_generation_records_one_wall_time_sample_not_task_sum() {
+        // A parallel group with several tasks emits one Finished with the
+        // observed wall duration; the recorder adds exactly one sample, so
+        // parallel wall time (not the sum of task durations) is the basis.
+        let (recorder, _temp) = recorder();
+        let signature = sig(1);
+        recorder.observe(&started(1, Some("checks"), Some(1)));
+        // Tasks terminals are not run-level outcomes for the estimator.
+        for task in ["a", "b", "c"] {
+            recorder.observe(&Event::TaskTerminal {
+                run_id: 1,
+                task: crate::executor::TaskSnapshot {
+                    id: task.to_owned(),
+                    name: task.to_owned(),
+                    state: crate::executor::TaskState::Passed,
+                    duration_ms: Some(10_000),
+                },
+            });
+        }
+        recorder.observe(&finished(1, false, None));
+        assert_eq!(
+            recorder.success_samples(&signature),
+            1,
+            "one wall-time sample per generation, never per-task sums"
+        );
+        assert_eq!(
+            recorder.estimate(&signature, None).unwrap().typical_ms,
+            40_000
+        );
+    }
+
+    #[test]
     fn non_target_runs_are_ignored() {
         let (recorder, _temp) = recorder();
         recorder.observe(&started(1, None, None));
