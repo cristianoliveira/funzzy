@@ -1,7 +1,7 @@
 ---
 id: TASK-0038
 title: Run configured targets once without watcher IPC
-status: doing
+status: done
 depends_on: [TASK-0017, TASK-0026]
 priority: high
 tags: [rust, cli, workflow, run, ci, tdd]
