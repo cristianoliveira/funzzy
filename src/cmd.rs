@@ -1,8 +1,11 @@
 use crate::logging;
 use crate::stdout;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// Keeps track of the threads that forward the child's stdout/stderr so they
 /// can be joined once the child process exits.
@@ -42,6 +45,18 @@ pub struct LoggedChild {
     child: Child,
     forward_handles: ForwardHandles,
     has_finished: bool,
+}
+
+/// Outcome of a graceful process-group shutdown (TASK-0030).
+#[derive(Debug)]
+pub enum ShutdownOutcome {
+    /// The child had already exited before any signal was sent.
+    AlreadyExited(ExitStatus),
+    /// The group terminated after the initial signal, within the grace period.
+    Terminated(ExitStatus),
+    /// The grace period elapsed; the group was force-killed (`SIGKILL`) and
+    /// reaped. `status` is `None` only if the final reap failed (exceptional).
+    Escalated { status: Option<ExitStatus> },
 }
 
 impl LoggedChild {
@@ -94,17 +109,74 @@ impl LoggedChild {
             self.has_finished = true;
         }
     }
+
+    /// Gracefully shuts the owned process group down: sends `signal` to the
+    /// whole group (shell + descendants), waits up to `grace` for exit, then
+    /// escalates to `SIGKILL` on the group and reaps. Forwarding threads are
+    /// always joined before returning so no output is lost and no zombie is
+    /// left behind (TASK-0030).
+    pub fn shutdown(&mut self, signal: Signal, grace: Duration, verbose: bool) -> ShutdownOutcome {
+        // 1. Already exited?
+        if let Ok(Some(status)) = self.child.try_wait() {
+            self.join_forwarding_threads();
+            return ShutdownOutcome::AlreadyExited(status);
+        }
+
+        let pgid = self.child.id() as i32;
+        stdout::verbose(
+            &format!(
+                "---- signalling process group -{} with {:?} ----",
+                pgid, signal
+            ),
+            verbose,
+        );
+
+        // 2. Signal the whole process group (negative pid).
+        let _ = signal::kill(Pid::from_raw(-pgid), signal);
+
+        // 3. Wait up to `grace` for the group to terminate.
+        let deadline = Instant::now() + grace;
+        loop {
+            if let Ok(Some(status)) = self.child.try_wait() {
+                self.join_forwarding_threads();
+                return ShutdownOutcome::Terminated(status);
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        // 4. Grace elapsed: escalate to SIGKILL on the group and reap.
+        stdout::verbose(
+            &format!(
+                "---- grace of {:?} elapsed; force-killing process group -{} ----",
+                grace, pgid
+            ),
+            verbose,
+        );
+        let _ = signal::kill(Pid::from_raw(-pgid), Signal::SIGKILL);
+        let status = self.child.wait().ok();
+        self.join_forwarding_threads();
+        ShutdownOutcome::Escalated { status }
+    }
 }
 
 impl Drop for LoggedChild {
     fn drop(&mut self) {
         if !self.has_finished {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                self.forward_handles.join();
-            } else {
-                self.forward_handles.discard();
+            match self.child.try_wait() {
+                Ok(Some(_)) => self.join_forwarding_threads(),
+                _ => {
+                    // Last-resort owner cleanup: a dropped live handle must
+                    // not orphan its process group. Normal executor shutdown
+                    // calls `shutdown` explicitly with the configured grace;
+                    // Drop uses a short deterministic grace, then SIGKILL.
+                    let _ = self.shutdown(Signal::SIGTERM, Duration::from_millis(100), false);
+                }
             }
         }
+        crate::process_owner::unregister(self.child.id() as i32);
     }
 }
 
@@ -200,8 +272,42 @@ fn spawn_configured(cmd: &mut Command, display: &str) -> Result<LoggedChild, Str
         cmd.stderr(Stdio::piped());
     }
 
+    // Each task leads its own process group so cancellation can signal the
+    // whole tree (shell + descendants) without touching the funzzy process
+    // group. Done in pre_exec to avoid the parent/child exec race. Requires
+    // an explicit SIGINT route (see app.rs) since these groups no longer
+    // share funzzy's foreground group. (TASK-0030)
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            use nix::sys::signal::{sigprocmask, SigSet, SigmaskHow};
+
+            nix::unistd::setpgid(nix::unistd::Pid::from_raw(0), nix::unistd::Pid::from_raw(0))
+                .map_err(|err| std::io::Error::from_raw_os_error(err as i32))?;
+
+            // The non-block parent blocks SIGINT/SIGTERM for its sigwait
+            // thread. Signal masks are inherited across fork/exec, so reset
+            // them in the child; otherwise graceful group SIGTERM would stay
+            // pending until the 5s grace elapsed and every cancel would
+            // unnecessarily escalate to SIGKILL.
+            let mut signals = SigSet::empty();
+            signals.add(Signal::SIGINT);
+            signals.add(Signal::SIGTERM);
+            sigprocmask(SigmaskHow::SIG_UNBLOCK, Some(&signals), None)
+                .map_err(|err| std::io::Error::from_raw_os_error(err as i32))?;
+            Ok(())
+        });
+    }
+
     match cmd.spawn() {
-        Ok(child) => Ok(LoggedChild::new(child)),
+        Ok(child) => {
+            // The child leads its own group (pgid == pid). Track it so every
+            // shutdown path can reach the whole task tree (TASK-0030).
+            let pid = child.id() as i32;
+            crate::process_owner::register(pid);
+            Ok(LoggedChild::new(child))
+        }
         Err(error) => Err(format!("Command {} has errored with {}", display, error)),
     }
 }
@@ -214,6 +320,63 @@ fn it_spawn_a_command_returning_a_child_ref() {
     };
 
     assert_eq!(format!("{}", result), "exit status: 0")
+}
+
+#[test]
+fn graceful_shutdown_escalates_when_group_ignores_sigterm() {
+    let ready =
+        std::env::temp_dir().join(format!("funzzy-term-ignore-ready-{}", std::process::id()));
+    let _ = std::fs::remove_file(&ready);
+    let command = format!(
+        "bash -c 'trap \"\" TERM; touch {}; while true; do sleep 1; done'",
+        ready.display()
+    );
+    let mut child = spawn(&command).expect("spawn TERM-ignoring group");
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !ready.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.exists(), "child never installed TERM trap");
+
+    let outcome = child.shutdown(Signal::SIGTERM, Duration::from_millis(50), false);
+    let _ = std::fs::remove_file(&ready);
+    assert!(
+        matches!(outcome, ShutdownOutcome::Escalated { .. }),
+        "TERM-ignoring group must escalate: {:?}",
+        outcome
+    );
+}
+
+#[test]
+fn repeated_shutdown_is_safe() {
+    let mut child = spawn(&"sleep 30".to_owned()).expect("spawn sleep");
+    let _ = child.shutdown(Signal::SIGTERM, Duration::from_millis(200), false);
+    let second = child.shutdown(Signal::SIGTERM, Duration::from_millis(20), false);
+    assert!(
+        matches!(second, ShutdownOutcome::AlreadyExited(_)),
+        "second shutdown must be an idempotent no-op: {:?}",
+        second
+    );
+}
+
+#[test]
+fn dropping_owner_terminates_its_process_group() {
+    let child = spawn(&"sleep 30".to_owned()).expect("spawn sleep");
+    let pgid = child.id() as i32;
+    drop(child);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if matches!(
+            signal::kill(Pid::from_raw(-pgid), None),
+            Err(nix::errno::Errno::ESRCH)
+        ) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!("dropped owner left process group {} alive", pgid);
 }
 
 #[test]

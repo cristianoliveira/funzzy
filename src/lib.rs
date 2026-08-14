@@ -11,6 +11,7 @@ pub mod errors;
 pub mod executor;
 pub mod logging;
 pub mod plan;
+pub mod process_owner;
 pub mod rules;
 pub mod stdout;
 pub mod template;

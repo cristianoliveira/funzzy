@@ -13,8 +13,6 @@
 use crate::cmd::{self, LoggedChild};
 use crate::rules::CommandLine;
 use crate::stdout;
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -158,33 +156,30 @@ impl Run {
         }
     }
 
-    /// Gracefully terminate the active child, if any, and discard remaining
-    /// commands. The run never finishes normally after this.
+    /// Gracefully terminate the active child's whole process group, then
+    /// discard remaining commands. Escalates to SIGKILL after the configured
+    /// grace period (TASK-0030). The run never finishes normally after this.
     pub fn cancel(&mut self, verbose: bool) {
         if let Some(child) = self.child.as_mut() {
             let task = self.current_task.clone().unwrap_or_default();
+            let (signal, grace) = crate::process_owner::shutdown_policy();
             stdout::verbose(&format!("---- cancelling: {:?} ----", task), verbose);
-
-            if let Err(err) = signal::kill(
-                Pid::from_raw(child.id() as i32),
-                // Sends a SIGTERM signal to the process
-                // and allows it to exit gracefully.
-                Signal::SIGTERM,
-            ) {
-                stdout::error(&format!("failed to terminate task {:?}: {:?}", task, err));
-            }
-
-            if let Ok(status) = child.wait() {
-                stdout::verbose(
-                    &format!("---- finished: {:?} status: {} ----", task, status),
-                    verbose,
-                );
-            } else {
-                stdout::error(&format!(
-                    "failed to wait for the task to finish: {:?}",
-                    task
-                ));
-            }
+            let outcome = child.shutdown(signal, grace, verbose);
+            let report = match outcome {
+                crate::cmd::ShutdownOutcome::AlreadyExited(status) => {
+                    format!("---- finished: {:?} status: {} ----", task, status)
+                }
+                crate::cmd::ShutdownOutcome::Terminated(status) => {
+                    format!("---- finished: {:?} status: {} ----", task, status)
+                }
+                crate::cmd::ShutdownOutcome::Escalated { status } => {
+                    let detail = status
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "(reap failed)".to_owned());
+                    format!("---- force-killed: {:?} status: {} ----", task, detail)
+                }
+            };
+            stdout::verbose(&report, verbose);
         }
         self.child = None;
         self.commands.clear();

@@ -288,6 +288,11 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
 
     let run_on_init = !args.no_run_on_init;
     if non_block {
+        // Task children lead their own process groups (cmd::spawn_configured),
+        // so SIGINT/SIGTERM to funzzy's foreground group no longer reaches
+        // them. Catch both and route through the shared ownership path before
+        // exit so no descendant is orphaned (TASK-0030).
+        install_shutdown_signal_handler();
         execute(WatchNonBlockCommand::new(
             watches,
             verbose,
@@ -300,6 +305,46 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");
+}
+
+/// Catches SIGINT and SIGTERM on a dedicated thread and routes them through
+/// the shared process-group ownership path (`process_owner::shutdown_all`)
+/// before exiting, so descendants in their own groups are not orphaned.
+///
+/// Blocking is installed only on the non-block path: blocking-mode children
+/// share funzzy's process group, so the terminal's Ctrl-C still reaches them
+/// naturally.
+fn install_shutdown_signal_handler() {
+    use nix::sys::signal::{sigprocmask, SigSet, SigmaskHow};
+
+    let mut mask = SigSet::empty();
+    mask.add(Signal::SIGINT);
+    mask.add(Signal::SIGTERM);
+    // Block process-wide so the default action (terminate) does not fire; the
+    // sigwait thread below drains pending signals.
+    let _ = sigprocmask(SigmaskHow::SIG_BLOCK, Some(&mask), None);
+
+    std::thread::spawn(move || {
+        let mut set = SigSet::empty();
+        set.add(Signal::SIGINT);
+        set.add(Signal::SIGTERM);
+        loop {
+            match set.wait() {
+                Ok(Signal::SIGINT) => {
+                    let (signal, grace) = crate::process_owner::shutdown_policy();
+                    let _ = crate::process_owner::shutdown_all(signal, grace, false);
+                    std::process::exit(130);
+                }
+                Ok(Signal::SIGTERM) => {
+                    let (signal, grace) = crate::process_owner::shutdown_policy();
+                    let _ = crate::process_owner::shutdown_all(signal, grace, false);
+                    std::process::exit(143);
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+    });
 }
 
 fn execute<T: Command>(command: T) {
