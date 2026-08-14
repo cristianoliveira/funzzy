@@ -190,6 +190,15 @@ pub struct CompletedRun {
     pub outcome: RunOutcome,
 }
 
+/// How a run cancellation ended (TASK-0046): graceful when every active child
+/// terminated after the initial signal within grace, escalated when at least
+/// one child ignored the graceful signal and was force-killed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CancelDisposition {
+    Graceful,
+    Escalated,
+}
+
 pub enum Step {
     Running,
     Finished,
@@ -562,10 +571,16 @@ impl Executor {
     /// Cancels the run and records which generation superseded it, when any.
     /// The replacement relation (contract §1) is carried on the Cancelled
     /// event so superseded generations are never reported as passed/failed.
-    pub fn cancel(&self, run: &mut Run, superseded_by: Option<u64>) {
+    /// Cancels the run and records which generation superseded it, when any.
+    /// Returns the disposition: graceful when every active child terminated
+    /// after the initial signal, escalated when any child was force-killed.
+    pub fn cancel(&self, run: &mut Run, superseded_by: Option<u64>) -> CancelDisposition {
         run.superseded_by = superseded_by;
+        let mut escalated = false;
         for task in &mut run.active {
-            self.shutdown_task(task);
+            if self.shutdown_task(task) {
+                escalated = true;
+            }
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
                 outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
             }
@@ -577,12 +592,17 @@ impl Executor {
             run_id: run.metadata.run_id,
             superseded_by,
         });
+        if escalated {
+            CancelDisposition::Escalated
+        } else {
+            CancelDisposition::Graceful
+        }
     }
 
-    fn shutdown_task(&self, task: &mut ActiveTask) {
+    fn shutdown_task(&self, task: &mut ActiveTask) -> bool {
         let Some(child) = task.child.as_mut() else {
             task.commands.clear();
-            return;
+            return false;
         };
         let (signal, grace) = crate::process_owner::shutdown_policy();
         stdout::verbose(
@@ -590,6 +610,7 @@ impl Executor {
             self.verbose,
         );
         let outcome = child.shutdown(signal, grace, self.verbose);
+        let escalated = matches!(outcome, ShutdownOutcome::Escalated { .. });
         let report = match outcome {
             ShutdownOutcome::AlreadyExited(status) | ShutdownOutcome::Terminated(status) => {
                 format!(
@@ -610,6 +631,7 @@ impl Executor {
         stdout::verbose(&report, self.verbose);
         task.child = None;
         task.commands.clear();
+        escalated
     }
 
     pub fn run_to_completion(&self, metadata: RunMetadata, plan: RunPlan) -> CompletedRun {

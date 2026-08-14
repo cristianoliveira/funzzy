@@ -1,8 +1,8 @@
 use crate::cli::Command;
 use crate::config;
 use crate::control_client::{
-    AwaitMode, AwaitSnapshot, ControlClient, ControlClientError, EmitSnapshot, OutputSnapshot,
-    StatusSnapshot, TargetSnapshot,
+    AwaitMode, AwaitSnapshot, CancelSnapshot, ControlClient, ControlClientError, EmitSnapshot,
+    OutputSnapshot, StatusSnapshot, TargetSnapshot,
 };
 use crate::errors::FzzError;
 use std::path::{Path, PathBuf};
@@ -32,6 +32,13 @@ pub enum ControlAction {
         after: Option<u64>,
         generation: Option<u64>,
         timeout: Duration,
+    },
+    Cancel {
+        generation: u64,
+        /// Await the exact generation to terminal after cancelling.
+        wait: bool,
+        /// Required with `--wait`; bounds the server-side await.
+        timeout: Option<Duration>,
     },
     Output {
         generation: u64,
@@ -224,6 +231,29 @@ impl Command for ControlCommand {
                     _ => unreachable!("validated mutually exclusive await modes"),
                 };
                 return self.finish_await(&mut client, &path, mode, timeout);
+            }
+            ControlAction::Cancel {
+                generation,
+                wait,
+                timeout,
+            } => {
+                // Negotiate the instance token so a stale request formed
+                // against a different watcher process is a safe no-op.
+                let token = client.capabilities().ok().map(|caps| caps.token);
+                let cancel = client
+                    .cancel(*generation, token.as_deref())
+                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                print!("{}", render_cancel(&cancel));
+                if *wait {
+                    return self.finish_await(
+                        &mut client,
+                        &path,
+                        AwaitMode::Exact(*generation),
+                        timeout
+                            .as_ref()
+                            .expect("--wait requires --timeout (validated by clap)"),
+                    );
+                }
             }
             ControlAction::Output {
                 generation,
@@ -447,6 +477,20 @@ pub fn render_output(output: &OutputSnapshot) -> String {
     rendered
 }
 
+/// Compact deterministic `cancel` rendering: generation plus the compare-and-
+/// cancel outcome (`cancelled` or `not-running`).
+pub fn render_cancel(cancel: &CancelSnapshot) -> String {
+    format!(
+        "generation: {}\noutcome: {}\n",
+        cancel.generation,
+        if cancel.cancelled {
+            "cancelled"
+        } else {
+            "not-running"
+        }
+    )
+}
+
 /// Compact deterministic `emit` rendering: outcome, matched tasks, and the
 /// scheduled generation when one was produced.
 pub fn render_emit(emit: &EmitSnapshot) -> String {
@@ -645,6 +689,24 @@ mod tests {
     #[test]
     fn render_run_returns_generation_identity() {
         assert_eq!(render_run(7), "scheduled generation: 7\n");
+    }
+
+    #[test]
+    fn render_cancel_reports_cancelled_or_not_running() {
+        assert_eq!(
+            render_cancel(&CancelSnapshot {
+                cancelled: true,
+                generation: 7
+            }),
+            "generation: 7\noutcome: cancelled\n"
+        );
+        assert_eq!(
+            render_cancel(&CancelSnapshot {
+                cancelled: false,
+                generation: 7
+            }),
+            "generation: 7\noutcome: not-running\n"
+        );
     }
 
     #[test]

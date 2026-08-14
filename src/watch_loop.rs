@@ -207,9 +207,10 @@ impl NonBlockStrategy {
 
         let run_runner = Arc::clone(&runner);
         let emit_runner = Arc::clone(&runner);
+        let cancel_runner = Arc::clone(&runner);
         let coordinator = self.coordinator.clone();
         let outputs = self.outputs.clone();
-        match ControlServer::start_with_coordinator(
+        match ControlServer::start_with_cancel(
             path,
             Arc::clone(&self.control_state),
             targets,
@@ -217,6 +218,7 @@ impl NonBlockStrategy {
             move |path| emit_runner.emit_path(&path),
             coordinator,
             outputs,
+            move |generation| cancel_runner.cancel_generation(generation),
         ) {
             Ok(server) => {
                 stdout::info(&format!("Control socket listening at {}", path.display()));
@@ -231,6 +233,16 @@ impl NonBlockStrategy {
                 None
             }
         }
+    }
+
+    /// Cancels an exact generation through the worker run contract
+    /// (TASK-0046): a compare-and-act on generation identity. Returns the
+    /// disposition or a no-op for already-terminal/unknown generations.
+    pub fn cancel_generation(
+        &self,
+        generation: u64,
+    ) -> Result<crate::workers::CancelResult, String> {
+        self.worker.cancel_generation(generation)
     }
 
     /// Runs a control-requested target through the worker run contract:

@@ -134,6 +134,14 @@ impl Arguments {
                             .copied()
                             .expect("timeout is required by clap"),
                     },
+                    Some(("cancel", cancel_sub)) => ControlAction::Cancel {
+                        generation: cancel_sub
+                            .get_one::<u64>("generation")
+                            .copied()
+                            .expect("generation is required by clap"),
+                        wait: cancel_sub.get_flag("wait"),
+                        timeout: cancel_sub.get_one::<Duration>("timeout").copied(),
+                    },
                     Some(("output", output_sub)) => ControlAction::Output {
                         generation: output_sub
                             .get_one::<u64>("generation")
@@ -488,6 +496,37 @@ fn command() -> Command {
                                 .args(["after", "generation"])
                                 .required(true)
                                 .multiple(false),
+                        ),
+                )
+                .subcommand(
+                    Command::new("cancel")
+                        .about("Cancel an exact generation on the running watcher.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Cancel an exact generation on the running watcher.\n\nThe server compares generation identity atomically: a stale request never affects a replacement or newer run, and an already-terminal generation is a no-op. Cancellation uses the graceful process-group shutdown and escalates when the child ignores the signal. With `--wait` the exact generation is awaited atomically and its terminal observation is returned.",
+                        )
+                        .arg(
+                            Arg::new("generation")
+                                .long("generation")
+                                .value_name("GENERATION")
+                                .required(true)
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Exact generation to cancel."),
+                        )
+                        .arg(
+                            Arg::new("wait")
+                                .long("wait")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("timeout")
+                                .help("Await the exact generation to terminal after cancelling."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .requires("wait")
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Bound for the await: <number> seconds, or <number>ms/s/m (required with --wait)."),
                         ),
                 )
                 .subcommand(
@@ -914,6 +953,32 @@ mod tests {
             "--full"
         ])
         .is_err());
+    }
+
+    #[test]
+    fn control_cancel_carries_generation_and_wait() {
+        assert_eq!(
+            parse_action(&["control", "cancel", "--generation", "7"]),
+            Action::Control {
+                action: ControlAction::Cancel {
+                    generation: 7,
+                    wait: false,
+                    timeout: None,
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_cancel_wait_requires_timeout_and_vice_versa() {
+        assert!(parse(&["control", "cancel", "--generation", "7", "--wait"]).is_err());
+        assert!(parse(&["control", "cancel", "--generation", "7", "--timeout", "1s"]).is_err());
+    }
+
+    #[test]
+    fn control_cancel_requires_generation() {
+        assert!(parse(&["control", "cancel"]).is_err());
     }
 
     #[test]

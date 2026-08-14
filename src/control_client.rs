@@ -502,6 +502,35 @@ impl EmitSnapshot {
     }
 }
 
+/// Validated `cancel` result (contract §10): `{ cancelled: bool, generation: u64 }`.
+/// `cancelled: false` is a no-op (already terminal or unknown); escalation
+/// arrives as RPC error -32021 instead of this shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CancelSnapshot {
+    pub cancelled: bool,
+    pub generation: u64,
+}
+
+impl CancelSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "cancel result must be an object".to_string())?;
+        let cancelled = object
+            .get("cancelled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "cancel result field \"cancelled\" must be a boolean".to_string())?;
+        let generation = object
+            .get("generation")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "cancel result field \"generation\" must be a number".to_string())?;
+        Ok(Self {
+            cancelled,
+            generation,
+        })
+    }
+}
+
 fn read_string_array(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -636,6 +665,37 @@ impl ControlClient {
             .set_read_timeout(Some(Duration::from_millis(DEFAULT_IO_TIMEOUT_MS)));
         let result = result?;
         AwaitSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
+    /// Compare-and-cancel an exact generation (contract §10): returns whether
+    /// the generation matched, or a no-op when it was already terminal or
+    /// unknown. `instance_token`, when provided, makes a stale request against
+    /// a different watcher process a safe no-op. Escalation (force cleanup)
+    /// surfaces as a server error with code -32021.
+    pub fn cancel(
+        &mut self,
+        generation: u64,
+        instance_token: Option<&str>,
+    ) -> Result<CancelSnapshot, ControlClientError> {
+        let mut params = serde_json::json!({ "generation": generation });
+        if let Some(token) = instance_token {
+            params["instanceToken"] = serde_json::json!(token);
+        }
+        // Graceful shutdown can run up to the cancel grace period (default
+        // 5s), so a normal 3s read bound would misclassify a legitimate
+        // escalated cleanup as a client timeout. Bounded generously.
+        let read_bound = Duration::from_secs(30);
+        self.reader
+            .get_mut()
+            .set_read_timeout(Some(read_bound))
+            .map_err(|err| ControlClientError::Io(err.to_string()))?;
+        let result = self.call("cancel", params);
+        let _ = self
+            .reader
+            .get_mut()
+            .set_read_timeout(Some(Duration::from_millis(DEFAULT_IO_TIMEOUT_MS)));
+        let result = result?;
+        CancelSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
     /// Retrieves bounded retained output for one generation (contract §6).
@@ -930,6 +990,53 @@ mod tests {
         let mut client = ControlClient::connect(&path).expect("connect");
         let err = client.emit("x").expect_err("missing outcome must fail");
         handle.join().expect("server thread");
+        assert!(matches!(err, ControlClientError::Malformed(_)));
+    }
+
+    #[test]
+    fn cancel_roundtrip_parses_graceful_ack() {
+        let result = serde_json::json!({ "cancelled": true, "generation": 7 });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let snapshot = client.cancel(7, Some("fz-7f3a")).expect("cancel");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            snapshot,
+            CancelSnapshot {
+                cancelled: true,
+                generation: 7
+            }
+        );
+    }
+
+    #[test]
+    fn cancel_noop_roundtrip_parses_cancelled_false() {
+        let result = serde_json::json!({ "cancelled": false, "generation": 7 });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let snapshot = client.cancel(7, None).expect("cancel");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            snapshot,
+            CancelSnapshot {
+                cancelled: false,
+                generation: 7
+            }
+        );
+    }
+
+    #[test]
+    fn cancel_malformed_shape_fails_closed() {
+        let result = serde_json::json!({ "generation": 7 });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let err = client
+            .cancel(7, None)
+            .expect_err("missing cancelled must fail");
+        handle.join().unwrap();
+        let _ = std::fs::remove_file(&path);
         assert!(matches!(err, ControlClientError::Malformed(_)));
     }
 

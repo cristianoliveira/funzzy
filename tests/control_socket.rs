@@ -139,6 +139,113 @@ mod unix {
     }
 
     #[test]
+    fn it_cancels_an_exact_generation_through_the_socket() {
+        let path = socket_path("cancel");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let cancelled = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&cancelled);
+        let _server = ControlServer::start_with_cancel(
+            &path,
+            state,
+            vec![],
+            |_target| Ok(1),
+            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
+            None,
+            None,
+            move |generation| {
+                captured.lock().unwrap().push(generation);
+                Ok(funzzy::workers::CancelResult::Cancelled {
+                    disposition: funzzy::executor::CancelDisposition::Graceful,
+                })
+            },
+        )
+        .unwrap();
+
+        // Negotiate the instance token so the cancel carries the identity the
+        // server expects (a mismatched token is a safe no-op).
+        let token = call(
+            &path,
+            serde_json::json!({ "jsonrpc": "2.0", "id": "caps", "method": "capabilities" }),
+        )["result"]["instance"]["token"]
+            .as_str()
+            .expect("token")
+            .to_owned();
+
+        let response = call(
+            &path,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "cancel",
+                "method": "cancel",
+                "params": {"generation": 7, "instanceToken": token}
+            }),
+        );
+
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["result"]["cancelled"], true);
+        assert_eq!(response["result"]["generation"], 7);
+        assert_eq!(*cancelled.lock().unwrap(), vec![7]);
+    }
+
+    #[test]
+    fn it_reports_escalated_cancel_as_rpc_error_32021() {
+        let path = socket_path("cancel-escalated");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start_with_cancel(
+            &path,
+            state,
+            vec![],
+            |_target| Ok(1),
+            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
+            None,
+            None,
+            |_generation| {
+                Ok(funzzy::workers::CancelResult::Cancelled {
+                    disposition: funzzy::executor::CancelDisposition::Escalated,
+                })
+            },
+        )
+        .unwrap();
+
+        let response = call(
+            &path,
+            serde_json::json!(
+                {"jsonrpc": "2.0", "id": "cancel", "method": "cancel", "params": {"generation": 7}}
+            ),
+        );
+
+        assert_eq!(response["error"]["code"], -32021);
+        assert_eq!(response["error"]["message"], "Cancellation escalated");
+    }
+
+    #[test]
+    fn it_reports_a_noop_cancel_when_nothing_matched() {
+        let path = socket_path("cancel-noop");
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let _server = ControlServer::start_with_cancel(
+            &path,
+            state,
+            vec![],
+            |_target| Ok(1),
+            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
+            None,
+            None,
+            |_generation| Ok(funzzy::workers::CancelResult::Noop),
+        )
+        .unwrap();
+
+        let response = call(
+            &path,
+            serde_json::json!(
+                {"jsonrpc": "2.0", "id": "cancel", "method": "cancel", "params": {"generation": 9}}
+            ),
+        );
+
+        assert_eq!(response["result"]["cancelled"], false);
+        assert_eq!(response["result"]["generation"], 9);
+    }
+
+    #[test]
     fn it_answers_capabilities_with_the_negotiated_profile() {
         let path = socket_path("capabilities");
         let state = Arc::new(Mutex::new(ControlState::default()));

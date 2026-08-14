@@ -1,11 +1,13 @@
 use crate::executor::{
-    Event, EventSink, Executor, Run, RunMetadata, Step, SystemClock, SystemProcessRunner,
+    CancelDisposition, Event, EventSink, Executor, Run, RunMetadata, Step, SystemClock,
+    SystemProcessRunner,
 };
 use crate::output::OutputRegistry;
 use crate::plan::RunPlan;
 use crate::rules::Rules;
 use crate::stdout;
 use crate::template::TemplateOptions;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -26,26 +28,42 @@ struct RunRequest {
     predecessor: Option<u64>,
 }
 
-/// Scheduling and replacement flow through one ordered stream, so a newer run
-/// always supersedes any queued work instead of racing a separate cancel
+/// Result of an exact-generation cancel (TASK-0046): the generation matched
+/// (active or queued) and its termination disposition, or nothing matched.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CancelResult {
+    Cancelled { disposition: CancelDisposition },
+    Noop,
+}
+
+/// Scheduling, replacement, and cancellation flow through one ordered stream,
+/// so a newer run always supersedes queued work and an exact cancel is a
+/// compare-and-act on generation identity instead of a race with a separate
 /// channel.
 enum WorkerCommand {
     Run(RunRequest),
-    Cancel,
+    Cancel {
+        /// `Some(id)` cancels only the exact generation; `None` cancels
+        /// whatever is active (replacement/shutdown path).
+        generation: Option<u64>,
+        /// Reply channel for exact cancels, so the server can report whether
+        /// the generation actually matched instead of guessing.
+        reply: Option<std::sync::mpsc::Sender<CancelResult>>,
+    },
 }
 
-/// A single overwrite slot: bounded state that always retains only the newest
-/// scheduling decision. The condition variable blocks idle consumers without
-/// polling or growing an unbounded command queue.
+/// Ordered command queue: at most one queued Run (newest wins), while
+/// cancels are applied in order. The condition variable blocks idle consumers
+/// without polling.
 #[derive(Default)]
 struct SchedulerState {
-    pending: Option<WorkerCommand>,
+    queue: VecDeque<WorkerCommand>,
     closed: bool,
 }
 
-/// One-slot scheduler that reports discarded queued work (contract §1): every
-/// generation that is superseded before spawn gets a terminal Cancelled event
-/// with its successor identity, so exact-generation awaits never hang.
+/// Scheduler that reports discarded queued work (contract §1): every
+/// generation superseded before spawn gets a terminal Cancelled event with its
+/// successor identity, so exact-generation awaits never hang.
 struct Scheduler {
     state: Mutex<SchedulerState>,
     ready: Condvar,
@@ -63,38 +81,106 @@ impl Scheduler {
 
     fn send(&self, command: WorkerCommand) {
         let mut state = self.state.lock().unwrap();
-        let replaced = state.pending.take();
-        state.pending = Some(command);
-        match (&replaced, &state.pending) {
-            (Some(WorkerCommand::Run(old)), Some(WorkerCommand::Run(new_req))) => {
-                // The queued generation never spawns: it is superseded by the
-                // newest request.
-                self.events.emit(Event::Cancelled {
-                    run_id: old.run_id,
-                    superseded_by: Some(new_req.run_id),
+        match command {
+            WorkerCommand::Run(new_req) => {
+                let new_id = new_req.run_id;
+                // A Run subsumes any immediately-preceding cancel-whatever:
+                // the run itself replaces active work, so the bare cancel is
+                // redundant (preserves the single-slot overwrite behavior).
+                while matches!(
+                    state.queue.back(),
+                    Some(WorkerCommand::Cancel {
+                        generation: None,
+                        ..
+                    })
+                ) {
+                    state.queue.pop_back();
+                }
+                if let Some(pos) = state
+                    .queue
+                    .iter()
+                    .rposition(|command| matches!(command, WorkerCommand::Run(_)))
+                {
+                    let old_id = match &state.queue[pos] {
+                        WorkerCommand::Run(req) => req.run_id,
+                        _ => unreachable!("rposition matched a Run"),
+                    };
+                    state.queue[pos] = WorkerCommand::Run(new_req);
+                    self.events.emit(Event::Cancelled {
+                        run_id: old_id,
+                        superseded_by: Some(new_id),
+                    });
+                } else {
+                    state.queue.push_back(WorkerCommand::Run(new_req));
+                }
+            }
+            WorkerCommand::Cancel {
+                generation: Some(id),
+                reply,
+            } => {
+                if let Some(pos) = state.queue.iter().position(
+                    |command| matches!(command, WorkerCommand::Run(req) if req.run_id == id),
+                ) {
+                    // The queued generation never spawns: it is cancelled
+                    // before spawn, and the requester is told exactly that.
+                    state.queue.remove(pos);
+                    if let Some(reply) = reply {
+                        let _ = reply.send(CancelResult::Cancelled {
+                            disposition: CancelDisposition::Graceful,
+                        });
+                    }
+                    self.events.emit(Event::Cancelled {
+                        run_id: id,
+                        superseded_by: None,
+                    });
+                } else {
+                    state.queue.push_back(WorkerCommand::Cancel {
+                        generation: Some(id),
+                        reply,
+                    });
+                }
+            }
+            WorkerCommand::Cancel {
+                generation: None,
+                reply,
+            } => {
+                // cancel-whatever supersedes any queued Run (the original
+                // single-slot overwrite behavior), then reaches the consumer
+                // to cancel active work.
+                while let Some(pos) = state
+                    .queue
+                    .iter()
+                    .position(|command| matches!(command, WorkerCommand::Run(_)))
+                {
+                    let old_id = match &state.queue[pos] {
+                        WorkerCommand::Run(req) => req.run_id,
+                        _ => unreachable!("position matched a Run"),
+                    };
+                    state.queue.remove(pos);
+                    self.events.emit(Event::Cancelled {
+                        run_id: old_id,
+                        superseded_by: None,
+                    });
+                }
+                state.queue.push_back(WorkerCommand::Cancel {
+                    generation: None,
+                    reply,
                 });
             }
-            (Some(WorkerCommand::Run(old)), Some(WorkerCommand::Cancel)) => {
-                self.events.emit(Event::Cancelled {
-                    run_id: old.run_id,
-                    superseded_by: None,
-                });
-            }
-            _ => {}
         }
         self.ready.notify_one();
     }
 
-    fn take_newest(&self) -> Option<WorkerCommand> {
-        self.state.lock().unwrap().pending.take()
+    fn try_recv(&self) -> Option<WorkerCommand> {
+        self.state.lock().unwrap().queue.pop_front()
     }
 
     fn receive(&self) -> Option<WorkerCommand> {
         let mut state = self.state.lock().unwrap();
-        while state.pending.is_none() && !state.closed {
+        while state.queue.is_empty() && !state.closed {
             state = self.ready.wait(state).unwrap();
         }
-        state.pending.take()
+        state.queue.pop_front()
     }
 
     fn close(&self) {
@@ -227,7 +313,16 @@ impl Worker {
                                 req.plan,
                             ));
                         }
-                        Some(WorkerCommand::Cancel) => {}
+                        Some(WorkerCommand::Cancel { generation, reply }) => {
+                            // No active run: an exact cancel is a no-op unless
+                            // a matching queued Run was already handled by
+                            // `send`. reply is only present for exact cancels.
+                            if generation.is_some() {
+                                if let Some(reply) = reply {
+                                    let _ = reply.send(CancelResult::Noop);
+                                }
+                            }
+                        }
                         None => break,
                     }
                     continue;
@@ -235,7 +330,7 @@ impl Worker {
 
                 let step = executor.advance(active.as_mut().expect("active run"));
                 match step {
-                    Step::Running => match consumer_scheduler.take_newest() {
+                    Step::Running => match consumer_scheduler.try_recv() {
                         Some(WorkerCommand::Run(req)) => {
                             let mut replaced = active.take().expect("active run");
                             let replaced_id = replaced.run_id();
@@ -244,10 +339,24 @@ impl Worker {
                             superseding.predecessor = Some(replaced_id);
                             pending = Some(superseding);
                         }
-                        Some(WorkerCommand::Cancel) => {
-                            let mut cancelled = active.take().expect("active run");
-                            executor.cancel(&mut cancelled, None);
-                        }
+                        Some(WorkerCommand::Cancel { generation, reply }) => match generation {
+                            Some(id) => {
+                                if active.as_ref().is_some_and(|run| run.run_id() == id) {
+                                    let mut cancelled = active.take().expect("active run");
+                                    let disposition = executor.cancel(&mut cancelled, None);
+                                    if let Some(reply) = reply {
+                                        let _ = reply.send(CancelResult::Cancelled { disposition });
+                                    }
+                                } else if let Some(reply) = reply {
+                                    let _ = reply.send(CancelResult::Noop);
+                                }
+                            }
+                            None => {
+                                if let Some(mut cancelled) = active.take() {
+                                    executor.cancel(&mut cancelled, None);
+                                }
+                            }
+                        },
                         None => std::thread::sleep(Duration::from_millis(200)),
                     },
                     Step::Finished => {
@@ -271,9 +380,33 @@ impl Worker {
 
     pub fn cancel_running_tasks(&self) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            scheduler.send(WorkerCommand::Cancel);
+            scheduler.send(WorkerCommand::Cancel {
+                generation: None,
+                reply: None,
+            });
         }
         Ok(())
+    }
+
+    /// Cancels an exact generation through the worker command stream
+    /// (TASK-0046): a compare-and-act on generation identity. Returns whether
+    /// the generation matched (active or queued) and how it terminated, or a
+    /// no-op when it was already terminal or unknown. Bounded by the shutdown
+    /// grace plus a margin; the consumer always replies.
+    pub fn cancel_generation(&self, generation: u64) -> Result<CancelResult, String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_string());
+        };
+        let (reply, receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::Cancel {
+            generation: Some(generation),
+            reply: Some(reply),
+        });
+        let (_, grace) = crate::process_owner::shutdown_policy();
+        let bound = grace + Duration::from_secs(5);
+        receipt
+            .recv_timeout(bound)
+            .map_err(|_| "cancellation acknowledgement timed out".to_string())
     }
 
     pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<u64, String> {
@@ -345,7 +478,10 @@ impl Worker {
 impl Drop for Worker {
     fn drop(&mut self) {
         if let Some(scheduler) = self.scheduler.as_ref() {
-            scheduler.send(WorkerCommand::Cancel);
+            scheduler.send(WorkerCommand::Cancel {
+                generation: None,
+                reply: None,
+            });
             scheduler.close();
         }
         self.scheduler.take();
@@ -773,6 +909,117 @@ mod tests {
             matches!(discarded, Some((run_id, superseded_by)) if run_id == middle && superseded_by == Some(last)),
             "the discarded queued generation must reach superseded terminal: {events:?}"
         );
+    }
+
+    #[test]
+    fn cancel_generation_cancels_the_active_run() {
+        let (worker, rx) = worker_with_events(false, false);
+        let run_id = worker
+            .schedule(vec![rule(vec!["sleep 5"])], "a.txt")
+            .unwrap();
+        expect_event(
+            &rx,
+            "run to start",
+            |e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == run_id),
+        );
+
+        let result = worker.cancel_generation(run_id).unwrap();
+        assert!(
+            matches!(
+                result,
+                CancelResult::Cancelled {
+                    disposition: CancelDisposition::Graceful
+                }
+            ),
+            "expected graceful cancellation, got {result:?}"
+        );
+
+        expect_event(&rx, "run to be cancelled", |e| {
+            matches!(
+                e,
+                WorkerEvent::Cancelled {
+                    run_id: id,
+                    superseded_by: None
+                } if *id == run_id
+            )
+        });
+        drop(worker);
+    }
+
+    #[test]
+    fn cancel_generation_noops_after_terminal() {
+        let (worker, rx) = worker_with_events(false, false);
+        let run_id = worker
+            .schedule(vec![rule(vec!["echo ok"])], "a.txt")
+            .unwrap();
+        collect_until_finished(&rx);
+
+        assert_eq!(
+            worker.cancel_generation(run_id).unwrap(),
+            CancelResult::Noop
+        );
+        drop(worker);
+    }
+
+    #[test]
+    fn cancel_generation_noops_for_unknown_generation() {
+        let (worker, _rx) = worker_with_events(false, false);
+        assert_eq!(worker.cancel_generation(99).unwrap(), CancelResult::Noop);
+        drop(worker);
+    }
+
+    #[test]
+    fn cancel_generation_cancels_a_queued_run_before_spawn() {
+        let (worker, rx) = worker_with_events(false, false);
+        let first = worker
+            .schedule(vec![rule(vec!["sleep 5"])], "a.txt")
+            .unwrap();
+        expect_event(
+            &rx,
+            "first run to start",
+            |e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == first),
+        );
+        expect_event(&rx, "worker tick", |e| {
+            matches!(e, WorkerEvent::Tick { .. })
+        });
+
+        let second = worker
+            .schedule(vec![rule(vec!["echo ok"])], "b.txt")
+            .unwrap();
+        let result = worker.cancel_generation(second).unwrap();
+        assert!(
+            matches!(result, CancelResult::Cancelled { .. }),
+            "queued generation must be cancelled, got {result:?}"
+        );
+        drop(worker);
+    }
+
+    #[test]
+    fn stale_cancel_does_not_affect_a_newer_generation() {
+        let (worker, rx) = worker_with_events(false, false);
+        let first = worker
+            .schedule(vec![rule(vec!["sleep 5"])], "a.txt")
+            .unwrap();
+        expect_event(
+            &rx,
+            "first run to start",
+            |e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == first),
+        );
+        expect_event(&rx, "worker tick", |e| {
+            matches!(e, WorkerEvent::Tick { .. })
+        });
+
+        // Replace first with second, then send a stale cancel for first.
+        let second = worker
+            .schedule(vec![rule(vec!["echo ok"])], "b.txt")
+            .unwrap();
+        collect_until_finished(&rx);
+
+        // first is now superseded; a cancel for it must be a no-op and must
+        // not touch second (already passed).
+        assert_eq!(worker.cancel_generation(first).unwrap(), CancelResult::Noop);
+        drop(worker);
+        let _ = second;
     }
 
     #[test]

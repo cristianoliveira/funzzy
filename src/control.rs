@@ -1,7 +1,8 @@
 use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
-use crate::executor::Event;
+use crate::executor::{CancelDisposition, Event};
 use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
 use crate::stdout;
+use crate::workers::CancelResult;
 use serde_derive::Serialize;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -198,6 +199,7 @@ impl EmitOutcome {
 
 type RunTarget = Arc<dyn Fn(String) -> Result<u64, String> + Send + Sync>;
 type EmitPath = Arc<dyn Fn(String) -> Result<EmitOutcome, String> + Send + Sync>;
+type CancelTarget = Arc<dyn Fn(u64) -> Result<CancelResult, String> + Send + Sync>;
 
 /// Bounded concurrent client threads; waiters never starve the accept loop.
 const MAX_CLIENT_THREADS: usize = 64;
@@ -211,7 +213,7 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, vec![], None, None, None, None)
+        Self::start_internal(path, state, vec![], None, None, None, None, None)
     }
 
     pub fn start_with_runner<F>(
@@ -228,6 +230,7 @@ impl ControlServer {
             state,
             targets,
             Some(Arc::new(run_target)),
+            None,
             None,
             None,
             None,
@@ -277,6 +280,38 @@ impl ControlServer {
             Some(Arc::new(emit_path)),
             coordinator,
             outputs,
+            None,
+        )
+    }
+
+    /// Extends the surface with exact-generation cancellation (TASK-0046):
+    /// the `cancel` method compares generation identity atomically and reports
+    /// graceful, escalated, or no-op termination.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_cancel<F, E, C>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        run_target: F,
+        emit_path: E,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        cancel_generation: C,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
+    {
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(Arc::new(run_target)),
+            Some(Arc::new(emit_path)),
+            coordinator,
+            outputs,
+            Some(Arc::new(cancel_generation)),
         )
     }
 
@@ -288,6 +323,7 @@ impl ControlServer {
         emit_path: Option<EmitPath>,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
+        cancel_generation: Option<CancelTarget>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -324,6 +360,7 @@ impl ControlServer {
                         let emit_path = emit_path.clone();
                         let coordinator = coordinator.clone();
                         let outputs = outputs.clone();
+                        let cancel_generation = cancel_generation.clone();
                         let instance = instance.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
@@ -335,6 +372,7 @@ impl ControlServer {
                                 emit_path.as_ref(),
                                 coordinator.as_ref(),
                                 outputs.as_deref(),
+                                cancel_generation.as_ref(),
                                 &instance,
                             );
                             clients.fetch_sub(1, Ordering::Relaxed);
@@ -421,6 +459,7 @@ fn handle_client(
     emit_path: Option<&EmitPath>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
     outputs: Option<&OutputRegistry>,
+    cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
 ) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
@@ -474,7 +513,14 @@ fn handle_client(
         }
 
         if let Some(response) = process_payload(
-            request, state, targets, run_target, emit_path, outputs, instance,
+            request,
+            state,
+            targets,
+            run_target,
+            emit_path,
+            outputs,
+            cancel_generation,
+            instance,
         ) {
             write_response(&mut stream, response);
         }
@@ -599,11 +645,19 @@ fn process_payload(
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
+    cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
         return process_request(
-            request, state, targets, run_target, emit_path, outputs, instance,
+            request,
+            state,
+            targets,
+            run_target,
+            emit_path,
+            outputs,
+            cancel_generation,
+            instance,
         );
     };
 
@@ -620,7 +674,14 @@ fn process_payload(
         .into_iter()
         .filter_map(|request| {
             process_request(
-                request, state, targets, run_target, emit_path, outputs, instance,
+                request,
+                state,
+                targets,
+                run_target,
+                emit_path,
+                outputs,
+                cancel_generation,
+                instance,
             )
         })
         .collect();
@@ -637,6 +698,7 @@ fn process_request(
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
+    cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
@@ -661,6 +723,7 @@ fn process_request(
         "targets" => Ok(serde_json::json!(targets)),
         "run" => run_requested_target(&request, run_target),
         "emit" => emit_requested_path(&request, emit_path),
+        "cancel" => cancel_requested_generation(&request, cancel_generation, instance),
         "output" => output_retrieval(&request, outputs),
         // Honest negotiated profile (contract §8): methods list only what this
         // server implements; features stay false until the additive contract
@@ -674,7 +737,16 @@ fn process_request(
                 "token": instance.token,
                 "startedAtEpochMs": instance.started_at_epoch_ms,
             },
-            "methods": ["status", "targets", "run", "emit", "await", "output", "capabilities"],
+            "methods": [
+                "status",
+                "targets",
+                "run",
+                "emit",
+                "await",
+                "output",
+                "cancel",
+                "capabilities"
+            ],
             "optionalFields": [],
             "limits": {
                 "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
@@ -838,6 +910,66 @@ fn run_requested_target(
         .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
 }
 
+/// `cancel` transport and identity validation (TASK-0046): a positive numeric
+/// generation plus an optional instance token. The injected handler performs
+/// the compare-and-act; a stale instance token is a safe no-op. Escalation is
+/// reported as RPC error -32021 so clients can distinguish force cleanup.
+fn cancel_requested_generation(
+    request: &serde_json::Value,
+    cancel_generation: Option<&CancelTarget>,
+    instance: &ControlInstance,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let params = request.get("params").and_then(serde_json::Value::as_object);
+    let Some(generation) = params
+        .and_then(|params| params.get("generation"))
+        .and_then(serde_json::Value::as_u64)
+    else {
+        return Err((
+            -32602,
+            "Invalid params",
+            Some(serde_json::json!(
+                "cancel requires a numeric params.generation"
+            )),
+        ));
+    };
+
+    // Instance identity check: a request carrying a different token was formed
+    // against another watcher process and must never cancel work on this one.
+    if let Some(token) = params
+        .and_then(|params| params.get("instanceToken"))
+        .and_then(serde_json::Value::as_str)
+    {
+        if token != instance.token {
+            return Ok(serde_json::json!({ "cancelled": false, "generation": generation }));
+        }
+    }
+
+    let Some(cancel_generation) = cancel_generation else {
+        return Err((
+            -32000,
+            "Server error",
+            Some(serde_json::json!("cancellation is unavailable")),
+        ));
+    };
+
+    match cancel_generation(generation) {
+        Ok(CancelResult::Cancelled { disposition }) => match disposition {
+            CancelDisposition::Graceful => {
+                Ok(serde_json::json!({ "cancelled": true, "generation": generation }))
+            }
+            CancelDisposition::Escalated => Err((
+                -32021,
+                "Cancellation escalated",
+                Some(serde_json::json!({ "escalation": true, "generation": generation })),
+            )),
+        },
+        Ok(CancelResult::Noop) => {
+            Ok(serde_json::json!({ "cancelled": false, "generation": generation }))
+        }
+        Err(error) => Err((-32000, "Server error", Some(serde_json::json!(error)))),
+    }
+}
+
 /// `emit` transport validation only: one non-empty path. Routing, matching,
 /// ignore precedence, ordering, templates, and busy-run policy stay in the
 /// injected handler (shared event-to-run policy); no second matcher or
@@ -997,6 +1129,83 @@ mod tests {
         assert_eq!(object["changed"], serde_json::json!(["src/main.rs"]));
         assert_eq!(object["predecessor"], serde_json::json!(null));
         assert_eq!(object["supersededBy"], serde_json::json!(null));
+    }
+
+    fn instance(token: &str) -> ControlInstance {
+        ControlInstance {
+            token: token.to_owned(),
+            started_at_epoch_ms: 0,
+        }
+    }
+
+    #[test]
+    fn cancel_graceful_returns_wire_shape_matching_fixture() {
+        let cancel: CancelTarget = Arc::new(|generation: u64| -> Result<CancelResult, String> {
+            assert_eq!(generation, 7);
+            Ok(CancelResult::Cancelled {
+                disposition: CancelDisposition::Graceful,
+            })
+        });
+        let request =
+            serde_json::json!({ "params": { "generation": 7, "instanceToken": "fz-7f3a" } });
+        let result = cancel_requested_generation(&request, Some(&cancel), &instance("fz-7f3a"))
+            .expect("graceful cancel");
+        assert_eq!(
+            result,
+            serde_json::json!({ "cancelled": true, "generation": 7 })
+        );
+    }
+
+    #[test]
+    fn cancel_noop_returns_cancelled_false() {
+        let cancel: CancelTarget = Arc::new(|_generation: u64| Ok(CancelResult::Noop));
+        let request =
+            serde_json::json!({ "params": { "generation": 7, "instanceToken": "fz-7f3a" } });
+        let result = cancel_requested_generation(&request, Some(&cancel), &instance("fz-7f3a"))
+            .expect("no-op cancel");
+        assert_eq!(
+            result,
+            serde_json::json!({ "cancelled": false, "generation": 7 })
+        );
+    }
+
+    #[test]
+    fn cancel_escalated_returns_rpc_error_32021() {
+        let cancel: CancelTarget = Arc::new(|_generation: u64| {
+            Ok(CancelResult::Cancelled {
+                disposition: CancelDisposition::Escalated,
+            })
+        });
+        let request =
+            serde_json::json!({ "params": { "generation": 7, "instanceToken": "fz-7f3a" } });
+        let (code, _, _) =
+            cancel_requested_generation(&request, Some(&cancel), &instance("fz-7f3a"))
+                .expect_err("escalated cancel is an RPC error");
+        assert_eq!(code, -32021);
+    }
+
+    #[test]
+    fn cancel_with_mismatched_instance_token_is_a_safe_noop() {
+        let cancel: CancelTarget =
+            Arc::new(|_generation: u64| panic!("must not be called on a stale instance"));
+        let request =
+            serde_json::json!({ "params": { "generation": 7, "instanceToken": "fz-stale" } });
+        let result = cancel_requested_generation(&request, Some(&cancel), &instance("fz-current"))
+            .expect("stale instance is a safe no-op");
+        assert_eq!(
+            result,
+            serde_json::json!({ "cancelled": false, "generation": 7 })
+        );
+    }
+
+    #[test]
+    fn cancel_requires_a_numeric_generation() {
+        let cancel: CancelTarget = Arc::new(|_generation: u64| Ok(CancelResult::Noop));
+        let request = serde_json::json!({ "params": {} });
+        let (code, _, _) =
+            cancel_requested_generation(&request, Some(&cancel), &instance("fz-7f3a"))
+                .expect_err("missing generation is invalid");
+        assert_eq!(code, -32602);
     }
 }
 
