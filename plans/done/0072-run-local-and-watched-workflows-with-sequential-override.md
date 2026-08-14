@@ -1,7 +1,7 @@
 ---
 id: TASK-0072
 title: Run local and watched workflows with sequential override
-status: todo
+status: done
 depends_on: [TASK-0071, TASK-0027]
 priority: high
 tags: [rust, cli, executor, concurrency, debugging, tdd]
