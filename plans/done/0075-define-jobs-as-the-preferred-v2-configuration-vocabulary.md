@@ -1,7 +1,7 @@
 ---
 id: TASK-0075
 title: Define jobs as the preferred V2 configuration vocabulary
-status: todo
+status: done
 depends_on: [TASK-0014, TASK-0065]
 priority: high
 tags: [design, config, jobs, migration, ubiquitous-language, v2]
