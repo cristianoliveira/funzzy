@@ -1,6 +1,7 @@
 use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
-use crate::executor::{CancelDisposition, Event};
+use crate::executor::{CancelDisposition, Event, TaskSnapshot};
 use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
+use crate::snapshot::SnapshotBroker;
 use crate::stdout;
 use crate::workers::CancelResult;
 use serde_derive::Serialize;
@@ -14,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionState {
     Idle,
@@ -33,7 +34,7 @@ pub struct ControlTarget {
 
 /// One Funzzy process identity (contract §1): the token changes on restart,
 /// so pi-watcher can detect instance changes instead of assuming continuity.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlInstance {
     pub token: String,
@@ -79,6 +80,11 @@ pub struct ControlState {
     changed: Vec<String>,
     predecessor: Option<u64>,
     superseded_by: Option<u64>,
+    /// Per-task terminal outcomes of the latest generation (TASK-0050). Not
+    /// serialized into the legacy `status` result; read by the correlated
+    /// snapshot builder.
+    #[serde(skip)]
+    tasks: Vec<TaskSnapshot>,
 }
 
 impl Default for ControlState {
@@ -94,6 +100,7 @@ impl Default for ControlState {
             changed: vec![],
             predecessor: None,
             superseded_by: None,
+            tasks: vec![],
         }
     }
 }
@@ -112,6 +119,35 @@ impl ControlState {
     /// The superseded-by relation of the latest generation, when replaced.
     pub fn superseded_by(&self) -> Option<u64> {
         self.superseded_by
+    }
+
+    /// Per-task terminal outcomes of the latest generation.
+    pub fn tasks(&self) -> &[TaskSnapshot] {
+        &self.tasks
+    }
+
+    pub fn trigger(&self) -> Option<&str> {
+        self.trigger.as_deref()
+    }
+
+    pub fn commands(&self) -> &[String] {
+        &self.commands
+    }
+
+    pub fn duration_ms(&self) -> Option<u64> {
+        self.duration_ms
+    }
+
+    pub fn failures(&self) -> &[String] {
+        &self.failures
+    }
+
+    pub fn batch(&self) -> Option<u64> {
+        self.batch
+    }
+
+    pub fn changed(&self) -> &[String] {
+        &self.changed
     }
 
     pub fn apply(&mut self, event: Event) {
@@ -134,6 +170,7 @@ impl ControlState {
                 self.commands = commands;
                 self.duration_ms = None;
                 self.failures.clear();
+                self.tasks.clear();
             }
             Event::Finished {
                 superseded_by,
@@ -156,6 +193,11 @@ impl ControlState {
                 self.superseded_by = superseded_by;
             }
             Event::Tick { .. } => {}
+            Event::TaskTerminal { run_id, task } => {
+                if run_id == self.generation {
+                    self.tasks.push(task);
+                }
+            }
         }
     }
 }
@@ -213,7 +255,18 @@ pub struct ControlServer {
 impl ControlServer {
     #[allow(dead_code)]
     pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
-        Self::start_internal(path, state, vec![], None, None, None, None, None)
+        Self::start_internal(
+            path,
+            state,
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            Arc::new(ControlInstance::new()),
+            None,
+        )
     }
 
     pub fn start_with_runner<F>(
@@ -233,6 +286,8 @@ impl ControlServer {
             None,
             None,
             None,
+            None,
+            Arc::new(ControlInstance::new()),
             None,
         )
     }
@@ -281,6 +336,8 @@ impl ControlServer {
             coordinator,
             outputs,
             None,
+            Arc::new(ControlInstance::new()),
+            None,
         )
     }
 
@@ -312,9 +369,48 @@ impl ControlServer {
             coordinator,
             outputs,
             Some(Arc::new(cancel_generation)),
+            Arc::new(ControlInstance::new()),
+            None,
         )
     }
 
+    /// Extends the surface with subscription (TASK-0050): the `subscribe`
+    /// method returns one immediate correlated snapshot, then streams
+    /// `snapshot` notifications on the same connection. The instance token is
+    /// shared between `capabilities` and snapshots so clients see one identity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_broker<F, E, C>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        run_target: F,
+        emit_path: E,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        cancel_generation: C,
+        instance: Arc<ControlInstance>,
+        broker: Arc<SnapshotBroker>,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
+    {
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(Arc::new(run_target)),
+            Some(Arc::new(emit_path)),
+            coordinator,
+            outputs,
+            Some(Arc::new(cancel_generation)),
+            instance,
+            Some(broker),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn start_internal(
         path: &Path,
         state: Arc<Mutex<ControlState>>,
@@ -324,6 +420,8 @@ impl ControlServer {
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
         cancel_generation: Option<CancelTarget>,
+        instance: Arc<ControlInstance>,
+        broker: Option<Arc<SnapshotBroker>>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -332,7 +430,6 @@ impl ControlServer {
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
-        let instance = ControlInstance::new();
         let active_clients = Arc::new(AtomicUsize::new(0));
         let thread = std::thread::spawn(move || {
             while !thread_stop.load(Ordering::Relaxed) {
@@ -361,7 +458,8 @@ impl ControlServer {
                         let coordinator = coordinator.clone();
                         let outputs = outputs.clone();
                         let cancel_generation = cancel_generation.clone();
-                        let instance = instance.clone();
+                        let instance = Arc::clone(&instance);
+                        let broker = broker.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
                             handle_client(
@@ -373,7 +471,8 @@ impl ControlServer {
                                 coordinator.as_ref(),
                                 outputs.as_deref(),
                                 cancel_generation.as_ref(),
-                                &instance,
+                                instance.as_ref(),
+                                broker.as_ref(),
                             );
                             clients.fetch_sub(1, Ordering::Relaxed);
                         });
@@ -461,6 +560,7 @@ fn handle_client(
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
+    broker: Option<&Arc<SnapshotBroker>>,
 ) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
     // socket): the client adapter keeps one connection and increments ids.
@@ -500,6 +600,14 @@ fn handle_client(
             }
         };
 
+        // `subscribe` dedicates the connection to a notification stream:
+        // it returns one immediate snapshot then streams `snapshot`
+        // notifications, so it never returns to the request loop.
+        if request.get("method").and_then(serde_json::Value::as_str) == Some("subscribe") {
+            handle_subscribe(&mut stream, request, broker);
+            return;
+        }
+
         // `await` blocks for up to its timeout, so it needs the live stream
         // for disconnect detection and is handled outside the dispatcher; it
         // restores blocking mode before returning to the loop.
@@ -521,8 +629,63 @@ fn handle_client(
             outputs,
             cancel_generation,
             instance,
+            broker,
         ) {
             write_response(&mut stream, response);
+        }
+    }
+}
+
+/// Serves one `subscribe` connection (TASK-0050): returns the immediate
+/// correlated snapshot, then streams `snapshot` notifications as the shared
+/// broker publishes transitions. The loop ends on write failure (disconnect)
+/// or broker drop (watcher shutdown), which releases the subscriber promptly.
+fn handle_subscribe(
+    stream: &mut UnixStream,
+    request: serde_json::Value,
+    broker: Option<&Arc<SnapshotBroker>>,
+) {
+    let id = request_id(&request);
+    if request.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
+        write_response(stream, rpc_error(id, -32600, "Invalid Request", None));
+        return;
+    }
+    let Some(broker) = broker else {
+        write_response(
+            stream,
+            rpc_error(
+                id,
+                -32000,
+                "Server error",
+                Some(serde_json::json!("subscription is unavailable")),
+            ),
+        );
+        return;
+    };
+
+    let (receiver, snapshot) = broker.subscribe();
+    write_response(
+        stream,
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
+        }),
+    );
+
+    loop {
+        match receiver.recv() {
+            Ok(snapshot) => {
+                let notification = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "snapshot",
+                    "params": serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
+                });
+                if writeln!(stream, "{}", notification).is_err() {
+                    return;
+                }
+            }
+            Err(_) => return,
         }
     }
 }
@@ -647,6 +810,7 @@ fn process_payload(
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
+    broker: Option<&Arc<SnapshotBroker>>,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
         return process_request(
@@ -658,6 +822,7 @@ fn process_payload(
             outputs,
             cancel_generation,
             instance,
+            broker,
         );
     };
 
@@ -682,6 +847,7 @@ fn process_payload(
                 outputs,
                 cancel_generation,
                 instance,
+                broker,
             )
         })
         .collect();
@@ -700,6 +866,7 @@ fn process_request(
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
     instance: &ControlInstance,
+    broker: Option<&Arc<SnapshotBroker>>,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
     let Some(object) = request.as_object() else {
@@ -730,45 +897,7 @@ fn process_request(
         // (subscribe, cancel, output, correlated snapshots) lands. The
         // extension keeps the legacy polling fallback and never assumes
         // capabilities from package versions.
-        "capabilities" => Ok(serde_json::json!({
-            "protocolVersion": "1.0",
-            "schemaVersion": 1,
-            "watcherVersion": env!("CARGO_PKG_VERSION"),
-            "instance": {
-                "token": instance.token,
-                "startedAtEpochMs": instance.started_at_epoch_ms,
-            },
-            "methods": [
-                "status",
-                "targets",
-                "run",
-                "emit",
-                "await",
-                "output",
-                "cancel",
-                "capabilities"
-            ],
-            "optionalFields": [
-                "batch",
-                "changed",
-                "predecessor",
-                "supersededBy",
-                "failureEvidence"
-            ],
-            "outputFormats": ["toon", "json"],
-            "limits": {
-                "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
-                "maxResponseBytes": MAX_RESPONSE_BYTES,
-                "maxEvidenceLines": MAX_EVIDENCE_LINES,
-            },
-            "features": {
-                "atomicAwait": true,
-                "subscription": false,
-                "correlatedSnapshots": false,
-                "outputRetrieval": true,
-                "pendingWork": false,
-            },
-        })),
+        "capabilities" => Ok(capabilities_result(instance, broker.is_some())),
         _ => Err((-32601, "Method not found", None)),
     };
 
@@ -796,6 +925,56 @@ fn request_id(request: &serde_json::Value) -> serde_json::Value {
         .filter(|id| id.is_null() || id.is_string() || id.is_number())
         .cloned()
         .unwrap_or(serde_json::Value::Null)
+}
+
+/// Negotiated capabilities (contract §6/§7): protocol facts only. `subscribe`
+/// and the `subscription` feature are advertised only when a broker endpoint
+/// is actually registered, so clients never assume a push stream that does
+/// not exist.
+fn capabilities_result(instance: &ControlInstance, subscription: bool) -> serde_json::Value {
+    let mut methods = vec![
+        "status",
+        "targets",
+        "run",
+        "emit",
+        "await",
+        "output",
+        "cancel",
+        "capabilities",
+    ];
+    if subscription {
+        methods.push("subscribe");
+    }
+    serde_json::json!({
+        "protocolVersion": "1.0",
+        "schemaVersion": 1,
+        "watcherVersion": env!("CARGO_PKG_VERSION"),
+        "instance": {
+            "token": instance.token,
+            "startedAtEpochMs": instance.started_at_epoch_ms,
+        },
+        "methods": methods,
+        "optionalFields": [
+            "batch",
+            "changed",
+            "predecessor",
+            "supersededBy",
+            "failureEvidence"
+        ],
+        "outputFormats": ["toon", "json"],
+        "limits": {
+            "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
+            "maxResponseBytes": MAX_RESPONSE_BYTES,
+            "maxEvidenceLines": MAX_EVIDENCE_LINES,
+        },
+        "features": {
+            "atomicAwait": true,
+            "subscription": subscription,
+            "correlatedSnapshots": false,
+            "outputRetrieval": true,
+            "pendingWork": false,
+        },
+    })
 }
 
 /// `status` result: the legacy snapshot plus additive failure evidence when
@@ -1204,6 +1383,29 @@ mod tests {
             result,
             serde_json::json!({ "cancelled": false, "generation": 7 })
         );
+    }
+
+    #[test]
+    fn capabilities_advertise_subscribe_only_when_broker_registered() {
+        let with = capabilities_result(&instance("fz-7f3a"), true);
+        let methods: Vec<_> = with["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method.as_str().unwrap())
+            .collect();
+        assert!(methods.contains(&"subscribe"), "methods: {methods:?}");
+        assert_eq!(with["features"]["subscription"], true);
+
+        let without = capabilities_result(&instance("fz-7f3a"), false);
+        let methods: Vec<_> = without["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method.as_str().unwrap())
+            .collect();
+        assert!(!methods.contains(&"subscribe"), "methods: {methods:?}");
+        assert_eq!(without["features"]["subscription"], false);
     }
 
     #[test]

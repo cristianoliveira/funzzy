@@ -17,6 +17,7 @@ pub mod output;
 pub mod plan;
 pub mod process_owner;
 pub mod rules;
+pub mod snapshot;
 pub mod stdout;
 pub mod template;
 pub mod watch_loop;

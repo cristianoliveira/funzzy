@@ -162,7 +162,22 @@ impl AwaitCoordinator {
                 self.changed.notify_all();
             }
             Event::Tick { .. } => {}
+            // Per-task outcomes live in `ControlState`; the coordinator only
+            // tracks generation/batch/pending facts for freshness (TASK-0050).
+            Event::TaskTerminal { .. } => {}
         }
+    }
+
+    /// Snapshot facts for the correlated snapshot (TASK-0050): latest
+    /// generation and batch, plus pending-work state, read under one lock so
+    /// the snapshot never mixes generations.
+    pub fn snapshot_facts(&self) -> (u64, Option<u64>, PendingWork) {
+        let inner = self.inner.lock().unwrap();
+        (
+            inner.latest_generation,
+            inner.latest_batch,
+            inner.pending_work.clone(),
+        )
     }
 
     /// A debounce batch opened (first event → scheduling decision).
@@ -280,7 +295,11 @@ impl AwaitCoordinator {
 
 /// Freshness rule (contract §3): current only when the snapshot is the latest
 /// scheduled generation, terminal, and no pending debounce work exists.
-fn classify(snapshot: &ControlState, latest_generation: u64, pending: &PendingWork) -> Freshness {
+pub(crate) fn classify(
+    snapshot: &ControlState,
+    latest_generation: u64,
+    pending: &PendingWork,
+) -> Freshness {
     let terminal = matches!(
         snapshot.state(),
         ExecutionState::Passed | ExecutionState::Failed | ExecutionState::Cancelled

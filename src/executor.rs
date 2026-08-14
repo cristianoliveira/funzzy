@@ -9,6 +9,7 @@ use crate::output::OutputRegistry;
 use crate::plan::{RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan};
 use crate::rules::CommandLine;
 use crate::stdout;
+use serde_derive::Serialize;
 use std::collections::VecDeque;
 use std::io;
 use std::process::ExitStatus;
@@ -16,6 +17,27 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Wire-level task state for the correlated snapshot (contract §7). `Skipped`
+/// (fail-fast skipped work) collapses to `Cancelled` — never-started work is
+/// reported as cancelled, matching the pi-watcher decoder vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskState {
+    Passed,
+    Failed,
+    Cancelled,
+}
+
+/// One task's terminal outcome for the correlated snapshot (TASK-0050).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSnapshot {
+    pub id: String,
+    pub name: String,
+    pub state: TaskState,
+    pub duration_ms: Option<u64>,
+}
 
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -48,6 +70,10 @@ pub enum Event {
         task: String,
         group_occurrence: Option<String>,
     },
+    /// One task reached a terminal outcome (passed/failed/cancelled) within a
+    /// generation. Emitted per task so the correlated snapshot can show task
+    /// outcomes and durations (TASK-0050).
+    TaskTerminal { run_id: u64, task: TaskSnapshot },
 }
 
 pub trait EventSink: Send + Sync {
@@ -214,6 +240,9 @@ struct ActiveTask {
     context: TaskContext,
     context_validated: bool,
     group_occurrence: Option<String>,
+    /// When the first command of this task spawned, for per-task duration
+    /// (TASK-0050). None until a command actually starts.
+    started: Option<Instant>,
     /// Bounded per-stream output capture for this task, when the executor
     /// feeds a retention registry (TASK-0045).
     capture: Option<Arc<CaptureHandle>>,
@@ -231,6 +260,7 @@ impl From<TaskPlan> for ActiveTask {
             context: task.context,
             context_validated: false,
             group_occurrence: task.group_occurrence,
+            started: None,
             capture: None,
         }
     }
@@ -452,6 +482,9 @@ impl Executor {
                 {
                     Ok(child) => {
                         task.child = Some(child);
+                        if task.started.is_none() {
+                            task.started = Some(self.clock.now());
+                        }
                         self.events.emit(Event::Tick {
                             task: task.name.clone(),
                             group_occurrence: task.group_occurrence.clone(),
@@ -510,17 +543,50 @@ impl Executor {
         }
     }
 
+    /// Emits one per-task terminal record for the correlated snapshot
+    /// (TASK-0050). The id is the stable group-occurrence identity when a task
+    /// belongs to a named parallel group, else the task name.
+    fn record_task_snapshot(
+        &self,
+        run_id: u64,
+        name: &str,
+        group_occurrence: Option<&str>,
+        state: TaskState,
+        duration_ms: Option<u64>,
+    ) {
+        self.events.emit(Event::TaskTerminal {
+            run_id,
+            task: TaskSnapshot {
+                id: group_occurrence
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| name.to_owned()),
+                name: name.to_owned(),
+                state,
+                duration_ms,
+            },
+        });
+    }
+
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
         if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
             outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
         }
-        let outcome = if task.failures.is_empty() {
-            TaskOutcome::Passed
+        let duration_ms = task
+            .started
+            .map(|started| self.clock.elapsed(started).as_millis() as u64);
+        let (state, outcome) = if task.failures.is_empty() {
+            (TaskState::Passed, TaskOutcome::Passed)
         } else {
-            TaskOutcome::Failed {
-                failures: task.failures,
-            }
+            let failures = task.failures.clone();
+            (TaskState::Failed, TaskOutcome::Failed { failures })
         };
+        self.record_task_snapshot(
+            run.metadata.run_id,
+            &task.name,
+            task.group_occurrence.as_deref(),
+            state,
+            duration_ms,
+        );
         run.outcomes.push((task.position, task.name, outcome));
     }
 
@@ -530,15 +596,39 @@ impl Executor {
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
                 outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
             }
+            let duration_ms = task
+                .started
+                .map(|started| self.clock.elapsed(started).as_millis() as u64);
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                duration_ms,
+            );
             run.outcomes
                 .push((task.position, task.name, TaskOutcome::Cancelled));
         }
         for task in run.queued.drain(..) {
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                None,
+            );
             run.outcomes
                 .push((task.position, task.name, TaskOutcome::Skipped));
         }
         for stage in run.stages.drain(..) {
             for task in stage_tasks(stage) {
+                self.record_task_snapshot(
+                    run.metadata.run_id,
+                    &task.name,
+                    task.group_occurrence.as_deref(),
+                    TaskState::Cancelled,
+                    None,
+                );
                 run.outcomes
                     .push((task.position, task.name, TaskOutcome::Skipped));
             }
@@ -583,6 +673,36 @@ impl Executor {
             }
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
                 outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+            }
+            let duration_ms = task
+                .started
+                .map(|started| self.clock.elapsed(started).as_millis() as u64);
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                duration_ms,
+            );
+        }
+        for task in run.queued.drain(..) {
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                None,
+            );
+        }
+        for stage in run.stages.drain(..) {
+            for task in stage_tasks(stage) {
+                self.record_task_snapshot(
+                    run.metadata.run_id,
+                    &task.name,
+                    task.group_occurrence.as_deref(),
+                    TaskState::Cancelled,
+                    None,
+                );
             }
         }
         run.active.clear();

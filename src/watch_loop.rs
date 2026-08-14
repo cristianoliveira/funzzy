@@ -7,12 +7,13 @@
 //! [`watch_loop`].
 
 use crate::awaiting::AwaitCoordinator;
-use crate::control::{ControlServer, ControlState, ControlTarget, EmitOutcome};
+use crate::control::{ControlInstance, ControlServer, ControlState, ControlTarget, EmitOutcome};
 use crate::errors::FzzError;
 use crate::executor::RunMetadata;
 use crate::identity::{AtomicSequence, Batch, BatchId};
 use crate::output::OutputRegistry;
 use crate::plan::RunPlan;
+use crate::snapshot::SnapshotBroker;
 use crate::stdout;
 use crate::watcher;
 use crate::watches::Watches;
@@ -150,6 +151,8 @@ pub struct NonBlockStrategy {
     control_state: Arc<Mutex<ControlState>>,
     coordinator: Option<Arc<AwaitCoordinator>>,
     outputs: Option<Arc<OutputRegistry>>,
+    instance: Arc<ControlInstance>,
+    broker: Option<Arc<SnapshotBroker>>,
     control_server: Mutex<Option<ControlServer>>,
     self_arc: Mutex<Option<Arc<NonBlockStrategy>>>,
 }
@@ -165,6 +168,32 @@ impl NonBlockStrategy {
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
     ) -> Arc<Self> {
+        Self::new_arc_with_subscription(
+            worker,
+            watches,
+            control_socket,
+            control_state,
+            coordinator,
+            outputs,
+            Arc::new(ControlInstance::new()),
+            None,
+        )
+    }
+
+    /// Creates the strategy with a shared instance and subscription broker
+    /// (TASK-0050): `subscribe` exposes push lifecycle, and `capabilities` and
+    /// snapshots report one instance identity.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_arc_with_subscription(
+        worker: Arc<workers::Worker>,
+        watches: Watches,
+        control_socket: Option<PathBuf>,
+        control_state: Arc<Mutex<ControlState>>,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        instance: Arc<ControlInstance>,
+        broker: Option<Arc<SnapshotBroker>>,
+    ) -> Arc<Self> {
         let strategy = Arc::new(NonBlockStrategy {
             worker,
             watches,
@@ -172,6 +201,8 @@ impl NonBlockStrategy {
             control_state,
             coordinator,
             outputs,
+            instance,
+            broker,
             control_server: Mutex::new(None),
             self_arc: Mutex::new(None),
         });
@@ -210,16 +241,34 @@ impl NonBlockStrategy {
         let cancel_runner = Arc::clone(&runner);
         let coordinator = self.coordinator.clone();
         let outputs = self.outputs.clone();
-        match ControlServer::start_with_cancel(
-            path,
-            Arc::clone(&self.control_state),
-            targets,
-            move |target| run_runner.run_target(&target),
-            move |path| emit_runner.emit_path(&path),
-            coordinator,
-            outputs,
-            move |generation| cancel_runner.cancel_generation(generation),
-        ) {
+        let instance = Arc::clone(&self.instance);
+        let broker = self.broker.clone();
+        let start = if let Some(broker) = broker {
+            ControlServer::start_with_broker(
+                path,
+                Arc::clone(&self.control_state),
+                targets,
+                move |target| run_runner.run_target(&target),
+                move |path| emit_runner.emit_path(&path),
+                coordinator,
+                outputs,
+                move |generation| cancel_runner.cancel_generation(generation),
+                instance,
+                broker,
+            )
+        } else {
+            ControlServer::start_with_cancel(
+                path,
+                Arc::clone(&self.control_state),
+                targets,
+                move |target| run_runner.run_target(&target),
+                move |path| emit_runner.emit_path(&path),
+                coordinator,
+                outputs,
+                move |generation| cancel_runner.cancel_generation(generation),
+            )
+        };
+        match start {
             Ok(server) => {
                 stdout::info(&format!("Control socket listening at {}", path.display()));
                 Some(server)
