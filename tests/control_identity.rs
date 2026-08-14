@@ -83,16 +83,25 @@ fn run_cli(directory: &std::path::Path, args: &[&str]) -> Output {
         .expect("fzz control client should run")
 }
 
-fn raw_status(socket_path: &std::path::Path) -> serde_json::Value {
-    let mut stream = UnixStream::connect(socket_path).expect("connect control socket");
+fn try_status(socket_path: &std::path::Path) -> Result<serde_json::Value, String> {
+    let mut stream = match UnixStream::connect(socket_path) {
+        Ok(stream) => stream,
+        Err(err) => return Err(err.to_string()),
+    };
     writeln!(
         stream,
         r#"{{"jsonrpc":"2.0","id":"status","method":"status"}}"#
     )
-    .unwrap();
+    .map_err(|err| err.to_string())?;
     let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+    BufReader::new(&mut stream)
+        .read_line(&mut line)
+        .map_err(|err| err.to_string())?;
+    serde_json::from_str(&line).map_err(|err| err.to_string())
+}
+
+fn raw_status(socket_path: &std::path::Path) -> serde_json::Value {
+    try_status(socket_path).expect("connect control socket")
 }
 
 fn wait_until<F: FnMut() -> bool>(mut condition: F) {
@@ -174,11 +183,24 @@ fn wait_until_status<F: FnMut(&serde_json::Value) -> bool>(
     mut condition: F,
 ) -> u64 {
     let mut generation = 0;
+    let mut last_error = String::new();
     wait_until(|| {
-        let status = raw_status(socket_path);
-        generation = status["result"]["generation"].as_u64().unwrap_or(0);
-        condition(&status["result"])
+        match try_status(socket_path) {
+            Ok(status) => {
+                generation = status["result"]["generation"].as_u64().unwrap_or(0);
+                condition(&status["result"])
+            }
+            Err(err) => {
+                // A transient connect failure (watcher under heavy load) is
+                // not a test failure: keep polling until the bound expires.
+                last_error = err;
+                false
+            }
+        }
     });
+    if !last_error.is_empty() {
+        eprintln!("last status connect error: {last_error}");
+    }
     generation
 }
 
