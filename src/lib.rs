@@ -14,6 +14,7 @@ pub mod duration_recorder;
 pub mod duration_store;
 pub mod environment;
 pub mod errors;
+pub mod event_stream;
 pub mod executor;
 pub mod identity;
 pub mod logging;

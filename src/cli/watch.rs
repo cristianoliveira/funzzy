@@ -15,26 +15,41 @@ pub struct WatchCommand {
     verbose: bool,
     fail_fast: bool,
     run_on_init: bool,
+    events: Option<std::sync::Arc<crate::event_stream::EventStream>>,
 }
 
 impl WatchCommand {
     pub fn new(watches: Watches, verbose: bool, fail_fast: bool, run_on_init: bool) -> Self {
+        Self::with_events(watches, verbose, fail_fast, run_on_init, None)
+    }
+
+    /// Creates the watch command with an optional NDJSON run-event stream
+    /// (TASK-0039).
+    pub fn with_events(
+        watches: Watches,
+        verbose: bool,
+        fail_fast: bool,
+        run_on_init: bool,
+        events: Option<std::sync::Arc<crate::event_stream::EventStream>>,
+    ) -> Self {
         WatchCommand {
             watches,
             verbose,
             fail_fast,
             run_on_init,
+            events,
         }
     }
 }
 
 impl Command for WatchCommand {
     fn execute(&self) -> Result<(), FzzError> {
-        let strategy = BlockingStrategy::new(
+        let strategy = BlockingStrategy::with_events(
             self.watches.root().to_path_buf(),
             self.verbose,
             self.fail_fast,
             self.watches.concurrency(),
+            self.events.clone(),
         );
         watch_loop(
             &self.watches,

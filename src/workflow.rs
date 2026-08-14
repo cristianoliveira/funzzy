@@ -23,7 +23,7 @@ pub struct WorkflowRunner {
 
 impl WorkflowRunner {
     pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, concurrency: usize) -> Self {
-        Self::with_recorder(root, verbose, fail_fast, concurrency, None)
+        Self::with_recorder_and_events(root, verbose, fail_fast, concurrency, None, None)
     }
 
     /// Creates a runner that also records exact target runs into duration
@@ -36,12 +36,47 @@ impl WorkflowRunner {
         concurrency: usize,
         recorder: Option<Arc<DurationRecorder>>,
     ) -> Self {
-        let events: Arc<dyn crate::executor::EventSink> = match &recorder {
+        Self::with_recorder_and_events(root, verbose, fail_fast, concurrency, recorder, None)
+    }
+
+    /// Creates a runner that records duration history and appends NDJSON run
+    /// events (TASK-0039) when an event stream is provided.
+    pub fn with_recorder_and_events(
+        root: PathBuf,
+        verbose: bool,
+        fail_fast: bool,
+        concurrency: usize,
+        recorder: Option<Arc<DurationRecorder>>,
+        events: Option<Arc<crate::event_stream::EventStream>>,
+    ) -> Self {
+        let recorder_sink = match &recorder {
             Some(recorder) => {
                 let recorder = Arc::clone(recorder);
-                Arc::new(move |event| recorder.observe(&event))
+                Some(
+                    Arc::new(move |event: crate::executor::Event| recorder.observe(&event))
+                        as Arc<dyn crate::executor::EventSink>,
+                )
             }
-            None => Arc::new(|_| {}),
+            None => None,
+        };
+        let events_sink = match &events {
+            Some(stream) => {
+                let stream = Arc::clone(stream);
+                Some(
+                    Arc::new(move |event: crate::executor::Event| stream.emit_event(event))
+                        as Arc<dyn crate::executor::EventSink>,
+                )
+            }
+            None => None,
+        };
+        let events: Arc<dyn crate::executor::EventSink> = match (recorder_sink, events_sink) {
+            (Some(recorder), Some(events)) => Arc::new(move |event: crate::executor::Event| {
+                recorder.emit(event.clone());
+                events.emit(event);
+            }),
+            (Some(recorder), None) => recorder,
+            (None, Some(events)) => events,
+            (None, None) => Arc::new(|_| {}),
         };
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),

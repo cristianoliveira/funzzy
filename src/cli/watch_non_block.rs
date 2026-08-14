@@ -24,6 +24,8 @@ pub struct WatchNonBlockCommand {
     fail_fast: bool,
     run_on_init: bool,
     control_socket: Option<PathBuf>,
+    /// NDJSON run-event stream destination (TASK-0039); None = no stream.
+    events: Option<Arc<crate::event_stream::EventStream>>,
 }
 
 impl WatchNonBlockCommand {
@@ -34,12 +36,33 @@ impl WatchNonBlockCommand {
         run_on_init: bool,
         control_socket: Option<PathBuf>,
     ) -> Self {
+        Self::with_events(
+            watches,
+            verbose,
+            fail_fast,
+            run_on_init,
+            control_socket,
+            None,
+        )
+    }
+
+    /// Creates the non-block watch command with an optional NDJSON run-event
+    /// stream (TASK-0039).
+    pub fn with_events(
+        watches: Watches,
+        verbose: bool,
+        fail_fast: bool,
+        run_on_init: bool,
+        control_socket: Option<PathBuf>,
+        events: Option<Arc<crate::event_stream::EventStream>>,
+    ) -> Self {
         WatchNonBlockCommand {
             watches,
             verbose,
             fail_fast,
             run_on_init,
             control_socket,
+            events,
         }
     }
 }
@@ -78,6 +101,7 @@ impl Command for WatchNonBlockCommand {
         let worker_outputs = Arc::clone(&outputs);
         let broker_state = Arc::clone(&broker);
         let recorder_state = Arc::clone(&recorder);
+        let events_state = self.events.clone();
         let worker = Arc::new(workers::Worker::with_root_and_concurrency_and_outputs(
             self.verbose,
             self.fail_fast,
@@ -86,6 +110,9 @@ impl Command for WatchNonBlockCommand {
             move |event| {
                 recorder_state.observe(&event);
                 coordinator_state.observe(&event);
+                if let Some(stream) = &events_state {
+                    stream.emit_event(event.clone());
+                }
                 worker_state.lock().unwrap().apply(event);
                 broker_state.publish();
             },

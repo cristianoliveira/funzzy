@@ -413,3 +413,61 @@ fn jobs_parallel_group_keeps_barriers_and_execution_semantics() {
     assert!(directory.join("b.ready").exists());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn run_events_flag_writes_ndjson_stream() {
+    // TASK-0039: `--events FILE` appends NDJSON run events; the stream must
+    // contain started/task_terminal/finished records with schema version,
+    // generation identity, and the final order-independent outcome.
+    let directory = fixture("events");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: ok @quick\n    run: 'true'\n  - name: bad @quick\n    run: 'exit 1'\n",
+    );
+    let events_path = directory.join("run-events.ndjson");
+
+    fzz(&directory)
+        .args(["run", "@quick", "--events", events_path.to_str().unwrap()])
+        .assert()
+        .code(1);
+
+    let content = std::fs::read_to_string(&events_path).expect("events file");
+    let records: Vec<serde_json::Value> = content
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("valid ndjson"))
+        .collect();
+    assert!(!records.is_empty(), "stream must not be empty");
+    for record in &records {
+        assert_eq!(record["schemaVersion"], 1, "schema on every record");
+        assert!(record["tsMs"].is_number());
+    }
+    assert!(
+        records.iter().any(|r| r["event"] == "started"),
+        "started record: {content}"
+    );
+    assert!(
+        records
+            .iter()
+            .any(|r| r["event"] == "task_terminal" && r["state"] == "failed"),
+        "failed task_terminal: {content}"
+    );
+    let finished = records
+        .iter()
+        .find(|r| r["event"] == "finished")
+        .expect("finished record");
+    assert!(
+        finished["failures"]
+            .as_array()
+            .map(|f| !f.is_empty())
+            .unwrap_or(false),
+        "finished must carry order-independent failures: {finished}"
+    );
+    // Every task record has stable identity.
+    assert!(
+        records
+            .iter()
+            .all(|r| r["runId"].is_number() || r["event"] == "tick"),
+        "run identity on records: {content}"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}

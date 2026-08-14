@@ -54,6 +54,8 @@ pub struct Arguments {
     pub config: Option<String>,
     pub log_truncate_on_change: bool,
     pub log_file: Option<String>,
+    /// NDJSON run-event stream destination (TASK-0039); None = no stream.
+    pub events_file: Option<String>,
     pub control_socket: Option<String>,
     pub migrate: bool,
     pub on_busy: OnBusy,
@@ -84,6 +86,7 @@ impl Arguments {
             .cloned()
             .filter(|value| !value.is_empty());
         let log_file = matches.get_one::<String>("log_file").cloned();
+        let events_file = matches.get_one::<String>("events_file").cloned();
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
         let (action, migrate) = match matches.subcommand() {
@@ -185,6 +188,7 @@ impl Arguments {
             config,
             log_truncate_on_change: matches.get_flag("log_truncate_on_change"),
             log_file,
+            events_file,
             control_socket,
             migrate,
             on_busy: if matches.get_flag("restart") {
@@ -281,6 +285,14 @@ fn command() -> Command {
                 .value_name("file")
                 .value_parser(clap::builder::ValueParser::string())
                 .help("Write all output to the specified log file in addition to the console."),
+        )
+        .arg(
+            Arg::new("events_file")
+                .long("events")
+                .global(true)
+                .value_name("file")
+                .value_parser(clap::builder::ValueParser::string())
+                .help("Append NDJSON run events (started/tick/task_terminal/finished/cancelled) to the specified file (TASK-0039)."),
         )
         .arg(
             Arg::new("control_socket")

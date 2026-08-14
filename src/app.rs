@@ -62,6 +62,20 @@ pub fn run() {
         stdout::info(&format!("Logging output to {}", log_path.display()));
     }
 
+    // NDJSON run-event stream (TASK-0039): opened once, shared by every
+    // executor sink in this process; None keeps behavior byte-identical.
+    let event_stream = match args.events_file.as_deref() {
+        Some(path) if !path.trim().is_empty() => {
+            let stream = crate::event_stream::EventStream::open(std::path::Path::new(path))
+                .unwrap_or_else(|err| {
+                    stdout::failure("Failed to open run event stream", err.to_string())
+                });
+            stdout::info(&format!("Appending run events to {}", path));
+            Some(Arc::new(stream))
+        }
+        _ => None,
+    };
+
     // Resolve the workspace root once and anchor all watch planning,
     // config discovery, and command template preparation to it.
     let workspace_root = std::env::current_dir().expect("Failed to get current directory");
@@ -96,13 +110,13 @@ pub fn run() {
             .with_debounce(debounce);
             match wanted {
                 Some(target) => match watches.select_target(target) {
-                    Some(selected) => execute_watch_command(selected, args),
+                    Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
                     None => stdout::failure(
                         &format!("No target found for '{}'", target),
                         rules::available_targets(&rules),
                     ),
                 },
-                None => execute_watch_command(watches, args),
+                None => execute_watch_command(watches, args, event_stream.clone()),
             }
         }
         Action::List => {
@@ -136,7 +150,7 @@ pub fn run() {
 
             let shutdown = install_shutdown_signal_handler();
             let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
-            let command = RunCommand::with_recorder(
+            let command = RunCommand::with_recorder_and_events(
                 workspace_root.clone(),
                 args.verbose,
                 fail_fast,
@@ -148,6 +162,7 @@ pub fn run() {
                         STATE_SCHEMA_VERSION,
                     ),
                 )))),
+                event_stream.clone(),
             );
             let result = command.execute(plan, target);
             let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
@@ -218,7 +233,11 @@ pub fn run() {
                         stdout::failure("Invalid config file.", err);
                     }
 
-                    execute_watch_command(Watches::with_root(watch_rules, workspace_root), args);
+                    execute_watch_command(
+                        Watches::with_root(watch_rules, workspace_root),
+                        args,
+                        event_stream.clone(),
+                    );
                 }
                 Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
             };
@@ -443,7 +462,11 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
         .unwrap_or(default)
 }
 
-fn execute_watch_command(watches: Watches, mut args: Arguments) {
+fn execute_watch_command(
+    watches: Watches,
+    mut args: Arguments,
+    event_stream: Option<Arc<crate::event_stream::EventStream>>,
+) {
     let possible_config_paths = match args.config.as_deref() {
         None => {
             let dir = watches.root();
@@ -580,15 +603,22 @@ fn execute_watch_command(watches: Watches, mut args: Arguments) {
         // them. Catch both and route through the shared ownership path before
         // exit so no descendant is orphaned (TASK-0030).
         let _shutdown = install_shutdown_signal_handler();
-        execute(WatchNonBlockCommand::new(
+        execute(WatchNonBlockCommand::with_events(
             watches,
             verbose,
             fail_fast,
             run_on_init,
             args.control_socket.map(std::path::PathBuf::from),
+            event_stream,
         ))
     } else {
-        execute(WatchCommand::new(watches, verbose, fail_fast, run_on_init))
+        execute(WatchCommand::with_events(
+            watches,
+            verbose,
+            fail_fast,
+            run_on_init,
+            event_stream,
+        ))
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");

@@ -27,13 +27,27 @@ impl RunCommand {
         concurrency: usize,
         recorder: Option<Arc<DurationRecorder>>,
     ) -> Self {
+        Self::with_recorder_and_events(root, verbose, fail_fast, concurrency, recorder, None)
+    }
+
+    /// Creates the local run command with optional duration recorder and
+    /// NDJSON run-event stream (TASK-0039).
+    pub fn with_recorder_and_events(
+        root: PathBuf,
+        verbose: bool,
+        fail_fast: bool,
+        concurrency: usize,
+        recorder: Option<Arc<DurationRecorder>>,
+        events: Option<Arc<crate::event_stream::EventStream>>,
+    ) -> Self {
         Self {
-            workflow: WorkflowRunner::with_recorder(
+            workflow: WorkflowRunner::with_recorder_and_events(
                 root,
                 verbose,
                 fail_fast,
                 concurrency,
                 recorder,
+                events,
             ),
         }
     }

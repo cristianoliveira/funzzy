@@ -243,8 +243,27 @@ pub struct BlockingStrategy {
 
 impl BlockingStrategy {
     pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, concurrency: usize) -> Self {
+        Self::with_events(root, verbose, fail_fast, concurrency, None)
+    }
+
+    /// Creates the blocking strategy with an optional NDJSON run-event stream
+    /// (TASK-0039).
+    pub fn with_events(
+        root: PathBuf,
+        verbose: bool,
+        fail_fast: bool,
+        concurrency: usize,
+        events: Option<Arc<crate::event_stream::EventStream>>,
+    ) -> Self {
         Self {
-            workflow: WorkflowRunner::new(root, verbose, fail_fast, concurrency),
+            workflow: WorkflowRunner::with_recorder_and_events(
+                root,
+                verbose,
+                fail_fast,
+                concurrency,
+                None,
+                events,
+            ),
         }
     }
 }
