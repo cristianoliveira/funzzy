@@ -1,7 +1,7 @@
 ---
 id: TASK-0022
 title: Route synthetic path events through the control socket
-status: todo
+status: done
 depends_on: [TASK-0021, TASK-0018]
 priority: normal
 tags: [rust, cli, ipc, control-socket, workflow, pi-watcher, tdd]
