@@ -1,7 +1,7 @@
 ---
 id: TASK-0048
 title: Render agent-safe structured control responses
-status: todo
+status: done
 depends_on: [TASK-0039, TASK-0044, TASK-0047]
 priority: high
 tags: [rust, cli, axi, toon, json, output, tdd]
