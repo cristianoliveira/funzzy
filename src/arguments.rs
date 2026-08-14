@@ -9,6 +9,8 @@
 
 use clap::{Arg, ArgAction, Command};
 
+use crate::cli::ControlAction;
+
 /// Busy-run policy: what to do when a change arrives while a run is active.
 /// Replaces the V1 `--non-block` flag (TASK-0018).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,12 @@ pub enum Action {
     Explain { path: String },
     /// `fzz init [--migrate]`: create or migrate the default config file.
     Init,
+    /// `fzz control status|list|run TARGET`: talk to a running watcher.
+    Control {
+        action: ControlAction,
+        /// `control --socket <PATH>` override.
+        socket: Option<String>,
+    },
     /// `fzz exec -- PROGRAM ARG...`: ad-hoc command over stdin-supplied paths.
     Exec { command: Vec<String> },
 }
@@ -96,6 +104,21 @@ impl Arguments {
                 (Action::Explain { path }, false)
             }
             Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
+            Some(("control", sub)) => {
+                let socket = sub.get_one::<String>("socket").cloned();
+                let action = match sub.subcommand() {
+                    Some(("status", _)) => ControlAction::Status,
+                    Some(("list", _)) => ControlAction::List,
+                    Some(("run", run_sub)) => ControlAction::Run {
+                        target: run_sub
+                            .get_one::<String>("target")
+                            .cloned()
+                            .expect("target is required by clap"),
+                    },
+                    _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
+                };
+                (Action::Control { action, socket }, false)
+            }
             Some(("exec", sub)) => {
                 let command: Vec<String> = sub
                     .get_many::<String>("command")
@@ -301,6 +324,46 @@ fn command() -> Command {
                         .help("Program and arguments to run on each change."),
                 ),
         )
+        .subcommand(
+            Command::new("control")
+                .about("Interact with a running watcher over its control socket.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .subcommand_required(true)
+                .arg_required_else_help(true)
+                .arg(
+                    Arg::new("socket")
+                        .long("socket")
+                        .value_name("PATH")
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Control socket path (overrides --control-socket and on.socket)."),
+                )
+                .subcommand(
+                    Command::new("status")
+                        .about("Print the running watcher's state.")
+                        .version(env!("CARGO_PKG_VERSION")),
+                )
+                .subcommand(
+                    Command::new("list")
+                        .about("List targets from the running watcher.")
+                        .version(env!("CARGO_PKG_VERSION")),
+                )
+                .subcommand(
+                    Command::new("run")
+                        .about("Trigger a named target on the running watcher and report the scheduled generation.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Trigger a named target on the running watcher and report the scheduled generation.\n\nThis is remote execution: an existing watcher owns the work. Local execution is `fzz run TARGET`. Atomic await and `--wait` land with TASK-0044.",
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .value_name("TARGET")
+                                .num_args(1)
+                                .required(true)
+                                .value_parser(clap::builder::ValueParser::string())
+                                .help("Exact task name, @tag, or name substring on the running watcher."),
+                        ),
+                ),
+        )
 }
 
 const HELP_TEMPLATE: &str = "\
@@ -318,6 +381,7 @@ Commands:
   run TARGET          Run configured tasks once locally, without watcher IPC.
   explain PATH        Show which tasks a path matches or is ignored by.
   exec                Run an ad-hoc command over stdin-supplied paths.
+  control             Interact with a running watcher over its control socket.
 
 {all-args}
 
@@ -398,6 +462,91 @@ mod tests {
     fn migrate_without_init_is_unknown() {
         // `--migrate` is scoped to `init`; without it, it is not a valid flag.
         assert!(parse(&["--migrate"]).is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // control
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn control_without_subcommand_fails() {
+        assert!(parse(&["control"]).is_err());
+    }
+
+    #[test]
+    fn control_status_selects_status() {
+        assert_eq!(
+            parse_action(&["control", "status"]),
+            Action::Control {
+                action: ControlAction::Status,
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_list_selects_list() {
+        assert_eq!(
+            parse_action(&["control", "list"]),
+            Action::Control {
+                action: ControlAction::List,
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_run_carries_target() {
+        assert_eq!(
+            parse_action(&["control", "run", "@agent-final"]),
+            Action::Control {
+                action: ControlAction::Run {
+                    target: "@agent-final".to_string(),
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_run_without_target_fails() {
+        assert!(parse(&["control", "run"]).is_err());
+    }
+
+    #[test]
+    fn control_socket_flag_carries_path() {
+        let args = parse(&["control", "--socket", "/tmp/sock", "status"]).expect("parse");
+        match args.action {
+            Action::Control { action, socket } => {
+                assert_eq!(action, ControlAction::Status);
+                assert_eq!(socket.as_deref(), Some("/tmp/sock"));
+            }
+            other => panic!("expected Control action, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn control_status_accepts_global_control_socket() {
+        let args = parse(&["--control-socket", "/tmp/global", "control", "status"]).expect("parse");
+        assert_eq!(args.control_socket.as_deref(), Some("/tmp/global"));
+        assert_eq!(
+            args.action,
+            Action::Control {
+                action: ControlAction::Status,
+                socket: None
+            }
+        );
+    }
+
+    #[test]
+    fn control_unknown_subcommand_fails() {
+        assert!(parse(&["control", "bogus"]).is_err());
+    }
+
+    #[test]
+    fn control_emit_is_not_yet_a_command() {
+        // `emit` lands with TASK-0022; until then it must be a usage error.
+        assert!(parse(&["control", "emit", "src/x.rs"]).is_err());
     }
 
     #[test]

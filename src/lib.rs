@@ -6,6 +6,7 @@ pub mod cli;
 pub mod cmd;
 pub mod config;
 pub mod control;
+pub mod control_client;
 pub mod environment;
 pub mod errors;
 pub mod executor;

@@ -63,6 +63,15 @@ pub fn run() {
         // Commands
         Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
         Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
+        Action::Control { action, socket } => {
+            let command = ControlCommand::new(
+                action,
+                socket,
+                args.control_socket.clone(),
+                args.config.clone(),
+            );
+            execute(command);
+        }
 
         Action::Watch { target: ref wanted } => {
             let rules = load_rules(&args.config);
