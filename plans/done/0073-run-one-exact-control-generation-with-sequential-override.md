@@ -1,7 +1,7 @@
 ---
 id: TASK-0073
 title: Run one exact control generation with sequential override
-status: todo
+status: done
 depends_on: [TASK-0071, TASK-0072, TASK-0044, TASK-0047]
 priority: high
 tags: [rust, control-socket, concurrency, capabilities, freshness, tdd]
