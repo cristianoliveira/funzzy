@@ -1,7 +1,7 @@
 ---
 id: TASK-0034
 title: Make explain show filtered execution topology
-status: todo
+status: done
 depends_on: [TASK-0019, TASK-0025, TASK-0033]
 priority: high
 tags: [rust, cli, explain, workflow, diagnostics, tdd]
