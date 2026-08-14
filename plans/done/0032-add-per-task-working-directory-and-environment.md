@@ -1,7 +1,7 @@
 ---
 id: TASK-0032
 title: Add per-task working directory and environment
-status: doing
+status: done
 depends_on: [TASK-0025]
 priority: high
 tags: [rust, workflow, process, monorepo, config, tdd]
