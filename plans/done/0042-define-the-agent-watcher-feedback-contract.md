@@ -1,7 +1,7 @@
 ---
 id: TASK-0042
 title: Define the agent watcher feedback contract
-status: doing
+status: done
 depends_on: [TASK-0014]
 priority: high
 tags: [design, axi, control-socket, protocol, determinism]
