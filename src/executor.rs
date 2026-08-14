@@ -62,6 +62,12 @@ pub enum Event {
         /// Stable execution signature for target runs; the profile identity
         /// that duration history records against (TASK-0054).
         execution_signature: Option<ExecutionSignature>,
+        /// Per-generation effective concurrency (TASK-0073): Some(1) for a
+        /// sequential override generation; None means the configured bound.
+        effective_concurrency: Option<usize>,
+        /// Override source label (TASK-0073): "control" for an exact
+        /// control-generation override; None for configured/native runs.
+        concurrency_source: Option<&'static str>,
     },
     Finished {
         run_id: u64,
@@ -191,6 +197,12 @@ pub struct RunMetadata {
     /// Stable execution signature for target runs; the profile identity that
     /// duration history records against (TASK-0054).
     pub execution_signature: Option<ExecutionSignature>,
+    /// Per-generation effective concurrency (TASK-0073): Some(1) for a
+    /// sequential override run; None keeps the executor's configured limit.
+    pub effective_concurrency: Option<usize>,
+    /// Override source label (TASK-0073): "control" when this generation was
+    /// explicitly requested sequential over the control socket.
+    pub concurrency_source: Option<&'static str>,
 }
 
 impl RunMetadata {
@@ -204,6 +216,8 @@ impl RunMetadata {
             changed: vec![],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 
@@ -225,6 +239,8 @@ impl RunMetadata {
             changed,
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 
@@ -238,6 +254,20 @@ impl RunMetadata {
     ) -> Self {
         self.target = target;
         self.execution_signature = execution_signature;
+        self
+    }
+
+    /// Attaches a per-generation effective concurrency override (TASK-0073):
+    /// Some(1) for a sequential control run, None for the configured bound.
+    pub fn with_effective_concurrency(mut self, effective_concurrency: Option<usize>) -> Self {
+        self.effective_concurrency = effective_concurrency;
+        self
+    }
+
+    /// Attaches the override source label (TASK-0073): "control" when the
+    /// generation was explicitly requested sequential over the control socket.
+    pub fn with_concurrency_source(mut self, concurrency_source: Option<&'static str>) -> Self {
+        self.concurrency_source = concurrency_source;
         self
     }
 }
@@ -406,6 +436,8 @@ impl Executor {
             commands: plan.commands().iter().map(CommandLine::display).collect(),
             target: metadata.target.clone(),
             execution_signature: metadata.execution_signature.clone(),
+            effective_concurrency: metadata.effective_concurrency,
+            concurrency_source: metadata.concurrency_source,
         });
 
         Run {
@@ -433,7 +465,14 @@ impl Executor {
                         run.queued.push_back(task);
                     }
                     Stage::Parallel { tasks, .. } => {
-                        run.stage_limit = self.concurrency_limit.min(tasks.len());
+                        // TASK-0073: a per-generation sequential override
+                        // caps this stage at one; otherwise the configured
+                        // executor limit applies.
+                        let limit = run
+                            .metadata
+                            .effective_concurrency
+                            .unwrap_or(self.concurrency_limit);
+                        run.stage_limit = limit.min(tasks.len());
                         run.queued.extend(tasks);
                     }
                 }

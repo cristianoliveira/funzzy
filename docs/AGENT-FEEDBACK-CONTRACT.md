@@ -214,10 +214,10 @@ Policy (fixed by TASK-0045):
 - One cheap `capabilities` request reports protocol/schema version, watcher
   version, supported methods, optional fields, output formats, limits, and
   features (`atomicAwait`, `subscription`, `correlatedSnapshots`,
-  `outputRetrieval`, `pendingWork`).
+  `outputRetrieval`, `pendingWork`, `durationEstimates`, `sequentialOverride`).
 - Every feature stays `false` until its implementation task lands; methods list
   only what this server implements. Clients gate await/emit/cancel/output
-  retrieval on negotiated facts, never on package versions.
+  retrieval/sequential on negotiated facts, never on package versions.
 
 ## §7 Compatibility policy
 

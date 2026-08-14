@@ -30,6 +30,12 @@ struct RunRequest {
     target: Option<String>,
     /// Stable execution signature of the resolved plan (TASK-0054).
     execution_signature: Option<ExecutionSignature>,
+    /// Per-generation effective concurrency (TASK-0073): Some(1) for a
+    /// sequential control run; None keeps the worker's configured bound.
+    effective_concurrency: Option<usize>,
+    /// Override source label (TASK-0073): "control" when the generation was
+    /// explicitly requested sequential over the control socket.
+    concurrency_source: Option<&'static str>,
 }
 
 /// Result of an exact-generation cancel (TASK-0046): the generation matched
@@ -302,7 +308,9 @@ impl Worker {
                                 .with_duration_profile(
                                     req.target.clone(),
                                     req.execution_signature.clone(),
-                                ),
+                                )
+                                .with_effective_concurrency(req.effective_concurrency)
+                                .with_concurrency_source(req.concurrency_source),
                                 req.plan,
                             ),
                         );
@@ -323,7 +331,9 @@ impl Worker {
                                     .with_duration_profile(
                                         req.target.clone(),
                                         req.execution_signature.clone(),
-                                    ),
+                                    )
+                                    .with_effective_concurrency(req.effective_concurrency)
+                                    .with_concurrency_source(req.concurrency_source),
                                     req.plan,
                                 ),
                             );
@@ -471,7 +481,17 @@ impl Worker {
     /// without parsing the trigger string. Filesystem/init/emit runs go
     /// through [`Worker::schedule_plan_correlated`] and carry no signature,
     /// so they never contaminate target history.
-    pub(crate) fn schedule_target(&self, plan: RunPlan, target: &str) -> Result<u64, String> {
+    ///
+    /// `sequential` (TASK-0073) requests effective concurrency one for this
+    /// exact generation; the signature uses the effective concurrency so
+    /// sequential duration history cannot contaminate parallel estimates.
+    pub(crate) fn schedule_target(
+        &self,
+        plan: RunPlan,
+        target: &str,
+        sequential: bool,
+    ) -> Result<u64, String> {
+        let effective = if sequential { 1 } else { self.concurrency };
         // The trigger label stays `control:<target>` (compatibility surface);
         // profile identity is carried structurally via `target` + signature,
         // never parsed from the trigger string.
@@ -479,11 +499,9 @@ impl Worker {
             self.prepare_request(plan, &format!("control:{}", target), None, None, vec![])?;
         let request = RunRequest {
             target: Some(target.to_owned()),
-            execution_signature: Some(
-                request
-                    .plan
-                    .execution_signature(self.concurrency, self.fail_fast),
-            ),
+            execution_signature: Some(request.plan.execution_signature(effective, self.fail_fast)),
+            effective_concurrency: Some(effective),
+            concurrency_source: sequential.then_some("control"),
             ..request
         };
         self.dispatch(request)
@@ -533,6 +551,8 @@ impl Worker {
             predecessor: None,
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         })
     }
 
@@ -1162,7 +1182,7 @@ mod tests {
         let signature = resolved.execution_signature(1, false);
 
         worker
-            .schedule_target(plan, "build")
+            .schedule_target(plan, "build", false)
             .expect("target schedules");
         // Wait until the run reaches terminal (worker polls at 200ms max).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

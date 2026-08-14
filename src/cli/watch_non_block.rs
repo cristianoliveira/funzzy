@@ -71,6 +71,7 @@ impl Command for WatchNonBlockCommand {
             Arc::clone(&control_state),
             Arc::clone(&coordinator),
             Some(snapshot_estimates),
+            self.watches.concurrency(),
         ));
         let worker_state = Arc::clone(&control_state);
         let coordinator_state = Arc::clone(&coordinator);

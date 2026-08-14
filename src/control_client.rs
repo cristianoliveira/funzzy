@@ -256,6 +256,9 @@ pub struct CapabilityFeatures {
     pub output_retrieval: bool,
     pub pending_work: bool,
     pub duration_estimates: bool,
+    /// Exact-generation sequential override (TASK-0073); absent on legacy
+    /// servers, so clients must check before sending `sequential`.
+    pub sequential_override: bool,
 }
 
 impl CapabilitiesSnapshot {
@@ -340,6 +343,7 @@ impl CapabilitiesSnapshot {
             output_retrieval: read_feature(object, "outputRetrieval"),
             pending_work: read_feature(object, "pendingWork"),
             duration_estimates: read_feature(object, "durationEstimates"),
+            sequential_override: read_feature(object, "sequentialOverride"),
         };
         Ok(Self {
             token,
@@ -783,8 +787,11 @@ impl ControlClient {
     }
 
     /// Requests `run` for an exact target; returns the scheduled generation.
-    pub fn run(&mut self, target: &str) -> Result<u64, ControlClientError> {
-        let result = self.call("run", serde_json::json!({ "target": target }))?;
+    /// `sequential` (TASK-0073) is an additive typed parameter requesting
+    /// effective concurrency one for this exact generation.
+    pub fn run(&mut self, target: &str, sequential: bool) -> Result<u64, ControlClientError> {
+        let params = serde_json::json!({ "target": target, "sequential": sequential });
+        let result = self.call("run", params)?;
         result.get("runId").and_then(Value::as_u64).ok_or_else(|| {
             ControlClientError::Malformed("run result must carry a numeric \"runId\"".to_string())
         })
@@ -1084,7 +1091,7 @@ mod tests {
         let result = serde_json::json!({"runId": 7});
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
-        let generation = client.run("@agent-final").expect("run");
+        let generation = client.run("@agent-final", false).expect("run");
         handle.join().expect("server thread");
         assert_eq!(generation, 7);
     }
@@ -1094,7 +1101,7 @@ mod tests {
         let result = serde_json::json!({});
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
-        let err = client.run("x").expect_err("missing runId must fail");
+        let err = client.run("x", false).expect_err("missing runId must fail");
         handle.join().expect("server thread");
         assert!(matches!(err, ControlClientError::Malformed(_)));
     }
@@ -1218,7 +1225,9 @@ mod tests {
         .to_string();
         let (path, handle) = serving_socket(response);
         let mut client = ControlClient::connect(&path).expect("connect");
-        let err = client.run("nope").expect_err("server error must surface");
+        let err = client
+            .run("nope", false)
+            .expect_err("server error must surface");
         handle.join().expect("server thread");
         match &err {
             ControlClientError::Server { code, message, .. } => {
@@ -1518,6 +1527,8 @@ mod tests {
         assert!(caps.features.atomic_await);
         assert!(caps.features.output_retrieval);
         assert!(!caps.features.subscription);
+        // TASK-0073: absent on legacy servers, never assumed.
+        assert!(!caps.features.sequential_override);
         assert!(caps.has_method("cancel"));
         assert!(!caps.has_method("subscribe"));
     }

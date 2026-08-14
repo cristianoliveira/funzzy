@@ -236,6 +236,8 @@ mod tests {
             commands: vec!["make all".to_owned()],
             target: target.map(str::to_owned),
             execution_signature: signature.map(sig),
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 

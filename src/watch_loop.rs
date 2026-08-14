@@ -404,7 +404,7 @@ impl NonBlockStrategy {
                     path,
                     Arc::clone(&self.control_state),
                     targets,
-                    move |target| run_runner.run_target(&target),
+                    move |target, sequential| run_runner.run_target(&target, sequential),
                     move |path| emit_runner.emit_path(&path),
                     coordinator,
                     outputs,
@@ -417,7 +417,7 @@ impl NonBlockStrategy {
                     path,
                     Arc::clone(&self.control_state),
                     targets,
-                    move |target| run_runner.run_target(&target),
+                    move |target, sequential| run_runner.run_target(&target, sequential),
                     move |path| emit_runner.emit_path(&path),
                     coordinator,
                     outputs,
@@ -431,7 +431,7 @@ impl NonBlockStrategy {
                 path,
                 Arc::clone(&self.control_state),
                 targets,
-                move |target| run_runner.run_target(&target),
+                move |target, sequential| run_runner.run_target(&target, sequential),
                 move |path| emit_runner.emit_path(&path),
                 coordinator,
                 outputs,
@@ -467,14 +467,17 @@ impl NonBlockStrategy {
     /// Runs a control-requested target through the worker run contract:
     /// cancel the active run, then schedule the target's rules with its
     /// structural target identity and execution signature (TASK-0054).
-    pub fn run_target(&self, target: &str) -> Result<u64, String> {
+    /// `sequential` (TASK-0073) requests effective concurrency one for this
+    /// exact generation only; later native generations keep their configured
+    /// concurrency.
+    pub fn run_target(&self, target: &str, sequential: bool) -> Result<u64, String> {
         let plan = self
             .watches
             .target_plan(target)
             .ok_or_else(|| format!("No target found for '{}'", target))?;
         let commands = plan.commands().len();
         self.worker.cancel_running_tasks()?;
-        let run_id = self.worker.schedule_target(plan, target)?;
+        let run_id = self.worker.schedule_target(plan, target, sequential)?;
         diagnostics::debug(&diagnostics::Record {
             source: Some("control"),
             decision: Some("scheduled"),
@@ -720,7 +723,7 @@ mod tests {
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let run_id = strategy
-            .run_target("my tests")
+            .run_target("my tests", false)
             .expect("known target should schedule");
         assert_eq!(run_id, 1);
     }
@@ -732,7 +735,9 @@ mod tests {
         let control_state = Arc::new(Mutex::new(ControlState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
-        let err = strategy.run_target("nope").expect_err("unknown target");
+        let err = strategy
+            .run_target("nope", false)
+            .expect_err("unknown target");
         assert!(
             err.contains("No target found for 'nope'"),
             "unexpected: {}",

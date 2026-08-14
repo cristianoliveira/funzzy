@@ -119,6 +119,7 @@ impl Arguments {
                             .expect("target is required by clap"),
                         wait: run_sub.get_flag("wait"),
                         timeout: run_sub.get_one::<Duration>("timeout").copied(),
+                        sequential: run_sub.get_flag("sequential"),
                     },
                     Some(("emit", emit_sub)) => ControlAction::Emit {
                         path: emit_sub
@@ -438,6 +439,12 @@ fn command() -> Command {
                                 .action(clap::ArgAction::SetTrue)
                                 .requires("timeout")
                                 .help("Await the scheduled generation to terminal and return its observation."),
+                        )
+                        .arg(
+                            Arg::new("sequential")
+                                .long("sequential")
+                                .action(clap::ArgAction::SetTrue)
+                                .help("Run this exact generation with effective concurrency one (TASK-0073)."),
                         )
                         .arg(
                             Arg::new("timeout")
@@ -792,6 +799,35 @@ mod tests {
                     target: "@agent-final".to_string(),
                     wait: false,
                     timeout: None,
+                    sequential: false,
+                },
+                socket: None,
+            }
+        );
+    }
+
+    #[test]
+    fn control_run_sequential_flag_carries_through() {
+        assert_eq!(
+            parse_action(&["control", "run", "@agent-final", "--sequential"]),
+            Action::Control {
+                action: ControlAction::Run {
+                    target: "@agent-final".to_string(),
+                    wait: false,
+                    timeout: None,
+                    sequential: true,
+                },
+                socket: None,
+            }
+        );
+        assert_eq!(
+            parse_action(&["ctl", "run", "@agent-final", "--sequential"]),
+            Action::Control {
+                action: ControlAction::Run {
+                    target: "@agent-final".to_string(),
+                    wait: false,
+                    timeout: None,
+                    sequential: true,
                 },
                 socket: None,
             }
@@ -1036,6 +1072,7 @@ mod tests {
                     target: "@agent-final".to_string(),
                     wait: true,
                     timeout: Some(Duration::from_secs(30)),
+                    sequential: false,
                 },
                 socket: None,
             }

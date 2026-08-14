@@ -22,6 +22,8 @@ pub enum ControlAction {
         wait: bool,
         /// Required with `--wait`; bounds the server-side await.
         timeout: Option<Duration>,
+        /// Effective concurrency one for this exact generation (TASK-0073).
+        sequential: bool,
     },
     Emit {
         path: String,
@@ -188,9 +190,24 @@ impl Command for ControlCommand {
                 target,
                 wait,
                 timeout,
+                sequential,
             } => {
+                // TASK-0073: never silently strip the sequential flag and
+                // retry parallel. When the caller requested the override,
+                // negotiate capabilities first; a legacy server that cannot
+                // honor it fails with an actionable error before scheduling.
+                if *sequential {
+                    let capabilities = client
+                        .capabilities()
+                        .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                    if !capabilities.features.sequential_override {
+                        return Err(FzzError::GenericError(
+                            "the running watcher does not support --sequential (sequentialOverride capability missing); upgrade funzzy or drop the flag".to_string(),
+                        ));
+                    }
+                }
                 let generation = client
-                    .run(target)
+                    .run(target, *sequential)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 print!("{}", render_run(generation));
                 if *wait {
@@ -871,6 +888,7 @@ mod tests {
                 output_retrieval: true,
                 pending_work: false,
                 duration_estimates: true,
+                sequential_override: true,
             },
         };
         let rendered = render_capabilities(&caps);

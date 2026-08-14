@@ -50,6 +50,8 @@ mod unix {
             commands: vec!["cargo test".to_string()],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,
@@ -82,6 +84,8 @@ mod unix {
             commands: vec!["cargo test auth".to_string()],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,
@@ -101,11 +105,12 @@ mod unix {
         let state = Arc::new(Mutex::new(ControlState::default()));
         let requested = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&requested);
-        let _server = ControlServer::start_with_runner(&path, state, vec![], move |target| {
-            captured.lock().unwrap().push(target);
-            Ok(7)
-        })
-        .unwrap();
+        let _server =
+            ControlServer::start_with_runner(&path, state, vec![], move |target, _sequential| {
+                captured.lock().unwrap().push(target);
+                Ok(7)
+            })
+            .unwrap();
 
         let response = call(
             &path,
@@ -130,7 +135,9 @@ mod unix {
             name: "final checks @agent-final".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server = ControlServer::start_with_runner(&path, state, targets, |_| Ok(1)).unwrap();
+        let _server =
+            ControlServer::start_with_runner(&path, state, targets, |_, _sequential| Ok(1))
+                .unwrap();
 
         let response = call(
             &path,
@@ -152,7 +159,7 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target| Ok(1),
+            |_target, _sequential| Ok(1),
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
@@ -199,7 +206,7 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target| Ok(1),
+            |_target, _sequential| Ok(1),
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
@@ -230,7 +237,7 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target| Ok(1),
+            |_target, _sequential| Ok(1),
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
@@ -426,7 +433,9 @@ mod unix {
             name: "checks".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server = ControlServer::start_with_runner(&path, state, targets, |_| Ok(1)).unwrap();
+        let _server =
+            ControlServer::start_with_runner(&path, state, targets, |_, _sequential| Ok(1))
+                .unwrap();
 
         let response = call(
             &path,

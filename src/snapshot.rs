@@ -47,6 +47,17 @@ pub struct CorrelatedSnapshot {
     /// legacy servers and non-target generations (omitted, never null).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimate: Option<RunEstimate>,
+    /// Configured scheduler concurrency of this watcher (TASK-0073): the
+    /// bound from config, fixed per watcher session.
+    pub configured_concurrency: usize,
+    /// Effective concurrency of this generation (TASK-0073): one for a
+    /// sequential override generation, otherwise the configured bound.
+    pub effective_concurrency: usize,
+    /// Override source label (TASK-0073): "control" for an exact control
+    /// generation override; "config" otherwise. Omitted only for legacy
+    /// servers that predate the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency_source: Option<String>,
 }
 
 struct Subscriber {
@@ -71,6 +82,9 @@ pub struct SnapshotBroker {
     /// Optional frozen run-start estimate lookup (TASK-0055): None keeps the
     /// legacy snapshot shape (no estimate key).
     estimates: Option<EstimateLookup>,
+    /// Configured scheduler concurrency, fixed per watcher session
+    /// (TASK-0073); reported verbatim on every snapshot.
+    configured_concurrency: usize,
     inner: Mutex<BrokerInner>,
 }
 
@@ -80,7 +94,7 @@ impl SnapshotBroker {
         state: Arc<Mutex<ControlState>>,
         coordinator: Arc<AwaitCoordinator>,
     ) -> Self {
-        Self::with_estimates(instance, state, coordinator, None)
+        Self::with_estimates(instance, state, coordinator, None, 1)
     }
 
     /// Creates a broker that attaches the frozen run-start estimate to each
@@ -91,12 +105,14 @@ impl SnapshotBroker {
         state: Arc<Mutex<ControlState>>,
         coordinator: Arc<AwaitCoordinator>,
         estimates: Option<EstimateLookup>,
+        configured_concurrency: usize,
     ) -> Self {
         let broker = Self {
             instance,
             state,
             coordinator,
             estimates,
+            configured_concurrency,
             inner: Mutex::new(BrokerInner::default()),
         };
         // Seed the idle snapshot so the first subscriber has an immediate value.
@@ -137,6 +153,13 @@ impl SnapshotBroker {
             failures: state.failures().to_vec(),
             paths: state.changed().to_vec(),
             estimate,
+            configured_concurrency: self.configured_concurrency,
+            // TASK-0073: effective defaults to configured for generations
+            // without an override; the source label rides the same state read.
+            effective_concurrency: state
+                .effective_concurrency()
+                .unwrap_or(self.configured_concurrency),
+            concurrency_source: Some(state.concurrency_source().unwrap_or("config").to_string()),
         }
     }
 
@@ -208,6 +231,8 @@ mod tests {
             commands: vec!["make all".to_owned()],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 
@@ -333,6 +358,7 @@ mod tests {
             Arc::clone(&state),
             Arc::clone(&coordinator),
             Some(lookup),
+            2,
         );
         let (_, snapshot) = with_estimates.subscribe();
         let json = serde_json::to_value(&snapshot).unwrap();
@@ -340,6 +366,9 @@ mod tests {
         assert_eq!(json["estimate"]["recommendedTimeoutMs"], 95_000);
         assert_eq!(json["estimate"]["confidence"], "medium");
         assert_eq!(json["estimate"]["source"], "measured");
+        assert_eq!(json["configuredConcurrency"], 2);
+        assert_eq!(json["effectiveConcurrency"], 2);
+        assert_eq!(json["concurrencySource"], "config");
     }
 
     #[test]
@@ -370,13 +399,15 @@ mod tests {
             failures: vec![],
         });
 
-        let broker = SnapshotBroker::new(
+        let broker = SnapshotBroker::with_estimates(
             ControlInstance {
                 token: "fz-7f3a".to_owned(),
                 started_at_epoch_ms: 1_710_000_000_000,
             },
             Arc::clone(&state),
             Arc::clone(&coordinator),
+            None,
+            2,
         );
         let (_, snapshot) = broker.subscribe();
 
@@ -395,5 +426,46 @@ mod tests {
         assert_eq!(json["durationMs"], 42);
         assert!(json["failures"].as_array().unwrap().is_empty());
         assert_eq!(json["paths"][0], "src/main.rs");
+        // TASK-0073 additive concurrency fields, matching the pi-watcher
+        // golden fixture: configured 2, effective 2, source "config" for a
+        // native run without any override.
+        assert_eq!(json["configuredConcurrency"], 2);
+        assert_eq!(json["effectiveConcurrency"], 2);
+        assert_eq!(json["concurrencySource"], "config");
+    }
+
+    #[test]
+    fn snapshot_reports_sequential_override_effective_concurrency() {
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        let mut started = started(5);
+        if let Event::Started {
+            effective_concurrency,
+            concurrency_source,
+            ..
+        } = &mut started
+        {
+            *effective_concurrency = Some(1);
+            *concurrency_source = Some("control");
+        }
+        let started_event = started.clone();
+        state.lock().unwrap().apply(started);
+        coordinator.observe(&started_event);
+
+        let broker = SnapshotBroker::with_estimates(
+            ControlInstance {
+                token: "fz-test".to_owned(),
+                started_at_epoch_ms: 1,
+            },
+            Arc::clone(&state),
+            Arc::clone(&coordinator),
+            None,
+            4,
+        );
+        let (_, snapshot) = broker.subscribe();
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["configuredConcurrency"], 4);
+        assert_eq!(json["effectiveConcurrency"], 1);
+        assert_eq!(json["concurrencySource"], "control");
     }
 }

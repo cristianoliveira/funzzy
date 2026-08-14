@@ -93,6 +93,15 @@ pub struct ControlState {
     /// snapshot builder.
     #[serde(skip)]
     tasks: Vec<TaskSnapshot>,
+    /// Per-generation effective concurrency (TASK-0073): Some(1) for a
+    /// sequential override generation; None = configured bound. Reported in
+    /// the correlated snapshot; never in the legacy status result.
+    #[serde(skip)]
+    effective_concurrency: Option<usize>,
+    /// Override source label (TASK-0073): "control" for an exact control
+    /// generation override; None for configured/native runs.
+    #[serde(skip)]
+    concurrency_source: Option<&'static str>,
 }
 
 impl Default for ControlState {
@@ -109,6 +118,8 @@ impl Default for ControlState {
             predecessor: None,
             superseded_by: None,
             tasks: vec![],
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 }
@@ -158,6 +169,18 @@ impl ControlState {
         &self.changed
     }
 
+    /// Per-generation effective concurrency (TASK-0073): None means the
+    /// configured bound applied.
+    pub fn effective_concurrency(&self) -> Option<usize> {
+        self.effective_concurrency
+    }
+
+    /// Override source label (TASK-0073): "control" for an exact control
+    /// generation override; None for configured/native runs.
+    pub fn concurrency_source(&self) -> Option<&'static str> {
+        self.concurrency_source
+    }
+
     pub fn apply(&mut self, event: Event) {
         match event {
             Event::Started {
@@ -167,6 +190,8 @@ impl ControlState {
                 predecessor,
                 changed,
                 commands,
+                effective_concurrency,
+                concurrency_source,
                 ..
             } => {
                 self.generation = run_id;
@@ -180,6 +205,8 @@ impl ControlState {
                 self.duration_ms = None;
                 self.failures.clear();
                 self.tasks.clear();
+                self.effective_concurrency = effective_concurrency;
+                self.concurrency_source = concurrency_source;
             }
             Event::Finished {
                 superseded_by,
@@ -248,7 +275,7 @@ impl EmitOutcome {
     }
 }
 
-type RunTarget = Arc<dyn Fn(String) -> Result<u64, String> + Send + Sync>;
+type RunTarget = Arc<dyn Fn(String, bool) -> Result<u64, String> + Send + Sync>;
 type EmitPath = Arc<dyn Fn(String) -> Result<EmitOutcome, String> + Send + Sync>;
 type CancelTarget = Arc<dyn Fn(u64) -> Result<CancelResult, String> + Send + Sync>;
 
@@ -286,7 +313,7 @@ impl ControlServer {
         run_target: F,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
     {
         Self::start_internal(
             path,
@@ -315,7 +342,7 @@ impl ControlServer {
         emit_path: E,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
         Self::start_with_coordinator(path, state, targets, run_target, emit_path, None, None)
@@ -335,7 +362,7 @@ impl ControlServer {
         outputs: Option<Arc<OutputRegistry>>,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
         Self::start_internal(
@@ -368,7 +395,7 @@ impl ControlServer {
         cancel_generation: C,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -405,7 +432,7 @@ impl ControlServer {
         broker: Arc<SnapshotBroker>,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -443,7 +470,7 @@ impl ControlServer {
         estimates: TargetEstimateProvider,
     ) -> io::Result<Self>
     where
-        F: Fn(String) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -962,6 +989,11 @@ fn process_request(
             instance,
             broker.is_some(),
             estimates.is_some(),
+            // TASK-0073: the sequential run override is implemented whenever a
+            // run target handler is wired (always in production); capability
+            // negotiation lets old clients detect support before sending the
+            // flag, and lets the extension fail closed on legacy servers.
+            run_target.is_some(),
         )),
         _ => Err((-32601, "Method not found", None)),
     };
@@ -1001,6 +1033,7 @@ fn capabilities_result(
     instance: &ControlInstance,
     subscription: bool,
     duration_estimates: bool,
+    sequential_override: bool,
 ) -> serde_json::Value {
     let mut methods = vec![
         "status",
@@ -1053,6 +1086,7 @@ fn capabilities_result(
             "outputRetrieval": true,
             "pendingWork": false,
             "durationEstimates": duration_estimates,
+            "sequentialOverride": sequential_override,
         },
     })
 }
@@ -1187,6 +1221,26 @@ fn run_requested_target(
             Some(serde_json::json!("run requires a non-empty params.target")),
         ));
     };
+    // TASK-0073: optional additive `sequential` flag. Absent or false means
+    // the configured concurrency applies; true requests effective concurrency
+    // one for this exact generation. Malformed types are invalid params, so
+    // a client can never silently get parallel execution from a typo.
+    let sequential = match request
+        .get("params")
+        .and_then(|params| params.get("sequential"))
+    {
+        None => false,
+        Some(serde_json::Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err((
+                -32602,
+                "Invalid params",
+                Some(serde_json::json!(
+                    "run params.sequential must be a boolean when present"
+                )),
+            ))
+        }
+    };
     let Some(run_target) = run_target else {
         return Err((
             -32000,
@@ -1195,7 +1249,7 @@ fn run_requested_target(
         ));
     };
 
-    run_target(target.to_string())
+    run_target(target.to_string(), sequential)
         .map(|run_id| serde_json::json!({"runId": run_id}))
         .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
 }
@@ -1329,6 +1383,8 @@ mod tests {
             commands: vec!["echo hi".to_owned()],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 
@@ -1431,6 +1487,87 @@ mod tests {
     }
 
     #[test]
+    fn run_absent_sequential_defaults_to_false() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen_flag = std::sync::Arc::clone(&seen);
+        let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
+            *seen_flag.lock().unwrap() = Some((target, sequential));
+            Ok(9)
+        });
+        let request = serde_json::json!({ "params": { "target": "@agent-final" } });
+        let result = run_requested_target(&request, Some(&run_target)).expect("run");
+        assert_eq!(result, serde_json::json!({ "runId": 9 }));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(("@agent-final".to_owned(), false))
+        );
+    }
+
+    #[test]
+    fn run_sequential_true_carries_flag() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen_flag = std::sync::Arc::clone(&seen);
+        let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
+            *seen_flag.lock().unwrap() = Some((target, sequential));
+            Ok(9)
+        });
+        let request = serde_json::json!({
+            "params": { "target": "@agent-final", "sequential": true }
+        });
+        let result = run_requested_target(&request, Some(&run_target)).expect("run");
+        assert_eq!(result, serde_json::json!({ "runId": 9 }));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(("@agent-final".to_owned(), true))
+        );
+    }
+
+    #[test]
+    fn run_sequential_false_is_noop() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen_flag = std::sync::Arc::clone(&seen);
+        let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
+            *seen_flag.lock().unwrap() = Some((target, sequential));
+            Ok(9)
+        });
+        let request = serde_json::json!({
+            "params": { "target": "@agent-final", "sequential": false }
+        });
+        let result = run_requested_target(&request, Some(&run_target)).expect("run");
+        assert_eq!(result, serde_json::json!({ "runId": 9 }));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            Some(("@agent-final".to_owned(), false))
+        );
+    }
+
+    #[test]
+    fn run_sequential_malformed_type_is_invalid_params() {
+        let run_target: RunTarget =
+            Arc::new(|_target: String, _sequential: bool| panic!("must not run"));
+        for bad in [
+            serde_json::json!("yes"),
+            serde_json::json!(1),
+            serde_json::json!(null),
+        ] {
+            let request = serde_json::json!({
+                "params": { "target": "@agent-final", "sequential": bad }
+            });
+            let (code, _, _) =
+                run_requested_target(&request, Some(&run_target)).expect_err("malformed");
+            assert_eq!(code, -32602);
+        }
+    }
+
+    #[test]
+    fn capabilities_advertise_sequential_override_only_when_supported() {
+        let with = capabilities_result(&instance("fz-7f3a"), false, false, true);
+        assert_eq!(with["features"]["sequentialOverride"], true);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        assert_eq!(without["features"]["sequentialOverride"], false);
+    }
+
+    #[test]
     fn cancel_graceful_returns_wire_shape_matching_fixture() {
         let cancel: CancelTarget = Arc::new(|generation: u64| -> Result<CancelResult, String> {
             assert_eq!(generation, 7);
@@ -1492,7 +1629,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_subscribe_only_when_broker_registered() {
-        let with = capabilities_result(&instance("fz-7f3a"), true, false);
+        let with = capabilities_result(&instance("fz-7f3a"), true, false, false);
         let methods: Vec<_> = with["methods"]
             .as_array()
             .unwrap()
@@ -1502,7 +1639,7 @@ mod tests {
         assert!(methods.contains(&"subscribe"), "methods: {methods:?}");
         assert_eq!(with["features"]["subscription"], true);
 
-        let without = capabilities_result(&instance("fz-7f3a"), false, false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
         let methods: Vec<_> = without["methods"]
             .as_array()
             .unwrap()
@@ -1515,7 +1652,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_duration_estimates_only_when_provider_wired() {
-        let with = capabilities_result(&instance("fz-7f3a"), true, true);
+        let with = capabilities_result(&instance("fz-7f3a"), true, true, false);
         assert_eq!(with["features"]["durationEstimates"], true);
         assert_eq!(
             with["optionalFields"][0], "batch",
@@ -1529,7 +1666,7 @@ mod tests {
         assert_eq!(with["limits"]["durationEstimateLimits"]["maxSamples"], 20);
         assert_eq!(with["limits"]["durationEstimateLimits"]["capMs"], 900_000);
 
-        let without = capabilities_result(&instance("fz-7f3a"), false, false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
         assert_eq!(without["features"]["durationEstimates"], false);
         assert!(
             without["limits"].get("durationEstimateLimits").is_none(),

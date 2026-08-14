@@ -1,6 +1,9 @@
 # Funzzy Sequential Debugging Override Contract
 
-> Status: **draft** — defined by TASK-0071. Drives TASK-0072 through TASK-0074.
+> Status: **normative** — defined by TASK-0071. TASK-0072 implements local
+> run/watch scope; TASK-0073 implements the exact control-generation scope,
+> capability advertisement, and correlated snapshot concurrency fields.
+> TASK-0074 proves the parallel-versus-sequential diagnostic workflow.
 > Source research: `.tmp/reports/14-08-26/sequential-debug-override-recommendation.md`, `.tmp/reports/14-08-26/sequential-debug-override-plan.md`, `docs/AGENT-FEEDBACK-CONTRACT.md`, `docs/PARALLEL-EXECUTION-CONTRACT.md`.
 
 When a parallel target fails nondeterministically, users and agents need an

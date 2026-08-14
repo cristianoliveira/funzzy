@@ -436,3 +436,178 @@ fn control_emit_empty_path_is_usage_error() {
         combined
     );
 }
+
+#[test]
+fn ctl_run_sequential_overrides_effective_concurrency_for_one_generation() {
+    // TASK-0073: `control run --sequential` must schedule the exact generation
+    // with effective concurrency one. Two parallel handshake tasks pass when
+    // the watcher runs them concurrently (concurrency 2); under the override
+    // the first task waits in vain for the second's ready file and fails.
+    let counter = DIRECTORY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let directory =
+        std::env::temp_dir().join(format!("fzzc-sequential-{counter}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        r#"on:
+  socket: sock
+  concurrency: 2
+tasks:
+  - name: lint @quick
+    parallel: checks
+    run: 'touch lint.ready; i=0; while [ $i -lt 100 ]; do test -f test.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'
+    change: "*.txt"
+  - name: test @quick
+    parallel: checks
+    run: 'touch test.ready; i=0; while [ $i -lt 100 ]; do test -f lint.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'
+    change: "*.txt"
+"#,
+    )
+    .unwrap();
+    let watcher = TestProcess {
+        child: Command::new(env!("CARGO_BIN_EXE_fzz"))
+            .current_dir(&directory)
+            .env_remove("FUNZZY_BAIL")
+            .env_remove("FUNZZY_NON_BLOCK")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        directory: directory.clone(),
+    };
+    let _watcher = watcher;
+    wait_until_socket(&directory);
+
+    // Baseline: a control run without the override passes both tasks.
+    let baseline = run_cli(
+        &directory,
+        &["control", "run", "@quick", "--wait", "--timeout", "30"],
+    );
+    assert!(
+        baseline.status.success(),
+        "baseline control run must succeed: {}",
+        String::from_utf8_lossy(&baseline.stdout)
+    );
+    let baseline_out = String::from_utf8_lossy(&baseline.stdout);
+    assert!(
+        baseline_out.contains("state: passed"),
+        "baseline must pass: {}",
+        baseline_out
+    );
+
+    std::fs::remove_file(directory.join("lint.ready")).unwrap();
+    std::fs::remove_file(directory.join("test.ready")).unwrap();
+
+    // Override: `ctl run @quick --sequential` schedules the exact generation
+    // with effective concurrency one, so the first task fails.
+    let overridden = run_cli(
+        &directory,
+        &[
+            "ctl",
+            "run",
+            "@quick",
+            "--sequential",
+            "--wait",
+            "--timeout",
+            "30",
+        ],
+    );
+    let overridden_out = String::from_utf8_lossy(&overridden.stdout);
+    assert!(
+        overridden_out.contains("state: failed"),
+        "sequential override must fail: {}",
+        overridden_out
+    );
+    assert!(
+        overridden_out.contains("terminal reason: failed"),
+        "failure must be named: {}",
+        overridden_out
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn ctl_run_sequential_rejects_legacy_server_before_scheduling() {
+    // TASK-0073: a server that does not advertise `sequentialOverride` must
+    // cause the client to fail with an actionable error BEFORE sending the
+    // run request — the flag is never silently stripped and retried parallel.
+    let counter = DIRECTORY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let directory =
+        std::env::temp_dir().join(format!("fzzc-legacy-seq-{counter}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let socket_path = directory.join("sock");
+
+    // Minimal legacy control server: answers `capabilities` WITHOUT the
+    // sequentialOverride feature, then closes. The client must fail before
+    // ever sending the run request.
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    let serve = std::thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut line = String::new();
+            BufReader::new(&mut stream).read_line(&mut line).unwrap();
+            let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+            let method = request["method"].as_str().unwrap();
+            let id = &request["id"];
+            let response = if method == "capabilities" {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "result": {
+                        "protocolVersion": "1.0",
+                        "schemaVersion": 1,
+                        "watcherVersion": "1.6.0",
+                        "instance": {"token": "fz-legacy", "startedAtEpochMs": 0},
+                        "methods": ["status", "targets", "run", "capabilities"],
+                        "optionalFields": [],
+                        "outputFormats": ["toon"],
+                        "limits": {
+                            "outputRetentionBytes": 1048576,
+                            "maxResponseBytes": 65536,
+                            "maxEvidenceLines": 40
+                        },
+                        "features": {
+                            "atomicAwait": true,
+                            "subscription": false,
+                            "correlatedSnapshots": false,
+                            "outputRetrieval": false,
+                            "pendingWork": false
+                        }
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32601, "message": "Method not found"}
+                })
+            };
+            let _ = writeln!(stream, "{}", response);
+        }
+        // Drop the listener; the client is the only connection and has moved on.
+    });
+
+    let socket_arg = socket_path.to_str().unwrap().to_string();
+    let output = run_cli(
+        &directory,
+        &[
+            "ctl",
+            "--socket",
+            &socket_arg,
+            "run",
+            "@quick",
+            "--sequential",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "legacy sequential must fail");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("does not support --sequential"),
+        "error must be actionable: {}",
+        combined
+    );
+    serve.join().expect("legacy server thread");
+    let _ = std::fs::remove_dir_all(&directory);
+}

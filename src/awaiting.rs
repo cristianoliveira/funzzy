@@ -329,6 +329,8 @@ mod tests {
             commands: vec!["echo hi".to_owned()],
             target: None,
             execution_signature: None,
+            effective_concurrency: None,
+            concurrency_source: None,
         }
     }
 
