@@ -203,7 +203,10 @@ where
         &fixture,
     );
 
-    std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");
+    // Idempotent cleanup: the log may already be gone under concurrent test
+    // binaries (each process has its own mutex, so cross-binary parallelism
+    // is not serialized); a missing file is not a failure.
+    let _ = std::fs::remove_file(dir.join(&log_name));
 }
 
 #[cfg(feature = "test-integration")]
@@ -295,7 +298,10 @@ where
         &fixture,
     );
 
-    std::fs::remove_file(dir.join(&log_name)).expect("failed to remove file after running test");
+    // Idempotent cleanup: the log may already be gone under concurrent test
+    // binaries (each process has its own mutex, so cross-binary parallelism
+    // is not serialized); a missing file is not a failure.
+    let _ = std::fs::remove_file(dir.join(&log_name));
 }
 
 #[allow(dead_code)]
