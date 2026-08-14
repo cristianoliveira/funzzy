@@ -264,6 +264,61 @@ It's super useful when a workflow contains long-running tasks. [See more in long
 fzz --non-block # or fzz -n
 ```
 
+## Parallel execution
+
+Funzzy can run independent tasks concurrently. Concurrency is **opt-in**: a
+task belongs to a named `parallel` group, and only *consecutive* tasks sharing
+the same group name may overlap. This keeps existing sequential configs
+running exactly as before — no migration needed.
+
+```yaml
+on:
+  change: "src/**"
+  concurrency: 4      # optional global cap on active tasks
+tasks:
+  - name: lint
+    parallel: checks  # group membership is explicit
+    run: cargo clippy
+  - name: test
+    parallel: checks
+    run: cargo test
+  - name: package
+    run: cargo build   # serial: runs alone, after the group
+```
+
+Key rules:
+
+- **Contiguous groups**: only consecutive tasks with the same group name
+  share one barrier. `A@x, B, C@x` runs `A -> B -> C` as two *separate*
+  `x` occurrences; the reused name never reconnects across a serial task.
+- **Barriers**: commands inside one task stay strictly sequential; a serial
+task (no `parallel`) runs alone between groups.
+- **Filtering**: target selection keeps the original topology. If only one
+  group member matches, it runs alone — barriers stay valid.
+- **`on.concurrency`**: global cap on simultaneously active tasks. Defaults
+to available parallelism, resolved once at plan time. `1` is valid and means
+tasks run one at a time inside the barrier. Without `parallel` groups,
+concurrency is never inferred.
+- **Failures**: by default a failed task does not stop siblings or later
+stages; the run fails with combined results. `--fail-fast` cancels active
+siblings and skips queued/later work on the first failure.
+- **Restart** (`--restart`): a new event cancels and reaps all active tasks
+across every group, then starts the newest generation.
+- **Output**: live lines from group tasks carry a `[task]` prefix so
+interleaved output keeps identity; the final summary lists every task with
+its group. Ordering inside a group is intentionally unspecified.
+- **Diagnosing races**: rerun the same target with `--sequential`
+(`fzz run TARGET --sequential` or `fzz ctl run TARGET --sequential --wait`)
+to compare against effective concurrency one. Parallel fail + sequential pass
+is `parallel-sensitive` evidence, not proof of a race root cause.
+
+**Cost guidance**: parallelism helps when independent tasks dominate a batch
+— latency approaches the slowest task rather than the sum. It does **not**
+make every workload faster: CPU-bound tasks on few cores, or tasks competing
+for one resource (a database, a port, a lock file), can slow down. Start with
+`concurrency: 2` and measure; raise only when independent work is proven.
+Each concurrent task is a separate child process with its own process group.
+
 ## Troubleshooting
 
 #### Why the watcher is running the same task multiple times?
