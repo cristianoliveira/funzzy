@@ -2,7 +2,7 @@
 id: TASK-0020
 title: Publish and verify the redesigned CLI
 status: todo
-depends_on: [TASK-0016, TASK-0017, TASK-0018, TASK-0019, TASK-0021, TASK-0022, TASK-0023]
+depends_on: [TASK-0016, TASK-0017, TASK-0018, TASK-0019, TASK-0021, TASK-0022, TASK-0023, TASK-0069]
 priority: high
 tags: [rust, cli, docs, release]
 ---
@@ -14,7 +14,7 @@ A CLI redesign is incomplete until help, usage documentation, both binary aliase
 
 ## Context
 
-Treat generated help and executable behavior as truth. Coordinate control-socket documentation with `pi-watcher` where command examples change.
+Treat generated help and executable behavior as truth. Coordinate control-socket documentation with `pi-watcher` where command examples change. TASK-0065 through TASK-0069 own the broader V2 documentation revamp; this task is the final CLI publication consistency gate.
 
 ## Acceptance criteria
 
