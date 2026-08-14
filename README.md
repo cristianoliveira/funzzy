@@ -318,6 +318,27 @@ the native backend. Tradeoffs: polling adds a small per-interval scan cost and
 change latency up to the interval; prefer native for large trees. Forced
 native fails with an actionable error instead of silently changing semantics.
 
+## Agents and configuration discovery
+
+Agents (and humans) discover the current configuration surface from the
+**installed binary**, never from stale docs. Bootstrap commands:
+
+```sh
+fzz config schema                    # full JSON Schema for the preferred jobs: format
+fzz config schema --section parallel # one bounded section + hint for the full schema
+fzz config example minimal           # runnable minimal .watch.yaml
+fzz config example agent             # control-socket + verify-style example
+fzz check                            # validate .watch.yaml (semantic checks)
+fzz list | fzz explain PATH          # inspect what would run
+fzz run TARGET | fzz watch           # execute
+```
+
+All `config` commands are non-interactive and side-effect-free: they never
+read a project config, start a watcher, open a socket, or run tasks. The
+schema is the single source of truth for structure; `fzz check` adds semantic
+validation. Legacy root-list configs remain accepted and are migrated with
+`fzz init --migrate`.
+
 ## Parallel execution
 
 Funzzy can run independent tasks concurrently. Concurrency is **opt-in**: a
