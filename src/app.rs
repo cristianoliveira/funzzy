@@ -165,9 +165,18 @@ pub fn run() {
             if let Err(err) = rules::validate_rules(&rules) {
                 stdout::failure("Invalid config file.", err);
             }
-            let watches = Watches::with_root(rules, workspace_root);
+            let watches = Watches::with_root_and_concurrency(
+                rules.clone(),
+                workspace_root.clone(),
+                effective_concurrency(&args, &args.config),
+            )
+            .with_debounce(load_debounce(&args.config));
             let result = watches.explain(path);
-            stdout::info(&explain_output(path, &result));
+            let facts = crate::watches::ExplainFacts {
+                concurrency: watches.concurrency(),
+                debounce: watches.debounce(),
+            };
+            stdout::info(&explain_output(path, &result, &facts));
         }
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
@@ -219,7 +228,11 @@ pub fn run() {
 
 /// Renders a deterministic human summary of which tasks a path matches.
 /// Reuses the structured `ExplainResult`; no matching logic lives here.
-fn explain_output(path: &str, result: &crate::watches::ExplainResult) -> String {
+fn explain_output(
+    path: &str,
+    result: &crate::watches::ExplainResult,
+    facts: &crate::watches::ExplainFacts,
+) -> String {
     let mut output = String::from("Explain path ");
     output.push_str(path);
     output.push('\n');
@@ -261,6 +274,31 @@ fn explain_output(path: &str, result: &crate::watches::ExplainResult) -> String 
             }
         }
     }
+
+    // TASK-0034: the filtered execution topology — barriers and named group
+    // occurrences as they would actually run. Order is declaration order;
+    // completion order inside a group is intentionally unspecified.
+    if !result.plan_stages.is_empty() {
+        output.push_str("  plan:\n");
+        for stage in &result.plan_stages {
+            match stage {
+                crate::watches::PlanStagePreview::Serial { task } => {
+                    output.push_str(&format!("    - {}\n", task));
+                }
+                crate::watches::PlanStagePreview::Parallel { group, tasks } => {
+                    output.push_str(&format!(
+                        "    - [{}] (parallel group): {}\n",
+                        group,
+                        tasks.join(" || ")
+                    ));
+                }
+            }
+        }
+    }
+
+    // Execution facts (TASK-0034): effective concurrency and debounce.
+    output.push_str(&format!("  concurrency: {}\n", facts.concurrency));
+    output.push_str(&format!("  debounce: {:?}\n", facts.debounce));
 
     output
 }

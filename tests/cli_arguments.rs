@@ -768,3 +768,56 @@ fn check_rejects_invalid_debounce_and_mixed_tasks_jobs() {
             .stdout(predicate::str::contains("Invalid config file"));
     });
 }
+
+#[test]
+fn explain_shows_filtered_execution_topology() {
+    with_tmp_dir("explain-topology", |dir| {
+        let config = dir.join("topology.yml");
+        std::fs::write(
+            &config,
+            "on:\n  concurrency: 2\njobs:\n  - name: lint @quick\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test @quick\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n  - name: docs\n    run: mdbook build\n    change: 'docs/**'\n",
+        )
+        .expect("write config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("explain")
+            .arg("src/lib.rs")
+            .assert()
+            .code(0)
+            .stdout(predicate::str::contains("matched:"))
+            .stdout(predicate::str::contains("lint @quick"))
+            .stdout(predicate::str::contains("test @quick"))
+            // Filtered topology: one parallel group occurrence, docs excluded.
+            .stdout(predicate::str::contains("[checks#1] (parallel group)"))
+            .stdout(predicate::str::contains("lint @quick || test @quick"))
+            .stdout(predicate::str::contains("concurrency: 2"))
+            .stdout(predicate::str::contains("docs").not());
+    });
+}
+
+#[test]
+fn explain_shows_separated_group_occurrences() {
+    with_tmp_dir("explain-occurrences", |dir| {
+        let config = dir.join("occ.yml");
+        std::fs::write(
+            &config,
+            "on:\n  change: '**/*'\njobs:\n  - name: a @quick\n    parallel: x\n    run: echo a\n    change: 'src/**'\n  - name: sep @quick\n    run: echo sep\n    change: 'src/**'\n  - name: c @quick\n    parallel: x\n    run: echo c\n    change: 'src/**'\n",
+        )
+        .expect("write config");
+
+        fzz()
+            .arg("-c")
+            .arg(&config)
+            .arg("explain")
+            .arg("src/lib.rs")
+            .assert()
+            .code(0)
+            // The reused group name never reconnects across the serial task:
+            // two separate occurrences, not one.
+            .stdout(predicate::str::contains("[x#1] (parallel group)"))
+            .stdout(predicate::str::contains("[x#2] (parallel group)"))
+            .stdout(predicate::str::contains("sep @quick"));
+    });
+}

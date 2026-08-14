@@ -29,6 +29,27 @@ pub struct ExplainResult {
     pub matched: Vec<ExplainRule>,
     /// Rules whose change pattern matched but an ignore pattern won.
     pub ignored: Vec<ExplainRule>,
+    /// The filtered execution topology (stages + named group occurrences)
+    /// after path filtering — the actual run plan preview, same planner as
+    /// execution (TASK-0034). Empty when nothing matches.
+    pub plan_stages: Vec<PlanStagePreview>,
+}
+
+/// One filtered execution stage for `explain` output (TASK-0034): a serial
+/// task, or a named parallel group occurrence with its selected members.
+/// Barriers and group names are shown without implying completion order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanStagePreview {
+    Serial { task: String },
+    Parallel { group: String, tasks: Vec<String> },
+}
+
+/// Execution facts relevant to an explained plan (TASK-0034): the effective
+/// scheduler concurrency and the filesystem debounce window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExplainFacts {
+    pub concurrency: usize,
+    pub debounce: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -412,7 +433,40 @@ impl Watches {
             }
         }
 
-        ExplainResult { matched, ignored }
+        ExplainResult {
+            matched,
+            ignored,
+            // TASK-0034: the filtered execution topology uses the exact same
+            // planner as execution (watch_plan), so the preview can never
+            // drift from what would actually run.
+            plan_stages: self
+                .watch_plan(path)
+                .map(|plan| {
+                    plan.stages
+                        .into_iter()
+                        .map(|stage| match stage {
+                            crate::plan::Stage::Serial(task) => {
+                                PlanStagePreview::Serial { task: task.name }
+                            }
+                            crate::plan::Stage::Parallel { group, tasks } => {
+                                // The stage carries the bare group name; the
+                                // occurrence identity lives on the member
+                                // tasks (e.g. `checks#2`), so previews show
+                                // the same occurrence label as execution.
+                                let occurrence = tasks
+                                    .first()
+                                    .and_then(|t| t.group_occurrence.clone())
+                                    .unwrap_or_else(|| group.clone());
+                                PlanStagePreview::Parallel {
+                                    group: occurrence,
+                                    tasks: tasks.into_iter().map(|t| t.name).collect(),
+                                }
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
     }
 
     /// The effective-rule origin for one rule decision: `group` when the
@@ -1149,5 +1203,99 @@ mod tests {
         "#
         )
         .is_ok());
+    }
+}
+
+#[cfg(test)]
+mod explain_plan_tests {
+    use super::*;
+
+    fn config(content: &str) -> Vec<Rules> {
+        crate::config::from_yaml(content).expect("parse config")
+    }
+
+    #[test]
+    fn explain_plan_shows_serial_stages_in_order() {
+        let watches = Watches::new(config(
+            "jobs:\n  - name: a\n    run: echo a\n    change: 'src/**'\n  - name: b\n    run: echo b\n    change: 'src/**'\n",
+        ));
+        let result = watches.explain("src/x.rs");
+        assert_eq!(result.matched.len(), 2);
+        assert_eq!(
+            result.plan_stages,
+            vec![
+                PlanStagePreview::Serial {
+                    task: "a".to_owned()
+                },
+                PlanStagePreview::Serial {
+                    task: "b".to_owned()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn explain_plan_shows_parallel_group_occurrence() {
+        let watches = Watches::new(config(
+            "jobs:\n  - name: a\n    parallel: checks\n    run: echo a\n    change: 'src/**'\n  - name: b\n    parallel: checks\n    run: echo b\n    change: 'src/**'\n",
+        ));
+        let result = watches.explain("src/x.rs");
+        assert_eq!(
+            result.plan_stages,
+            vec![PlanStagePreview::Parallel {
+                group: "checks#1".to_owned(),
+                tasks: vec!["a".to_owned(), "b".to_owned()],
+            }]
+        );
+    }
+
+    #[test]
+    fn explain_plan_keeps_separated_group_occurrences() {
+        let watches = Watches::new(config(
+            "jobs:\n  - name: a\n    parallel: x\n    run: echo a\n    change: 'src/**'\n  - name: sep\n    run: echo sep\n    change: 'src/**'\n  - name: c\n    parallel: x\n    run: echo c\n    change: 'src/**'\n",
+        ));
+        let result = watches.explain("src/x.rs");
+        assert_eq!(
+            result.plan_stages,
+            vec![
+                PlanStagePreview::Parallel {
+                    group: "x#1".to_owned(),
+                    tasks: vec!["a".to_owned()],
+                },
+                PlanStagePreview::Serial {
+                    task: "sep".to_owned()
+                },
+                PlanStagePreview::Parallel {
+                    group: "x#2".to_owned(),
+                    tasks: vec!["c".to_owned()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn explain_plan_excludes_ignored_and_unmatched_tasks() {
+        let watches = Watches::new(config(
+            "jobs:\n  - name: hit\n    run: echo hit\n    change: 'src/**'\n  - name: ignored\n    run: echo ignored\n    change: 'src/**'\n    ignore: 'src/**'\n  - name: other\n    run: echo other\n    change: 'docs/**'\n",
+        ));
+        let result = watches.explain("src/x.rs");
+        assert_eq!(result.matched.len(), 1);
+        assert_eq!(result.ignored.len(), 1);
+        assert_eq!(
+            result.plan_stages,
+            vec![PlanStagePreview::Serial {
+                task: "hit".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn explain_plan_is_empty_for_unmatched_path() {
+        let watches = Watches::new(config(
+            "jobs:\n  - name: a\n    run: echo a\n    change: 'src/**'\n",
+        ));
+        let result = watches.explain("docs/x.md");
+        assert!(result.matched.is_empty());
+        assert!(result.plan_stages.is_empty());
     }
 }
