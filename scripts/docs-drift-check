@@ -30,10 +30,10 @@ else
 fi
 
 # 3. Version identity across packages.
-if ./scripts/version-check >/dev/null 2>&1; then
+if ./scripts/version-check --candidate >/dev/null 2>&1; then
   note "version identity consistent"
 else
-  fail "version drift: run 'make version-check'"
+  fail "version drift: run 'make version-check -- --candidate'"
 fi
 
 # 4. Stale V1 vocabulary scan. Excluded contexts: migration/history/contracts.
