@@ -1,7 +1,7 @@
 ---
 id: TASK-0067
 title: Document advanced execution control and agent feedback workflows
-status: todo
+status: done
 depends_on: [TASK-0065, TASK-0028, TASK-0055, TASK-0059, TASK-0070, TASK-0074]
 priority: high
 tags: [docs, parallel, control-socket, agents, diagnostics, duration]
