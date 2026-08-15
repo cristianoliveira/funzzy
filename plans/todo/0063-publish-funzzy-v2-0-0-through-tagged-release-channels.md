@@ -2,7 +2,7 @@
 id: TASK-0063
 title: Publish Funzzy v2.0.0 through tagged release channels
 status: todo
-depends_on: [TASK-0062]
+depends_on: [TASK-0062, TASK-0084]
 priority: high
 tags: [release, github, crates-io, nix, supply-chain]
 ---
@@ -14,7 +14,7 @@ The verified candidate must be tagged and published exactly once across GitHub a
 
 ## Context
 
-This task contains irreversible remote writes. Require explicit human approval of exact candidate SHA and release notes immediately before execution.
+This task contains irreversible remote writes. Require explicit human approval of exact candidate SHA and release notes immediately before execution. The earlier candidate is superseded by reproduced output AXI defects; publication must use refreshed TASK-0084 candidate and new approval.
 
 ## Acceptance criteria
 
