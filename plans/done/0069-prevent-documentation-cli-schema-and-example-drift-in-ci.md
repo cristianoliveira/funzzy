@@ -1,7 +1,7 @@
 ---
 id: TASK-0069
 title: Prevent documentation CLI schema and example drift in CI
-status: todo
+status: done
 depends_on: [TASK-0068]
 priority: high
 tags: [docs, ci, drift, links, examples, determinism]
