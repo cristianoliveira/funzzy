@@ -17,6 +17,10 @@ include = [
     "examples/**",
     "nix/**",
     "scripts/**",
+    "!pi-watcher/**",
+    "!src/.pi/**",
+    "!**/*.log",
+    "!**/*.sock",
 ]
 # Minimum supported Rust version. Clap 4.6 (used by the CLI refactor) and its
 # baseline tracks latest stable; keep in sync with the Nix toolchain and CI pins.
