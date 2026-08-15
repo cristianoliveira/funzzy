@@ -333,11 +333,21 @@ fn socket_path_change_binds_new_before_retiring_old() {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(new_connected, "new socket must be connectable after reload");
-        // The OLD socket file is removed by the retired server.
-        assert!(
-            !scratch.join("sock").exists(),
-            "old socket must be retired after commit"
-        );
+        // The OLD socket file is removed by the retired server. The retire
+        // happens after the commit boundary (later than the "rebinding" log
+        // the wait observed), so poll instead of asserting on an exact
+        // instant — the invariant is eventual removal, never a stale socket
+        // left live.
+        let mut deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut old_retired = false;
+        while std::time::Instant::now() < deadline {
+            if !scratch.join("sock").exists() {
+                old_retired = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(old_retired, "old socket must be retired after commit");
         let _ = child.kill();
         let _ = child.wait();
         std::fs::remove_dir_all(&scratch).unwrap();
