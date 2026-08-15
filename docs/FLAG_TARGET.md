@@ -1,74 +1,33 @@
-## FLAG: `--target <text_to_search>` **EXPERIMENTAL**
+# Target selection (V2)
 
-**Minimal version**: 1.4.0
+Replaces the removed V1 `--target` flag. In V2, target selection is a
+positional argument on the relevant subcommand.
 
-The `--target` flag allows you to execute specific tasks based on their names or @tags containing the specified `<text_to_search>`. By providing this flag, you can filter the tasks to be run, ensuring only those matching the target criteria are executed.
+## Selecting targets
 
-## USAGE
-
-Given the following config file:
-
-```yaml
-- name: run my test @quick
-  run: "echo 'quick tests'"
-  change: "examples/workdir/**/*.yaml"
-
-- name: run my build
-  run: "echo 'building project'"
-  change: "examples/workdir/**/*.rs"
-
-- name: run my lint @quick
-  run: "echo 'quick lint'"
-  change: "examples/workdir/**/*.py"
+```sh
+fzz watch "@quick"      # watch only matching targets
+fzz run "@quick"        # run once, locally
+fzz list                # show every configured target
+fzz explain PATH        # which targets a path matches or is ignored by
 ```
 
-### Example without the `--target` flag:
+A target is a job name, `@tag`, or an unambiguous substring. `@tag` may select
+many jobs; a plain substring must be unambiguous or it is an error listing
+the alternatives.
 
-Running the `fzz` command without any target will execute all tasks:
+## Migration from V1
 
-```bash
-$ fzz
-Funzzy: Executing all tasks...
-// run all tasks
+| V1 | V2 |
+| --- | --- |
+| `fzz --target <text>` | `fzz watch <text>` / `fzz run <text>` |
+| `fzz -t <text>` | same — `-t` is removed |
+| (list targets) | `fzz list` |
 
-Funzzy: echo 'quick tests'
+Behavior change: `watch TARGET` with no match is an actionable error (not a
+silent all-tasks fallback); `run TARGET` selects the exact target and rejects
+path arguments. Exit-code impact: no-match/ambiguous is exit 1 with the
+available-targets list.
 
-quick tests
-
-Funzzy: echo 'building project'
-
-building project
-
-Funzzy: echo 'quick lint'
-
-quick lint
-Funzzy results ----------------------------
-Success; Completed: 3; Failed: 0; Duration: 0.0000s
-```
-
-### Example with the `--target` flag:
-
-Running the `fzz` command using the `--target @quick` flag will filter tasks that are tagged with `@quick`:
-
-```bash
-$ fzz --target @quick
-Funzzy: Filtering tasks with target '@quick'...
-// run filtered tasks
-
-Funzzy: echo 'quick tests'
-
-quick tests
-
-Funzzy: echo 'quick lint'
-
-quick lint
-Funzzy results ----------------------------
-Success; Completed: 2; Failed: 0; Duration: 0.0000s
-```
-
-If no tasks match the provided `<text_to_search>`, a list of available tasks will be displayed for reference.
-
-### Tests
-
-Consider reviewing the tests in `tests/watching_filtered_tasks_with_target_flag.rs` for more detailed examples.
-
+See docs/USAGE.md §2 for the decision table and the normative
+CLI-V2-CONTRACT for the command tree.

@@ -4,7 +4,7 @@
 # See: https://github.com/actions/runner/issues/2684
 #
 # Uncomment the following lines to see 
-# the signal handling in action by funzzy when using the `--non-block` flag
+# the signal handling in action by funzzy when using the `--on-busy restart` policy
 #
 # trap "echo '>> SIGINT received'; exit" SIGINT
 # trap "echo '>> SIGTERM received'; exit" SIGTERM

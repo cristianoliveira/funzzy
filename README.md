@@ -263,11 +263,11 @@ Templates for composing commands
 find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
 ```
 
-Run in "non-block" mode, which cancels the currently running task when there are new change events from files.
-It's super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
+Restart busy policy: cancels the currently running task when new change events arrive from files.
+It is super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
 
 ```bash
-fzz --non-block # or fzz -n
+fzz --on-busy restart # or fzz --restart
 ```
 
 ## Event batching and debounce

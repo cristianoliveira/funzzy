@@ -1,0 +1,22 @@
+# Modern V2 example: parallel groups, control socket, and an agent-final target.
+# Every example in examples/ must pass `fzz check` (locked by tests).
+on:
+  change: "**/*"
+  concurrency: 2
+  socket: .tmp/funzzy/control.sock
+
+jobs:
+  - name: lint @quick
+    parallel: checks
+    run: "cargo fmt -- --check"
+    ignore: "target/**"
+
+  - name: test @quick
+    parallel: checks
+    run: "cargo test"
+
+  - name: final checks @agent-final
+    run: "cargo test --release"
+    change: "src/**"
+    ignore: "target/**"
+    run_on_init: true

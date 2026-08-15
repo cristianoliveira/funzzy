@@ -253,3 +253,31 @@ fn usage_guide_yaml_blocks_parse_through_the_production_parser() {
     }
     assert!(parsed >= 2, "expected multiple yaml blocks, got {parsed}");
 }
+
+#[test]
+fn every_example_passes_fzz_check() {
+    // TASK-0068: every valid example fixture must pass `fzz check`; docs and
+    // examples can never drift from the parser. Intentionally-invalid
+    // fixtures would be labeled and asserted separately.
+    let examples = std::fs::read_dir("examples")
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|x| x == "yml").unwrap_or(false))
+        .collect::<Vec<_>>();
+    assert!(!examples.is_empty());
+    for example in examples {
+        let output = assert_cmd::cargo::cargo_bin_cmd!("fzz")
+            .arg("-c")
+            .arg(&example)
+            .arg("check")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "example {} must pass fzz check: {}",
+            example.display(),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
