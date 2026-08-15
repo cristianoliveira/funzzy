@@ -1,7 +1,7 @@
 ---
 id: TASK-0040
 title: Add workflow success and failure hooks
-status: todo
+status: done
 depends_on: [TASK-0027]
 priority: normal
 tags: [rust, workflow, hooks, automation, tdd]
