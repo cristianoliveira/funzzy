@@ -1,7 +1,7 @@
 ---
 id: TASK-0035
 title: Support managed long-running service tasks
-status: todo
+status: done
 depends_on: [TASK-0030, TASK-0027]
 priority: normal
 tags: [rust, workflow, service, process, lifecycle, tdd]
