@@ -1,7 +1,7 @@
 ---
 id: TASK-0041
 title: Add task-aware output policies
-status: todo
+status: done
 depends_on: [TASK-0028]
 priority: normal
 tags: [rust, output, workflow, logs, tdd]
