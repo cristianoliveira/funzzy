@@ -10,6 +10,7 @@ use crate::control_client::{
 };
 use crate::duration_history::RunEstimate;
 use crate::errors::FzzError;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -65,6 +66,11 @@ pub enum ControlAction {
         stream: Option<String>,
         tail: Option<u64>,
         full: bool,
+        /// Page mode (contract §5): deterministic continuation below the
+        /// negotiated budget; mutually exclusive with `tail` and `full`.
+        page: bool,
+        page_size: Option<u64>,
+        cursor: Option<String>,
     },
 }
 
@@ -334,17 +340,62 @@ impl Command for ControlCommand {
                 stream,
                 tail,
                 full,
+                page,
+                page_size,
+                cursor,
             } => {
-                let retrieved = client
-                    .output(
-                        *generation,
-                        task.as_deref(),
-                        stream.as_deref(),
-                        *tail,
-                        *full,
-                    )
-                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                self.print_response(&output_document(&retrieved), || render_output(&retrieved));
+                // Negotiate the watcher instance token (contract §1): the
+                // exact instance must ride the retrieval so a stale token can
+                // never read a same-number generation from a replacement
+                // watcher. Legacy servers keep working without it.
+                let instance_token = client.capabilities().ok().map(|caps| caps.token);
+                match client.output(
+                    *generation,
+                    task.as_deref(),
+                    stream.as_deref(),
+                    *tail,
+                    *full,
+                    *page,
+                    *page_size,
+                    cursor.as_deref(),
+                    instance_token.as_deref(),
+                ) {
+                    Ok(retrieved) => {
+                        self.print_response(&output_document(&retrieved), || {
+                            render_output(&retrieved)
+                        });
+                    }
+                    Err(ControlClientError::Server {
+                        code,
+                        message,
+                        data,
+                    }) => {
+                        // Typed output errors (contract §3) render their
+                        // structured retry data (candidates, retained range,
+                        // action) to stdout in the selected format; the
+                        // returned error keeps exit code 1 (contract §8).
+                        let human = match &data {
+                            Some(serde_json::Value::Object(details)) => format!(
+                                "output failed: {} ({code}) — {}",
+                                message,
+                                serde_json::to_string(details)
+                                    .unwrap_or_else(|_| "retry with the exact task id".to_string())
+                            ),
+                            _ => format!("output failed: {} ({code})", message),
+                        };
+                        let mut error = json!({ "code": code, "message": message });
+                        if let Some(data) = &data {
+                            error["data"] = data.clone();
+                        }
+                        let doc = json!({ "error": error });
+                        self.print_response(&doc, || human.clone());
+                        return Err(FzzError::GenericError(format!(
+                            "output failed: {} ({code})",
+                            message
+                        )));
+                    }
+                    Err(err) => return Err(FzzError::GenericError(err.to_string())),
+                }
             }
         }
         Ok(())
@@ -628,6 +679,16 @@ pub fn render_await(observation: &AwaitSnapshot) -> String {
             evidence.total_observed_bytes
         ));
         output.push_str(&format!("  retained_bytes: {}\n", evidence.retained_bytes));
+        if let Some(output_ref) = &evidence.output_ref {
+            output.push_str(&format!("  instance: {}\n", output_ref.instance_token));
+            output.push_str(&format!("  task: {}\n", output_ref.task));
+        }
+        if evidence.additional_failed_tasks > 0 {
+            output.push_str(&format!(
+                "  additional_failed_tasks: {}\n",
+                evidence.additional_failed_tasks
+            ));
+        }
         output.push_str(&format!("  retrieve: {}\n", evidence.retrieve));
         output.push_str("  excerpt:\n");
         for line in evidence.excerpt.lines() {
@@ -642,6 +703,18 @@ pub fn render_await(observation: &AwaitSnapshot) -> String {
 /// socket permission (0600) is the security boundary.
 pub fn render_output(output: &OutputSnapshot) -> String {
     let mut rendered = format!("output: generation {}\n", output.generation);
+    if let Some(resolved_task) = &output.resolved_task {
+        rendered.push_str(&format!("resolved task: {}\n", resolved_task));
+    }
+    if let Some(returned_bytes) = output.returned_bytes {
+        rendered.push_str(&format!("returned bytes: {}\n", returned_bytes));
+    }
+    if let Some(next_cursor) = &output.next_cursor {
+        rendered.push_str(&format!("next cursor: {}\n", next_cursor));
+    }
+    if let Some(truncated) = output.truncated {
+        rendered.push_str(&format!("truncated: {}\n", truncated));
+    }
     if output.tasks.is_empty() {
         rendered.push_str("tasks: (none)\n");
         return rendered;
@@ -787,6 +860,10 @@ mod tests {
         use crate::control_client::{OutputSnapshot, RetrievedTaskSnapshot, StreamSnapshot};
         let output = OutputSnapshot {
             generation: 7,
+            resolved_task: None,
+            next_cursor: None,
+            returned_bytes: None,
+            truncated: None,
             tasks: vec![RetrievedTaskSnapshot {
                 id: "my tests".to_string(),
                 stdout: Some(StreamSnapshot {
@@ -837,6 +914,8 @@ mod tests {
                 retained_bytes: 24,
                 retrieve: "fzz control output --generation 7 --task 'my tests' --tail 80"
                     .to_string(),
+                output_ref: None,
+                additional_failed_tasks: 0,
             }),
         };
         let rendered = render_await(&mut observation);

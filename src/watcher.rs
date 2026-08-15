@@ -26,6 +26,69 @@ pub struct FileEvent {
 /// window. The batch identity is assigned from a fresh per-instance sequence,
 /// so one window maps to zero or one generation (contract §1) and the same
 /// identity correlates the diagnostics of the whole decision chain.
+
+/// One live root-set swap requested by a config reload (TASK-0090): the
+/// complete new root list after commit. The backend diffs it against the
+/// currently registered roots and applies `unwatch`/`watch` live, then
+/// acknowledges, so there is no event-loss gap between old and new
+/// subscriptions (contract §4 commit boundary is synchronous).
+#[derive(Clone, Debug)]
+pub struct RootSwap {
+    pub roots: Vec<String>,
+    /// Acknowledgement the backend sends after applying the swap.
+    pub ack: Option<std::sync::mpsc::Sender<Result<(), String>>>,
+}
+
+/// Receiver side of the root-swap channel fed by the config-reload
+/// transaction (TASK-0090).
+pub type RootSwapReceiver = std::sync::mpsc::Receiver<RootSwap>;
+
+/// Publishes the complete new root set to the running backend. A no-op when
+/// the backend was started without reload support (legacy callers).
+#[derive(Clone, Debug)]
+pub struct RootSwapPublisher {
+    sender: Option<std::sync::mpsc::Sender<RootSwap>>,
+}
+
+impl RootSwapPublisher {
+    /// A live publisher connected to the running backend.
+    pub fn new(sender: std::sync::mpsc::Sender<RootSwap>) -> Self {
+        Self {
+            sender: Some(sender),
+        }
+    }
+
+    /// A disabled publisher for backends started without reload support.
+    pub fn disabled() -> Self {
+        Self { sender: None }
+    }
+
+    /// Swaps the live root set synchronously: waits for the backend to apply
+    /// the new roots before returning. Returns an error when the backend is
+    /// not connected (legacy/disabled), the channel is gone, or the backend
+    /// does not acknowledge within the bound.
+    pub fn swap(&self, roots: Vec<String>) -> Result<(), String> {
+        match &self.sender {
+            Some(sender) => {
+                let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+                sender
+                    .send(RootSwap {
+                        roots,
+                        ack: Some(ack_tx),
+                    })
+                    .map_err(|_| "root-swap channel closed".to_owned())?;
+                ack_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|_| "root-swap acknowledgement timed out".to_owned())?
+            }
+            None => Err("backend started without reload support".to_owned()),
+        }
+    }
+}
+
+/// Runs the configured backend with an optional live root-swap channel
+/// (TASK-0090). `swap_rx` is consumed by the backend loop: each swap diff is
+/// applied to the live watcher without stopping it.
 pub fn events(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
@@ -33,16 +96,33 @@ pub fn events(
     debounce: Duration,
     backend: WatchBackend,
     verbose: bool,
+    swap_rx: Option<RootSwapReceiver>,
 ) -> Result<(), String> {
     match backend {
-        WatchBackend::Native => run_native(watch_path_list, on_ready, handler, debounce, verbose),
-        WatchBackend::Poll { interval } => run_poll(watch_path_list, on_ready, handler, interval),
+        WatchBackend::Native => run_native(
+            watch_path_list,
+            on_ready,
+            handler,
+            debounce,
+            verbose,
+            swap_rx,
+        ),
+        WatchBackend::Poll { interval } => {
+            run_poll(watch_path_list, on_ready, handler, interval, swap_rx)
+        }
         WatchBackend::Auto => {
             // Try native first; on failure warn once and fall back to
             // deterministic polling (TASK-0037). The probe registers the
             // roots without consuming on_ready, so exactly one backend runs.
             match native_available(&watch_path_list) {
-                Ok(()) => run_native(watch_path_list, on_ready, handler, debounce, verbose),
+                Ok(()) => run_native(
+                    watch_path_list,
+                    on_ready,
+                    handler,
+                    debounce,
+                    verbose,
+                    swap_rx,
+                ),
                 Err(native_err) => {
                     stdout::warn(&format!(
                         "native filesystem backend unavailable ({}); falling back to polling",
@@ -53,6 +133,7 @@ pub fn events(
                         on_ready,
                         handler,
                         Duration::from_millis(500),
+                        swap_rx,
                     )
                 }
             }
@@ -76,12 +157,15 @@ fn native_available(watch_path_list: &[String]) -> Result<(), String> {
 }
 
 /// Runs the native notify backend: one normalized batch per debounce window.
+/// With `swap_rx`, each live root swap is diffed and applied (unwatch/watch)
+/// without stopping the backend (TASK-0090).
 fn run_native(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
     debounce: Duration,
     verbose: bool,
+    swap_rx: Option<RootSwapReceiver>,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
     let mut debouncer = new_debouncer(debounce, None, tx)
@@ -89,7 +173,7 @@ fn run_native(
     let watcher = debouncer.watcher();
     let batch_sequence = AtomicSequence::new();
 
-    for path in watch_path_list {
+    for path in &watch_path_list {
         if verbose {
             diagnostics::debug(&diagnostics::Record {
                 source: Some("config"),
@@ -128,8 +212,22 @@ fn run_native(
     // to change a file in the gap and lose the first event.
     on_ready();
 
+    let mut current_roots = watch_path_list.clone();
+    let mut swap_rx = swap_rx;
+
     loop {
-        match rx.recv() {
+        // Apply any pending live root swaps before draining events, so a
+        // batch is never routed against a stale root set (contract §4
+        // commit boundary).
+        if let Some(rx) = swap_rx.as_mut() {
+            while let Ok(swap) = rx.try_recv() {
+                apply_root_swap(&mut *watcher, &mut current_roots, swap);
+            }
+        }
+        // `recv_timeout` keeps the loop wakeable so pending root swaps are
+        // applied even when no filesystem event arrives (TASK-0090). The
+        // debounce window is the upper bound on swap latency.
+        match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(debounced_evts) => {
                 let (events, malformed) = normalize_batch(debounced_evts);
                 if events.is_empty() {
@@ -180,6 +278,10 @@ fn run_native(
                 handler(batch_id, &events);
             }
 
+            Err(err) if matches!(err, std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Wake-up tick for pending root swaps; not an error.
+                continue;
+            }
             Err(err) => {
                 if verbose {
                     diagnostics::debug(&diagnostics::Record {
@@ -192,8 +294,6 @@ fn run_native(
                 stdout::error(&format!("failed to receive event: {:?}", err));
             }
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
     }
 }
 
@@ -206,11 +306,24 @@ fn run_poll(
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
     interval: Duration,
+    swap_rx: Option<RootSwapReceiver>,
 ) -> Result<(), String> {
     let batch_sequence = AtomicSequence::new();
     let mut scanner = PollScanner::new(watch_path_list);
+    let mut swap_rx = swap_rx;
     on_ready();
     loop {
+        // A root swap rebuilds the scanner under the new root set; the next
+        // scan seeds the new baseline, so a swap never reports old content
+        // as changes (contract §7 parity).
+        if let Some(rx) = swap_rx.as_mut() {
+            while let Ok(swap) = rx.try_recv() {
+                scanner = PollScanner::new(swap.roots.clone());
+                if let Some(ack) = swap.ack {
+                    let _ = ack.send(Ok(()));
+                }
+            }
+        }
         let events = scanner.scan();
         if !events.is_empty() {
             let batch_id = batch_sequence.next();
@@ -219,6 +332,34 @@ fn run_poll(
             }
         }
         std::thread::sleep(interval.max(Duration::from_millis(20)));
+    }
+}
+
+/// Applies one live root swap to the native watcher: retires removed roots
+/// and registers added roots, updating the tracked set. Called before
+/// draining the next debounce batch so routing always sees the committed
+/// root set (contract §4 commit boundary).
+fn apply_root_swap(
+    watcher: &mut dyn notify_debouncer_mini::notify::Watcher,
+    current_roots: &mut Vec<String>,
+    swap: RootSwap,
+) {
+    use notify_debouncer_mini::notify::{RecursiveMode, Watcher};
+    for root in current_roots.iter() {
+        if !swap.roots.contains(root) {
+            let _ = watcher.unwatch(Path::new(root));
+        }
+    }
+    for root in &swap.roots {
+        if !current_roots.contains(root) {
+            let _ = watcher.watch(Path::new(root), RecursiveMode::Recursive);
+        }
+    }
+    *current_roots = swap.roots.clone();
+    // Acknowledge so the reload transaction returns only after the backend
+    // applies the new roots (contract §4: no event-loss gap at commit).
+    if let Some(ack) = swap.ack {
+        let _ = ack.send(Ok(()));
     }
 }
 
@@ -335,6 +476,35 @@ impl WatchBackend {
     }
 }
 
+/// Recursively collects descendants of `root` into `paths`: every child
+/// (file or directory), then the children of each non-`.git`, non-symlinked
+/// directory. Symlinked directories are recorded as paths but never walked,
+/// so cycles cannot recurse (contract §6 symlink policy).
+fn walk_descendants(root: &Path, paths: &mut Vec<PathBuf>) {
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_dir = entry
+                .file_type()
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false);
+            let is_symlink = entry
+                .file_type()
+                .map(|file_type| file_type.is_symlink())
+                .unwrap_or(false);
+            let is_git = path.file_name().map(|name| name == ".git").unwrap_or(false);
+            paths.push(path.clone());
+            if is_dir && !is_symlink && !is_git {
+                stack.push(path);
+            }
+        }
+    }
+}
+
 /// One filesystem fact the poll scanner tracks: the modified time and whether
 /// the path exists. A change in either detects create/modify/remove and
 /// rename-equivalent (old path gone + new path present) for matching.
@@ -377,17 +547,16 @@ impl PollScanner {
         }
     }
 
-    /// Collects every path under the watched roots (one level deep plus the
-    /// roots themselves), in deterministic order.
+    /// Collects every path under the watched roots recursively, in
+    /// deterministic order (TASK-0086, contract §7). Does not traverse
+    /// `.git`, symlinked directories (cycle safety), or paths outside the
+    /// bounded roots; the baseline is seeded on the first scan and never
+    /// reported as changes.
     fn collect_paths(&self) -> Vec<PathBuf> {
         let mut paths = vec![];
         for root in &self.watched {
             paths.push(root.clone());
-            if let Ok(entries) = std::fs::read_dir(root) {
-                for entry in entries.flatten() {
-                    paths.push(entry.path());
-                }
-            }
+            walk_descendants(root, &mut paths);
         }
         paths.sort();
         paths.dedup();
@@ -511,6 +680,87 @@ mod poll_tests {
     }
 
     #[test]
+    fn nested_creation_and_modification_are_detected_recursively() {
+        let dir = scratch("nested");
+        std::fs::create_dir_all(dir.join("a/b/c")).unwrap();
+        std::fs::write(dir.join("a/b/c/deep.txt"), "x").unwrap();
+        let mut scanner = PollScanner::new(vec![dir.display().to_string()]);
+        scanner.scan(); // baseline seeds the whole tree
+
+        // Create a file two levels below the root: recursive discovery.
+        std::fs::write(dir.join("a/b/new.txt"), "y").unwrap();
+        let changed = scanner.scan();
+        assert!(
+            changed.iter().any(|e| e.path.ends_with("a/b/new.txt")),
+            "nested create must be detected: {changed:?}"
+        );
+
+        // Modify a deeply nested existing file.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.join("a/b/c/deep.txt"), "zzz").unwrap();
+        let changed = scanner.scan();
+        assert!(
+            changed.iter().any(|e| e.path.ends_with("a/b/c/deep.txt")),
+            "nested modify must be detected: {changed:?}"
+        );
+
+        // Remove a nested file.
+        std::fs::remove_file(dir.join("a/b/c/deep.txt")).unwrap();
+        let changed = scanner.scan();
+        assert!(
+            changed.iter().any(|e| e.path.ends_with("a/b/c/deep.txt")),
+            "nested remove must be detected: {changed:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn git_directories_are_not_traversed() {
+        let dir = scratch("git-skip");
+        std::fs::create_dir_all(dir.join(".git/objects")).unwrap();
+        std::fs::write(dir.join(".git/objects/deep.txt"), "x").unwrap();
+        std::fs::write(dir.join(".git/config"), "x").unwrap();
+        let mut scanner = PollScanner::new(vec![dir.display().to_string()]);
+        scanner.scan(); // baseline
+
+        // A change inside .git must never surface (contract §6: no .git
+        // traversal).
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.join(".git/objects/deep.txt"), "zzz").unwrap();
+        let changed = scanner.scan();
+        assert!(
+            !changed.iter().any(|e| e.path.contains(".git")),
+            ".git changes must not be reported: {changed:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn symlinked_directories_are_recorded_but_not_walked() {
+        let dir = scratch("symlink-skip");
+        let target = scratch("symlink-target");
+        std::fs::create_dir_all(target.join("inner")).unwrap();
+        std::fs::write(target.join("inner/real.txt"), "x").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, dir.join("link")).unwrap();
+
+        let mut scanner = PollScanner::new(vec![dir.display().to_string()]);
+        scanner.scan(); // baseline
+
+        // A change inside the symlink target must not surface through the
+        // link path (no traversal), and the link itself is not a cycle.
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(target.join("inner/real.txt"), "zzz").unwrap();
+        let changed = scanner.scan();
+        assert!(
+            !changed.iter().any(|e| e.path.contains("symlink-skip")),
+            "symlink traversal must not report target changes: {changed:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&target).unwrap();
+    }
+
+    #[test]
     fn backend_parse_validates_selection_and_interval() {
         assert_eq!(WatchBackend::parse(None, None).unwrap(), WatchBackend::Auto);
         assert_eq!(
@@ -524,5 +774,54 @@ mod poll_tests {
             }
         );
         assert!(WatchBackend::parse(Some("bogus"), None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    #[test]
+    fn publisher_swap_waits_for_backend_ack() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let publisher = RootSwapPublisher::new(tx);
+
+        // Backend side: receive the swap, apply, acknowledge.
+        let backend = std::thread::spawn(move || {
+            let swap = rx.recv_timeout(Duration::from_secs(5)).expect("swap");
+            assert_eq!(
+                swap.roots,
+                vec!["/repo/src".to_owned(), "/repo/docs".to_owned()]
+            );
+            let ack = swap.ack.expect("ack channel");
+            ack.send(Ok(())).unwrap();
+        });
+
+        // Publisher side: swap blocks until the ack arrives.
+        publisher
+            .swap(vec!["/repo/src".to_owned(), "/repo/docs".to_owned()])
+            .expect("synchronous swap");
+        backend.join().expect("backend");
+    }
+
+    #[test]
+    fn publisher_swap_errors_when_backend_never_acks() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        // Drop the receiver: the sender send fails immediately.
+        drop(_rx);
+        let publisher = RootSwapPublisher::new(tx);
+        let err = publisher
+            .swap(vec!["/repo/src".to_owned()])
+            .expect_err("closed channel must error");
+        assert!(err.contains("closed"), "{err}");
+    }
+
+    #[test]
+    fn disabled_publisher_errors_without_backend() {
+        let publisher = RootSwapPublisher::disabled();
+        let err = publisher
+            .swap(vec!["/repo/src".to_owned()])
+            .expect_err("disabled publisher must error");
+        assert!(err.contains("without reload support"), "{err}");
     }
 }

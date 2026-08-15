@@ -161,7 +161,13 @@ fn subscribe_returns_immediate_snapshot_then_streams_transitions() {
     assert!(params["commands"].as_array().unwrap().len() >= 1);
     let paths = params["paths"].as_array().unwrap();
     assert!(!paths.is_empty(), "paths must carry the batch path");
-    assert!(paths[0].as_str().unwrap().ends_with("a.txt"));
+    // The batch is the complete changed-path set (contract §1) and may
+    // coalesce unrelated setup writes under load; the trigger must be
+    // present, not necessarily first.
+    assert!(
+        paths.iter().any(|p| p.as_str().unwrap().ends_with("a.txt")),
+        "batch must contain the trigger path: {paths:?}"
+    );
 }
 
 #[test]
@@ -201,4 +207,71 @@ fn subscribe_cli_reports_an_actionable_error_on_a_legacy_server() {
     );
     assert_eq!(response["error"]["code"], -32601);
     assert_eq!(response["error"]["message"], "Method not found");
+}
+
+#[test]
+fn subscribe_failure_notification_carries_exact_output_ref() {
+    // Contract §1/§3/§5: the snapshot notification on a failed generation
+    // carries the same structured outputRef as status/await — one reference
+    // source, no divergent reconstruction across surfaces.
+    let directory = setup_directory(
+        "output-ref",
+        r#"
+on:
+  socket: sock
+tasks:
+  - name: failing task
+    run: 'echo "boom stdout" && echo "boom stderr" >&2 && exit 3'
+    change: "*.txt"
+"#,
+    );
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    // Subscribe first, then emit a failing change; the notification stream
+    // must report the failed snapshot with an outputRef.
+    let socket = directory.join("sock");
+    let mut stream = UnixStream::connect(&socket).expect("connect");
+    writeln!(
+        stream,
+        r#"{{"jsonrpc":"2.0","id":"sub","method":"subscribe"}}"#
+    )
+    .unwrap();
+    let mut reader = BufReader::new(stream);
+
+    let emit = call(
+        &directory,
+        serde_json::json!({"jsonrpc": "2.0", "id": "emit", "method": "emit",
+                           "params": {"path": "notes.txt"}}),
+    );
+    let generation = emit["result"]["runId"].as_u64().expect("runId");
+
+    // Drain until the notification for the failed generation with evidence.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut found = None;
+    while std::time::Instant::now() < deadline {
+        let notification = read_snapshot(&mut reader);
+        if notification["params"]["generation"].as_u64() == Some(generation)
+            && notification["params"]["state"].as_str() == Some("failed")
+        {
+            found = Some(notification);
+            break;
+        }
+    }
+    let notification = found.expect("failed snapshot notification");
+
+    let evidence = &notification["params"]["failureEvidence"];
+    let output_ref = &evidence["outputRef"];
+    assert_eq!(output_ref["generation"], generation);
+    assert_eq!(output_ref["task"], "failing task");
+    assert!(!output_ref["instanceToken"].as_str().unwrap().is_empty());
+    assert!(output_ref["retrieve"]
+        .as_str()
+        .unwrap()
+        .contains("--instance '"));
+    assert_eq!(evidence["additionalFailedTasks"], 0);
+    assert!(evidence["excerpt"]
+        .as_str()
+        .unwrap()
+        .contains("boom stdout"));
 }

@@ -31,7 +31,7 @@ fn ctrl_c_shuts_down_owned_groups_before_exit() {
             std::fs::write(
                 fixture.join(".watch.yaml"),
                 "- name: ctrl-c-grandchild
-  run: \"bash -c 'echo CTRL_C_READY; sleep 30 & echo $! > ctrl-c-grandchild.pid; wait'\"
+  run: \"bash -c 'sleep 30 & echo $! > ctrl-c-grandchild.pid; echo CTRL_C_READY; wait'\"
   change: 'trigger.txt'
   run_on_init: true
 ",
@@ -50,13 +50,25 @@ fn ctrl_c_shuts_down_owned_groups_before_exit() {
                 output
             );
 
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            let grandchild_pid: u32 =
-                std::fs::read_to_string(fixture.join("ctrl-c-grandchild.pid"))
-                    .expect("grandchild pid file")
-                    .trim()
-                    .parse()
-                    .expect("pid");
+            // The grandchild pid file is written by the background subshell
+            // after CTRL_C_READY; under full-suite load a fixed sleep races
+            // that write, so wait for the file deterministically instead.
+            let pid_file = fixture.join("ctrl-c-grandchild.pid");
+            wait_until!(
+                {
+                    let ready = std::fs::read_to_string(&pid_file)
+                        .map(|content| !content.trim().is_empty())
+                        .unwrap_or(false);
+                    ready
+                },
+                "grandchild pid file never appeared at {}",
+                pid_file.display()
+            );
+            let grandchild_pid: u32 = std::fs::read_to_string(&pid_file)
+                .expect("grandchild pid file")
+                .trim()
+                .parse()
+                .expect("pid");
             assert!(alive(grandchild_pid), "grandchild should start alive");
 
             let status = std::process::Command::new("kill")

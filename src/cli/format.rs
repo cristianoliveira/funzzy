@@ -33,6 +33,22 @@ pub fn render_error(format: OutputFormat, code: i64, message: &str) -> String {
     )
 }
 
+/// Renders a control server error with its structured data (contract §3):
+/// typed codes carry machine-actionable retry data (candidates, retained
+/// range, action) that agents consume without parsing message text.
+pub fn render_server_error(
+    format: OutputFormat,
+    code: i64,
+    message: &str,
+    data: Option<&serde_json::Value>,
+) -> String {
+    let mut error = json!({ "code": code, "message": message });
+    if let Some(data) = data {
+        error["data"] = data.clone();
+    }
+    render_document(format, &json!({ "error": error }))
+}
+
 pub fn status_document(status: &StatusSnapshot) -> Value {
     json!({
         "generation": status.generation,
@@ -118,28 +134,40 @@ pub fn cancel_document(cancel: &CancelSnapshot) -> Value {
 }
 
 pub fn output_document(output: &OutputSnapshot) -> Value {
-    let tasks: Vec<Value> = output
-        .tasks
-        .iter()
-        .map(|task| {
-            let mut entry = json!({ "id": task.id });
-            for (name, stream) in [("stdout", &task.stdout), ("stderr", &task.stderr)] {
-                if let Some(stream) = stream {
-                    entry[name] = json!({
-                        "content": stream.content,
-                        "truncated": stream.truncated,
-                        "totalObservedBytes": stream.observed_bytes,
-                        "retainedBytes": stream.retained_bytes,
-                    });
-                }
-            }
-            entry
-        })
-        .collect();
-    json!({
+    let mut doc = json!({
         "generation": output.generation,
-        "tasks": tasks,
-    })
+        "tasks": output
+            .tasks
+            .iter()
+            .map(|task| {
+                let mut entry = json!({ "id": task.id });
+                for (name, stream) in [("stdout", &task.stdout), ("stderr", &task.stderr)] {
+                    if let Some(stream) = stream {
+                        entry[name] = json!({
+                            "content": stream.content,
+                            "truncated": stream.truncated,
+                            "totalObservedBytes": stream.observed_bytes,
+                            "retainedBytes": stream.retained_bytes,
+                        });
+                    }
+                }
+                entry
+            })
+            .collect::<Vec<_>>(),
+    });
+    if let Some(resolved_task) = &output.resolved_task {
+        doc["resolvedTask"] = json!(resolved_task);
+    }
+    if let Some(next_cursor) = &output.next_cursor {
+        doc["nextCursor"] = json!(next_cursor);
+    }
+    if let Some(returned_bytes) = output.returned_bytes {
+        doc["returnedBytes"] = json!(returned_bytes);
+    }
+    if let Some(truncated) = output.truncated {
+        doc["truncated"] = json!(truncated);
+    }
+    doc
 }
 
 pub fn await_document(observation: &AwaitSnapshot) -> Value {
@@ -151,14 +179,27 @@ pub fn await_document(observation: &AwaitSnapshot) -> Value {
         "snapshot": status_document(&observation.snapshot),
     });
     if let Some(evidence) = &observation.failure_evidence {
-        doc["failureEvidence"] = json!({
+        let mut evidence_doc = json!({
             "excerpt": evidence.excerpt,
             "lines": evidence.lines,
             "truncated": evidence.truncated,
             "totalObservedBytes": evidence.total_observed_bytes,
             "retainedBytes": evidence.retained_bytes,
             "retrieve": evidence.retrieve,
+            "additionalFailedTasks": evidence.additional_failed_tasks,
         });
+        if let Some(output_ref) = &evidence.output_ref {
+            evidence_doc["outputRef"] = json!({
+                "instanceToken": output_ref.instance_token,
+                "generation": output_ref.generation,
+                "task": output_ref.task,
+                "mode": output_ref.mode,
+                "tail": output_ref.tail,
+                "maxBytes": output_ref.max_bytes,
+                "retrieve": output_ref.retrieve,
+            });
+        }
+        doc["failureEvidence"] = evidence_doc;
     }
     doc
 }
@@ -248,9 +289,45 @@ mod tests {
     }
 
     #[test]
+    fn server_error_document_carries_structured_retry_data() {
+        // Contract §3: typed errors render code + message + structured data
+        // (candidates, retained range, action) so agents never parse prose.
+        let data = serde_json::json!({
+            "generation": 7,
+            "task": "run integration",
+            "candidates": ["run integration @agent-final"],
+            "ambiguous": false,
+            "action": "reobserve-or-copy-exact"
+        });
+        for format in [OutputFormat::Toon, OutputFormat::Json] {
+            let rendered = render_server_error(format, -32011, "task_not_found", Some(&data));
+            if format == OutputFormat::Json {
+                let doc: Value = serde_json::from_str(&rendered).unwrap();
+                assert_eq!(doc["error"]["code"], -32011);
+                assert_eq!(
+                    doc["error"]["data"]["candidates"][0],
+                    "run integration @agent-final"
+                );
+                assert_eq!(doc["error"]["data"]["action"], "reobserve-or-copy-exact");
+            } else {
+                assert!(rendered.contains("-32011"), "toon: {rendered}");
+                assert!(rendered.contains("task_not_found"), "toon: {rendered}");
+                assert!(
+                    rendered.contains("run integration @agent-final"),
+                    "toon: {rendered}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn output_document_carries_bounds_not_secret_redaction() {
         let output = OutputSnapshot {
             generation: 9,
+            resolved_task: None,
+            next_cursor: None,
+            returned_bytes: None,
+            truncated: None,
             tasks: vec![RetrievedTaskSnapshot {
                 id: "t-1".to_owned(),
                 stdout: Some(StreamSnapshot {
@@ -289,6 +366,8 @@ mod tests {
                 total_observed_bytes: 12,
                 retained_bytes: 12,
                 retrieve: "fzz control output --generation 7".to_owned(),
+                output_ref: None,
+                additional_failed_tasks: 0,
             }),
         };
         let doc = await_document(&observation);

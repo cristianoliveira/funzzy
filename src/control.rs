@@ -100,6 +100,12 @@ pub struct ControlState {
     /// Override source label (TASK-0073): "control" for an exact control
     /// generation override; None for configured/native runs.
     concurrency_source: Option<&'static str>,
+    /// Immutable config revision this generation was frozen under
+    /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4); retained through the
+    /// terminal state of the same generation. Additive field.
+    revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen config revision.
+    revision_hash: Option<String>,
 }
 
 impl Default for ControlState {
@@ -118,6 +124,8 @@ impl Default for ControlState {
             tasks: vec![],
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         }
     }
 }
@@ -159,6 +167,17 @@ impl ControlState {
         &self.failures
     }
 
+    /// The immutable config revision the latest generation was frozen under
+    /// (TASK-0089); None for legacy runs.
+    pub fn revision(&self) -> Option<u64> {
+        self.revision
+    }
+
+    /// The non-secret semantic hash of the frozen config revision.
+    pub fn revision_hash(&self) -> Option<&str> {
+        self.revision_hash.as_deref()
+    }
+
     pub fn batch(&self) -> Option<u64> {
         self.batch
     }
@@ -190,6 +209,8 @@ impl ControlState {
                 commands,
                 effective_concurrency,
                 concurrency_source,
+                revision,
+                revision_hash,
                 ..
             } => {
                 self.generation = run_id;
@@ -205,6 +226,8 @@ impl ControlState {
                 self.tasks.clear();
                 self.effective_concurrency = effective_concurrency;
                 self.concurrency_source = concurrency_source;
+                self.revision = revision;
+                self.revision_hash = revision_hash;
             }
             Event::Finished {
                 superseded_by,
@@ -697,7 +720,7 @@ fn handle_client(
                 .get("params")
                 .is_some_and(|params| params.is_object())
         {
-            handle_await(&mut stream, request, state, coordinator, outputs);
+            handle_await(&mut stream, request, state, coordinator, outputs, instance);
             continue;
         }
 
@@ -782,6 +805,7 @@ fn handle_await(
     state: &Arc<Mutex<ControlState>>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
     outputs: Option<&OutputRegistry>,
+    instance: &ControlInstance,
 ) {
     let id = request_id(&request);
     if request.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
@@ -826,6 +850,7 @@ fn handle_await(
         state,
         Some(&mut probe),
         outputs,
+        instance.token.as_str(),
     );
     let _ = stream.set_nonblocking(false);
     write_response(
@@ -972,12 +997,12 @@ fn process_request(
     }
 
     let result = match method {
-        "status" => status_result(state, outputs),
+        "status" => status_result(state, outputs, instance),
         "targets" => Ok(targets_result(targets, estimates)),
         "run" => run_requested_target(&request, run_target),
         "emit" => emit_requested_path(&request, emit_path),
         "cancel" => cancel_requested_generation(&request, cancel_generation, instance),
-        "output" => output_retrieval(&request, outputs),
+        "output" => output_retrieval(&request, outputs, instance),
         // Honest negotiated profile (contract §8): methods list only what this
         // server implements; features stay false until the additive contract
         // (subscribe, cancel, output, correlated snapshots, estimates) lands.
@@ -1050,6 +1075,12 @@ fn capabilities_result(
         "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
         "maxResponseBytes": MAX_RESPONSE_BYTES,
         "maxEvidenceLines": MAX_EVIDENCE_LINES,
+        // Contract §4: paging and envelope facts so advanced clients negotiate
+        // before requesting, instead of discovering a > transport response.
+        "outputSchemaVersion": 2,
+        "outputModes": ["tail", "page"],
+        "outputPageSizeMax": crate::output::OUTPUT_PAGE_MAX_BYTES as u64,
+        "outputMaxBytesEffective": crate::output::DEFAULT_PAGE_BYTES as u64,
     });
     if duration_estimates {
         limits["durationEstimateLimits"] = serde_json::json!({
@@ -1117,6 +1148,7 @@ fn targets_result(
 fn status_result(
     state: &Arc<Mutex<ControlState>>,
     outputs: Option<&OutputRegistry>,
+    instance: &ControlInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let snapshot = state.lock().unwrap().clone();
     let mut value = serde_json::to_value(snapshot.clone()).map_err(|_| {
@@ -1127,10 +1159,21 @@ fn status_result(
         )
     })?;
     if snapshot.state() == &ExecutionState::Failed {
+        let failed_tasks: Vec<String> = snapshot
+            .tasks()
+            .iter()
+            .filter(|task| task.state == crate::executor::TaskState::Failed)
+            .map(|task| task.name.clone())
+            .collect();
         if let (Some(outputs), Some(evidence)) = (
             outputs,
             outputs.and_then(|outputs| {
-                outputs.failure_evidence(snapshot.generation(), MAX_EVIDENCE_LINES)
+                outputs.failure_evidence(
+                    snapshot.generation(),
+                    MAX_EVIDENCE_LINES,
+                    &instance.token,
+                    &failed_tasks,
+                )
             }),
         ) {
             let _ = outputs;
@@ -1142,18 +1185,21 @@ fn status_result(
     Ok(value)
 }
 
-/// `output` retrieval (contract §6): bounded, per generation/task/stream,
-/// tail or full. Missing generations/tasks are actionable errors naming the
-/// retained range.
+/// `output` retrieval (contract §6/§3): bounded, per generation/task/stream,
+/// tail or full. Instance token is validated before registry lookup (stale
+/// token cannot read a same-number generation from a replacement watcher);
+/// registry failures map to typed codes `-32010`/`-32011` with structured
+/// data. Generic `-32000` is reserved for genuine server failure.
 fn output_retrieval(
     request: &serde_json::Value,
     outputs: Option<&OutputRegistry>,
+    instance: &ControlInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let Some(outputs) = outputs else {
         return Err((
-            -32000,
-            "Server error",
-            Some(serde_json::json!("output retrieval is unavailable")),
+            -32014,
+            "output_unavailable",
+            Some(serde_json::json!({ "feature": "outputRetrieval" })),
         ));
     };
     let params = request.get("params").and_then(serde_json::Value::as_object);
@@ -1169,6 +1215,28 @@ fn output_retrieval(
             )),
         ));
     };
+
+    // Instance identity (contract §3 `-32012`): a request carrying a stale
+    // token was formed against another watcher process and must never read
+    // the same-number generation from this one. Missing token (legacy) keeps
+    // working but never claims exact freshness.
+    if let Some(token) = params
+        .and_then(|params| params.get("instanceToken"))
+        .and_then(serde_json::Value::as_str)
+    {
+        if token != instance.token {
+            return Err((
+                -32012,
+                "instance_mismatch",
+                Some(serde_json::json!({
+                    "instance": token,
+                    "activeInstance": instance.token,
+                    "action": "restart-or-reobserve",
+                })),
+            ));
+        }
+    }
+
     let task = params
         .and_then(|params| params.get("task"))
         .and_then(serde_json::Value::as_str)
@@ -1177,6 +1245,30 @@ fn output_retrieval(
         .and_then(|params| params.get("stream"))
         .and_then(serde_json::Value::as_str)
         .filter(|stream| matches!(*stream, "stdout" | "stderr"));
+
+    // Retrieval mode (contract §5): `mode` selects tail (last N lines per
+    // stream) or page (deterministic continuation below the negotiated
+    // budget). Legacy clients omit `mode` and may send `tail`/`full`;
+    // unsafe unpaged `full` is translated to a first bounded page with
+    // continuation, never a response at or above the transport budget.
+    let mode = params
+        .and_then(|params| params.get("mode"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|mode| !mode.is_empty());
+    if let Some(mode) = mode {
+        if mode != "tail" && mode != "page" {
+            return Err((
+                -32013,
+                "invalid_options",
+                Some(serde_json::json!({
+                    "field": "mode",
+                    "reason": format!("output mode must be 'tail' or 'page', got '{mode}'"),
+                    "valid": ["tail", "page"],
+                })),
+            ));
+        }
+    }
     let tail = params
         .and_then(|params| params.get("tail"))
         .and_then(serde_json::Value::as_u64)
@@ -1186,21 +1278,123 @@ fn output_retrieval(
         .and_then(|params| params.get("full"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    if tail.is_some() && full {
+    let max_bytes = params
+        .and_then(|params| params.get("maxBytes"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|bytes| *bytes > 0)
+        .map(|bytes| bytes as usize);
+    let cursor = params
+        .and_then(|params| params.get("cursor"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|cursor| !cursor.trim().is_empty());
+
+    // Contract §2: `tail` and page/full variants are structurally exclusive
+    // and invalid shapes are rejected before transport — never exposed as a
+    // combination the server would have to resolve ambiguously.
+    let is_page = mode == Some("page") || full;
+    if mode == Some("tail") && (is_page || cursor.is_some()) {
         return Err((
-            -32602,
-            "Invalid params",
-            Some(serde_json::json!(
-                "output requires at most one of params.tail or params.full"
-            )),
+            -32013,
+            "invalid_options",
+            Some(serde_json::json!({
+                "field": "mode/tail",
+                "reason": "tail mode cannot carry page/full or cursor options",
+                "valid": ["tail", "page"],
+            })),
+        ));
+    }
+    if !is_page && cursor.is_some() {
+        return Err((
+            -32013,
+            "invalid_options",
+            Some(serde_json::json!({
+                "field": "cursor",
+                "reason": "cursor requires page mode",
+                "valid": ["page"],
+            })),
+        ));
+    }
+    if is_page && tail.is_some() {
+        return Err((
+            -32013,
+            "invalid_options",
+            Some(serde_json::json!({
+                "field": "tail/page",
+                "reason": "page mode cannot carry params.tail",
+                "valid": ["page", "tail"],
+            })),
         ));
     }
 
-    outputs
-        .retrieve(generation, task, stream, tail, full)
-        .map(serde_json::to_value)
-        .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
-        .and_then(|result| result.map_err(|_| (-32000, "Server error", None)))
+    if is_page {
+        // Unsafe unpaged `full` translates to the first bounded page with a
+        // continuation cursor (contract §2), sharing one budget; the page
+        // default is conservative below the transport envelope.
+        let budget = max_bytes.unwrap_or(crate::output::DEFAULT_PAGE_BYTES);
+        let budget = budget.min(crate::output::OUTPUT_PAGE_MAX_BYTES);
+        outputs
+            .retrieve_page(generation, task, stream, budget, cursor)
+            .map_err(|error| typed_output_error(error, generation))
+            .and_then(serialize_retrieved)
+    } else {
+        outputs
+            .retrieve(generation, task, stream, tail, false)
+            .map_err(|error| typed_output_error(error, generation))
+            .and_then(serialize_retrieved)
+    }
+}
+
+fn typed_output_error(
+    error: crate::output::RetrievalError,
+    generation: u64,
+) -> (i64, &'static str, Option<serde_json::Value>) {
+    match error {
+        crate::output::RetrievalError::GenerationNotFound { retained } => (
+            -32010,
+            "generation_not_found",
+            Some(serde_json::json!({
+                "generation": generation,
+                "retained": retained,
+                "action": "reobserve",
+            })),
+        ),
+        crate::output::RetrievalError::TaskNotFound {
+            task,
+            candidates,
+            ambiguous,
+        } => (
+            -32011,
+            "task_not_found",
+            Some(serde_json::json!({
+                "generation": generation,
+                "task": task,
+                "candidates": candidates,
+                "ambiguous": ambiguous,
+                "action": "reobserve-or-copy-exact",
+            })),
+        ),
+        crate::output::RetrievalError::InvalidCursor { reason } => (
+            -32013,
+            "invalid_options",
+            Some(serde_json::json!({
+                "field": "cursor",
+                "reason": reason,
+                "action": "restart-paging-from-first-page",
+            })),
+        ),
+    }
+}
+
+fn serialize_retrieved(
+    retrieved: crate::output::RetrievedOutput,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    serde_json::to_value(&retrieved).map_err(|_| {
+        (
+            -32015,
+            "internal",
+            Some(serde_json::json!({ "kind": "serialize" })),
+        )
+    })
 }
 
 fn run_requested_target(
@@ -1383,6 +1577,8 @@ mod tests {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            revision: Some(3),
+            revision_hash: Some("abc123".to_owned()),
         }
     }
 
@@ -1400,6 +1596,10 @@ mod tests {
         assert_eq!(state.superseded_by, None);
         assert_eq!(state.duration_ms, None);
         assert!(state.failures.is_empty());
+        // TASK-0089: the generation retains its frozen config revision
+        // through the running state.
+        assert_eq!(state.revision, Some(3));
+        assert_eq!(state.revision_hash.as_deref(), Some("abc123"));
     }
 
     #[test]
@@ -1419,6 +1619,10 @@ mod tests {
         assert_eq!(state.superseded_by, Some(43));
         // Correlation fields still describe generation 42, never a mix.
         assert_eq!(state.generation, 42);
+        // TASK-0089: the revision survives into the terminal state of the
+        // same generation.
+        assert_eq!(state.revision, Some(3));
+        assert_eq!(state.revision_hash.as_deref(), Some("abc123"));
     }
 
     #[test]
@@ -1623,6 +1827,285 @@ mod tests {
             result,
             serde_json::json!({ "cancelled": false, "generation": 7 })
         );
+    }
+
+    fn output_registry_with(records: &[(u64, &str, &[&str])]) -> OutputRegistry {
+        let registry = OutputRegistry::new();
+        for (generation, task, lines) in records {
+            let handle = crate::cmd::CaptureHandle::new();
+            for line in *lines {
+                handle.append(line.as_bytes(), false);
+            }
+            registry.record(*generation, (*task).to_owned(), handle.finish());
+        }
+        registry
+    }
+
+    #[test]
+    fn output_mismatched_instance_token_is_typed_instance_error() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        let request = serde_json::json!({
+            "params": { "generation": 7, "instanceToken": "fz-stale" }
+        });
+        let (code, message, data) =
+            output_retrieval(&request, Some(&outputs), &instance("fz-current"))
+                .expect_err("stale instance must fail");
+        assert_eq!(code, -32012);
+        assert_eq!(message, "instance_mismatch");
+        let data = data.expect("structured data");
+        assert_eq!(data["activeInstance"], "fz-current");
+        assert_eq!(data["action"], "restart-or-reobserve");
+    }
+
+    #[test]
+    fn output_matching_instance_token_reads_registry() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        let request = serde_json::json!({
+            "params": { "generation": 7, "instanceToken": "fz-7f3a" }
+        });
+        let result = output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+            .expect("matching instance reads");
+        assert_eq!(result["generation"], 7);
+    }
+
+    #[test]
+    fn output_missing_generation_maps_to_typed_code() {
+        let outputs = output_registry_with(&[(5, "t", &["x\n"])]);
+        let request = serde_json::json!({ "params": { "generation": 9 } });
+        let (code, message, data) =
+            output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+                .expect_err("missing generation");
+        assert_eq!(code, -32010);
+        assert_eq!(message, "generation_not_found");
+        let data = data.expect("structured data");
+        assert_eq!(data["retained"], serde_json::json!([5]));
+        assert_eq!(data["action"], "reobserve");
+    }
+
+    #[test]
+    fn output_missing_task_maps_to_typed_code_with_candidates() {
+        let outputs = output_registry_with(&[(7, "lint @fast", &["x\n"])]);
+        let request = serde_json::json!({ "params": { "generation": 7, "task": "nope" } });
+        let (code, message, data) =
+            output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+                .expect_err("unknown task");
+        assert_eq!(code, -32011);
+        assert_eq!(message, "task_not_found");
+        let data = data.expect("structured data");
+        assert_eq!(data["task"], "nope");
+        assert_eq!(data["candidates"], serde_json::json!(["lint @fast"]));
+        assert_eq!(data["ambiguous"], false);
+        assert_eq!(data["action"], "reobserve-or-copy-exact");
+    }
+
+    #[test]
+    fn output_tail_and_full_together_is_typed_invalid_options() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        let request = serde_json::json!({
+            "params": { "generation": 7, "tail": 40, "full": true }
+        });
+        let (code, message, _) = output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+            .expect_err("tail+full conflict");
+        assert_eq!(code, -32013);
+        assert_eq!(message, "invalid_options");
+    }
+
+    #[test]
+    fn output_unavailable_registry_is_typed_unavailable() {
+        let request = serde_json::json!({ "params": { "generation": 7 } });
+        let (code, message, data) =
+            output_retrieval(&request, None, &instance("fz-7f3a")).expect_err("registry not wired");
+        assert_eq!(code, -32014);
+        assert_eq!(message, "output_unavailable");
+        assert_eq!(data.unwrap()["feature"], "outputRetrieval");
+    }
+
+    #[test]
+    fn output_canonical_task_resolution_reports_selected_exact_id() {
+        let outputs = output_registry_with(&[(7, "run integration @agent-final", &["boom\n"])]);
+        let request =
+            serde_json::json!({ "params": { "generation": 7, "task": "run integration" } });
+        let result = output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+            .expect("single canonical candidate resolves");
+        assert_eq!(result["resolvedTask"], "run integration @agent-final");
+        assert_eq!(result["tasks"][0]["id"], "run integration @agent-final");
+    }
+
+    #[test]
+    fn output_page_mode_returns_bounded_first_page_with_continuation() {
+        let outputs = output_registry_with(&[(7, "t", &["aaa\n", "bbb\n", "ccc\n"])]);
+        // Budget derived from a page containing exactly the first two lines,
+        // so the first page stops with a continuation and the second finishes.
+        let two_lines = crate::output::RetrievedOutput {
+            generation: 7,
+            resolved_task: None,
+            tasks: vec![crate::output::RetrievedTask {
+                id: "t".to_owned(),
+                stdout: Some(crate::output::StreamOutput {
+                    content: "aaa\nbbb\n".to_owned(),
+                    lines: 2,
+                    retained_bytes: 12,
+                    observed_bytes: 12,
+                    truncated: false,
+                }),
+                stderr: None,
+            }],
+            next_cursor: Some("cursor".to_owned()),
+            returned_bytes: Some(8),
+            truncated: Some(true),
+        };
+        let budget = serde_json::to_vec(&two_lines)
+            .expect("serialize reference")
+            .len();
+        let request = serde_json::json!({
+            "params": { "generation": 7, "mode": "page", "maxBytes": budget }
+        });
+        let result =
+            output_retrieval(&request, Some(&outputs), &instance("fz-7f3a")).expect("page mode");
+        assert_eq!(result["generation"], 7);
+        assert!(result["returnedBytes"].as_u64().unwrap() > 0);
+        assert!(result["truncated"].as_bool().unwrap());
+        let cursor = result["nextCursor"].as_str().expect("cursor");
+        assert!(
+            cursor.starts_with("7|"),
+            "generation-scoped cursor: {cursor}"
+        );
+
+        // Follow the cursor: the second page continues exactly, then ends.
+        let next = serde_json::json!({
+            "params": { "generation": 7, "mode": "page", "maxBytes": budget, "cursor": cursor }
+        });
+        let second =
+            output_retrieval(&next, Some(&outputs), &instance("fz-7f3a")).expect("second page");
+        assert_eq!(second["truncated"].as_bool().unwrap(), false);
+        assert!(second["nextCursor"].is_null() || second.get("nextCursor").is_none());
+    }
+
+    #[test]
+    fn output_page_mode_rejects_tail_and_unknown_modes() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        // page + tail is structurally exclusive (contract §2).
+        let page_with_tail = serde_json::json!({
+            "params": { "generation": 7, "mode": "page", "tail": 40 }
+        });
+        let (code, _, _) = output_retrieval(&page_with_tail, Some(&outputs), &instance("fz-7f3a"))
+            .expect_err("page+tail conflict");
+        assert_eq!(code, -32013);
+
+        // Unknown mode is invalid options.
+        let bad_mode = serde_json::json!({ "params": { "generation": 7, "mode": "dump" } });
+        let (code, _, data) = output_retrieval(&bad_mode, Some(&outputs), &instance("fz-7f3a"))
+            .expect_err("unknown mode");
+        assert_eq!(code, -32013);
+        assert_eq!(data.unwrap()["valid"], serde_json::json!(["tail", "page"]));
+    }
+
+    #[test]
+    fn output_cursor_without_page_mode_is_invalid_options() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        let request = serde_json::json!({ "params": { "generation": 7, "cursor": "7|0|0|0" } });
+        let (code, _, _) = output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+            .expect_err("cursor requires page");
+        assert_eq!(code, -32013);
+    }
+
+    #[test]
+    fn output_tampered_cursor_maps_to_typed_invalid_options() {
+        let outputs = output_registry_with(&[(7, "t", &["x\n"])]);
+        let request = serde_json::json!({
+            "params": { "generation": 7, "mode": "page", "cursor": "7|9|0|0" }
+        });
+        let (code, message, data) =
+            output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+                .expect_err("tampered cursor");
+        assert_eq!(code, -32013);
+        assert_eq!(message, "invalid_options");
+        assert_eq!(data.unwrap()["field"], "cursor");
+    }
+
+    #[test]
+    fn output_legacy_full_translates_to_bounded_page_with_continuation() {
+        let outputs = output_registry_with(&[(7, "t", &["aaa\n", "bbb\n", "ccc\n"])]);
+        // Legacy `full: true` must never return a response at or above the
+        // transport budget: it becomes a first bounded page.
+        let request = serde_json::json!({ "params": { "generation": 7, "full": true } });
+        let result = output_retrieval(&request, Some(&outputs), &instance("fz-7f3a"))
+            .expect("legacy full translates to a page");
+        let serialized = serde_json::to_vec(&result).expect("serialize");
+        assert!(
+            serialized.len() <= crate::output::DEFAULT_PAGE_BYTES,
+            "legacy full must stay under page budget, got {}",
+            serialized.len()
+        );
+    }
+
+    #[test]
+    fn capabilities_advertise_output_paging_model() {
+        let caps = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        let limits = &caps["limits"];
+        assert_eq!(limits["outputSchemaVersion"], 2);
+        assert_eq!(limits["outputModes"], serde_json::json!(["tail", "page"]));
+        assert_eq!(
+            limits["outputPageSizeMax"],
+            serde_json::json!(crate::output::OUTPUT_PAGE_MAX_BYTES as u64)
+        );
+        assert!(limits["outputMaxBytesEffective"].as_u64().unwrap() > 0);
+        assert!(
+            limits["outputMaxBytesEffective"].as_u64().unwrap()
+                < limits["maxResponseBytes"].as_u64().unwrap()
+        );
+    }
+
+    #[test]
+    fn status_failure_evidence_carries_structured_output_ref() {
+        // Contract §1/§5: terminal status on a failed generation emits an
+        // exact outputRef (instance token + generation + exact task ID + safe
+        // defaults), not a human string the agent would have to parse.
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        state.lock().unwrap().apply(started(7, None, None));
+        state.lock().unwrap().apply(Event::Finished {
+            run_id: 7,
+            superseded_by: None,
+            elapsed: Duration::from_millis(5),
+            failures: vec!["boom".to_owned()],
+        });
+        let registry = output_registry_with(&[(7, "lint @fast", &["error: boom\n"])]);
+
+        let value = status_result(&state, Some(&registry), &instance("fz-7f3a")).expect("status");
+        let evidence = &value["failureEvidence"];
+        assert_eq!(
+            evidence["retrieve"],
+            "fzz control output --generation 7 --task 'lint @fast' --tail 80"
+        );
+        let output_ref = &evidence["outputRef"];
+        assert_eq!(output_ref["instanceToken"], "fz-7f3a");
+        assert_eq!(output_ref["generation"], 7);
+        assert_eq!(output_ref["task"], "lint @fast");
+        assert_eq!(output_ref["mode"], "tail");
+        assert!(output_ref["retrieve"]
+            .as_str()
+            .unwrap()
+            .contains("--instance 'fz-7f3a'"));
+        assert_eq!(evidence["additionalFailedTasks"], 0);
+    }
+
+    #[test]
+    fn status_evidence_counts_multiple_failed_tasks_via_primary_ref() {
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        state.lock().unwrap().apply(started(7, None, None));
+        state.lock().unwrap().apply(Event::Finished {
+            run_id: 7,
+            superseded_by: None,
+            elapsed: Duration::from_millis(5),
+            failures: vec!["a".to_owned(), "b".to_owned()],
+        });
+        let registry =
+            output_registry_with(&[(7, "lint", &["a boom\n"]), (7, "test", &["b boom\n"])]);
+
+        let value = status_result(&state, Some(&registry), &instance("fz-7f3a")).expect("status");
+        let evidence = &value["failureEvidence"];
+        assert_eq!(evidence["outputRef"]["task"], "lint");
+        assert_eq!(evidence["additionalFailedTasks"], 1);
     }
 
     #[test]

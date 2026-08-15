@@ -1,7 +1,7 @@
 ---
 id: TASK-0063
 title: Publish Funzzy v2.0.0 through tagged release channels
-status: todo
+status: doing
 depends_on: [TASK-0062, TASK-0084]
 priority: high
 tags: [release, github, crates-io, nix, supply-chain]

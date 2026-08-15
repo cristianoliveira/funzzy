@@ -150,6 +150,27 @@ pub fn run() {
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
             .with_hooks(load_hooks(&args.config));
+            // TASK-0089: freeze the initial immutable revision before any
+            // plan is created; reload (TASK-0090) observes candidates through
+            // the same tracker and only commits on semantic change.
+            let watches = {
+                let mut tracker = crate::config_revision::RevisionTracker::new();
+                let runtime = crate::config_revision::RuntimeConfig::capture(
+                    workspace_root.clone(),
+                    rules.clone(),
+                    concurrency,
+                    debounce,
+                    backend,
+                    load_respect_gitignore(&args.config),
+                    load_hooks(&args.config),
+                );
+                match tracker.observe(&runtime) {
+                    crate::config_revision::RevisionDecision::New(revision) => {
+                        watches.with_revision(revision)
+                    }
+                    crate::config_revision::RevisionDecision::NoOp => watches,
+                }
+            };
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
@@ -237,7 +258,7 @@ pub fn run() {
                 concurrency: watches.concurrency(),
                 debounce: watches.debounce(),
             };
-            stdout::info(&explain_output(path, &result, &facts));
+            stdout::info(&explain_output(path, &result, &facts, &watches));
         }
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
@@ -297,6 +318,7 @@ fn explain_output(
     path: &str,
     result: &crate::watches::ExplainResult,
     facts: &crate::watches::ExplainFacts,
+    watches: &Watches,
 ) -> String {
     let mut output = String::from("Explain path ");
     output.push_str(path);
@@ -304,6 +326,16 @@ fn explain_output(
 
     if result.matched.is_empty() && result.ignored.is_empty() {
         output.push_str("  unmatched: no configured task watches this path\n");
+        // Contract §8: for a future/missing path, name the subscription root
+        // that will observe it (nearest existing ancestor), so coverage is
+        // explicit instead of silent.
+        let covering = watches.covering_roots(path);
+        if !covering.is_empty() {
+            output.push_str(&format!(
+                "  covered by subscription root(s): {}\n",
+                covering.join(", ")
+            ));
+        }
         return output;
     }
 
@@ -567,6 +599,45 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
         .unwrap_or(default)
 }
 
+/// Graceful fatal config shutdown (contract §5): emit the terminal error,
+/// reap owned children/services through process ownership, and exit nonzero.
+/// Never SIGKILL/panic/self-SIGTERM.
+fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reason: &str) {
+    let current = coordinator.current();
+    stdout::error(&format!(
+        "Fatal configuration error; terminating watcher.\nWorkspace: {}\nReason: {}",
+        current.root().display(),
+        reason
+    ));
+    let (signal, grace) = crate::process_owner::shutdown_policy();
+    let _ = crate::process_owner::shutdown_all(signal, grace, false);
+    std::process::exit(1);
+}
+
+/// Builds a fresh `Watches` from a validated config candidate, bound to the
+/// new revision (TASK-0090 commit).
+fn build_watches_from_content(
+    content: &str,
+    root: &std::path::Path,
+    concurrency: usize,
+    debounce: std::time::Duration,
+    backend: crate::watcher::WatchBackend,
+    respect_gitignore: bool,
+    hooks: crate::config::RunHooks,
+    revision: crate::config_revision::ConfigRevision,
+) -> Result<Watches, String> {
+    let rules = crate::config::from_yaml(content).map_err(|err| err.to_string())?;
+    crate::rules::validate_rules(&rules).map_err(|err| err.to_string())?;
+    Ok(
+        Watches::with_root_and_concurrency(rules, root.to_path_buf(), concurrency)
+            .with_debounce(debounce)
+            .with_backend(backend)
+            .with_gitignore(respect_gitignore)
+            .with_hooks(hooks)
+            .with_revision(revision),
+    )
+}
+
 fn execute_watch_command(
     watches: Watches,
     mut args: Arguments,
@@ -606,11 +677,15 @@ fn execute_watch_command(
             .flatten();
     }
 
-    // This here restarts the watcher if the config file changes. The baseline
-    // mtime guard rejects stale/historical filesystem events (macOS FSEvents
-    // can replay pre-registration writes), so a watcher started right after
-    // writing its config never spuriously terminates itself.
-    let watcher_pid = std::process::id();
+    // TASK-0088/0090: replace unconditional self-SIGTERM with a
+    // validate-first branch. The reload thread watches the config file
+    // paths (baseline mtime guard rejects stale/historical replays), reads
+    // a stable candidate, validates it through the four gates, and then
+    // either commits a hot reload (same process) or shuts down gracefully
+    // with a nonzero exit (never leaves old config running silently).
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(watches.clone()));
+    let coordinator =
+        crate::reload_coordinator::ReloadCoordinator::new(std::sync::Arc::clone(&shared));
     let baselines: std::collections::HashMap<String, std::time::SystemTime> = config_file_paths
         .iter()
         .filter_map(|path| {
@@ -621,12 +696,34 @@ fn execute_watch_command(
         })
         .collect();
     let startup_config_paths = config_file_paths.clone();
+    let reload_coordinator = coordinator.clone();
+    let reload_root = watches.root().to_path_buf();
+    let reload_concurrency = watches.concurrency();
+    let reload_debounce = debounce;
+    let reload_backend = watches.backend();
+    let reload_gitignore = watches.respects_gitignore();
+    let reload_hooks = watches.hooks();
+    let initial_revision = watches.revision().cloned();
+    // TASK-0090: the reload watcher signals readiness after registering its
+    // config-path roots; the main loop gates init on it so a config-touching
+    // init task never fires before the reload watcher is subscribed.
+    let (reload_ready_tx, reload_ready_rx) = std::sync::mpsc::channel();
     let th = std::thread::spawn(move || {
         let baselines = std::sync::Mutex::new(baselines);
         let backend = crate::watcher::WatchBackend::Auto;
+        let tracker = std::sync::Mutex::new(crate::config_revision::RevisionTracker::new());
+        // Seed the reload tracker with the initial revision the composition
+        // root already observed, so reload revision numbers continue
+        // monotonically from startup (never two trackers disagreeing).
+        if let Some(initial) = initial_revision {
+            tracker.lock().unwrap().seed(initial);
+        }
+        let reload_ready_tx = reload_ready_tx;
         watcher::events(
             startup_config_paths,
-            || {},
+            move || {
+                let _ = reload_ready_tx.send(());
+            },
             move |_batch_id: u64, events: &[watcher::FileEvent]| {
                 let file_changed = events
                     .first()
@@ -653,37 +750,102 @@ fn execute_watch_command(
                 }
                 drop(baselines);
 
-                let truncation_status = if truncate_on_config_change {
-                    Some(logging::truncate())
-                } else {
-                    None
+                // Contract §2: read the candidate only after the window
+                // settles; a partial write fails validation instead of being
+                // misclassified.
+                let content = match std::fs::read_to_string(&file_changed) {
+                    Ok(content) => content,
+                    Err(err) => {
+                        // Config deleted/renamed: treat as invalid (contract
+                        // §7) — the watcher cannot run without a config.
+                        fatal_reload(
+                            &reload_coordinator,
+                            &format!("config unreadable after change: {err}"),
+                        );
+                        return;
+                    }
                 };
 
-                stdout::warn(
-                    &vec![
-                        "The config file has changed while an instance was running.",
-                        &format!("Config file: {}", file_changed),
-                    ]
-                    .join("\n"),
-                );
-
-                if let Some(Ok(())) = truncation_status {
-                    stdout::info("Log file truncated before reloading configuration.");
-                } else if let Some(Err(err)) = truncation_status {
-                    stdout::warn(&format!("Failed to truncate log file: {}", err));
-                }
-
-                println!("Watcher PID: {}", watcher_pid);
-                logging::log_line(&format!("Watcher PID: {}", watcher_pid));
-
-                match signal::kill(Pid::from_raw(watcher_pid as i32), Signal::SIGTERM) {
-                    Ok(_) => stdout::info("Terminating funzzy..."),
-                    Err(err) => panic!("Failed to terminate watcher forcefully.\nCause: {:?}", err),
+                match crate::reload::decide(
+                    &mut tracker.lock().unwrap(),
+                    &content,
+                    reload_root.clone(),
+                    reload_concurrency,
+                    reload_debounce,
+                    reload_backend,
+                    reload_gitignore,
+                    reload_hooks.clone(),
+                ) {
+                    crate::reload::ReloadDecision::NoOp => {
+                        stdout::info("Config save has no semantic change; nothing to reload.");
+                    }
+                    crate::reload::ReloadDecision::Commit(revision) => {
+                        let candidate_watches = build_watches_from_content(
+                            &content,
+                            &reload_root,
+                            reload_concurrency,
+                            reload_debounce,
+                            reload_backend,
+                            reload_gitignore,
+                            reload_hooks.clone(),
+                            revision.clone(),
+                        );
+                        match candidate_watches {
+                            Ok(candidate) => {
+                                if truncate_on_config_change {
+                                    match logging::truncate() {
+                                        Ok(()) => stdout::info(
+                                            "Log file truncated before reloading configuration.",
+                                        ),
+                                        Err(err) => stdout::warn(&format!(
+                                            "Failed to truncate log file: {err}"
+                                        )),
+                                    }
+                                }
+                                let log_sink = |msg: &str| stdout::warn(msg);
+                                if let Err(err) = reload_coordinator.commit(
+                                    revision.clone(),
+                                    candidate,
+                                    &log_sink,
+                                ) {
+                                    fatal_reload(
+                                        &reload_coordinator,
+                                        &format!("reload commit failed: {err}"),
+                                    );
+                                }
+                                // The commit (shared config swap + worker
+                                // revision + backend root swap) completed;
+                                // only now is the reload observable (contract
+                                // §4 live point = atomic commit).
+                                stdout::info(&format!(
+                                    "Config change is valid; hot-reloading to revision {}.",
+                                    revision.number
+                                ));
+                            }
+                            Err(err) => fatal_reload(&reload_coordinator, &err),
+                        }
+                    }
+                    crate::reload::ReloadDecision::Fatal(error) => {
+                        fatal_reload(
+                            &reload_coordinator,
+                            &format!(
+                                "invalid config ({}): {}",
+                                match error.gate {
+                                    crate::reload::ValidationGate::Syntactic => "syntax",
+                                    crate::reload::ValidationGate::Schema => "schema",
+                                    crate::reload::ValidationGate::Semantic => "semantics",
+                                    crate::reload::ValidationGate::Operational => "operational",
+                                },
+                                error.reason
+                            ),
+                        );
+                    }
                 }
             },
             debounce,
             backend,
             false,
+            None,
         )
     });
 
@@ -710,14 +872,18 @@ fn execute_watch_command(
         // them. Catch both and route through the shared ownership path before
         // exit so no descendant is orphaned (TASK-0030).
         let _shutdown = install_shutdown_signal_handler();
-        execute(WatchNonBlockCommand::with_events(
-            watches,
-            verbose,
-            fail_fast,
-            run_on_init,
-            args.control_socket.map(std::path::PathBuf::from),
-            event_stream,
-        ))
+        execute(
+            WatchNonBlockCommand::with_events(
+                watches,
+                verbose,
+                fail_fast,
+                run_on_init,
+                args.control_socket.map(std::path::PathBuf::from),
+                event_stream,
+            )
+            .with_reload(coordinator.clone())
+            .with_reload_ready(reload_ready_rx),
+        )
     } else {
         execute(WatchCommand::with_events(
             watches,

@@ -22,6 +22,31 @@ pub struct Options {
 
 static IS_RUNNING_MULTITHREAD: std::sync::Mutex<u8> = std::sync::Mutex::new(0);
 
+/// Serializes a closure against every filesystem-touching integration test
+/// (the same mutex `with_config`/`with_output`/`with_example` hold). Tests
+/// that spawn their own watcher in a scratch dir must call this so they do
+/// not run concurrently with harness tests and starve their wait budgets.
+#[allow(dead_code)]
+pub fn serialized<F: FnOnce()>(handler: F) {
+    let mut is_running = IS_RUNNING_MULTITHREAD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if *is_running == 1 {
+        *is_running = 0;
+    }
+    loop {
+        if *is_running == 0 {
+            *is_running = 1;
+            break;
+        }
+        sleep(Duration::from_millis(200));
+    }
+    defer!({
+        *is_running = 0;
+    });
+    handler();
+}
+
 /// Per-run fixture root: `temp_dir()/funzzy-fixture-<pid>-<label>/` with a
 /// private copy of the `examples/` tree.
 ///

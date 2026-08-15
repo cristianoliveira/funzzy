@@ -96,6 +96,11 @@ pub struct Watches {
     respect_gitignore: bool,
     /// Run-level terminal hooks (TASK-0040): success/failure commands.
     hooks: crate::config::RunHooks,
+    /// The immutable runtime config revision this watch plan was built from
+    /// (TASK-0089). Captured before any plan is created; a batch routes
+    /// under exactly one revision. None for legacy constructions that never
+    /// observe reload.
+    revision: Option<crate::config_revision::ConfigRevision>,
     /// Root-anchored gitignore matcher; rebuilt when the gitignore changes.
     /// Interior mutability so routing can refresh before each batch without
     /// an event-loss gap (TASK-0036 §4).
@@ -132,6 +137,7 @@ impl Watches {
             respect_gitignore: false,
             gitignore: None,
             hooks: crate::config::RunHooks::default(),
+            revision: None,
         }
     }
 
@@ -202,6 +208,20 @@ impl Watches {
         self.hooks.clone()
     }
 
+    /// Binds the immutable runtime config revision this watch plan was
+    /// captured under (TASK-0089, CONFIG-RELOAD-CONTRACT §4). Composition
+    /// root sets it once; batches routed through this instance carry it.
+    pub fn with_revision(mut self, revision: crate::config_revision::ConfigRevision) -> Self {
+        self.revision = Some(revision);
+        self
+    }
+
+    /// The revision this watch plan is frozen under; None for legacy
+    /// constructions that never observe reload.
+    pub fn revision(&self) -> Option<&crate::config_revision::ConfigRevision> {
+        self.revision.as_ref()
+    }
+
     /// Narrows visible rules while retaining barriers from original topology.
     pub fn select_target(&self, target: &str) -> Option<Self> {
         let rules: Vec<Rules> = self
@@ -226,12 +246,28 @@ impl Watches {
             respect_gitignore: self.respect_gitignore,
             gitignore: self.gitignore.clone(),
             hooks: self.hooks.clone(),
+            revision: self.revision.clone(),
         })
     }
 
     /// The workspace root this watch planning is anchored to.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Replaces the effective watch configuration with a reloaded candidate
+    /// (TASK-0090): swaps rules, topology, policy, and revision so later
+    /// batches route under the committed revision. Returns the previous
+    /// root set so the caller can retire obsolete roots (contract §4).
+    pub fn swap_config(&mut self, candidate: Watches) -> Vec<PathBuf> {
+        let previous_roots: Vec<PathBuf> = self
+            .paths_to_watch()
+            .unwrap_or_default()
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        *self = candidate;
+        previous_roots
     }
 
     /// Maximum simultaneously active tasks within one parallel group.
@@ -583,73 +619,138 @@ impl Watches {
         }
     }
 
-    /// Extract the directory to watch from a glob pattern.
-    /// For example:
-    /// - "src/**" -> "src"
-    /// - "/tmp/**" -> "/tmp"
-    /// - "examples/workdir/**/*" -> "examples/workdir"
-    fn extract_watch_directory(pattern: &str, current_dir: &std::path::Path) -> String {
-        let absolute_pattern = if pattern.starts_with("/") {
-            pattern.to_string()
-        } else {
-            let mut abs = current_dir.to_path_buf();
-            abs.push(pattern);
-            abs.to_str().unwrap().to_string()
-        };
-
-        // Split by '/' and collect segments until we hit a glob metacharacter
-        let mut segments = Vec::new();
-        let is_absolute = absolute_pattern.starts_with('/');
-        for segment in absolute_pattern.split('/') {
-            if segment.contains('*')
-                || segment.contains('?')
-                || segment.contains('[')
-                || segment.contains('{')
-            {
-                break;
-            }
-            if !segment.is_empty() {
-                segments.push(segment);
-            }
-        }
-
-        if segments.is_empty() {
-            return current_dir.to_str().unwrap().to_string();
-        }
-
-        let mut result = String::new();
-        if is_absolute {
-            result.push('/');
-        }
-        result.push_str(&segments.join("/"));
-        result
-    }
-
-    /// Returns the list of rules that contains absolute path
-    ///
-    pub fn paths_to_watch(&self) -> Option<Vec<String>> {
-        let mut paths = Vec::new();
-
+    /// Deterministic minimal subscription-root plan (TASK-0085 §3, TASK-0086):
+    /// for every change pattern, the literal directory prefix; a partly or
+    /// fully missing prefix resolves to its nearest existing ancestor. The
+    /// set is canonicalized, deduplicated, containment-minimized (a root
+    /// inside an already-watched root is dropped), workspace-bounded for
+    /// relative patterns, and stable (sorted). The workspace root itself is
+    /// watched only when no narrower safe ancestor exists.
+    pub fn subscription_roots(&self) -> Vec<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
         for rule in &self.rules {
             for pattern in rule.watch_patterns() {
-                let dir = Self::extract_watch_directory(&pattern, &self.root);
-                if !paths.contains(&dir) {
-                    paths.push(dir);
+                let candidate = self.root_for_pattern(&pattern);
+                if !candidates.contains(&candidate) {
+                    candidates.push(candidate);
                 }
             }
         }
+        // Containment minimization: a candidate inside another candidate is
+        // already covered by the ancestor's recursive watch.
+        let mut minimal: Vec<PathBuf> = candidates
+            .iter()
+            .filter(|candidate| {
+                !candidates
+                    .iter()
+                    .any(|other| other != *candidate && candidate.starts_with(other))
+            })
+            .cloned()
+            .collect();
+        minimal.sort();
+        minimal.dedup();
+        minimal
+    }
 
-        // Always watch current directory as fallback
-        let current_dir_str = self.root.to_str().unwrap().to_string();
-        if !paths.contains(&current_dir_str) {
-            paths.push(current_dir_str);
-        }
-
-        if !paths.is_empty() {
-            Some(paths)
+    /// One pattern's subscription root: its literal prefix (segments until a
+    /// glob metacharacter), resolved to the nearest existing ancestor. An
+    /// exact-file pattern watches its parent directory. A missing absolute
+    /// prefix never produces the filesystem root — the literal prefix is
+    /// returned so the backend warns actionably instead of silently missing.
+    fn root_for_pattern(&self, pattern: &str) -> PathBuf {
+        let absolute = if pattern.starts_with('/') {
+            PathBuf::from(pattern)
         } else {
-            None
+            self.root.join(pattern)
+        };
+        let prefix = Self::literal_prefix(&absolute);
+        Self::nearest_existing_ancestor_or_self(&prefix)
+    }
+
+    /// The literal path prefix: components until the first glob
+    /// metacharacter (`* ? [ {`), preserving absolute-ness.
+    fn literal_prefix(path: &Path) -> PathBuf {
+        use std::path::Component;
+        let mut out = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(_) => out.push("/"),
+                Component::RootDir => out.push("/"),
+                Component::CurDir => {}
+                Component::ParentDir => out.push(".."),
+                Component::Normal(seg) => {
+                    let seg = seg.to_string_lossy();
+                    if seg.contains('*')
+                        || seg.contains('?')
+                        || seg.contains('[')
+                        || seg.contains('{')
+                    {
+                        break;
+                    }
+                    out.push(seg.as_ref());
+                }
+            }
         }
+        out
+    }
+
+    /// The path itself when it exists as a directory, else its parent when
+    /// it exists as a file, else the nearest existing ancestor. Walking up
+    /// never returns the filesystem root: an unwatchable prefix returns
+    /// itself so the backend emits an actionable warning.
+    fn nearest_existing_ancestor_or_self(path: &Path) -> PathBuf {
+        if path.exists() {
+            if path.is_dir() {
+                return path.to_path_buf();
+            }
+            return path
+                .parent()
+                .map(|parent| parent.to_path_buf())
+                .unwrap_or_else(|| path.to_path_buf());
+        }
+        let mut current = path.to_path_buf();
+        while let Some(parent) = current.parent() {
+            if parent == current {
+                break;
+            }
+            current = parent.to_path_buf();
+            if current == Path::new("/") {
+                // Never watch the whole filesystem; the backend will warn on
+                // the literal prefix instead (contract §8).
+                return path.to_path_buf();
+            }
+            if current.exists() {
+                return current;
+            }
+        }
+        path.to_path_buf()
+    }
+
+    /// Returns the minimal subscription roots as display strings, for the
+    /// backend adapter and startup diagnostics (contract §8).
+    pub fn paths_to_watch(&self) -> Option<Vec<String>> {
+        let roots = self.subscription_roots();
+        if roots.is_empty() {
+            return None;
+        }
+        Some(
+            roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect(),
+        )
+    }
+
+    /// Subscription roots that will observe `path` (contract §8): the roots
+    /// whose recursive watch covers the path. Used by `explain` to name
+    /// coverage for future paths explicitly.
+    pub fn covering_roots(&self, path: &str) -> Vec<String> {
+        let (absolute_path, _) = self.normalize_paths(path);
+        self.subscription_roots()
+            .into_iter()
+            .filter(|root| absolute_path.starts_with(root))
+            .map(|root| root.display().to_string())
+            .collect()
     }
 }
 
@@ -1044,28 +1145,22 @@ mod tests {
         let results = watches.paths_to_watch().expect("No rules found");
 
         let current_dir = std::env::current_dir().expect("Unable to get current directory");
-        // Compute expected directories: all patterns converted to directories, plus current_dir
-        let mut expected = Vec::new();
-        let patterns = vec![
-            "src/**", "src/**", "/tmp/**", "/User/**", "test/**", "/dev/**", "/usr/**", "/etc/**",
+        // Minimal nearest-existing-ancestor roots: `src/**` exists → `src`;
+        // `test/**` has no existing `test/` dir → resolves to the workspace
+        // root, which then contains `src` (containment-minimized away);
+        // absolute dirs that exist are watched directly; `/User` does not
+        // exist and never resolves to `/` — its literal prefix is kept so the
+        // backend warns actionably (contract §8).
+        let mut expected = vec![
+            current_dir.display().to_string(),
+            "/User".to_owned(),
+            "/dev".to_owned(),
+            "/etc".to_owned(),
+            "/tmp".to_owned(),
+            "/usr".to_owned(),
         ];
-        for pattern in patterns {
-            let dir = Watches::extract_watch_directory(pattern, &current_dir);
-            if !expected.contains(&dir) {
-                expected.push(dir);
-            }
-        }
-        // Add current directory if not already present (it should be added by paths_to_watch)
-        let current_dir_str = current_dir.to_str().unwrap().to_string();
-        if !expected.contains(&current_dir_str) {
-            expected.push(current_dir_str);
-        }
-
-        assert_eq!(results.len(), expected.len());
-        // Order should match iteration order
-        for (i, expected_dir) in expected.iter().enumerate() {
-            assert_eq!(&results[i], expected_dir);
-        }
+        expected.sort();
+        assert_eq!(results, expected);
     }
 
     #[test]
@@ -1191,6 +1286,237 @@ mod tests {
             .stages
             .iter()
             .all(|stage| matches!(stage, Stage::Parallel { tasks, .. } if tasks.len() == 1)));
+    }
+
+    #[test]
+    fn subscription_roots_existing_prefix_is_watched_directly() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-roots-{}-{}",
+            std::process::id(),
+            "existing"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).unwrap();
+        std::fs::create_dir_all(scratch.join("tests")).unwrap();
+
+        let rules = vec![Rules::new(
+            "build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["src/**".to_owned(), "tests/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert_eq!(
+            roots,
+            vec![scratch.join("src"), scratch.join("tests")],
+            "existing literal prefixes are the roots; no root fallback"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_missing_prefix_watches_nearest_existing_ancestor() {
+        let scratch =
+            std::env::temp_dir().join(format!("funzzy-roots-{}-{}", std::process::id(), "missing"));
+        let _ = std::fs::remove_dir_all(&scratch);
+        // future/ exists but future/deep/src does not.
+        std::fs::create_dir_all(scratch.join("future")).unwrap();
+
+        let rules = vec![Rules::new(
+            "future build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["future/deep/src/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert_eq!(
+            roots,
+            vec![scratch.join("future")],
+            "missing nested prefix resolves to the nearest existing ancestor"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_entirely_missing_relative_prefix_falls_back_to_workspace_root() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-roots-{}-{}",
+            std::process::id(),
+            "all-missing"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).unwrap();
+
+        let rules = vec![Rules::new(
+            "future build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["future/deep/src/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert_eq!(
+            roots,
+            vec![scratch.clone()],
+            "no existing ancestor below the workspace root falls back to the root itself"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_absolute_missing_prefix_never_watches_filesystem_root() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-roots-{}-{}",
+            std::process::id(),
+            "abs-missing"
+        ));
+        std::fs::create_dir_all(&scratch).unwrap();
+
+        let rules = vec![Rules::new(
+            "outside".to_owned(),
+            vec!["echo outside".to_owned()],
+            vec!["/definitely-not-a-real-funzzy-dir-12345/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert!(
+            !roots.iter().any(|root| root == Path::new("/")),
+            "an unwatchable absolute prefix must never produce the filesystem root: {:?}",
+            roots
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_dedupe_and_containment_minimize() {
+        let scratch =
+            std::env::temp_dir().join(format!("funzzy-roots-{}-{}", std::process::id(), "overlap"));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src/deep")).unwrap();
+        std::fs::create_dir_all(scratch.join("src/other")).unwrap();
+
+        let rules = vec![Rules::new(
+            "overlap".to_owned(),
+            vec!["echo x".to_owned()],
+            vec![
+                "src/**".to_owned(),
+                "src/deep/**".to_owned(),
+                "src/other/*.rs".to_owned(),
+                "src/**".to_owned(),
+            ],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert_eq!(
+            roots,
+            vec![scratch.join("src")],
+            "contained roots are dropped; duplicates collapse; stable order"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_exact_file_pattern_watches_its_parent() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-roots-{}-{}",
+            std::process::id(),
+            "exact-file"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("crates/tests")).unwrap();
+        std::fs::write(scratch.join("crates/tests/foo.rs"), "x").unwrap();
+
+        let rules = vec![Rules::new(
+            "exact".to_owned(),
+            vec!["echo x".to_owned()],
+            vec!["crates/tests/foo.rs".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        assert_eq!(
+            roots,
+            vec![scratch.join("crates/tests")],
+            "an exact file pattern watches its parent directory"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn subscription_roots_stable_across_hash_order_and_sorted() {
+        let scratch =
+            std::env::temp_dir().join(format!("funzzy-roots-{}-{}", std::process::id(), "stable"));
+        let _ = std::fs::remove_dir_all(&scratch);
+        for dir in ["zeta", "alpha", "mid", "beta"] {
+            std::fs::create_dir_all(scratch.join(dir)).unwrap();
+        }
+
+        let rules = vec![Rules::new(
+            "stable".to_owned(),
+            vec!["echo x".to_owned()],
+            vec!["zeta/**".to_owned(), "alpha/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let roots = watches.subscription_roots();
+        let expected = vec![scratch.join("alpha"), scratch.join("zeta")];
+        assert_eq!(roots, expected, "roots are sorted deterministically");
+        assert_eq!(
+            watches.subscription_roots(),
+            expected,
+            "stable across calls"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn covering_roots_names_the_root_that_will_observe_a_future_path() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-roots-{}-{}",
+            std::process::id(),
+            "covering"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("future")).unwrap();
+
+        let rules = vec![Rules::new(
+            "future build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["future/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        // The path does not exist yet; explain must still name the root that
+        // will observe it once created.
+        let covering = watches.covering_roots("future/deep/nested/out.txt");
+        assert_eq!(covering, vec![scratch.join("future").display().to_string()]);
+
+        let outside = watches.covering_roots("other/never.txt");
+        assert!(
+            outside.is_empty(),
+            "paths outside any root are not covered: {outside:?}"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
     }
 
     #[test]

@@ -238,6 +238,8 @@ mod tests {
             execution_signature: signature.map(sig),
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         }
     }
 

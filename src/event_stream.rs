@@ -192,6 +192,8 @@ mod tests {
             execution_signature: Some(ExecutionSignature("sig-1".to_owned())),
             effective_concurrency: Some(2),
             concurrency_source: Some("config"),
+            revision: None,
+            revision_hash: None,
         }
     }
 

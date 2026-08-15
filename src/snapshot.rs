@@ -58,6 +58,19 @@ pub struct CorrelatedSnapshot {
     /// servers that predate the field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency_source: Option<String>,
+    /// Immutable config revision this generation was frozen under (TASK-0089,
+    /// CONFIG-RELOAD-CONTRACT §4). None for legacy servers that never
+    /// observe reload; omitted when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen config revision (TASK-0089).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_hash: Option<String>,
+    /// Exact failure evidence with structured outputRef (TASK-0082, contract
+    /// §1/§5): present only when the latest generation failed and retained
+    /// output exists. Rendered identically by status, await, and subscribe.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_evidence: Option<crate::output::FailureEvidence>,
 }
 
 struct Subscriber {
@@ -79,6 +92,9 @@ pub struct SnapshotBroker {
     instance: ControlInstance,
     state: Arc<Mutex<ControlState>>,
     coordinator: Arc<AwaitCoordinator>,
+    /// Optional retained-output registry (TASK-0045): lets snapshots attach
+    /// exact failure evidence with an outputRef. None keeps the legacy shape.
+    outputs: Option<Arc<crate::output::OutputRegistry>>,
     /// Optional frozen run-start estimate lookup (TASK-0055): None keeps the
     /// legacy snapshot shape (no estimate key).
     estimates: Option<EstimateLookup>,
@@ -107,10 +123,32 @@ impl SnapshotBroker {
         estimates: Option<EstimateLookup>,
         configured_concurrency: usize,
     ) -> Self {
+        Self::with_outputs(
+            instance,
+            state,
+            coordinator,
+            None,
+            estimates,
+            configured_concurrency,
+        )
+    }
+
+    /// Creates a broker that also attaches exact failure evidence with an
+    /// outputRef (TASK-0082) when the latest generation failed and retained
+    /// output exists.
+    pub fn with_outputs(
+        instance: ControlInstance,
+        state: Arc<Mutex<ControlState>>,
+        coordinator: Arc<AwaitCoordinator>,
+        outputs: Option<Arc<crate::output::OutputRegistry>>,
+        estimates: Option<EstimateLookup>,
+        configured_concurrency: usize,
+    ) -> Self {
         let broker = Self {
             instance,
             state,
             coordinator,
+            outputs,
             estimates,
             configured_concurrency,
             inner: Mutex::new(BrokerInner::default()),
@@ -136,6 +174,26 @@ impl SnapshotBroker {
             .estimates
             .as_ref()
             .and_then(|lookup| lookup(state.generation()));
+        // Exact failure evidence (TASK-0082): only when the latest generation
+        // failed and retained output exists; empty capture never emits a ref.
+        let failure_evidence = if state.state() == &ExecutionState::Failed {
+            let failed_tasks: Vec<String> = state
+                .tasks()
+                .iter()
+                .filter(|task| task.state == crate::executor::TaskState::Failed)
+                .map(|task| task.name.clone())
+                .collect();
+            self.outputs.as_ref().and_then(|outputs| {
+                outputs.failure_evidence(
+                    state.generation(),
+                    crate::control::MAX_EVIDENCE_LINES,
+                    &self.instance.token,
+                    &failed_tasks,
+                )
+            })
+        } else {
+            None
+        };
         CorrelatedSnapshot {
             instance: self.instance.clone(),
             generation: state.generation(),
@@ -160,6 +218,9 @@ impl SnapshotBroker {
                 .effective_concurrency()
                 .unwrap_or(self.configured_concurrency),
             concurrency_source: Some(state.concurrency_source().unwrap_or("config").to_string()),
+            revision: state.revision(),
+            revision_hash: state.revision_hash().map(str::to_owned),
+            failure_evidence,
         }
     }
 
@@ -233,6 +294,8 @@ mod tests {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         }
     }
 

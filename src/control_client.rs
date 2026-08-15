@@ -433,6 +433,23 @@ pub struct FailureEvidenceSnapshot {
     pub total_observed_bytes: u64,
     pub retained_bytes: u64,
     pub retrieve: String,
+    /// Exact structured output reference (contract §1); additive.
+    pub output_ref: Option<OutputRefSnapshot>,
+    /// Additional failed tasks beyond the named primary (contract §5).
+    pub additional_failed_tasks: u64,
+}
+
+/// Structured output reference decoded from evidence (contract §1/§5): the
+/// agent copies these exact identities instead of reconstructing task names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputRefSnapshot {
+    pub instance_token: String,
+    pub generation: u64,
+    pub task: String,
+    pub mode: String,
+    pub tail: u64,
+    pub max_bytes: u64,
+    pub retrieve: String,
 }
 
 impl FailureEvidenceSnapshot {
@@ -466,12 +483,65 @@ impl FailureEvidenceSnapshot {
             .and_then(Value::as_str)
             .map(str::to_owned)
             .ok_or_else(|| "failureEvidence must carry \"retrieve\"".to_string())?;
+        let output_ref = object
+            .get("outputRef")
+            .map(|value| OutputRefSnapshot::from_value(value.clone()))
+            .transpose()?;
+        let additional_failed_tasks = object
+            .get("additionalFailedTasks")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
         Ok(Self {
             excerpt,
             lines,
             truncated,
             total_observed_bytes,
             retained_bytes,
+            retrieve,
+            output_ref,
+            additional_failed_tasks,
+        })
+    }
+}
+
+impl OutputRefSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "outputRef must be an object".to_string())?;
+        let instance_token = object
+            .get("instanceToken")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "outputRef must carry \"instanceToken\"".to_string())?;
+        let generation = object
+            .get("generation")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "outputRef must carry a numeric \"generation\"".to_string())?;
+        let task = object
+            .get("task")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "outputRef must carry \"task\"".to_string())?;
+        let mode = object
+            .get("mode")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| "tail".to_owned());
+        let tail = object.get("tail").and_then(Value::as_u64).unwrap_or(80);
+        let max_bytes = object.get("maxBytes").and_then(Value::as_u64).unwrap_or(0);
+        let retrieve = object
+            .get("retrieve")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_default();
+        Ok(Self {
+            instance_token,
+            generation,
+            task,
+            mode,
+            tail,
+            max_bytes,
             retrieve,
         })
     }
@@ -614,7 +684,18 @@ pub struct RetrievedTaskSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputSnapshot {
     pub generation: u64,
+    /// Exact task ID selected by read-only canonical resolution (contract
+    /// §6); None when the request matched exactly or retrieved whole
+    /// generation. Additive — legacy servers omit it.
+    pub resolved_task: Option<String>,
     pub tasks: Vec<RetrievedTaskSnapshot>,
+    /// Paging continuation (contract §5): opaque cursor for the next page;
+    /// None on the final page or non-paged retrieval.
+    pub next_cursor: Option<String>,
+    /// Content bytes returned in this page.
+    pub returned_bytes: Option<u64>,
+    /// True when a continuation exists.
+    pub truncated: Option<bool>,
 }
 
 impl OutputSnapshot {
@@ -626,6 +707,16 @@ impl OutputSnapshot {
             .get("generation")
             .and_then(Value::as_u64)
             .ok_or_else(|| "output result must carry a numeric \"generation\"".to_string())?;
+        let resolved_task = object
+            .get("resolvedTask")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let next_cursor = object
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let returned_bytes = object.get("returnedBytes").and_then(Value::as_u64);
+        let truncated = object.get("truncated").and_then(Value::as_bool);
         let tasks = object
             .get("tasks")
             .and_then(Value::as_array)
@@ -651,7 +742,14 @@ impl OutputSnapshot {
                 Ok(RetrievedTaskSnapshot { id, stdout, stderr })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(Self { generation, tasks })
+        Ok(Self {
+            generation,
+            resolved_task,
+            tasks,
+            next_cursor,
+            returned_bytes,
+            truncated,
+        })
     }
 }
 
@@ -907,19 +1005,35 @@ impl ControlClient {
         stream: Option<&str>,
         tail: Option<u64>,
         full: bool,
+        page: bool,
+        page_size: Option<u64>,
+        cursor: Option<&str>,
+        instance_token: Option<&str>,
     ) -> Result<OutputSnapshot, ControlClientError> {
         let mut params = serde_json::json!({ "generation": generation });
+        if let Some(instance_token) = instance_token {
+            params["instanceToken"] = serde_json::json!(instance_token);
+        }
         if let Some(task) = task {
             params["task"] = serde_json::json!(task);
         }
-        if let Some(stream) = stream {
-            params["stream"] = serde_json::json!(stream);
-        }
-        if let Some(tail) = tail {
+        if page {
+            params["mode"] = serde_json::json!("page");
+            if let Some(page_size) = page_size {
+                params["maxBytes"] = serde_json::json!(page_size);
+            }
+            if let Some(cursor) = cursor {
+                params["cursor"] = serde_json::json!(cursor);
+            }
+        } else if full {
+            // Legacy flag: the server translates to a first bounded page with
+            // a continuation cursor (contract §2) — never > transport budget.
+            params["full"] = serde_json::json!(true);
+        } else if let Some(tail) = tail {
             params["tail"] = serde_json::json!(tail);
         }
-        if full {
-            params["full"] = serde_json::json!(true);
+        if let Some(stream) = stream {
+            params["stream"] = serde_json::json!(stream);
         }
         let result = self.call("output", params)?;
         OutputSnapshot::from_value(result).map_err(ControlClientError::Malformed)
@@ -1431,7 +1545,17 @@ mod tests {
         let (path, handle) = serving_socket(response);
         let mut client = ControlClient::connect(&path).expect("connect");
         let retrieved = client
-            .output(7, Some("my tests"), Some("stdout"), Some(80), false)
+            .output(
+                7,
+                Some("my tests"),
+                Some("stdout"),
+                Some(80),
+                false,
+                false,
+                None,
+                None,
+                None,
+            )
             .expect("output");
         handle.join().unwrap();
         let _ = std::fs::remove_file(&path);

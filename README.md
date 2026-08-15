@@ -315,6 +315,14 @@ the native backend. Tradeoffs: polling adds a small per-interval scan cost and
 change latency up to the interval; prefer native for large trees. Forced
 native fails with an actionable error instead of silently changing semantics.
 
+**Future files are covered without restart.** Funzzy watches the nearest
+existing ancestor of every configured pattern, so files and directories
+created after startup enter normal matching automatically: no restart, no
+"touch to arm it". A pattern like `future/**` with no `future/` directory
+at startup still triggers when `future/deep/file.rs` is created later. Both
+backends promise the same matched-path outcome (raw event order is not
+contractual). See `docs/WATCH-DISCOVERY-CONTRACT.md` for the full contract.
+
 ## Agents and configuration discovery
 
 Agents (and humans) discover the current configuration surface from the

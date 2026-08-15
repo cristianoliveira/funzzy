@@ -52,6 +52,8 @@ mod unix {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,
@@ -86,6 +88,8 @@ mod unix {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         });
         state.lock().unwrap().apply(WorkerEvent::Finished {
             run_id: 1,

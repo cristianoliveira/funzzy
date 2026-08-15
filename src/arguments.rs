@@ -234,6 +234,9 @@ impl Arguments {
                         },
                         tail: output_sub.get_one::<u64>("tail").copied(),
                         full: output_sub.get_flag("full"),
+                        page: output_sub.get_flag("page"),
+                        page_size: output_sub.get_one::<u64>("page-size").copied(),
+                        cursor: output_sub.get_one::<String>("cursor").cloned(),
                     },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
@@ -786,7 +789,7 @@ pub fn command() -> Command {
                             Arg::new("tail")
                                 .long("tail")
                                 .value_name("LINES")
-                                .conflicts_with("full")
+                                .conflicts_with_all(["full", "page"])
                                 .value_parser(clap::value_parser!(u64))
                                 .help("Last N lines per stream (default: 40)."),
                         )
@@ -794,8 +797,31 @@ pub fn command() -> Command {
                             Arg::new("full")
                                 .long("full")
                                 .action(clap::ArgAction::SetTrue)
-                                .conflicts_with("tail")
-                                .help("Return everything still retained (bounded by the declared retention limit)."),
+                                .conflicts_with_all(["tail", "page"])
+                                .help("Legacy: return everything still retained, translated to the first bounded page with a continuation cursor (never above the transport budget)."),
+                        )
+                        .arg(
+                            Arg::new("page")
+                                .long("page")
+                                .action(clap::ArgAction::SetTrue)
+                                .conflicts_with_all(["tail", "full"])
+                                .help("Page retained output deterministically below the negotiated transport budget (contract §5)."),
+                        )
+                        .arg(
+                            Arg::new("page-size")
+                                .long("page-size")
+                                .value_name("BYTES")
+                                .requires("page")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Serialized page budget in bytes (default: conservative negotiated limit)."),
+                        )
+                        .arg(
+                            Arg::new("cursor")
+                                .long("cursor")
+                                .value_name("CURSOR")
+                                .requires("page")
+                                .value_parser(clap::builder::ValueParser::string())
+                                .help("Opaque continuation cursor from a previous page response."),
                         ),
                 ),
         )
@@ -1328,6 +1354,9 @@ mod tests {
                     stream: Some("stderr".to_string()),
                     tail: Some(80),
                     full: false,
+                    page: false,
+                    page_size: None,
+                    cursor: None,
                 },
                 socket: None,
                 format: OutputFormat::Human,
@@ -1357,6 +1386,101 @@ mod tests {
             "--full"
         ])
         .is_err());
+        // Contract §2: page is structurally exclusive with tail and full, and
+        // page-only options require page mode — rejected before the socket
+        // call (exit 2), never a combination the server must disambiguate.
+        assert!(parse(&[
+            "control",
+            "output",
+            "--generation",
+            "1",
+            "--page",
+            "--tail",
+            "5"
+        ])
+        .is_err());
+        assert!(parse(&["control", "output", "--generation", "1", "--page", "--full"]).is_err());
+        assert!(
+            parse(&[
+                "control",
+                "output",
+                "--generation",
+                "1",
+                "--page-size",
+                "4096"
+            ])
+            .is_err(),
+            "--page-size requires --page"
+        );
+        assert!(
+            parse(&[
+                "control",
+                "output",
+                "--generation",
+                "1",
+                "--cursor",
+                "7|0|0|0"
+            ])
+            .is_err(),
+            "--cursor requires --page"
+        );
+    }
+
+    #[test]
+    fn control_output_page_flags_parse_with_mode() {
+        let action = parse_action(&[
+            "control",
+            "output",
+            "--generation",
+            "7",
+            "--page",
+            "--page-size",
+            "8192",
+        ]);
+        assert_eq!(
+            action,
+            Action::Control {
+                action: ControlAction::Output {
+                    generation: 7,
+                    task: None,
+                    stream: None,
+                    tail: None,
+                    full: false,
+                    page: true,
+                    page_size: Some(8192),
+                    cursor: None,
+                },
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
+
+        let with_cursor = parse_action(&[
+            "control",
+            "output",
+            "--generation",
+            "7",
+            "--page",
+            "--cursor",
+            "7|0|0|8",
+        ]);
+        assert_eq!(
+            with_cursor,
+            Action::Control {
+                action: ControlAction::Output {
+                    generation: 7,
+                    task: None,
+                    stream: None,
+                    tail: None,
+                    full: false,
+                    page: true,
+                    page_size: None,
+                    cursor: Some("7|0|0|8".to_string()),
+                },
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
     }
 
     #[test]

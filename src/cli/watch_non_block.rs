@@ -26,6 +26,10 @@ pub struct WatchNonBlockCommand {
     control_socket: Option<PathBuf>,
     /// NDJSON run-event stream destination (TASK-0039); None = no stream.
     events: Option<Arc<crate::event_stream::EventStream>>,
+    /// In-process reload coordinator (TASK-0090); None for legacy callers.
+    reload: Option<crate::reload_coordinator::ReloadCoordinator>,
+    /// Reload-watcher readiness signal (TASK-0090); init waits for it.
+    reload_ready: Option<std::sync::Arc<std::sync::mpsc::Receiver<()>>>,
 }
 
 impl WatchNonBlockCommand {
@@ -63,7 +67,22 @@ impl WatchNonBlockCommand {
             run_on_init,
             control_socket,
             events,
+            reload: None,
+            reload_ready: None,
         }
+    }
+
+    /// Attaches the in-process reload coordinator (TASK-0090).
+    pub fn with_reload(mut self, reload: crate::reload_coordinator::ReloadCoordinator) -> Self {
+        self.reload = Some(reload);
+        self
+    }
+
+    /// Attaches the reload-watcher readiness signal; init waits for it
+    /// before running (TASK-0090).
+    pub fn with_reload_ready(mut self, ready: std::sync::mpsc::Receiver<()>) -> Self {
+        self.reload_ready = Some(std::sync::Arc::new(ready));
+        self
     }
 }
 
@@ -89,10 +108,11 @@ impl Command for WatchNonBlockCommand {
         let recorder_lookup = Arc::clone(&recorder);
         let snapshot_estimates: crate::snapshot::EstimateLookup =
             Arc::new(move |run_id| recorder_lookup.estimate_at_start(run_id));
-        let broker = Arc::new(SnapshotBroker::with_estimates(
+        let broker = Arc::new(SnapshotBroker::with_outputs(
             instance.as_ref().clone(),
             Arc::clone(&control_state),
             Arc::clone(&coordinator),
+            Some(Arc::clone(&outputs)),
             Some(snapshot_estimates),
             self.watches.concurrency(),
         ));
@@ -120,8 +140,28 @@ impl Command for WatchNonBlockCommand {
                 },
                 Some(worker_outputs),
             )
-            .with_hooks(hooks),
+            .with_hooks(hooks)
+            .with_revision(self.watches.revision().cloned().unwrap_or(
+                crate::config_revision::ConfigRevision {
+                    number: 0,
+                    hash: String::new(),
+                },
+            )),
         );
+
+        // TASK-0090: the shared watch config the routing loop reads per batch
+        // and the reload coordinator swaps at the commit boundary. Install
+        // the worker + root-swap publisher BEFORE the strategy takes
+        // ownership, so a reload commit can reach them.
+        let (swap_tx, swap_rx) = std::sync::mpsc::channel();
+        let shared = match &self.reload {
+            Some(reload) => std::sync::Arc::clone(reload.shared()),
+            None => std::sync::Arc::new(std::sync::Mutex::new(self.watches.clone())),
+        };
+        if let Some(reload) = &self.reload {
+            reload.install_worker(Arc::clone(&worker));
+            reload.install_publisher(crate::watcher::RootSwapPublisher::new(swap_tx));
+        }
 
         let strategy = NonBlockStrategy::new_arc_with_subscription(
             worker,
@@ -135,11 +175,13 @@ impl Command for WatchNonBlockCommand {
             Some(recorder),
         );
         watch_loop(
-            &self.watches,
+            &shared,
             self.run_on_init,
             &*strategy,
             self.watches.debounce(),
             self.verbose,
+            Some(swap_rx),
+            self.reload_ready.clone(),
         )
     }
 }

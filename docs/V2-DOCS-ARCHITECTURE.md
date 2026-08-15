@@ -16,6 +16,8 @@ Every current README/docs/examples page classified with owner, audience, source 
 | `docs/PARALLEL-EXECUTION-CONTRACT.md` | **keep** (normative) | contributors | `src/executor.rs`, `src/plan.rs` | yes | TASK-0069 drift gate |
 | `docs/RUN-DURATION-ESTIMATES-CONTRACT.md` | **keep** (normative) | contributors | `src/duration_*.rs` | yes | TASK-0069 drift gate |
 | `docs/SEQUENTIAL-OVERRIDE-CONTRACT.md` | **keep** (normative) | contributors/agents | implementation | yes | TASK-0069 drift gate |
+| `docs/WATCH-DISCOVERY-CONTRACT.md` | **keep** (normative) | contributors | `src/watches.rs`, `src/watcher.rs`, `src/watch_loop.rs` | yes (defined by TASK-0085) | TASK-0086/0087 drift gate |
+| `docs/CONFIG-RELOAD-CONTRACT.md` | **keep** (normative) | contributors | `src/app.rs`, `src/config.rs`, `src/process_owner.rs` | yes (defined by TASK-0088) | TASK-0089..0092 drift gate |
 | `docs/DURATION-ESTIMATES-GUIDE.md` | **keep** (user guide) | users/agents | contract + control surface | yes | TASK-0067 polish |
 | `docs/FLAG_NON_BLOCK.md` | **archive/delete** | users | removed V1 flag `--non-block` → `--on-busy restart` | **no** — teaches removed vocabulary | TASK-0068 |
 | `docs/FLAG_TARGET.md` | **archive/delete** | users | removed V1 flag `--target` → `watch TARGET`/`list` | **no** — teaches removed vocabulary | TASK-0068 |

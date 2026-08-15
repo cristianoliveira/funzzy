@@ -378,3 +378,411 @@ fn no_match_ignored_timeout_and_malformed_paths_are_bounded() {
     let malformed = call(&socket, "await", serde_json::json!({"generation": "x"}));
     assert!(malformed["error"]["code"].is_number());
 }
+
+/// Config with a tag-bearing, space-containing job name — the audit's exact
+/// failure case (agent shortened `run integration @agent-final` to
+/// `run integration` and failed eight times). The proof: the observation
+/// carries the exact structured reference, and ONE retrieval with that exact
+/// identity succeeds without guessing or permutation.
+const TAGGED_FAIL_CONFIG: &str = r#"
+on:
+  socket: sock
+jobs:
+  - name: run integration @agent-final
+    run: 'echo "boom to stdout" && echo "boom to stderr" >&2 && exit 3'
+    change: "*.txt"
+"#;
+
+#[test]
+fn one_failure_reaches_evidence_in_one_output_call() {
+    let directory = setup_directory("one-hop", TAGGED_FAIL_CONFIG);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    // One observation: emit the failing change and await the exact generation.
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // The observation carries an exact structured outputRef — the full
+    // tag-bearing identity, never a shortened display name.
+    let output_ref = &awaited["failureEvidence"]["outputRef"];
+    assert_eq!(output_ref["task"], "run integration @agent-final");
+    assert_eq!(output_ref["generation"], gen);
+    assert!(!output_ref["instanceToken"].as_str().unwrap().is_empty());
+    let retrieve = output_ref["retrieve"].as_str().unwrap();
+    assert!(
+        retrieve.contains("--task 'run integration @agent-final'"),
+        "retrieve must quote the full exact identity: {retrieve}"
+    );
+
+    // Exactly ONE retrieval call, using the exact identities from the ref
+    // (task + instance), succeeds below the transport budget.
+    let retrieved = result(call(
+        &socket,
+        "output",
+        serde_json::json!({
+            "generation": gen,
+            "task": "run integration @agent-final",
+            "instanceToken": output_ref["instanceToken"],
+            "tail": 80,
+        }),
+    ));
+    assert_eq!(retrieved["tasks"][0]["id"], "run integration @agent-final");
+    let serialized = serde_json::to_vec(&retrieved).unwrap();
+    assert!(
+        serialized.len() < 65_536,
+        "one-hop retrieval must stay below transport, got {}",
+        serialized.len()
+    );
+    let stdout = retrieved["tasks"][0]["stdout"]["content"].as_str().unwrap();
+    assert!(stdout.contains("boom to stdout"), "stdout: {stdout}");
+    let stderr = retrieved["tasks"][0]["stderr"]["content"].as_str().unwrap();
+    assert!(stderr.contains("boom to stderr"), "stderr: {stderr}");
+}
+
+/// Config whose task emits enough output to span several small pages, proving
+/// whole-generation retrieval stays below transport with continuation.
+const LARGE_FAIL_CONFIG: &str = r#"
+on:
+  socket: sock
+jobs:
+  - name: loud
+    run: 'for i in $(seq 1 2000); do echo "line $i boom"; done; echo "tail stderr boom" >&2; exit 3'
+    change: "*.txt"
+"#;
+
+#[test]
+fn whole_generation_and_one_task_stay_below_transport_with_continuation() {
+    let directory = setup_directory("whole-gen", LARGE_FAIL_CONFIG);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // Whole-generation retrieval shares one budget: request a small page and
+    // follow the continuation; every response stays below the transport limit
+    // and the concatenated stream covers the full output with no duplicates.
+    let mut cursor: Option<String> = None;
+    let mut collected = String::new();
+    let mut pages = 0;
+    loop {
+        let mut params = serde_json::json!({
+            "generation": gen,
+            "mode": "page",
+            "maxBytes": 2048,
+        });
+        if let Some(ref c) = cursor {
+            params["cursor"] = serde_json::json!(c);
+        }
+        let page = result(call(&socket, "output", params));
+        let serialized = serde_json::to_vec(&page).unwrap();
+        assert!(
+            serialized.len() < 65_536,
+            "page {} must stay below transport, got {}",
+            pages,
+            serialized.len()
+        );
+        for task in page["tasks"].as_array().unwrap() {
+            for stream in ["stdout", "stderr"] {
+                if let Some(content) = task[stream]["content"].as_str() {
+                    collected.push_str(content);
+                }
+            }
+        }
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        pages += 1;
+        if cursor.is_none() {
+            break;
+        }
+        assert!(pages < 20, "paging did not terminate");
+    }
+    assert!(pages > 1, "small budget must span multiple pages");
+    assert_eq!(
+        collected.matches("line 1 boom").count(),
+        1,
+        "no duplicated bytes across pages: {collected}"
+    );
+    assert!(collected.contains("tail stderr boom"));
+
+    // One-task retrieval (tail) is also bounded below transport.
+    let one_task = result(call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "task": "loud", "tail": 80}),
+    ));
+    let serialized = serde_json::to_vec(&one_task).unwrap();
+    assert!(serialized.len() < 65_536, "one-task retrieval bounded");
+}
+
+#[test]
+fn unknown_task_returns_typed_candidates_and_resolves_unambiguous_once() {
+    let directory = setup_directory("unknown-task", TAGGED_FAIL_CONFIG);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // A genuinely unknown task (no canonical prefix) gets a typed error
+    // naming the exact candidate — never a guess, never a generic error.
+    let missing = call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "task": "nope"}),
+    );
+    assert_eq!(missing["error"]["code"], -32011);
+    let candidates = missing["error"]["data"]["candidates"].as_array().unwrap();
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c == "run integration @agent-final"),
+        "typed candidates must name the exact id: {missing}"
+    );
+
+    // A shortened canonical prefix resolves read-only, reporting the
+    // selected exact ID (contract §6) — the audit's "run integration" case.
+    let resolved = result(call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "task": "run integration", "tail": 80}),
+    ));
+    assert_eq!(resolved["resolvedTask"], "run integration @agent-final");
+    assert_eq!(resolved["tasks"][0]["id"], "run integration @agent-final");
+}
+
+#[test]
+fn stale_instance_with_reused_generation_cannot_read_replacement_output() {
+    // A stale instance token must never read the same-number generation from
+    // a replacement watcher (contract §3 `-32012`), even when the generation
+    // counter restarts and reuses the same number.
+    let directory = setup_directory("stale-instance", TAGGED_FAIL_CONFIG);
+    let socket = directory.join("sock");
+    let old_token = {
+        let _watcher = start_watcher(&directory);
+        wait_until_socket(&directory);
+        result(call(&socket, "capabilities", serde_json::json!({})))["instance"]["token"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+
+    // Restart into a recreated workspace; the new watcher reuses generation 1.
+    std::thread::sleep(Duration::from_millis(300));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join(".watch.yaml"), TAGGED_FAIL_CONFIG).unwrap();
+    let _watcher = start_watcher(&directory);
+    let mut connected = false;
+    for _ in 0..300 {
+        if UnixStream::connect(&socket).is_ok() {
+            connected = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(connected, "restarted watcher must bind the socket");
+
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // Reading with the OLD instance token is a typed instance mismatch, even
+    // though the generation number matches the replacement watcher's run.
+    let stale = call(
+        &socket,
+        "output",
+        serde_json::json!({
+            "generation": gen,
+            "instanceToken": old_token,
+        }),
+    );
+    assert_eq!(stale["error"]["code"], -32012);
+    assert_eq!(stale["error"]["data"]["action"], "restart-or-reobserve");
+
+    // The fresh instance token reads normally.
+    let fresh_token = result(call(&socket, "capabilities", serde_json::json!({})))["instance"]
+        ["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let fresh = result(call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "instanceToken": fresh_token, "tail": 80}),
+    ));
+    assert_eq!(fresh["generation"], gen);
+}
+
+#[test]
+fn invalid_option_combinations_rejected_before_any_retrieval() {
+    // Contract §2: structurally exclusive options are rejected with a typed
+    // invalid_options error at the server (and exit 2 at the CLI before the
+    // socket); no parameter permutation can turn a schema mismatch into a
+    // valid response.
+    let directory = setup_directory("invalid-opts", TAGGED_FAIL_CONFIG);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // page + tail: structurally exclusive, rejected before retrieval.
+    let conflict = call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "mode": "page", "tail": 40}),
+    );
+    assert_eq!(conflict["error"]["code"], -32013);
+
+    // cursor without page mode: rejected.
+    let cursor_only = call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "cursor": "1|0|0|0"}),
+    );
+    assert_eq!(cursor_only["error"]["code"], -32013);
+
+    // Unknown mode: rejected with the valid set.
+    let bad_mode = call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "mode": "dump"}),
+    );
+    assert_eq!(bad_mode["error"]["code"], -32013);
+    assert_eq!(
+        bad_mode["error"]["data"]["valid"],
+        serde_json::json!(["tail", "page"])
+    );
+}
+
+/// Config with two parallel tasks where one fails fast and the other runs
+/// longer — completion order differs from declaration order, so the retained
+/// output must stay attributed to the exact task regardless of who finished
+/// first (contract §1 identity).
+const PARALLEL_FAIL_CONFIG: &str = r#"
+on:
+  socket: sock
+  concurrency: 4
+jobs:
+  - name: slow pass
+    run: 'sleep 1 && echo "slow ok"'
+    change: "*.txt"
+  - name: fast fail
+    run: 'echo "secret=abc123" && echo "early boom" >&2 && exit 3'
+    change: "*.txt"
+"#;
+
+#[test]
+fn parallel_reversed_completion_keeps_exact_identity_and_bounds() {
+    // Task completion order is not declaration order; output retention must
+    // key each stream to its exact task id (never by finish time) and stay
+    // bounded. Secret-like content is retained but never redacted or echoed
+    // into evidence summaries (the socket permission is the boundary).
+    let directory = setup_directory("parallel-reversed", PARALLEL_FAIL_CONFIG);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "notes.txt"}),
+    ));
+    let gen = emit["runId"].as_u64().unwrap();
+    let awaited = result(call(
+        &socket,
+        "await",
+        serde_json::json!({"generation": gen, "timeoutMs": 10_000}),
+    ));
+    assert_eq!(awaited["terminalReason"], "failed");
+
+    // The failed task's evidence names its exact id and carries the ref.
+    let output_ref = &awaited["failureEvidence"]["outputRef"];
+    assert_eq!(output_ref["task"], "fast fail");
+
+    // Whole-generation retrieval attributes every stream to its exact task,
+    // regardless of which finished first.
+    let whole = result(call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "mode": "page", "maxBytes": 8192}),
+    ));
+    let ids: Vec<&str> = whole["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"fast fail"), "ids: {ids:?}");
+    assert!(ids.contains(&"slow pass"), "ids: {ids:?}");
+
+    // Secret-like content is retrievable verbatim (no redaction), and the
+    // serialized page stays below the transport bound.
+    let retrieved = result(call(
+        &socket,
+        "output",
+        serde_json::json!({"generation": gen, "task": "fast fail", "tail": 80}),
+    ));
+    assert_eq!(retrieved["tasks"][0]["id"], "fast fail");
+    let stdout = retrieved["tasks"][0]["stdout"]["content"].as_str().unwrap();
+    assert!(stdout.contains("secret=abc123"), "no redaction: {stdout}");
+    let stderr = retrieved["tasks"][0]["stderr"]["content"].as_str().unwrap();
+    assert!(stderr.contains("early boom"), "stderr: {stderr}");
+    assert!(
+        serde_json::to_vec(&retrieved).unwrap().len() < 65_536,
+        "bounded below transport"
+    );
+}

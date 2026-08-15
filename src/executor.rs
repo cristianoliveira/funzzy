@@ -74,6 +74,11 @@ pub enum Event {
         /// Override source label (TASK-0073): "control" for an exact
         /// control-generation override; None for configured/native runs.
         concurrency_source: Option<&'static str>,
+        /// Immutable config revision this generation was frozen under
+        /// (TASK-0089).
+        revision: Option<u64>,
+        /// Non-secret semantic hash of the frozen config revision.
+        revision_hash: Option<String>,
     },
     Finished {
         run_id: u64,
@@ -218,6 +223,12 @@ pub struct RunMetadata {
     /// Run-level terminal hooks (TASK-0040): `success`/`failure` commands run
     /// once at the generation terminal outcome.
     pub hooks: crate::config::RunHooks,
+    /// Immutable config revision this generation was frozen under
+    /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4). None for legacy runs that
+    /// never observe reload.
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen config revision (TASK-0089).
+    pub revision_hash: Option<String>,
 }
 
 impl RunMetadata {
@@ -234,6 +245,8 @@ impl RunMetadata {
             effective_concurrency: None,
             concurrency_source: None,
             hooks: crate::config::RunHooks::default(),
+            revision: None,
+            revision_hash: None,
         }
     }
 
@@ -258,6 +271,8 @@ impl RunMetadata {
             effective_concurrency: None,
             concurrency_source: None,
             hooks: crate::config::RunHooks::default(),
+            revision: None,
+            revision_hash: None,
         }
     }
 
@@ -271,6 +286,14 @@ impl RunMetadata {
     ) -> Self {
         self.target = target;
         self.execution_signature = execution_signature;
+        self
+    }
+
+    /// Attaches the immutable config revision this generation is frozen
+    /// under (TASK-0089).
+    pub fn with_revision(mut self, revision: u64, revision_hash: String) -> Self {
+        self.revision = Some(revision);
+        self.revision_hash = Some(revision_hash);
         self
     }
 
@@ -473,6 +496,8 @@ impl Executor {
             execution_signature: metadata.execution_signature.clone(),
             effective_concurrency: metadata.effective_concurrency,
             concurrency_source: metadata.concurrency_source,
+            revision: metadata.revision,
+            revision_hash: metadata.revision_hash.clone(),
         });
 
         Run {

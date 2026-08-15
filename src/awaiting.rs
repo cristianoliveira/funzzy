@@ -219,22 +219,37 @@ impl AwaitCoordinator {
         snapshot: &Arc<Mutex<ControlState>>,
         mut probe: Option<&mut dyn FnMut() -> bool>,
         outputs: Option<&OutputRegistry>,
+        instance_token: &str,
     ) -> AwaitResult {
         let deadline = Instant::now() + timeout;
         loop {
             let inner = self.inner.lock().unwrap();
             if let Some((reason, generation)) = Self::evaluate(&inner, mode) {
-                return Self::build(inner, snapshot, reason, generation, outputs);
+                return Self::build(inner, snapshot, reason, generation, outputs, instance_token);
             }
             let now = Instant::now();
             if now >= deadline {
-                return Self::build(inner, snapshot, TerminalReason::Timeout, 0, outputs);
+                return Self::build(
+                    inner,
+                    snapshot,
+                    TerminalReason::Timeout,
+                    0,
+                    outputs,
+                    instance_token,
+                );
             }
             let slice = (deadline - now).min(Duration::from_millis(500));
             let (guard, _) = self.changed.wait_timeout(inner, slice).unwrap();
             if let Some(probe) = probe.as_deref_mut() {
                 if probe() {
-                    return Self::build(guard, snapshot, TerminalReason::Disconnected, 0, outputs);
+                    return Self::build(
+                        guard,
+                        snapshot,
+                        TerminalReason::Disconnected,
+                        0,
+                        outputs,
+                        instance_token,
+                    );
                 }
             }
             // Loop re-evaluates: no transition can be lost between the
@@ -267,6 +282,7 @@ impl AwaitCoordinator {
         terminal_reason: TerminalReason,
         generation: u64,
         outputs: Option<&OutputRegistry>,
+        instance_token: &str,
     ) -> AwaitResult {
         let snapshot = snapshot.lock().unwrap().clone();
         let latest_generation = inner.latest_generation;
@@ -275,8 +291,19 @@ impl AwaitCoordinator {
         drop(inner);
         let freshness = classify(&snapshot, latest_generation, &pending_work);
         let failure_evidence = if terminal_reason == TerminalReason::Failed {
+            let failed_tasks: Vec<String> = snapshot
+                .tasks()
+                .iter()
+                .filter(|task| task.state == crate::executor::TaskState::Failed)
+                .map(|task| task.name.clone())
+                .collect();
             outputs.and_then(|outputs| {
-                outputs.failure_evidence(generation, crate::control::MAX_EVIDENCE_LINES)
+                outputs.failure_evidence(
+                    generation,
+                    crate::control::MAX_EVIDENCE_LINES,
+                    instance_token,
+                    &failed_tasks,
+                )
             })
         } else {
             None
@@ -331,6 +358,8 @@ mod tests {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         }
     }
 
@@ -359,7 +388,7 @@ mod tests {
         mode: AwaitMode,
         state: &Arc<Mutex<ControlState>>,
     ) -> AwaitResult {
-        coordinator.await_generation(mode, Duration::from_secs(30), state, None, None)
+        coordinator.await_generation(mode, Duration::from_secs(30), state, None, None, "fz-test")
     }
 
     fn spawn_wait(
@@ -389,6 +418,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
         assert_eq!(result.latest_generation, 7);
@@ -465,6 +495,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
         assert_eq!(result.latest_generation, 2);
@@ -482,6 +513,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
         assert_eq!(result.snapshot.generation(), 3);
@@ -519,11 +551,18 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
         // A zero timeout returns immediately too (bounded, never unbounded).
-        let zero =
-            coordinator.await_generation(AwaitMode::Exact(1), Duration::ZERO, &state, None, None);
+        let zero = coordinator.await_generation(
+            AwaitMode::Exact(1),
+            Duration::ZERO,
+            &state,
+            None,
+            None,
+            "fz-test",
+        );
         assert_eq!(zero.terminal_reason, TerminalReason::Timeout);
     }
 
@@ -544,6 +583,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.latest_batch, Some(5));
         assert_eq!(result.pending_work, PendingWork::default());
@@ -565,6 +605,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Superseded);
         assert_eq!(result.latest_generation, 2);
@@ -611,6 +652,7 @@ mod tests {
             &state,
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.terminal_reason, TerminalReason::Cancelled);
     }

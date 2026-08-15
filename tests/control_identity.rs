@@ -399,7 +399,7 @@ tasks:
 }
 
 #[test]
-fn config_reload_terminates_the_instance_identity_boundary() {
+fn config_reload_keeps_instance_identity_alive_on_valid_change() {
     let directory = setup_directory(
         "reload",
         r#"
@@ -416,24 +416,26 @@ tasks:
     let mut watcher = start_watcher(&directory);
     wait_until_socket(&directory);
 
-    // Touching the config file routes through the reload watcher, which
-    // SIGTERMs the running instance: the old identity ends here and no
-    // generation survives the boundary.
+    // TASK-0088/0090: a VALID config change no longer SIGTERMs the watcher.
+    // This rewrite is semantically identical (comment + same content), so it
+    // is a NoOp reload: the instance stays alive, identity is preserved, and
+    // the control socket keeps serving.
     std::fs::write(
         directory.join(".watch.yaml"),
         "# reloaded\non:\n  socket: sock\ntasks:\n  - name: init task\n    run: \"true\"\n    change: \"*.txt\"\n    run_on_init: true\n",
     )
     .unwrap();
 
-    let mut exited = false;
+    // The instance must survive the valid save; the socket stays live.
+    let mut alive = false;
     for _ in 0..250 {
-        if watcher.try_exited() {
-            exited = true;
+        if !watcher.try_exited() && UnixStream::connect(&directory.join("sock")).is_ok() {
+            alive = true;
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(exited, "config reload must terminate the watcher instance");
+    assert!(alive, "valid config reload must keep the instance alive");
 }
 
 fn parse_run_id(output: &Output) -> u64 {

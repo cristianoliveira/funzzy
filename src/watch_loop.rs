@@ -78,21 +78,36 @@ pub trait RunStrategy {
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
 /// converts init and change events into rule selections, and delegates
 /// execution to the injected strategy.
+///
+/// `watches` is a shared handle (TASK-0090): the config-reload transaction
+/// swaps the effective configuration under the lock at the commit boundary,
+/// and each batch routes under exactly one committed revision. `swap_rx`
+/// carries live root swaps to the backend; None for legacy/blocking callers.
 pub fn watch_loop(
-    watches: &Watches,
+    watches: &std::sync::Arc<std::sync::Mutex<Watches>>,
     run_on_init: bool,
     strategy: &dyn RunStrategy,
     debounce: Duration,
     verbose: bool,
+    swap_rx: Option<crate::watcher::RootSwapReceiver>,
+    // Optional readiness gate: the main loop waits for this signal before
+    // running init, so a config-touching init task can never fire before
+    // the reload watcher has registered its roots (TASK-0090).
+    reload_ready: Option<std::sync::Arc<std::sync::mpsc::Receiver<()>>>,
 ) -> Result<(), FzzError> {
-    let list_of_watched_paths = watches.paths_to_watch().unwrap_or_default();
+    let initial = watches.lock().unwrap().clone();
+    let list_of_watched_paths = initial.paths_to_watch().unwrap_or_default();
 
     watcher::events(
         list_of_watched_paths,
         || {
+            if let Some(ready) = &reload_ready {
+                let _ = ready.recv_timeout(Duration::from_secs(30));
+            }
             strategy.on_ready();
 
-            match init_action(watches.run_on_init_plan(), run_on_init) {
+            let initial = watches.lock().unwrap().clone();
+            match init_action(initial.run_on_init_plan(), run_on_init) {
                 InitAction::Run(plan) => {
                     stdout::info("Running on init commands.");
                     let commands = plan.commands().len();
@@ -123,28 +138,33 @@ pub fn watch_loop(
                 return;
             }
             strategy.on_batch(&batch);
-            match watches.watch_plan_batch(&batch.changed) {
+            // Lock once per batch: the whole routing decision (match/ignore,
+            // plan, trigger) reads one committed revision (contract §4).
+            let watches_guard = watches.lock().unwrap();
+            match watches_guard.watch_plan_batch(&batch.changed) {
                 Some((plan, trigger)) => {
                     stdout::clear_screen();
                     if verbose {
-                        emit_matched_decisions(watches, &batch, &trigger);
+                        emit_matched_decisions(&watches_guard, &batch, &trigger);
                     }
                     let generation = strategy.run_change(plan, &trigger, &batch);
                     if verbose {
-                        observe_triggers(watches, &batch, &trigger, generation);
+                        observe_triggers(&watches_guard, &batch, &trigger, generation);
                     }
                 }
                 None => {
                     if verbose {
-                        emit_non_matched_decisions(watches, &batch);
+                        emit_non_matched_decisions(&watches_guard, &batch);
                     }
                 }
             }
+            drop(watches_guard);
             strategy.on_batch_complete();
         },
         debounce,
-        watches.backend(),
+        initial.backend(),
         verbose,
+        swap_rx,
     )
     .map_err(FzzError::GenericError)
 }
@@ -877,6 +897,7 @@ mod tests {
             &Arc::new(Mutex::new(ControlState::default())),
             None,
             None,
+            "fz-test",
         );
         assert_eq!(result.latest_batch, Some(9));
         assert!(!result.pending_work.debounce_active);

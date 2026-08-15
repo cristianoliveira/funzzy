@@ -128,6 +128,10 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                     std::thread::sleep(std::time::Duration::from_secs(5));
                     write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
+                    // Wait for the whole first run to finish (the "Funzzy
+                    // results" summary marker) before slicing: the change task's
+                    // own output can appear mid-run, and slicing on the summary
+                    // before it is written panics under load.
                     wait_until!(
                         {
                             output_log
@@ -135,6 +139,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                                 .expect("failed to read from file");
 
                             output.contains("should not run on init but on change")
+                                && output.contains("Funzzy results")
                         },
                         "OUTPUT: {}",
                         output

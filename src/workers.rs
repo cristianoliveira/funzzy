@@ -38,6 +38,10 @@ struct RunRequest {
     concurrency_source: Option<&'static str>,
     /// Run-level terminal hooks (TASK-0040).
     hooks: crate::config::RunHooks,
+    /// Immutable config revision this request is frozen under (TASK-0089).
+    revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen config revision.
+    revision_hash: Option<String>,
 }
 
 /// Result of an exact-generation cancel (TASK-0046): the generation matched
@@ -211,6 +215,11 @@ pub struct Worker {
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040), applied to target runs.
     hooks: crate::config::RunHooks,
+    /// Immutable config revision all plans prepared through this worker are
+    /// frozen under (TASK-0089). Captured before plan creation; a reload
+    /// (TASK-0090) swaps it at the commit boundary. Interior mutability so
+    /// the reload transaction can swap without rebuilding the worker.
+    revision: std::sync::Mutex<Option<crate::config_revision::ConfigRevision>>,
 
     consumer: Option<JoinHandle<()>>,
 }
@@ -315,7 +324,11 @@ impl Worker {
                                 )
                                 .with_effective_concurrency(req.effective_concurrency)
                                 .with_concurrency_source(req.concurrency_source)
-                                .with_hooks(req.hooks.clone()),
+                                .with_hooks(req.hooks.clone())
+                                .with_revision(
+                                    req.revision.unwrap_or(0),
+                                    req.revision_hash.clone().unwrap_or_default(),
+                                ),
                                 req.plan,
                             ),
                         );
@@ -339,7 +352,11 @@ impl Worker {
                                     )
                                     .with_effective_concurrency(req.effective_concurrency)
                                     .with_concurrency_source(req.concurrency_source)
-                                    .with_hooks(req.hooks.clone()),
+                                    .with_hooks(req.hooks.clone())
+                                    .with_revision(
+                                        req.revision.unwrap_or(0),
+                                        req.revision_hash.clone().unwrap_or_default(),
+                                    ),
                                     req.plan,
                                 ),
                             );
@@ -369,6 +386,42 @@ impl Worker {
                             let mut superseding = req;
                             superseding.predecessor = Some(replaced_id);
                             pending = Some(superseding);
+                            // Burst drain (TASK-0083/0090): newer Runs already
+                            // queued behind this one supersede it in the
+                            // pending slot before promotion, so a burst
+                            // schedules only the newest generation — never a
+                            // cascade of one-run-per-drain starts. Cancels
+                            // seen here are answered inline (never dropped):
+                            // the replaced run is no longer active, and a
+                            // cancel of a queued pending run drops it.
+                            loop {
+                                match consumer_scheduler.try_recv() {
+                                    Some(WorkerCommand::Run(later)) => {
+                                        pending = Some(later);
+                                    }
+                                    Some(WorkerCommand::Cancel {
+                                        generation: Some(id),
+                                        reply,
+                                    }) => {
+                                        let cancelled_pending =
+                                            pending.as_ref().is_some_and(|req| req.run_id == id);
+                                        if cancelled_pending {
+                                            pending = None;
+                                        }
+                                        if let Some(reply) = reply {
+                                            let _ = reply.send(if cancelled_pending {
+                                                CancelResult::Cancelled {
+                                                    disposition:
+                                                        crate::executor::CancelDisposition::Graceful,
+                                                }
+                                            } else {
+                                                CancelResult::Noop
+                                            });
+                                        }
+                                    }
+                                    _ => break,
+                                }
+                            }
                         }
                         Some(WorkerCommand::Cancel { generation, reply }) => match generation {
                             Some(id) => {
@@ -411,6 +464,7 @@ impl Worker {
             concurrency,
             fail_fast,
             hooks: crate::config::RunHooks::default(),
+            revision: std::sync::Mutex::new(None),
             consumer: Some(consumer),
         }
     }
@@ -442,6 +496,20 @@ impl Worker {
     pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
         self.hooks = hooks;
         self
+    }
+
+    /// Binds the immutable config revision all plans prepared through this
+    /// worker are frozen under (TASK-0089, CONFIG-RELOAD-CONTRACT §4).
+    pub fn with_revision(self, revision: crate::config_revision::ConfigRevision) -> Self {
+        *self.revision.lock().unwrap() = Some(revision);
+        self
+    }
+
+    /// Swaps the frozen config revision at the reload commit boundary
+    /// (TASK-0090). Plans prepared after this call carry the new revision;
+    /// active runs keep the revision they started under.
+    pub fn set_revision(&self, revision: crate::config_revision::ConfigRevision) {
+        *self.revision.lock().unwrap() = Some(revision);
     }
 
     /// Cancels an exact generation through the worker command stream
@@ -563,6 +631,7 @@ impl Worker {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
         let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let revision = self.revision.lock().unwrap().clone();
         Ok(RunRequest {
             run_id,
             plan,
@@ -575,6 +644,8 @@ impl Worker {
             effective_concurrency: None,
             concurrency_source: None,
             hooks: crate::config::RunHooks::default(),
+            revision: revision.as_ref().map(|r| r.number),
+            revision_hash: revision.as_ref().map(|r| r.hash.clone()),
         })
     }
 

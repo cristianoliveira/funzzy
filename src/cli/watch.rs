@@ -52,12 +52,15 @@ impl Command for WatchCommand {
             self.events.clone(),
         )
         .with_hooks(self.watches.hooks());
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(self.watches.clone()));
         watch_loop(
-            &self.watches,
+            &shared,
             self.run_on_init,
             &strategy,
             self.watches.debounce(),
             self.verbose,
+            None,
+            None,
         )
     }
 }

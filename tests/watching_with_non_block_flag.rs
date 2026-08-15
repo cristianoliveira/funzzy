@@ -92,9 +92,11 @@ Long task running... 0
 ";
 
             assert_eq!(
-                output, expected,
+                setup::strip_ansi_codes(&output),
+                expected,
                 "Output:\n{} ------ \n\nExpected:\n{}",
-                output, expected,
+                output,
+                expected,
             );
         },
     );
@@ -187,9 +189,11 @@ Long task running... 0
 ";
 
                     assert_eq!(
-                        output, expected,
+                        setup::strip_ansi_codes(&output),
+                        expected,
                         "Output:\n{} ------ \n\nExpected:\n{}",
-                        output, expected,
+                        output,
+                        expected,
                     );
                 },
             );
