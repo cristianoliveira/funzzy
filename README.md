@@ -94,7 +94,7 @@ tasks:
 
 See more:
 
- - [Documentation](/docs/USAGE.md)
+ - [Documentation](docs/USAGE.md)
  - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
  - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
 

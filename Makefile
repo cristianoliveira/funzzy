@@ -104,3 +104,7 @@ version-check: ## Verify release version identity across packages (TASK-0061)
 .PHONY: version-check-test
 version-check-test: ## Test the version consistency check (TASK-0061)
 	@./scripts/version-check-test
+
+.PHONY: docs-drift
+docs-drift: ## Verify docs/CLI/schema/examples/links/version consistency (TASK-0069)
+	@./scripts/docs-drift-check

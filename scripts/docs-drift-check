@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Funzzy docs/CLI/schema/example drift check (TASK-0069).
+#
+# Focused, deterministic, bounded. Fails with an exact repair command for each
+# drift class. Run locally with `make docs-drift`; the push CI runs it too.
+# External link checks are scheduled separately (bounded, allowlisted), never
+# a flaky push gate.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+errors=0
+note() { echo "ok: $*"; }
+fail() { echo "DRIFT: $*" >&2; errors=$((errors + 1)); }
+
+# 1. YAML examples parse + check (locked by tests; run directly for the gate).
+if cargo test --test jobs_migration every_example_passes_fzz_check >/dev/null 2>&1; then
+  note "all examples pass fzz check"
+else
+  fail "examples drift: run 'cargo test --test jobs_migration every_example_passes_fzz_check'"
+fi
+
+# 2. Doc YAML blocks parse (usage + advanced guides).
+if cargo test --test jobs_migration usage_guide_yaml_blocks_parse_through_the_production_parser >/dev/null 2>&1; then
+  note "doc YAML blocks parse"
+else
+  fail "doc YAML drift: run 'cargo test --test jobs_migration usage_guide_yaml_blocks_parse_through_the_production_parser'"
+fi
+
+# 3. Version identity across packages.
+if ./scripts/version-check >/dev/null 2>&1; then
+  note "version identity consistent"
+else
+  fail "version drift: run 'make version-check'"
+fi
+
+# 4. Stale V1 vocabulary scan. Excluded contexts: migration/history/contracts.
+#    Every hit must name file:line.
+STALE_PATTERN='--non-block|\-t |--target\b'
+EXCLUDE='docs/MIGRATION.md|docs/FLAG_NON_BLOCK.md|docs/FLAG_TARGET.md|docs/RELEASE-BOUNDARY.md|CHANGELOG|examples/longtask.sh:7|tests/watching_with_non_block_flag'
+HITS=$(rg -n --no-ignore "$STALE_PATTERN" README.md docs/ examples/ 2>/dev/null \
+  | grep -vE "$EXCLUDE" || true)
+if [ -z "$HITS" ]; then
+  note "no stale V1 vocabulary outside migration/history contexts"
+else
+  fail "stale V1 vocabulary:\n$HITS"
+fi
+
+# 5. Internal markdown links and referenced repo paths exist.
+MISSING_LINKS=$(python3 - << 'PY'
+import os, re
+missing = []
+for root, _, files in os.walk("."):
+    if any(part in root for part in (".git", "target", ".gwt", "node_modules")):
+        continue
+    for f in files:
+        if not f.endswith(".md"):
+            continue
+        path = os.path.join(root, f)
+        text = open(path, encoding="utf-8").read()
+        for m in re.finditer(r"\]\(([^)#]+)(#[^)]*)?\)", text):
+            target = m.group(1)
+            if target.startswith(("http", "mailto", "ftp")):
+                continue
+            target = target.split("#")[0]
+            if not target:
+                continue
+            resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            if not os.path.exists(resolved):
+                missing.append(f"{path}: -> {target}")
+for line in sorted(set(missing)):
+    print(line)
+PY
+)
+if [ -z "$MISSING_LINKS" ]; then
+  note "internal markdown links resolve"
+else
+  fail "broken internal links:\n$MISSING_LINKS"
+fi
+
+if [ "$errors" -gt 0 ]; then
+  echo "docs-drift FAILED ($errors issue(s))" >&2
+  exit 1
+fi
+echo "docs-drift OK: help/schema/examples/links/version/vocabulary consistent"
