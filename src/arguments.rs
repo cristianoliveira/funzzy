@@ -186,6 +186,7 @@ impl Arguments {
                     Some(("status", _)) => ControlAction::Status,
                     Some(("list", _)) => ControlAction::List,
                     Some(("capabilities", _)) => ControlAction::Capabilities,
+                    Some(("config", _)) => ControlAction::Config,
                     Some(("run", run_sub)) => ControlAction::Run {
                         target: run_sub
                             .get_one::<String>("target")
@@ -605,6 +606,14 @@ pub fn command() -> Command {
                         ),
                 )
                 .subcommand(
+                    Command::new("config")
+                        .about("Print the running watcher's config lifecycle.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Print the config lifecycle from the shared state source: the current phase (idle, configReloading, configReloaded, or terminal configInvalid), the revision facts, and the bounded transition history.\n\nA valid hot reload preserves the instance identity; a formatting-only save is quiet here (no transition) and only the watcher log reports it.",
+                        ),
+                )
+                .subcommand(
                     Command::new("run")
                         .about("Trigger a named target on the running watcher and report the scheduled generation.")
                         .version(env!("CARGO_PKG_VERSION"))
@@ -1003,6 +1012,18 @@ mod tests {
             parse_action(&["control", "capabilities"]),
             Action::Control {
                 action: ControlAction::Capabilities,
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
+    }
+
+    #[test]
+    fn control_config_selects_config() {
+        assert_eq!(
+            parse_action(&["control", "config"]),
+            Action::Control {
+                action: ControlAction::Config,
                 socket: None,
                 format: OutputFormat::Human,
             }

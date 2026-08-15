@@ -602,8 +602,9 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
 }
 
 /// Graceful fatal config shutdown (contract §5): emit the terminal error,
-/// reap owned children/services through process ownership, and exit nonzero.
-/// Never SIGKILL/panic/self-SIGTERM.
+/// publish the terminal `configInvalid` lifecycle transition so control
+/// subscribers observe it, reap owned children/services through process
+/// ownership, and exit nonzero. Never SIGKILL/panic/self-SIGTERM.
 fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reason: &str) {
     let current = coordinator.current();
     stdout::error(&format!(
@@ -611,6 +612,13 @@ fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reas
         current.root().display(),
         reason
     ));
+    // TASK-0091 AC8: publish the terminal config diagnostic BEFORE the
+    // socket closes — subscribers observe `configInvalid`, then disconnect.
+    // Best effort: the process exits right after, so a slow subscriber may
+    // miss the notification (bounded, "when possible").
+    coordinator
+        .lifecycle()
+        .invalid(current.revision(), reason.to_owned());
     let (signal, grace) = crate::process_owner::shutdown_policy();
     let _ = crate::process_owner::shutdown_all(signal, grace, false);
     std::process::exit(1);
@@ -841,6 +849,11 @@ fn execute_watch_command(
                         stdout::info("Config save has no semantic change; nothing to reload.");
                     }
                     crate::reload::ReloadDecision::Commit(revision) => {
+                        // TASK-0091 AC3: the reload lifecycle transitions
+                        // only when a candidate actually commits (never for a
+                        // no-op save): `configReloading` before prepare,
+                        // `configReloaded` after the commit boundary.
+                        reload_coordinator.lifecycle().reloading(Some(&revision));
                         let candidate_watches = build_watches_from_content(
                             &content,
                             &reload_root,
@@ -937,6 +950,9 @@ fn execute_watch_command(
                                     "Config change is valid; hot-reloading to revision {}.",
                                     revision.number
                                 ));
+                                // The commit boundary passed; the new revision
+                                // is live and observable.
+                                reload_coordinator.lifecycle().reloaded(&revision);
                             }
                             Err(err) => fatal_reload(&reload_coordinator, &err),
                         }

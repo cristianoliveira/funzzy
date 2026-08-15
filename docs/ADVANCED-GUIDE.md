@@ -173,7 +173,7 @@ the `legacy` profile, never assumed facts.
 | Superseded generation | newer batch replaced it → await the newer runId |
 | Truncated output | retention cap → `output --tail N` / `--full`, bounds reported |
 | Process cleanup | cancelled children must be reaped → verify `cancel --wait` terminal |
-| Config reload | watcher restarts on config change → instance token changes |
+| Config reload | invalid config is fatal (nonzero exit, terminal error); a valid reload hot-swaps in-process — the instance token is preserved (only a process restart changes it) |
 | Corrupt history | state file damaged → delete to reset, or rely on confidence=None |
 | Feedback loop | watcher noise from generated files → `ignore` or `respect_gitignore: true` |
 

@@ -9,8 +9,8 @@
 
 use crate::cli::control::OutputFormat;
 use crate::control_client::{
-    AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, EmitSnapshot, OutputSnapshot,
-    StatusSnapshot, TargetSnapshot,
+    AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ConfigSnapshot, EmitSnapshot,
+    OutputSnapshot, StatusSnapshot, TargetSnapshot,
 };
 use crate::duration_history::RunEstimate;
 use serde_json::{json, Value};
@@ -50,7 +50,7 @@ pub fn render_server_error(
 }
 
 pub fn status_document(status: &StatusSnapshot) -> Value {
-    json!({
+    let mut doc = json!({
         "generation": status.generation,
         "state": status.state,
         "trigger": status.trigger,
@@ -59,7 +59,16 @@ pub fn status_document(status: &StatusSnapshot) -> Value {
         "failures": status.failures,
         "effectiveConcurrency": status.effective_concurrency,
         "concurrencySource": status.concurrency_source,
-    })
+    });
+    // TASK-0091, AC2: the frozen config revision of the latest generation
+    // (additive; omitted on legacy servers).
+    if let Some(revision) = status.revision {
+        doc["revision"] = json!(revision);
+    }
+    if let Some(revision_hash) = &status.revision_hash {
+        doc["revisionHash"] = json!(revision_hash);
+    }
+    doc
 }
 
 pub fn targets_document(targets: &[TargetSnapshot]) -> Value {
@@ -114,16 +123,30 @@ pub fn capabilities_document(caps: &CapabilitiesSnapshot) -> Value {
     })
 }
 
-pub fn run_document(generation: u64) -> Value {
-    json!({ "runId": generation })
+pub fn run_document(scheduled: &crate::control_client::ScheduledRunSnapshot) -> Value {
+    let mut doc = json!({ "runId": scheduled.run_id });
+    if let Some(revision) = scheduled.revision {
+        doc["revision"] = json!(revision);
+    }
+    if let Some(revision_hash) = &scheduled.revision_hash {
+        doc["revisionHash"] = json!(revision_hash);
+    }
+    doc
 }
 
 pub fn emit_document(emit: &EmitSnapshot) -> Value {
-    json!({
+    let mut doc = json!({
         "outcome": emit.outcome,
         "matched": emit.matched,
         "runId": emit.run_id,
-    })
+    });
+    if let Some(revision) = emit.revision {
+        doc["revision"] = json!(revision);
+    }
+    if let Some(revision_hash) = &emit.revision_hash {
+        doc["revisionHash"] = json!(revision_hash);
+    }
+    doc
 }
 
 pub fn cancel_document(cancel: &CancelSnapshot) -> Value {
@@ -131,6 +154,39 @@ pub fn cancel_document(cancel: &CancelSnapshot) -> Value {
         "cancelled": cancel.cancelled,
         "generation": cancel.generation,
     })
+}
+
+/// Canonical `config` lifecycle document (TASK-0091, AC3): the live
+/// transition plus the bounded history, fixed field order.
+pub fn config_document(config: &ConfigSnapshot) -> Value {
+    let transition = |t: &crate::control_client::ConfigTransitionSnapshot| {
+        let mut entry =
+            json!({ "phase": t.phase, "ordinal": t.ordinal, "atEpochMs": t.at_epoch_ms });
+        if let Some(revision) = t.revision {
+            entry["revision"] = json!(revision);
+        }
+        if let Some(hash) = &t.revision_hash {
+            entry["revisionHash"] = json!(hash);
+        }
+        if let Some(reason) = &t.reason {
+            entry["reason"] = json!(reason);
+        }
+        entry
+    };
+    let mut doc = json!({
+        "current": transition(&config.current),
+        "history": config.history.iter().map(transition).collect::<Vec<_>>(),
+    });
+    if let Some(revision) = config.current.revision {
+        doc["revision"] = json!(revision);
+    }
+    if let Some(hash) = &config.current.revision_hash {
+        doc["revisionHash"] = json!(hash);
+    }
+    if let Some(reason) = &config.current.reason {
+        doc["reason"] = json!(reason);
+    }
+    doc
 }
 
 pub fn output_document(output: &OutputSnapshot) -> Value {
@@ -224,6 +280,8 @@ mod tests {
             failures: vec!["test: boom".to_owned()],
             effective_concurrency: Some(1),
             concurrency_source: Some("control".to_owned()),
+            revision: Some(2),
+            revision_hash: Some("hash-2".to_owned()),
         }
     }
 
@@ -245,6 +303,8 @@ mod tests {
                 "effectiveConcurrency",
                 "failures",
                 "generation",
+                "revision",
+                "revisionHash",
                 "state",
                 "trigger"
             ]
@@ -437,6 +497,8 @@ mod tests {
             matched: vec!["a".to_owned(), "b".to_owned()],
             run_id: Some(7),
             outcome: "scheduled".to_owned(),
+            revision: None,
+            revision_hash: None,
         };
         let doc = emit_document(&emit);
         assert_eq!(doc["outcome"], "scheduled");

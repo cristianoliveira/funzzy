@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::config_lifecycle::ConfigLifecycle;
 use crate::config_revision::ConfigRevision;
 use crate::plan::RunPlan;
 use crate::watcher::RootSwapPublisher;
@@ -78,6 +79,9 @@ pub struct ReloadCoordinator {
     socket: Arc<Mutex<Option<SocketSwapper>>>,
     /// Pending socket swap prepared at `begin`; retired at `retire`.
     socket_pending: Arc<Mutex<bool>>,
+    /// Config lifecycle state source (TASK-0091, AC3): the reload thread
+    /// writes transitions; the snapshot broker and control server read them.
+    lifecycle: Arc<ConfigLifecycle>,
 }
 
 impl ReloadCoordinator {
@@ -91,7 +95,14 @@ impl ReloadCoordinator {
             publisher: Arc::new(Mutex::new(None)),
             socket: Arc::new(Mutex::new(None)),
             socket_pending: Arc::new(Mutex::new(false)),
+            lifecycle: Arc::new(ConfigLifecycle::new()),
         }
+    }
+
+    /// The config lifecycle state source (TASK-0091, AC3): shared between
+    /// the reload thread (writer) and the control/broker surfaces (readers).
+    pub fn lifecycle(&self) -> &Arc<ConfigLifecycle> {
+        &self.lifecycle
     }
 
     /// The shared watch config the routing loop reads per batch.

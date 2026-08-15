@@ -7,6 +7,7 @@
 //! channel; it never builds a second state tracker.
 
 use crate::awaiting::{classify, AwaitCoordinator};
+use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::control::{ControlInstance, ControlState, ExecutionState};
 use crate::duration_history::RunEstimate;
 use crate::executor::TaskSnapshot;
@@ -66,6 +67,14 @@ pub struct CorrelatedSnapshot {
     /// Non-secret semantic hash of the frozen config revision (TASK-0089).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_hash: Option<String>,
+    /// Live config lifecycle transition (TASK-0091, AC3/AC4): the current
+    /// `configReloading`/`configReloaded`/`configInvalid` phase and its
+    /// revision, read from the shared lifecycle source. Present only when a
+    /// lifecycle source is wired; a reload transition publishes a snapshot
+    /// even when the generation state is unchanged, so subscriptions receive
+    /// the revision transition without reconnecting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_lifecycle: Option<ConfigTransition>,
     /// Exact failure evidence with structured outputRef (TASK-0082, contract
     /// §1/§5): present only when the latest generation failed and retained
     /// output exists. Rendered identically by status, await, and subscribe.
@@ -98,6 +107,9 @@ pub struct SnapshotBroker {
     /// Optional frozen run-start estimate lookup (TASK-0055): None keeps the
     /// legacy snapshot shape (no estimate key).
     estimates: Option<EstimateLookup>,
+    /// Optional config lifecycle source (TASK-0091): None keeps the legacy
+    /// snapshot shape (no configLifecycle key).
+    lifecycle: std::sync::Mutex<Option<Arc<ConfigLifecycle>>>,
     /// Configured scheduler concurrency, fixed per watcher session
     /// (TASK-0073); reported verbatim on every snapshot.
     configured_concurrency: usize,
@@ -150,6 +162,7 @@ impl SnapshotBroker {
             coordinator,
             outputs,
             estimates,
+            lifecycle: std::sync::Mutex::new(None),
             configured_concurrency,
             inner: Mutex::new(BrokerInner::default()),
         };
@@ -157,6 +170,15 @@ impl SnapshotBroker {
         let idle = broker.build();
         broker.inner.lock().unwrap().last = Some(idle);
         broker
+    }
+
+    /// Attaches the config lifecycle source (TASK-0091, AC3/AC4): snapshots
+    /// then carry the live `configLifecycle` transition. The composition
+    /// root separately registers a lifecycle watcher that calls `publish` on
+    /// transitions, so a reload publishes even when generation state is
+    /// unchanged (this method only records the source for snapshot reads).
+    pub fn attach_lifecycle(&self, lifecycle: Arc<ConfigLifecycle>) {
+        *self.lifecycle.lock().unwrap() = Some(lifecycle);
     }
 
     /// The instance identity the snapshot carries; shared with the control
@@ -220,6 +242,12 @@ impl SnapshotBroker {
             concurrency_source: Some(state.concurrency_source().unwrap_or("config").to_string()),
             revision: state.revision(),
             revision_hash: state.revision_hash().map(str::to_owned),
+            config_lifecycle: self
+                .lifecycle
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|lifecycle| lifecycle.current()),
             failure_evidence,
         }
     }
@@ -432,6 +460,64 @@ mod tests {
         assert_eq!(json["configuredConcurrency"], 2);
         assert_eq!(json["effectiveConcurrency"], 2);
         assert_eq!(json["concurrencySource"], "config");
+    }
+
+    #[test]
+    fn snapshot_carries_the_config_lifecycle_transition_when_attached() {
+        // TASK-0091, AC3/AC4: after attach, the snapshot includes the live
+        // config transition; a reload transition changes the snapshot even
+        // when generation state is unchanged.
+        let (broker, state, coordinator) = broker();
+        state.lock().unwrap().apply(started(1));
+        coordinator.observe(&started(1));
+        state.lock().unwrap().apply(Event::Finished {
+            run_id: 1,
+            superseded_by: None,
+            elapsed: Duration::from_millis(1),
+            failures: vec![],
+        });
+        coordinator.observe(&Event::Finished {
+            run_id: 1,
+            superseded_by: None,
+            elapsed: Duration::from_millis(1),
+            failures: vec![],
+        });
+        broker.publish();
+
+        let lifecycle = Arc::new(crate::config_lifecycle::ConfigLifecycle::new());
+        broker.attach_lifecycle(Arc::clone(&lifecycle));
+        // Composition-root wiring: the broker publishes on lifecycle
+        // transitions (mirrors watch_non_block.rs).
+        let broker_pub = Arc::clone(&broker);
+        lifecycle.watch(Arc::new(move |_| broker_pub.publish()));
+        // Refresh the broker's last snapshot so the immediate value carries
+        // the attached lifecycle source.
+        broker.publish();
+        let (rx, _) = broker.subscribe();
+
+        // Without a transition the snapshot carries the Idle transition.
+        let (_, idle) = broker.subscribe();
+        assert_eq!(
+            idle.config_lifecycle.as_ref().map(|t| t.phase),
+            Some(crate::config_lifecycle::ConfigPhase::Idle)
+        );
+
+        // A reloaded transition changes the snapshot and publishes.
+        lifecycle.reloaded(&crate::config_revision::ConfigRevision {
+            number: 2,
+            hash: "hash-2".to_owned(),
+        });
+        let notified = rx.recv_timeout(Duration::from_millis(200)).unwrap();
+        assert_eq!(
+            notified.config_lifecycle.as_ref().map(|t| t.phase),
+            Some(crate::config_lifecycle::ConfigPhase::ConfigReloaded)
+        );
+        assert_eq!(
+            notified.config_lifecycle.as_ref().and_then(|t| t.revision),
+            Some(2)
+        );
+        // The generation facts are unchanged: only the config transition moved.
+        assert_eq!(notified.generation, 1);
     }
 
     #[test]

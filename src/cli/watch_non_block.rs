@@ -163,16 +163,23 @@ impl Command for WatchNonBlockCommand {
             reload.install_publisher(crate::watcher::RootSwapPublisher::new(swap_tx));
         }
 
-        let strategy = NonBlockStrategy::new_arc_with_subscription(
+        // TASK-0091 AC3: the config lifecycle source is shared by the reload
+        // thread (writer) and the control/broker surfaces (readers).
+        let lifecycle = self
+            .reload
+            .as_ref()
+            .map(|reload| Arc::clone(reload.lifecycle()));
+        let strategy = NonBlockStrategy::new_arc_with_shared(
             worker,
-            self.watches.clone(),
+            Arc::clone(&shared),
             self.control_socket.clone(),
             control_state,
             Some(coordinator),
             Some(outputs),
             instance,
-            Some(broker),
+            Some(Arc::clone(&broker)),
             Some(recorder),
+            lifecycle,
         );
         // TASK-0090 AC8: when the reloaded config changes the control socket
         // path, the transaction binds the new socket before commit and
@@ -185,6 +192,15 @@ impl Command for WatchNonBlockCommand {
                 move |path| swapper_strategy.prepare_socket_swap(path.to_path_buf()),
                 move || retire_strategy.retire_socket_swap(),
             ));
+            // TASK-0091 AC3/AC4: the snapshot broker carries the config
+            // lifecycle transition and publishes on every lifecycle change,
+            // so active subscriptions receive configReloading/configReloaded/
+            // configInvalid without disconnecting or polling.
+            broker.attach_lifecycle(Arc::clone(reload.lifecycle()));
+            let broker_pub = Arc::clone(&broker);
+            reload
+                .lifecycle()
+                .watch(Arc::new(move |_| broker_pub.publish()));
         }
         watch_loop(
             &shared,

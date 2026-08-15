@@ -409,6 +409,22 @@ impl Run {
     pub fn run_id(&self) -> u64 {
         self.metadata.run_id
     }
+
+    /// The frozen config revision this run was scheduled under (TASK-0091,
+    /// AC2): reported by `cancel` so the cancellation is attributable to the
+    /// exact revision; None for legacy runs that never observe reload.
+    pub fn revision(&self) -> Option<crate::config_revision::ConfigRevision> {
+        match (
+            self.metadata.revision,
+            self.metadata.revision_hash.as_deref(),
+        ) {
+            (Some(number), Some(hash)) => Some(crate::config_revision::ConfigRevision {
+                number,
+                hash: hash.to_owned(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 enum TaskStep {
@@ -868,7 +884,13 @@ impl Executor {
         let task_failed = !task.failures.is_empty();
         self.reveal_on_failure(&task, &task.failures);
         if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
-            outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+            outputs.record(
+                run.metadata.run_id,
+                task.name.clone(),
+                capture.finish(),
+                run.metadata.revision,
+                run.metadata.revision_hash.clone(),
+            );
         }
         let duration_ms = task
             .started
@@ -898,7 +920,13 @@ impl Executor {
         for mut task in run.active.drain(..) {
             self.shutdown_task(&mut task);
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
-                outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+                outputs.record(
+                    run.metadata.run_id,
+                    task.name.clone(),
+                    capture.finish(),
+                    run.metadata.revision,
+                    run.metadata.revision_hash.clone(),
+                );
             }
             let duration_ms = task
                 .started
@@ -1179,7 +1207,13 @@ impl Executor {
                 escalated = true;
             }
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
-                outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
+                outputs.record(
+                    run.metadata.run_id,
+                    task.name.clone(),
+                    capture.finish(),
+                    run.metadata.revision,
+                    run.metadata.revision_hash.clone(),
+                );
             }
             let duration_ms = task
                 .started

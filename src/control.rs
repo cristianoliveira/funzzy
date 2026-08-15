@@ -262,12 +262,21 @@ impl ControlState {
 /// Result of routing one synthetic path change through the shared
 /// event-to-run policy (contract §5): matched task names plus the scheduled
 /// generation, or an explicit unmatched/ignored outcome with no generation.
+/// Additive `revision`/`revisionHash` (TASK-0091, AC2) name the frozen
+/// config revision the scheduled generation was planned under.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmitOutcome {
     pub matched: Vec<String>,
     pub run_id: Option<u64>,
     pub outcome: String,
+    /// Immutable config revision the scheduled run was frozen under; omitted
+    /// for legacy servers and for unmatched/ignored outcomes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_hash: Option<String>,
 }
 
 impl EmitOutcome {
@@ -276,6 +285,24 @@ impl EmitOutcome {
             matched,
             run_id: Some(run_id),
             outcome: "scheduled".to_owned(),
+            revision: None,
+            revision_hash: None,
+        }
+    }
+
+    /// Builds a scheduled outcome with the frozen config revision the run
+    /// was planned under (TASK-0091, AC2/AC7).
+    pub fn scheduled_at(
+        matched: Vec<String>,
+        run_id: u64,
+        revision: Option<crate::config_revision::ConfigRevision>,
+    ) -> Self {
+        Self {
+            matched,
+            run_id: Some(run_id),
+            outcome: "scheduled".to_owned(),
+            revision: revision.as_ref().map(|r| r.number),
+            revision_hash: revision.map(|r| r.hash),
         }
     }
 
@@ -284,6 +311,8 @@ impl EmitOutcome {
             matched: vec![],
             run_id: None,
             outcome: "unmatched".to_owned(),
+            revision: None,
+            revision_hash: None,
         }
     }
 
@@ -292,11 +321,66 @@ impl EmitOutcome {
             matched: vec![],
             run_id: None,
             outcome: "ignored".to_owned(),
+            revision: None,
+            revision_hash: None,
         }
     }
 }
 
-type RunTarget = Arc<dyn Fn(String, bool) -> Result<u64, String> + Send + Sync>;
+/// One control-scheduled run (TASK-0091, AC2): the generation identity plus
+/// the frozen config revision the run was planned under (additive — the
+/// legacy shape keeps only `runId`). The revision is read under the same
+/// shared-config lock as the plan, so a run concurrent with reload binds to
+/// exactly one revision.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledRun {
+    pub run_id: u64,
+    /// Immutable config revision the run was frozen under; omitted for
+    /// legacy servers that never observe reload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_hash: Option<String>,
+}
+
+/// Typed control-run failure (TASK-0091, AC7): a stale target (not in the
+/// current revision) is an actionable typed outcome, never a generic server
+/// error that the agent would have to parse. Maps to one stable RPC code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ControlRunError {
+    /// The requested target does not exist in the current revision.
+    TargetNotFound { target: String },
+    /// Any other scheduling failure (busy-run cancel, worker error).
+    Internal(String),
+}
+
+impl ControlRunError {
+    /// Maps the typed error to a stable RPC error triple.
+    pub fn to_rpc(self) -> (i64, &'static str, Option<serde_json::Value>) {
+        match self {
+            ControlRunError::TargetNotFound { target } => (
+                -32016,
+                "target_not_found",
+                Some(serde_json::json!({
+                    "target": target,
+                    "action": "reobserve-targets",
+                })),
+            ),
+            ControlRunError::Internal(message) => {
+                (-32000, "Server error", Some(serde_json::json!(message)))
+            }
+        }
+    }
+}
+
+type RunTarget = Arc<dyn Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync>;
+
+/// Resolves the live target list at request time (TASK-0091, AC6): the
+/// strategy reads the SHARED watch config, so `targets` after a valid reload
+/// reflects the new jobs without rebuilding the server. None = static list.
+pub type TargetsProvider = Arc<dyn Fn() -> Vec<ControlTarget> + Send + Sync>;
 type EmitPath = Arc<dyn Fn(String) -> Result<EmitOutcome, String> + Send + Sync>;
 type CancelTarget = Arc<dyn Fn(u64) -> Result<CancelResult, String> + Send + Sync>;
 
@@ -321,7 +405,9 @@ impl ControlServer {
             None,
             None,
             None,
+            None,
             Arc::new(ControlInstance::new()),
+            None,
             None,
             None,
         )
@@ -334,18 +420,20 @@ impl ControlServer {
         run_target: F,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
     {
         Self::start_internal(
             path,
             state,
             targets,
+            None,
             Some(Arc::new(run_target)),
             None,
             None,
             None,
             None,
             Arc::new(ControlInstance::new()),
+            None,
             None,
             None,
         )
@@ -363,7 +451,7 @@ impl ControlServer {
         emit_path: E,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
         Self::start_with_coordinator(path, state, targets, run_target, emit_path, None, None)
@@ -383,19 +471,21 @@ impl ControlServer {
         outputs: Option<Arc<OutputRegistry>>,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
         Self::start_internal(
             path,
             state,
             targets,
+            None,
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
             coordinator,
             outputs,
             None,
             Arc::new(ControlInstance::new()),
+            None,
             None,
             None,
         )
@@ -416,7 +506,7 @@ impl ControlServer {
         cancel_generation: C,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -424,12 +514,14 @@ impl ControlServer {
             path,
             state,
             targets,
+            None,
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
             coordinator,
             outputs,
             Some(Arc::new(cancel_generation)),
             Arc::new(ControlInstance::new()),
+            None,
             None,
             None,
         )
@@ -453,7 +545,7 @@ impl ControlServer {
         broker: Arc<SnapshotBroker>,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -461,6 +553,7 @@ impl ControlServer {
             path,
             state,
             targets,
+            None,
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
             coordinator,
@@ -468,6 +561,7 @@ impl ControlServer {
             Some(Arc::new(cancel_generation)),
             instance,
             Some(broker),
+            None,
             None,
         )
     }
@@ -491,7 +585,7 @@ impl ControlServer {
         estimates: TargetEstimateProvider,
     ) -> io::Result<Self>
     where
-        F: Fn(String, bool) -> Result<u64, String> + Send + Sync + 'static,
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
@@ -499,6 +593,7 @@ impl ControlServer {
             path,
             state,
             targets,
+            None,
             Some(Arc::new(run_target)),
             Some(Arc::new(emit_path)),
             coordinator,
@@ -507,6 +602,48 @@ impl ControlServer {
             instance,
             Some(broker),
             Some(estimates),
+            None,
+        )
+    }
+
+    /// Starts the full control surface with the config lifecycle source
+    /// (TASK-0091, AC3): serves the `config` method and lets `await` carry
+    /// the live lifecycle transition in its observation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_lifecycle<F, E, C>(
+        path: &Path,
+        state: Arc<Mutex<ControlState>>,
+        targets: Vec<ControlTarget>,
+        targets_provider: TargetsProvider,
+        run_target: F,
+        emit_path: E,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        cancel_generation: C,
+        instance: Arc<ControlInstance>,
+        broker: Arc<SnapshotBroker>,
+        estimates: TargetEstimateProvider,
+        lifecycle: Arc<crate::config_lifecycle::ConfigLifecycle>,
+    ) -> io::Result<Self>
+    where
+        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
+        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
+        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
+    {
+        Self::start_internal(
+            path,
+            state,
+            targets,
+            Some(targets_provider),
+            Some(Arc::new(run_target)),
+            Some(Arc::new(emit_path)),
+            coordinator,
+            outputs,
+            Some(Arc::new(cancel_generation)),
+            instance,
+            Some(broker),
+            Some(estimates),
+            Some(lifecycle),
         )
     }
 
@@ -515,6 +652,7 @@ impl ControlServer {
         path: &Path,
         state: Arc<Mutex<ControlState>>,
         targets: Vec<ControlTarget>,
+        targets_provider: Option<TargetsProvider>,
         run_target: Option<RunTarget>,
         emit_path: Option<EmitPath>,
         coordinator: Option<Arc<AwaitCoordinator>>,
@@ -523,6 +661,7 @@ impl ControlServer {
         instance: Arc<ControlInstance>,
         broker: Option<Arc<SnapshotBroker>>,
         estimates: Option<TargetEstimateProvider>,
+        lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
     ) -> io::Result<Self> {
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
@@ -554,6 +693,7 @@ impl ControlServer {
                         }
                         let state = Arc::clone(&state);
                         let targets = targets.clone();
+                        let targets_provider = targets_provider.clone();
                         let run_target = run_target.clone();
                         let emit_path = emit_path.clone();
                         let coordinator = coordinator.clone();
@@ -562,12 +702,14 @@ impl ControlServer {
                         let instance = Arc::clone(&instance);
                         let broker = broker.clone();
                         let estimates = estimates.clone();
+                        let lifecycle = lifecycle.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
                             handle_client(
                                 stream,
                                 &state,
                                 &targets,
+                                targets_provider.as_ref(),
                                 run_target.as_ref(),
                                 emit_path.as_ref(),
                                 coordinator.as_ref(),
@@ -576,6 +718,7 @@ impl ControlServer {
                                 instance.as_ref(),
                                 broker.as_ref(),
                                 estimates.as_ref(),
+                                lifecycle.as_ref(),
                             );
                             clients.fetch_sub(1, Ordering::Relaxed);
                         });
@@ -657,6 +800,7 @@ fn handle_client(
     mut stream: UnixStream,
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
+    targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
@@ -665,6 +809,7 @@ fn handle_client(
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
+    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
 ) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
     // socket): the client adapter keeps one connection and increments ids.
@@ -720,7 +865,15 @@ fn handle_client(
                 .get("params")
                 .is_some_and(|params| params.is_object())
         {
-            handle_await(&mut stream, request, state, coordinator, outputs, instance);
+            handle_await(
+                &mut stream,
+                request,
+                state,
+                coordinator,
+                outputs,
+                instance,
+                lifecycle,
+            );
             continue;
         }
 
@@ -728,6 +881,7 @@ fn handle_client(
             request,
             state,
             targets,
+            targets_provider,
             run_target,
             emit_path,
             outputs,
@@ -735,6 +889,7 @@ fn handle_client(
             instance,
             broker,
             estimates,
+            lifecycle,
         ) {
             write_response(&mut stream, response);
         }
@@ -784,7 +939,7 @@ fn handle_subscribe(
                 let notification = serde_json::json!({
                     "jsonrpc": "2.0",
                     "method": "snapshot",
-                    "params": serde_json::to_value(snapshot).unwrap_or(serde_json::Value::Null),
+                    "params": serde_json::to_value(&snapshot).unwrap_or(serde_json::Value::Null),
                 });
                 if writeln!(stream, "{}", notification).is_err() {
                     return;
@@ -806,6 +961,7 @@ fn handle_await(
     coordinator: Option<&Arc<AwaitCoordinator>>,
     outputs: Option<&OutputRegistry>,
     instance: &ControlInstance,
+    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
 ) {
     let id = request_id(&request);
     if request.get("jsonrpc") != Some(&serde_json::json!("2.0")) {
@@ -851,6 +1007,7 @@ fn handle_await(
         Some(&mut probe),
         outputs,
         instance.token.as_str(),
+        lifecycle.map(|lifecycle| lifecycle.as_ref()),
     );
     let _ = stream.set_nonblocking(false);
     write_response(
@@ -912,6 +1069,7 @@ fn process_payload(
     request: serde_json::Value,
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
+    targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
@@ -919,12 +1077,14 @@ fn process_payload(
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
+    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
 ) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
         return process_request(
             request,
             state,
             targets,
+            targets_provider,
             run_target,
             emit_path,
             outputs,
@@ -932,6 +1092,7 @@ fn process_payload(
             instance,
             broker,
             estimates,
+            lifecycle,
         );
     };
 
@@ -951,6 +1112,7 @@ fn process_payload(
                 request,
                 state,
                 targets,
+                targets_provider,
                 run_target,
                 emit_path,
                 outputs,
@@ -958,6 +1120,7 @@ fn process_payload(
                 instance,
                 broker,
                 estimates,
+                lifecycle,
             )
         })
         .collect();
@@ -971,6 +1134,7 @@ fn process_request(
     request: serde_json::Value,
     state: &Arc<Mutex<ControlState>>,
     targets: &[ControlTarget],
+    targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
@@ -978,6 +1142,7 @@ fn process_request(
     instance: &ControlInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
+    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
 ) -> Option<serde_json::Value> {
     let id = request_id(&request);
     let Some(object) = request.as_object() else {
@@ -998,7 +1163,13 @@ fn process_request(
 
     let result = match method {
         "status" => status_result(state, outputs, instance),
-        "targets" => Ok(targets_result(targets, estimates)),
+        "targets" => Ok(targets_result(
+            targets_provider
+                .map(|provider| provider())
+                .as_deref()
+                .unwrap_or(targets),
+            estimates,
+        )),
         "run" => run_requested_target(&request, run_target),
         "emit" => emit_requested_path(&request, emit_path),
         "cancel" => cancel_requested_generation(&request, cancel_generation, instance),
@@ -1008,10 +1179,12 @@ fn process_request(
         // (subscribe, cancel, output, correlated snapshots, estimates) lands.
         // The extension keeps the legacy polling fallback and never assumes
         // capabilities from package versions.
+        "config" => config_result(lifecycle),
         "capabilities" => Ok(capabilities_result(
             instance,
             broker.is_some(),
             estimates.is_some(),
+            lifecycle.is_some(),
             // TASK-0073: the sequential run override is implemented whenever a
             // run target handler is wired (always in production); capability
             // negotiation lets old clients detect support before sending the
@@ -1051,11 +1224,14 @@ fn request_id(request: &serde_json::Value) -> serde_json::Value {
 /// and the `subscription` feature are advertised only when a broker endpoint
 /// is actually registered, so clients never assume a push stream that does
 /// not exist. `durationEstimates` is advertised only when an estimate
-/// provider is wired, with its declared bounds.
+/// provider is wired, with its declared bounds. The `config` lifecycle
+/// method is advertised only when a lifecycle source is wired (TASK-0091,
+/// AC3).
 fn capabilities_result(
     instance: &ControlInstance,
     subscription: bool,
     duration_estimates: bool,
+    config_lifecycle: bool,
     sequential_override: bool,
 ) -> serde_json::Value {
     let mut methods = vec![
@@ -1070,6 +1246,9 @@ fn capabilities_result(
     ];
     if subscription {
         methods.push("subscribe");
+    }
+    if config_lifecycle {
+        methods.push("config");
     }
     let mut limits = serde_json::json!({
         "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
@@ -1118,6 +1297,34 @@ fn capabilities_result(
             "sequentialOverride": sequential_override,
         },
     })
+}
+
+/// `config` result (TASK-0091, AC3): the live config lifecycle transition
+/// plus the bounded transition history from the same shared state source.
+/// Returns a typed unavailable error on servers without a lifecycle source.
+fn config_result(
+    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let Some(lifecycle) = lifecycle else {
+        return Err((
+            -32017,
+            "config_lifecycle_unavailable",
+            Some(serde_json::json!({ "feature": "configLifecycle" })),
+        ));
+    };
+    let current = lifecycle.current();
+    let history = lifecycle.history();
+    let mut value = serde_json::to_value(&current).map_err(|_| {
+        (
+            -32000,
+            "Server error",
+            Some(serde_json::json!("config lifecycle serialization failed")),
+        )
+    })?;
+    if let Ok(history) = serde_json::to_value(&history) {
+        value["history"] = history;
+    }
+    Ok(value)
 }
 
 /// `targets` result: each target carries its current estimate computed at
@@ -1442,8 +1649,8 @@ fn run_requested_target(
     };
 
     run_target(target.to_string(), sequential)
-        .map(|run_id| serde_json::json!({"runId": run_id}))
-        .map_err(|error| (-32000, "Server error", Some(serde_json::json!(error))))
+        .map(|scheduled| serde_json::to_value(scheduled).unwrap_or_default())
+        .map_err(ControlRunError::to_rpc)
 }
 
 /// `cancel` transport and identity validation (TASK-0046): a positive numeric
@@ -1489,16 +1696,29 @@ fn cancel_requested_generation(
     };
 
     match cancel_generation(generation) {
-        Ok(CancelResult::Cancelled { disposition }) => match disposition {
-            CancelDisposition::Graceful => {
-                Ok(serde_json::json!({ "cancelled": true, "generation": generation }))
+        Ok(CancelResult::Cancelled {
+            disposition,
+            revision,
+            revision_hash,
+        }) => {
+            // TASK-0091, AC2: the frozen config revision of the cancelled
+            // generation rides the result additively.
+            let mut value = serde_json::json!({ "cancelled": true, "generation": generation });
+            if let Some(revision) = revision {
+                value["revision"] = serde_json::json!(revision);
             }
-            CancelDisposition::Escalated => Err((
-                -32021,
-                "Cancellation escalated",
-                Some(serde_json::json!({ "escalation": true, "generation": generation })),
-            )),
-        },
+            if let Some(revision_hash) = revision_hash {
+                value["revisionHash"] = serde_json::json!(revision_hash);
+            }
+            match disposition {
+                CancelDisposition::Graceful => Ok(value),
+                CancelDisposition::Escalated => Err((
+                    -32021,
+                    "Cancellation escalated",
+                    Some(serde_json::json!({ "escalation": true, "generation": generation })),
+                )),
+            }
+        }
         Ok(CancelResult::Noop) => {
             Ok(serde_json::json!({ "cancelled": false, "generation": generation }))
         }
@@ -1694,7 +1914,11 @@ mod tests {
         let seen_flag = std::sync::Arc::clone(&seen);
         let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
             *seen_flag.lock().unwrap() = Some((target, sequential));
-            Ok(9)
+            Ok(ScheduledRun {
+                run_id: 9,
+                revision: None,
+                revision_hash: None,
+            })
         });
         let request = serde_json::json!({ "params": { "target": "@agent-final" } });
         let result = run_requested_target(&request, Some(&run_target)).expect("run");
@@ -1711,13 +1935,24 @@ mod tests {
         let seen_flag = std::sync::Arc::clone(&seen);
         let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
             *seen_flag.lock().unwrap() = Some((target, sequential));
-            Ok(9)
+            Ok(ScheduledRun {
+                run_id: 9,
+                revision: Some(2),
+                revision_hash: Some("hash-2".to_owned()),
+            })
         });
         let request = serde_json::json!({
             "params": { "target": "@agent-final", "sequential": true }
         });
         let result = run_requested_target(&request, Some(&run_target)).expect("run");
-        assert_eq!(result, serde_json::json!({ "runId": 9 }));
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "runId": 9,
+                "revision": 2,
+                "revisionHash": "hash-2"
+            })
+        );
         assert_eq!(
             *seen.lock().unwrap(),
             Some(("@agent-final".to_owned(), true))
@@ -1730,7 +1965,11 @@ mod tests {
         let seen_flag = std::sync::Arc::clone(&seen);
         let run_target: RunTarget = Arc::new(move |target: String, sequential: bool| {
             *seen_flag.lock().unwrap() = Some((target, sequential));
-            Ok(9)
+            Ok(ScheduledRun {
+                run_id: 9,
+                revision: None,
+                revision_hash: None,
+            })
         });
         let request = serde_json::json!({
             "params": { "target": "@agent-final", "sequential": false }
@@ -1763,9 +2002,9 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_sequential_override_only_when_supported() {
-        let with = capabilities_result(&instance("fz-7f3a"), false, false, true);
+        let with = capabilities_result(&instance("fz-7f3a"), false, false, false, true);
         assert_eq!(with["features"]["sequentialOverride"], true);
-        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false, false);
         assert_eq!(without["features"]["sequentialOverride"], false);
     }
 
@@ -1775,6 +2014,8 @@ mod tests {
             assert_eq!(generation, 7);
             Ok(CancelResult::Cancelled {
                 disposition: CancelDisposition::Graceful,
+                revision: Some(2),
+                revision_hash: Some("hash-2".to_owned()),
             })
         });
         let request =
@@ -1783,7 +2024,12 @@ mod tests {
             .expect("graceful cancel");
         assert_eq!(
             result,
-            serde_json::json!({ "cancelled": true, "generation": 7 })
+            serde_json::json!({
+                "cancelled": true,
+                "generation": 7,
+                "revision": 2,
+                "revisionHash": "hash-2"
+            })
         );
     }
 
@@ -1805,6 +2051,8 @@ mod tests {
         let cancel: CancelTarget = Arc::new(|_generation: u64| {
             Ok(CancelResult::Cancelled {
                 disposition: CancelDisposition::Escalated,
+                revision: None,
+                revision_hash: None,
             })
         });
         let request =
@@ -1836,9 +2084,104 @@ mod tests {
             for line in *lines {
                 handle.append(line.as_bytes(), false);
             }
-            registry.record(*generation, (*task).to_owned(), handle.finish());
+            registry.record(*generation, (*task).to_owned(), handle.finish(), None, None);
         }
         registry
+    }
+
+    #[test]
+    fn output_retrieval_reports_the_frozen_config_revision_of_the_generation() {
+        // TASK-0091, AC2: `output` additively exposes the frozen config
+        // revision the generation ran under, so evidence is attributable to
+        // the exact revision that produced it.
+        let registry = OutputRegistry::new();
+        let handle = crate::cmd::CaptureHandle::new();
+        handle.append(b"boom\n", false);
+        registry.record(
+            7,
+            "lint".to_owned(),
+            handle.finish(),
+            Some(2),
+            Some("hash-2".to_owned()),
+        );
+
+        let request = serde_json::json!({ "params": { "generation": 7 } });
+        let result = output_retrieval(&request, Some(&registry), &instance("fz-7f3a"))
+            .expect("retrieve with revision");
+        assert_eq!(result["generation"], 7);
+        assert_eq!(result["revision"], 2);
+        assert_eq!(result["revisionHash"], "hash-2");
+    }
+
+    #[test]
+    fn config_result_reports_live_phase_revision_and_bounded_history() {
+        // TASK-0091, AC3: the `config` method serves the same state source
+        // the reload thread writes — phase, revision, and bounded history.
+        let lifecycle = Arc::new(crate::config_lifecycle::ConfigLifecycle::new());
+        lifecycle.reloaded(&crate::config_revision::ConfigRevision {
+            number: 2,
+            hash: "hash-2".to_owned(),
+        });
+        lifecycle.reloaded(&crate::config_revision::ConfigRevision {
+            number: 3,
+            hash: "hash-3".to_owned(),
+        });
+
+        let value = config_result(Some(&lifecycle)).expect("config");
+        assert_eq!(value["phase"], "configReloaded");
+        assert_eq!(value["revision"], 3);
+        assert_eq!(value["revisionHash"], "hash-3");
+        assert_eq!(value["ordinal"], 2);
+        let history = value["history"].as_array().expect("history");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0]["revision"], 2);
+        assert_eq!(history[1]["revision"], 3);
+    }
+
+    #[test]
+    fn config_result_without_a_lifecycle_source_is_typed_unavailable() {
+        let (code, message, data) = config_result(None).expect_err("no lifecycle");
+        assert_eq!(code, -32017);
+        assert_eq!(message, "config_lifecycle_unavailable");
+        assert_eq!(data.unwrap()["feature"], "configLifecycle");
+    }
+
+    #[test]
+    fn capabilities_advertise_config_only_when_lifecycle_wired() {
+        let with = capabilities_result(&instance("fz-7f3a"), false, false, true, false);
+        let methods: Vec<_> = with["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method.as_str().unwrap())
+            .collect();
+        assert!(methods.contains(&"config"), "methods: {methods:?}");
+
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false, false);
+        let methods: Vec<_> = without["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|method| method.as_str().unwrap())
+            .collect();
+        assert!(!methods.contains(&"config"), "methods: {methods:?}");
+    }
+
+    #[test]
+    fn run_target_not_found_maps_to_typed_code() {
+        let run_target: RunTarget = Arc::new(|_target: String, _sequential: bool| {
+            Err(ControlRunError::TargetNotFound {
+                target: "gone".to_owned(),
+            })
+        });
+        let request = serde_json::json!({ "params": { "target": "gone" } });
+        let (code, message, data) =
+            run_requested_target(&request, Some(&run_target)).expect_err("stale target");
+        assert_eq!(code, -32016);
+        assert_eq!(message, "target_not_found");
+        let data = data.expect("structured data");
+        assert_eq!(data["target"], "gone");
+        assert_eq!(data["action"], "reobserve-targets");
     }
 
     #[test]
@@ -1938,6 +2281,8 @@ mod tests {
         // so the first page stops with a continuation and the second finishes.
         let two_lines = crate::output::RetrievedOutput {
             generation: 7,
+            revision: None,
+            revision_hash: None,
             resolved_task: None,
             tasks: vec![crate::output::RetrievedTask {
                 id: "t".to_owned(),
@@ -2041,7 +2386,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_output_paging_model() {
-        let caps = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        let caps = capabilities_result(&instance("fz-7f3a"), false, false, false, false);
         let limits = &caps["limits"];
         assert_eq!(limits["outputSchemaVersion"], 2);
         assert_eq!(limits["outputModes"], serde_json::json!(["tail", "page"]));
@@ -2110,7 +2455,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_subscribe_only_when_broker_registered() {
-        let with = capabilities_result(&instance("fz-7f3a"), true, false, false);
+        let with = capabilities_result(&instance("fz-7f3a"), true, false, false, false);
         let methods: Vec<_> = with["methods"]
             .as_array()
             .unwrap()
@@ -2120,7 +2465,7 @@ mod tests {
         assert!(methods.contains(&"subscribe"), "methods: {methods:?}");
         assert_eq!(with["features"]["subscription"], true);
 
-        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false, false);
         let methods: Vec<_> = without["methods"]
             .as_array()
             .unwrap()
@@ -2133,7 +2478,7 @@ mod tests {
 
     #[test]
     fn capabilities_advertise_duration_estimates_only_when_provider_wired() {
-        let with = capabilities_result(&instance("fz-7f3a"), true, true, false);
+        let with = capabilities_result(&instance("fz-7f3a"), true, true, false, false);
         assert_eq!(with["features"]["durationEstimates"], true);
         assert_eq!(
             with["optionalFields"][0], "batch",
@@ -2147,7 +2492,7 @@ mod tests {
         assert_eq!(with["limits"]["durationEstimateLimits"]["maxSamples"], 20);
         assert_eq!(with["limits"]["durationEstimateLimits"]["capMs"], 900_000);
 
-        let without = capabilities_result(&instance("fz-7f3a"), false, false, false);
+        let without = capabilities_result(&instance("fz-7f3a"), false, false, false, false);
         assert_eq!(without["features"]["durationEstimates"], false);
         assert!(
             without["limits"].get("durationEstimateLimits").is_none(),

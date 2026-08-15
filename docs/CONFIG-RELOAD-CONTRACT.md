@@ -65,11 +65,38 @@ A valid hot reload preserves, without process exit:
 - instance token and control service (`capabilities.instance.token`);
 - monotonic batch/generation IDs (newer generations strictly follow older);
 - retained output (the `OutputRegistry` keeps prior generations' evidence);
-- active subscriptions (control `subscribe` streams keep delivering).
+- active subscriptions (control `subscribe` streams keep delivering);
+- active await connections (they stay open through the reload and their
+  observation carries the live lifecycle transition — TASK-0091 AC4).
 
 What *changes* is the effective runtime config: jobs, matching/ignore,
 roots, concurrency, debounce, backend, hooks/output policies, sequential
 defaults, services, control socket options — classified per §6.
+
+### §3.1 Config lifecycle state source (TASK-0091 AC3)
+
+One shared state source (`ConfigLifecycle`) records config lifecycle
+transitions, bounded to a fixed history. The reload thread writes; the
+control server and snapshot broker read the same source:
+
+- `configReloading` — a validated candidate is being prepared/committed
+  (target revision named);
+- `configReloaded` — the commit boundary passed (committed revision named);
+- `configInvalid` — terminal; an invalid candidate is shutting the watcher
+  down fatally (gate + reason named).
+
+A formatting-only no-op save never transitions the source: the stdout notice
+is the only explicit signal and every subsystem stays quiet (no revision
+bump, no snapshot churn).
+
+Control surfaces:
+
+- `config` method — the live transition plus the bounded history;
+- correlated snapshots carry the live `configLifecycle` transition and
+  publish on every transition, so subscriptions receive the revision
+  transition without reconnecting;
+- `run`/`emit`/`cancel`/`output` expose the frozen config revision of the
+  generation they name (additive `revision`/`revisionHash`).
 
 ## §4 Atomic commit and the revision boundary
 
@@ -96,12 +123,15 @@ defaults, services, control socket options — classified per §6.
 An invalid candidate (any of §1's four gates failing) must:
 
 1. emit a **terminal config error** naming the gate and the reason;
-2. **cancel and reap** every owned child/service through
+2. publish the terminal `configInvalid` lifecycle transition (TASK-0091 AC8)
+   when a control surface exists — subscribers observe the terminal event
+   before the socket closes (best effort: the process exits right after);
+3. **cancel and reap** every owned child/service through
    `process_owner::shutdown_all` (the same coordinated path as Ctrl-C) —
    no SIGKILL shortcut, no panic, no self-SIGTERM;
-3. **close resources** (control sockets, retained-output handles, service
+4. **close resources** (control sockets, retained-output handles, service
    sockets);
-4. **exit nonzero** (distinct from clean exit; documented code).
+5. **exit nonzero** (distinct from clean exit; documented code).
 
 Constraints:
 

@@ -49,6 +49,11 @@ impl TaskOutput {
 #[derive(Clone, Debug)]
 struct GenerationOutput {
     generation: u64,
+    /// Frozen config revision this generation ran under (TASK-0091, AC2);
+    /// None for legacy runs that never observe reload.
+    revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen revision.
+    revision_hash: Option<String>,
     tasks: Vec<TaskOutput>,
     bytes: usize,
 }
@@ -96,8 +101,17 @@ impl OutputRegistry {
     }
 
     /// Records one task's final capture for a generation, then enforces the
-    /// global byte budget with oldest-generation-first eviction.
-    pub fn record(&self, generation: u64, task: String, data: CaptureData) {
+    /// global byte budget with oldest-generation-first eviction. The frozen
+    /// config revision rides the record (TASK-0091, AC2) so `output` can
+    /// expose the revision a generation's evidence belongs to.
+    pub fn record(
+        &self,
+        generation: u64,
+        task: String,
+        data: CaptureData,
+        revision: Option<u64>,
+        revision_hash: Option<String>,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         let bytes = data.stdout.retained_bytes() as usize + data.stderr.retained_bytes() as usize;
         let task_output = TaskOutput {
@@ -127,6 +141,8 @@ impl OutputRegistry {
             inner.total_bytes += bytes;
             inner.generations.push_back(GenerationOutput {
                 generation,
+                revision,
+                revision_hash,
                 tasks: vec![task_output],
                 bytes,
             });
@@ -186,6 +202,8 @@ impl OutputRegistry {
         if let Some(Some(task_output)) = exact {
             return Ok(RetrievedOutput {
                 generation,
+                revision: entry.revision,
+                revision_hash: entry.revision_hash.clone(),
                 resolved_task: None,
                 tasks: vec![retrieved_task(task_output, stream, tail, full)],
                 next_cursor: None,
@@ -218,6 +236,8 @@ impl OutputRegistry {
                         .expect("candidate derived from retained tasks");
                     return Ok(RetrievedOutput {
                         generation,
+                        revision: entry.revision,
+                        revision_hash: entry.revision_hash.clone(),
                         resolved_task: Some(single.clone()),
                         tasks: vec![retrieved_task(task_output, stream, tail, full)],
                         next_cursor: None,
@@ -257,6 +277,8 @@ impl OutputRegistry {
             .collect();
         Ok(RetrievedOutput {
             generation,
+            revision: entry.revision,
+            revision_hash: entry.revision_hash.clone(),
             resolved_task: None,
             tasks,
             next_cursor: None,
@@ -462,6 +484,8 @@ impl OutputRegistry {
             set_stream(&mut candidate, task_id, *is_stderr, &text, buffer);
             let page = RetrievedOutput {
                 generation,
+                revision: entry.revision,
+                revision_hash: entry.revision_hash.clone(),
                 resolved_task: resolved_task.clone(),
                 tasks: candidate,
                 next_cursor: Some("cursor".to_owned()),
@@ -491,6 +515,8 @@ impl OutputRegistry {
                 set_stream(&mut candidate, task_id, *is_stderr, &text[..keep], buffer);
                 let page = RetrievedOutput {
                     generation,
+                    revision: entry.revision,
+                    revision_hash: entry.revision_hash.clone(),
                     resolved_task: resolved_task.clone(),
                     tasks: candidate,
                     next_cursor: Some("cursor".to_owned()),
@@ -523,6 +549,8 @@ impl OutputRegistry {
         let truncated = next_cursor.is_some();
         Ok(RetrievedOutput {
             generation,
+            revision: entry.revision,
+            revision_hash: entry.revision_hash.clone(),
             resolved_task,
             tasks,
             next_cursor,
@@ -773,6 +801,13 @@ pub struct RetrievedTask {
 #[serde(rename_all = "camelCase")]
 pub struct RetrievedOutput {
     pub generation: u64,
+    /// Frozen config revision this generation ran under (TASK-0091, AC2);
+    /// omitted when the generation predates reload observation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_hash: Option<String>,
     /// Exact task ID selected by read-only canonical resolution (contract §6);
     /// absent when the request matched exactly or retrieved whole generation.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -850,7 +885,13 @@ mod tests {
     }
 
     fn record(registry: &OutputRegistry, generation: u64, task: &str, lines: &[&str]) {
-        registry.record(generation, task.to_owned(), handle_with(lines).finish());
+        registry.record(
+            generation,
+            task.to_owned(),
+            handle_with(lines).finish(),
+            None,
+            None,
+        );
     }
 
     #[test]
@@ -884,7 +925,7 @@ mod tests {
         let data = handle.finish();
         assert_eq!(data.stdout.bytes(), &[0xff, 0xfe, b'\n']);
         let registry = OutputRegistry::new();
-        registry.record(1, "t".to_owned(), data);
+        registry.record(1, "t".to_owned(), data, None, None);
         let retrieved = registry.retrieve(1, None, None, None, false).unwrap();
         let stdout = retrieved.tasks[0].stdout.as_ref().unwrap();
         assert!(stdout.content.contains('\u{fffd}'), "lossy rendering");
@@ -919,12 +960,14 @@ mod tests {
             1,
             "t".to_owned(),
             handle_with(&["out\n"]).finish(), // stdout only
+            None,
+            None,
         );
         // record with stderr content too
         let handle = Arc::new(CaptureHandle::new());
         handle.append(b"out\n", false);
         handle.append(b"err\n", true);
-        registry.record(2, "t".to_owned(), handle.finish());
+        registry.record(2, "t".to_owned(), handle.finish(), None, None);
 
         let retrieved = registry
             .retrieve(2, None, Some("stderr"), None, false)
@@ -1054,6 +1097,8 @@ mod tests {
                     generation,
                     format!("t{task}"),
                     handle_with(&[&big]).finish(),
+                    None,
+                    None,
                 );
             }
         }
@@ -1083,7 +1128,7 @@ mod tests {
         let handle = Arc::new(CaptureHandle::new());
         handle.append(b"error: boom\n", false);
         handle.append(b"detail line\n", false);
-        registry.record(7, "my tests".to_owned(), handle.finish());
+        registry.record(7, "my tests".to_owned(), handle.finish(), None, None);
 
         let evidence = registry
             .failure_evidence(7, 40, "fz-7f3a", &[])
@@ -1115,6 +1160,8 @@ mod tests {
             7,
             "run integration @agent-final it's 'quoted'".to_owned(),
             handle.finish(),
+            None,
+            None,
         );
 
         let evidence = registry
@@ -1179,7 +1226,7 @@ mod tests {
         let registry = OutputRegistry::new();
         let handle = Arc::new(CaptureHandle::new());
         handle.append(b"", false);
-        registry.record(7, "t".to_owned(), handle.finish());
+        registry.record(7, "t".to_owned(), handle.finish(), None, None);
         let evidence = registry
             .failure_evidence(7, 40, "fz-7f3a", &[])
             .expect("evidence");
@@ -1213,6 +1260,8 @@ mod tests {
         let _ = two_lines; // sanity: unbounded returns everything
         let budget = serde_json::to_vec(&RetrievedOutput {
             generation: 7,
+            revision: None,
+            revision_hash: None,
             resolved_task: None,
             tasks: vec![RetrievedTask {
                 id: "t".to_owned(),
@@ -1247,6 +1296,8 @@ mod tests {
         record(&registry, 7, "t", &["aaa\n", "bbb\n", "ccc\n"]);
         let budget = serde_json::to_vec(&RetrievedOutput {
             generation: 7,
+            revision: None,
+            revision_hash: None,
             resolved_task: None,
             tasks: vec![RetrievedTask {
                 id: "t".to_owned(),
@@ -1283,7 +1334,7 @@ mod tests {
         let handle = Arc::new(CaptureHandle::new());
         handle.append(b"out-b\n", false);
         handle.append(b"err-b\n", true);
-        registry.record(7, "b".to_owned(), handle.finish());
+        registry.record(7, "b".to_owned(), handle.finish(), None, None);
         record(&registry, 7, "a", &["out-a\n"]);
 
         // Budget derived from a reference page with only task "a" stdout:
@@ -1291,6 +1342,8 @@ mod tests {
         // and never stderr before stdout.
         let budget = serde_json::to_vec(&RetrievedOutput {
             generation: 7,
+            revision: None,
+            revision_hash: None,
             resolved_task: None,
             tasks: vec![RetrievedTask {
                 id: "a".to_owned(),
@@ -1335,10 +1388,12 @@ mod tests {
         // "é" is two bytes; budget derived from a reference page with one
         // "é" must not split the multi-byte char.
         handle.append("ééé\n".as_bytes(), false);
-        registry.record(7, "t".to_owned(), handle.finish());
+        registry.record(7, "t".to_owned(), handle.finish(), None, None);
 
         let budget = serde_json::to_vec(&RetrievedOutput {
             generation: 7,
+            revision: None,
+            revision_hash: None,
             resolved_task: None,
             tasks: vec![RetrievedTask {
                 id: "t".to_owned(),
@@ -1376,7 +1431,7 @@ mod tests {
         let nasty: String = (0..4000).map(|_| "\"\\\n\u{0}\u{1}").collect();
         let handle = Arc::new(CaptureHandle::new());
         handle.append(nasty.as_bytes(), false);
-        registry.record(7, "t".to_owned(), handle.finish());
+        registry.record(7, "t".to_owned(), handle.finish(), None, None);
 
         let budget = 16 * 1024;
         let page = registry

@@ -46,9 +46,16 @@ struct RunRequest {
 
 /// Result of an exact-generation cancel (TASK-0046): the generation matched
 /// (active or queued) and its termination disposition, or nothing matched.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CancelResult {
-    Cancelled { disposition: CancelDisposition },
+    /// The generation was cancelled. The frozen config revision it ran under
+    /// (TASK-0091, AC2) is reported additively so clients can attribute the
+    /// cancellation to the exact revision; None for legacy runs.
+    Cancelled {
+        disposition: CancelDisposition,
+        revision: Option<u64>,
+        revision_hash: Option<String>,
+    },
     Noop,
 }
 
@@ -155,10 +162,15 @@ impl Scheduler {
                 ) {
                     // The queued generation never spawns: it is cancelled
                     // before spawn, and the requester is told exactly that.
-                    state.queue.remove(pos);
+                    let queued = match state.queue.remove(pos) {
+                        Some(WorkerCommand::Run(req)) => req,
+                        _ => unreachable!("position matched a Run"),
+                    };
                     if let Some(reply) = reply {
                         let _ = reply.send(CancelResult::Cancelled {
                             disposition: CancelDisposition::Graceful,
+                            revision: queued.revision,
+                            revision_hash: queued.revision_hash,
                         });
                     }
                     self.events.emit(Event::Cancelled {
@@ -468,6 +480,10 @@ impl Worker {
                                     }) => {
                                         let cancelled_pending =
                                             pending.as_ref().is_some_and(|req| req.run_id == id);
+                                        let pending_revision = pending
+                                            .as_ref()
+                                            .filter(|req| req.run_id == id)
+                                            .map(|req| (req.revision, req.revision_hash.clone()));
                                         if cancelled_pending {
                                             pending = None;
                                         }
@@ -476,6 +492,12 @@ impl Worker {
                                                 CancelResult::Cancelled {
                                                     disposition:
                                                         crate::executor::CancelDisposition::Graceful,
+                                                    revision: pending_revision
+                                                        .as_ref()
+                                                        .and_then(|(r, _)| *r),
+                                                    revision_hash: pending_revision
+                                                        .as_ref()
+                                                        .and_then(|(_, h)| h.clone()),
                                                 }
                                             } else {
                                                 CancelResult::Noop
@@ -541,8 +563,15 @@ impl Worker {
                                 if active.as_ref().is_some_and(|run| run.run_id() == id) {
                                     let mut cancelled = active.take().expect("active run");
                                     let disposition = executor.cancel(&mut cancelled, None);
+                                    let revision = cancelled.revision();
                                     if let Some(reply) = reply {
-                                        let _ = reply.send(CancelResult::Cancelled { disposition });
+                                        let _ = reply.send(CancelResult::Cancelled {
+                                            disposition,
+                                            revision: revision.as_ref().map(|r| r.number),
+                                            revision_hash: revision
+                                                .as_ref()
+                                                .map(|r| r.hash.clone()),
+                                        });
                                     }
                                 } else if let Some(reply) = reply {
                                     let _ = reply.send(CancelResult::Noop);
@@ -656,11 +685,20 @@ impl Worker {
     }
 
     pub fn schedule(&self, rules: Vec<Rules>, filepath: &str) -> Result<u64, String> {
-        self.schedule_plan(RunPlan::from_rules(rules), filepath)
+        self.schedule_plan(RunPlan::from_rules(rules), filepath, None)
     }
 
-    pub fn schedule_plan(&self, plan: RunPlan, filepath: &str) -> Result<u64, String> {
-        self.schedule_plan_with_trigger(plan, filepath, Some(filepath))
+    /// Schedules a plan frozen under the given config revision (TASK-0091,
+    /// AC7): the caller read the plan and revision under one shared lock, so
+    /// the generation freezes exactly that revision. `None` falls back to the
+    /// worker's bound revision (legacy/test paths).
+    pub fn schedule_plan(
+        &self,
+        plan: RunPlan,
+        filepath: &str,
+        revision: Option<crate::config_revision::ConfigRevision>,
+    ) -> Result<u64, String> {
+        self.schedule_plan_with_trigger(plan, filepath, Some(filepath), revision)
     }
 
     #[cfg(test)]
@@ -670,7 +708,7 @@ impl Worker {
         trigger: &str,
         filepath: Option<&str>,
     ) -> Result<u64, String> {
-        self.schedule_plan_with_trigger(RunPlan::from_rules(rules), trigger, filepath)
+        self.schedule_plan_with_trigger(RunPlan::from_rules(rules), trigger, filepath, None)
     }
 
     pub(crate) fn schedule_plan_with_trigger(
@@ -678,8 +716,9 @@ impl Worker {
         plan: RunPlan,
         trigger: &str,
         filepath: Option<&str>,
+        revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<u64, String> {
-        self.schedule_plan_correlated(plan, trigger, filepath, None, vec![])
+        self.schedule_plan_correlated(plan, trigger, filepath, None, vec![], revision)
     }
 
     /// Schedules an exact configured target run with its stable execution
@@ -697,13 +736,20 @@ impl Worker {
         plan: RunPlan,
         target: &str,
         sequential: bool,
+        revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<u64, String> {
         let effective = if sequential { 1 } else { self.concurrency() };
         // The trigger label stays `control:<target>` (compatibility surface);
         // profile identity is carried structurally via `target` + signature,
         // never parsed from the trigger string.
-        let request =
-            self.prepare_request(plan, &format!("control:{}", target), None, None, vec![])?;
+        let request = self.prepare_request(
+            plan,
+            &format!("control:{}", target),
+            None,
+            None,
+            vec![],
+            revision,
+        )?;
         let request = RunRequest {
             target: Some(target.to_owned()),
             execution_signature: Some(request.plan.execution_signature(effective, self.fail_fast)),
@@ -726,13 +772,17 @@ impl Worker {
         filepath: Option<&str>,
         batch: Option<u64>,
         changed: Vec<String>,
+        revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<u64, String> {
-        let request = self.prepare_request(plan, trigger, filepath, batch, changed)?;
+        let request = self.prepare_request(plan, trigger, filepath, batch, changed, revision)?;
         self.dispatch(request)
     }
 
     /// Resolves and expands a plan against the workspace root, emitting the
-    /// same verbose diagnostics as every other scheduling path.
+    /// same verbose diagnostics as every other scheduling path. The frozen
+    /// config revision is the caller-provided one when present (read under
+    /// the same shared lock as the plan — TASK-0091, AC7); otherwise the
+    /// worker's bound revision (legacy/test paths).
     fn prepare_request(
         &self,
         plan: RunPlan,
@@ -740,6 +790,7 @@ impl Worker {
         filepath: Option<&str>,
         batch: Option<u64>,
         changed: Vec<String>,
+        caller_revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<RunRequest, String> {
         let plan = plan.resolve_context(&self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
@@ -753,7 +804,7 @@ impl Worker {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
         let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let revision = self.revision.lock().unwrap().clone();
+        let revision = caller_revision.or_else(|| self.revision.lock().unwrap().clone());
         Ok(RunRequest {
             run_id,
             plan,
@@ -905,6 +956,86 @@ mod tests {
                 return events;
             }
         }
+    }
+
+    #[test]
+    fn schedule_with_explicit_revision_freezes_that_revision_on_the_generation() {
+        // TASK-0091, AC7: the caller reads plan + revision under one shared
+        // lock and passes the revision explicitly; the scheduled generation
+        // must freeze exactly that revision (a concurrent commit cannot
+        // re-freeze it with a later revision).
+        let (worker, rx) = worker_with_events(false, false);
+        let explicit = crate::config_revision::ConfigRevision {
+            number: 7,
+            hash: "hash-7".to_owned(),
+        };
+        worker
+            .schedule_plan(
+                RunPlan::from_rules(vec![rule(vec!["echo ok"])]),
+                "a.txt",
+                Some(explicit),
+            )
+            .expect("schedules");
+
+        let event = expect_event(&rx, "started with frozen revision", |event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        if let WorkerEvent::Started {
+            revision,
+            revision_hash,
+            ..
+        } = event
+        {
+            assert_eq!(revision, Some(7));
+            assert_eq!(revision_hash.as_deref(), Some("hash-7"));
+        } else {
+            panic!("expected Started");
+        }
+        // Drain to terminal so the worker's consumer thread stops cleanly.
+        expect_event(&rx, "terminal", |event| {
+            matches!(
+                event,
+                WorkerEvent::Finished { .. } | WorkerEvent::Cancelled { .. }
+            )
+        });
+    }
+
+    #[test]
+    fn schedule_without_revision_falls_back_to_the_worker_bound_revision() {
+        let (worker, rx) = worker_with_events(false, false);
+        let worker = worker.with_revision(crate::config_revision::ConfigRevision {
+            number: 3,
+            hash: "hash-3".to_owned(),
+        });
+        worker
+            .schedule_plan(
+                RunPlan::from_rules(vec![rule(vec!["echo ok"])]),
+                "a.txt",
+                None,
+            )
+            .expect("schedules");
+
+        let event = expect_event(&rx, "started with worker revision", |event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        if let WorkerEvent::Started {
+            revision,
+            revision_hash,
+            ..
+        } = event
+        {
+            assert_eq!(revision, Some(3));
+            assert_eq!(revision_hash.as_deref(), Some("hash-3"));
+        } else {
+            panic!("expected Started");
+        }
+        // Drain to terminal so the worker's consumer thread stops cleanly.
+        expect_event(&rx, "terminal", |event| {
+            matches!(
+                event,
+                WorkerEvent::Finished { .. } | WorkerEvent::Cancelled { .. }
+            )
+        });
     }
 
     #[test]
@@ -1273,7 +1404,8 @@ mod tests {
             matches!(
                 result,
                 CancelResult::Cancelled {
-                    disposition: CancelDisposition::Graceful
+                    disposition: CancelDisposition::Graceful,
+                    ..
                 }
             ),
             "expected graceful cancellation, got {result:?}"
@@ -1434,7 +1566,7 @@ mod tests {
         let signature = resolved.execution_signature(1, false);
 
         worker
-            .schedule_target(plan, "build", false)
+            .schedule_target(plan, "build", false, None)
             .expect("target schedules");
         // Wait until the run reaches terminal (worker polls at 200ms max).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

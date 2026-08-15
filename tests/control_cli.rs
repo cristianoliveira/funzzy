@@ -173,7 +173,8 @@ fn control_run_returns_scheduled_generation_identity() {
     );
     let generation: u64 = stdout
         .trim()
-        .strip_prefix("scheduled generation: ")
+        .lines()
+        .find_map(|line| line.strip_prefix("scheduled generation: "))
         .expect("generation line")
         .parse()
         .expect("numeric generation");
@@ -245,9 +246,21 @@ fn control_run_unknown_target_surfaces_server_error() {
     let output = run_cli(&directory, &["control", "run", "does-not-exist"]);
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&output.stdout);
+    // TASK-0091 AC7: a stale/unknown target is a typed actionable outcome,
+    // never a message the agent would parse.
     assert!(
-        stdout.contains("No target found for 'does-not-exist'"),
-        "server error must surface: {}",
+        stdout.contains("target_not_found"),
+        "typed stale-target error must surface: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("does-not-exist"),
+        "the stale target name must be reported: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("reobserve-targets"),
+        "the typed outcome must name the recovery action: {}",
         stdout
     );
 }

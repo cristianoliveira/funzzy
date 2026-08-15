@@ -82,6 +82,17 @@ impl fmt::Display for ControlClientError {
                     "control socket server error {}: {} ({})",
                     code, message, detail
                 ),
+                // TASK-0091 AC7: typed outcomes carry structured recovery
+                // data (e.g. target_not_found names the target and the
+                // reobserve action); render it so the agent never has to
+                // guess from the message alone.
+                Some(detail) if !detail.is_null() => write!(
+                    f,
+                    "control socket server error {}: {} ({})",
+                    code,
+                    message,
+                    detail
+                ),
                 _ => write!(f, "control socket server error {}: {}", code, message),
             },
         }
@@ -103,6 +114,11 @@ pub struct StatusSnapshot {
     /// Override source label (TASK-0073): "control" for an exact control
     /// generation override; None otherwise (additive).
     pub concurrency_source: Option<String>,
+    /// Immutable config revision the latest generation was frozen under
+    /// (TASK-0089/0091, AC2): None on legacy servers (additive).
+    pub revision: Option<u64>,
+    /// Non-secret semantic hash of the frozen config revision.
+    pub revision_hash: Option<String>,
 }
 
 impl StatusSnapshot {
@@ -160,6 +176,23 @@ impl StatusSnapshot {
                 return Err("status result field \"concurrencySource\" must be a string".to_string())
             }
         };
+        // TASK-0091, AC2: the frozen config revision of the latest generation
+        // (additive; None on legacy servers).
+        let revision = match object.get("revision") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "status result field \"revision\" must be a number".to_string())?,
+            Some(_) => return Err("status result field \"revision\" must be a number".to_string()),
+        };
+        let revision_hash = match object.get("revisionHash") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err("status result field \"revisionHash\" must be a string".to_string())
+            }
+        };
         Ok(Self {
             generation,
             state,
@@ -169,6 +202,8 @@ impl StatusSnapshot {
             failures,
             effective_concurrency,
             concurrency_source,
+            revision,
+            revision_hash,
         })
     }
 }
@@ -754,12 +789,15 @@ impl OutputSnapshot {
 }
 
 /// Validated `emit` result (contract §5): matched task names plus the
-/// scheduled generation, or an explicit unmatched/ignored outcome.
+/// scheduled generation, or an explicit unmatched/ignored outcome. The
+/// frozen config revision of the scheduled run (TASK-0091, AC2) is additive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmitSnapshot {
     pub matched: Vec<String>,
     pub run_id: Option<u64>,
     pub outcome: String,
+    pub revision: Option<u64>,
+    pub revision_hash: Option<String>,
 }
 
 impl EmitSnapshot {
@@ -790,10 +828,67 @@ impl EmitSnapshot {
                 return Err("emit result field \"runId\" must be a number or null".to_string())
             }
         };
+        let revision = match object.get("revision") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "emit result field \"revision\" must be a number".to_string())?,
+            Some(_) => return Err("emit result field \"revision\" must be a number".to_string()),
+        };
+        let revision_hash = match object.get("revisionHash") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err("emit result field \"revisionHash\" must be a string".to_string())
+            }
+        };
         Ok(Self {
             matched,
             run_id,
             outcome,
+            revision,
+            revision_hash,
+        })
+    }
+}
+
+/// Validated `run` result (TASK-0091, AC2): the scheduled generation plus
+/// the frozen config revision it was planned under (additive; None on
+/// legacy servers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduledRunSnapshot {
+    pub run_id: u64,
+    pub revision: Option<u64>,
+    pub revision_hash: Option<String>,
+}
+
+impl ScheduledRunSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "run result must be an object".to_string())?;
+        let run_id = object
+            .get("runId")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "run result must carry a numeric \"runId\"".to_string())?;
+        let revision = match object.get("revision") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "run result field \"revision\" must be a number".to_string())?,
+            Some(_) => return Err("run result field \"revision\" must be a number".to_string()),
+        };
+        let revision_hash = match object.get("revisionHash") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => return Err("run result field \"revisionHash\" must be a string".to_string()),
+        };
+        Ok(Self {
+            run_id,
+            revision,
+            revision_hash,
         })
     }
 }
@@ -823,6 +918,81 @@ impl CancelSnapshot {
         Ok(Self {
             cancelled,
             generation,
+        })
+    }
+}
+
+/// One config lifecycle transition (TASK-0091, AC3): the phase plus the
+/// revision facts and reason, decoded from the `config` method response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigTransitionSnapshot {
+    pub phase: String,
+    pub revision: Option<u64>,
+    pub revision_hash: Option<String>,
+    pub reason: Option<String>,
+    pub ordinal: u64,
+    pub at_epoch_ms: u64,
+}
+
+/// The live config lifecycle (TASK-0091, AC3): the current transition plus
+/// the bounded transition history from the same state source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigSnapshot {
+    pub current: ConfigTransitionSnapshot,
+    pub history: Vec<ConfigTransitionSnapshot>,
+}
+
+impl ConfigSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "config result must be an object".to_string())?;
+        let current =
+            ConfigTransitionSnapshot::from_value(serde_json::Value::Object(object.clone()))?;
+        let history = object
+            .get("history")
+            .and_then(Value::as_array)
+            .map(|history| {
+                history
+                    .iter()
+                    .map(|entry| ConfigTransitionSnapshot::from_value(entry.clone()))
+                    .collect::<Result<Vec<_>, String>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        Ok(Self { current, history })
+    }
+}
+
+impl ConfigTransitionSnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "config transition must be an object".to_string())?;
+        let phase = object
+            .get("phase")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| "config transition field \"phase\" must be a string".to_string())?;
+        Ok(Self {
+            phase,
+            revision: object.get("revision").and_then(Value::as_u64),
+            revision_hash: object
+                .get("revisionHash")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            reason: object
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            ordinal: object
+                .get("ordinal")
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            at_epoch_ms: object
+                .get("atEpochMs")
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
         })
     }
 }
@@ -910,15 +1080,18 @@ impl ControlClient {
         Ok(values)
     }
 
-    /// Requests `run` for an exact target; returns the scheduled generation.
+    /// Requests `run` for an exact target; returns the scheduled generation
+    /// plus the frozen config revision it was planned under (TASK-0091, AC2).
     /// `sequential` (TASK-0073) is an additive typed parameter requesting
     /// effective concurrency one for this exact generation.
-    pub fn run(&mut self, target: &str, sequential: bool) -> Result<u64, ControlClientError> {
+    pub fn run(
+        &mut self,
+        target: &str,
+        sequential: bool,
+    ) -> Result<ScheduledRunSnapshot, ControlClientError> {
         let params = serde_json::json!({ "target": target, "sequential": sequential });
         let result = self.call("run", params)?;
-        result.get("runId").and_then(Value::as_u64).ok_or_else(|| {
-            ControlClientError::Malformed("run result must carry a numeric \"runId\"".to_string())
-        })
+        ScheduledRunSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
     /// Requests `emit` for one path; returns matched tasks and run identity
@@ -971,6 +1144,14 @@ impl ControlClient {
     /// unknown. `instance_token`, when provided, makes a stale request against
     /// a different watcher process a safe no-op. Escalation (force cleanup)
     /// surfaces as a server error with code -32021.
+    /// Queries the config lifecycle (TASK-0091, AC3): the live transition
+    /// plus the bounded history from the same state source the reload thread
+    /// writes. Requires a server with a lifecycle source (capability-gated).
+    pub fn config(&mut self) -> Result<ConfigSnapshot, ControlClientError> {
+        let result = self.call("config", serde_json::json!({}))?;
+        ConfigSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
     pub fn cancel(
         &mut self,
         generation: u64,
@@ -1184,6 +1365,8 @@ mod tests {
                 failures: vec![],
                 effective_concurrency: None,
                 concurrency_source: None,
+                revision: None,
+                revision_hash: None,
             }
         );
     }
@@ -1233,9 +1416,10 @@ mod tests {
         let result = serde_json::json!({"runId": 7});
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
-        let generation = client.run("@agent-final", false).expect("run");
+        let scheduled = client.run("@agent-final", false).expect("run");
         handle.join().expect("server thread");
-        assert_eq!(generation, 7);
+        assert_eq!(scheduled.run_id, 7);
+        assert_eq!(scheduled.revision, None, "legacy run shape has no revision");
     }
 
     #[test]

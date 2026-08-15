@@ -1,12 +1,13 @@
 use crate::cli::format::{
-    await_document, cancel_document, capabilities_document, emit_document, output_document,
-    render_document, run_document, status_document, targets_document,
+    await_document, cancel_document, capabilities_document, config_document, emit_document,
+    output_document, render_document, run_document, status_document, targets_document,
 };
 use crate::cli::Command;
 use crate::config;
 use crate::control_client::{
-    AwaitMode, AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ControlClient,
-    ControlClientError, EmitSnapshot, OutputSnapshot, StatusSnapshot, TargetSnapshot,
+    AwaitMode, AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ConfigSnapshot, ControlClient,
+    ControlClientError, EmitSnapshot, OutputSnapshot, ScheduledRunSnapshot, StatusSnapshot,
+    TargetSnapshot,
 };
 use crate::duration_history::RunEstimate;
 use crate::errors::FzzError;
@@ -32,6 +33,7 @@ pub enum ControlAction {
     Status,
     List,
     Capabilities,
+    Config,
     Run {
         target: String,
         /// Await the exact scheduled generation before returning (TASK-0044).
@@ -240,6 +242,12 @@ impl Command for ControlCommand {
                     render_capabilities(&capabilities)
                 });
             }
+            ControlAction::Config => {
+                let config = client
+                    .config()
+                    .map_err(|err| FzzError::GenericError(err.to_string()))?;
+                self.print_response(&config_document(&config), || render_config(&config));
+            }
             ControlAction::Run {
                 target,
                 wait,
@@ -260,15 +268,15 @@ impl Command for ControlCommand {
                         ));
                     }
                 }
-                let generation = client
+                let scheduled = client
                     .run(target, *sequential)
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
-                self.print_response(&run_document(generation), || render_run(generation));
+                self.print_response(&run_document(&scheduled), || render_run(&scheduled));
                 if *wait {
                     return self.finish_await(
                         &mut client,
                         &path,
-                        AwaitMode::Exact(generation),
+                        AwaitMode::Exact(scheduled.run_id),
                         timeout
                             .as_ref()
                             .expect("--wait requires --timeout (validated by clap)"),
@@ -490,6 +498,10 @@ pub fn render_status(status: &StatusSnapshot) -> String {
             output.push_str(&format!("concurrencySource: {}\n", source));
         }
     }
+    // TASK-0091, AC2: the frozen config revision of the latest generation.
+    if let Some(revision) = status.revision {
+        output.push_str(&format!("revision: {}\n", revision));
+    }
     if let Some(trigger) = &status.trigger {
         output.push_str(&format!("trigger: {}\n", trigger));
     }
@@ -581,6 +593,34 @@ pub fn render_capabilities(caps: &CapabilitiesSnapshot) -> String {
     output
 }
 
+/// Compact deterministic `config` lifecycle rendering (TASK-0091, AC3): the
+/// live phase plus revision facts and the bounded transition history.
+pub fn render_config(config: &ConfigSnapshot) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("phase: {}\n", config.current.phase));
+    if let Some(revision) = config.current.revision {
+        output.push_str(&format!("revision: {}\n", revision));
+    }
+    if let Some(hash) = &config.current.revision_hash {
+        output.push_str(&format!("revision hash: {}\n", hash));
+    }
+    if let Some(reason) = &config.current.reason {
+        output.push_str(&format!("reason: {}\n", reason));
+    }
+    output.push_str(&format!("ordinal: {}\n", config.current.ordinal));
+    if !config.history.is_empty() {
+        output.push_str("history:\n");
+        for transition in &config.history {
+            let revision = transition
+                .revision
+                .map(|revision| format!(" revision {revision}"))
+                .unwrap_or_default();
+            output.push_str(&format!("  - {}{}\n", transition.phase, revision));
+        }
+    }
+    output
+}
+
 /// Compact deterministic `targets` rendering from the running watcher.
 pub fn render_targets(targets: &[TargetSnapshot]) -> String {
     if targets.is_empty() {
@@ -644,9 +684,14 @@ fn source_label(source: crate::duration_history::EstimateSource) -> &'static str
     }
 }
 
-/// Scheduled-generation identity returned by `control run TARGET`.
-pub fn render_run(generation: u64) -> String {
-    format!("scheduled generation: {}\n", generation)
+/// Scheduled-generation identity returned by `control run TARGET`, with the
+/// frozen config revision it was planned under (TASK-0091, AC2).
+pub fn render_run(scheduled: &ScheduledRunSnapshot) -> String {
+    let mut output = format!("scheduled generation: {}\n", scheduled.run_id);
+    if let Some(revision) = scheduled.revision {
+        output.push_str(&format!("revision: {}\n", revision));
+    }
+    output
 }
 
 /// One consistent await observation (contract §4): terminal reason, freshness,
@@ -756,8 +801,9 @@ pub fn render_cancel(cancel: &CancelSnapshot) -> String {
     )
 }
 
-/// Compact deterministic `emit` rendering: outcome, matched tasks, and the
-/// scheduled generation when one was produced.
+/// Compact deterministic `emit` rendering: outcome, matched tasks, the
+/// scheduled generation when one was produced, and its frozen config
+/// revision (TASK-0091, AC2).
 pub fn render_emit(emit: &EmitSnapshot) -> String {
     let mut output = format!("outcome: {}\n", emit.outcome);
     if emit.matched.is_empty() {
@@ -770,6 +816,9 @@ pub fn render_emit(emit: &EmitSnapshot) -> String {
     }
     if let Some(run_id) = emit.run_id {
         output.push_str(&format!("scheduled generation: {}\n", run_id));
+    }
+    if let Some(revision) = emit.revision {
+        output.push_str(&format!("revision: {}\n", revision));
     }
     output
 }
@@ -789,6 +838,8 @@ mod tests {
             failures: vec!["invalid concurrency value".to_string()],
             effective_concurrency: Some(1),
             concurrency_source: Some("control".to_string()),
+            revision: Some(2),
+            revision_hash: Some("hash-2".to_string()),
         };
         let rendered = render_status(&status);
         assert!(rendered.contains("generation: 4"));
@@ -811,6 +862,8 @@ mod tests {
             failures: vec![],
             effective_concurrency: None,
             concurrency_source: None,
+            revision: None,
+            revision_hash: None,
         };
         let rendered = render_status(&status);
         assert!(rendered.contains("state: idle"));
@@ -840,6 +893,8 @@ mod tests {
                 failures: vec![],
                 effective_concurrency: Some(1),
                 concurrency_source: Some("control".to_string()),
+                revision: None,
+                revision_hash: None,
             },
             failure_evidence: None,
         };
@@ -905,6 +960,8 @@ mod tests {
                 failures: vec!["boom".to_string()],
                 effective_concurrency: None,
                 concurrency_source: None,
+                revision: None,
+                revision_hash: None,
             },
             failure_evidence: Some(FailureEvidenceSnapshot {
                 excerpt: "error: boom\ndetail\n".to_string(),
@@ -999,7 +1056,13 @@ mod tests {
 
     #[test]
     fn render_run_returns_generation_identity() {
-        assert_eq!(render_run(7), "scheduled generation: 7\n");
+        let scheduled = ScheduledRunSnapshot {
+            run_id: 7,
+            revision: Some(2),
+            revision_hash: Some("hash-2".to_string()),
+        };
+        let rendered = render_run(&scheduled);
+        assert_eq!(rendered, "scheduled generation: 7\nrevision: 2\n");
     }
 
     #[test]
@@ -1068,6 +1131,8 @@ mod tests {
             matched: vec!["fast tests".to_string(), "full tests".to_string()],
             run_id: Some(7),
             outcome: "scheduled".to_string(),
+            revision: Some(2),
+            revision_hash: Some("hash-2".to_string()),
         };
         let rendered = render_emit(&emit);
         assert!(rendered.contains("outcome: scheduled"));
@@ -1083,6 +1148,8 @@ mod tests {
             matched: vec![],
             run_id: None,
             outcome: "unmatched".to_string(),
+            revision: None,
+            revision_hash: None,
         };
         let rendered = render_emit(&emit);
         assert!(rendered.contains("outcome: unmatched"));
@@ -1096,6 +1163,8 @@ mod tests {
             matched: vec![],
             run_id: None,
             outcome: "ignored".to_string(),
+            revision: None,
+            revision_hash: None,
         };
         let rendered = render_emit(&emit);
         assert!(rendered.contains("outcome: ignored"));

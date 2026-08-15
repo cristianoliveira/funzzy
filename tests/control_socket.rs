@@ -112,7 +112,11 @@ mod unix {
         let _server =
             ControlServer::start_with_runner(&path, state, vec![], move |target, _sequential| {
                 captured.lock().unwrap().push(target);
-                Ok(7)
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 7,
+                    revision: None,
+                    revision_hash: None,
+                })
             })
             .unwrap();
 
@@ -139,9 +143,14 @@ mod unix {
             name: "final checks @agent-final".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server =
-            ControlServer::start_with_runner(&path, state, targets, |_, _sequential| Ok(1))
-                .unwrap();
+        let _server = ControlServer::start_with_runner(&path, state, targets, |_, _sequential| {
+            Ok(funzzy::control::ScheduledRun {
+                run_id: 1,
+                revision: None,
+                revision_hash: None,
+            })
+        })
+        .unwrap();
 
         let response = call(
             &path,
@@ -163,7 +172,13 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target, _sequential| Ok(1),
+            |_target, _sequential| {
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 1,
+                    revision: None,
+                    revision_hash: None,
+                })
+            },
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
@@ -171,6 +186,8 @@ mod unix {
                 captured.lock().unwrap().push(generation);
                 Ok(funzzy::workers::CancelResult::Cancelled {
                     disposition: funzzy::executor::CancelDisposition::Graceful,
+                    revision: None,
+                    revision_hash: None,
                 })
             },
         )
@@ -210,13 +227,21 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target, _sequential| Ok(1),
+            |_target, _sequential| {
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 1,
+                    revision: None,
+                    revision_hash: None,
+                })
+            },
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
             |_generation| {
                 Ok(funzzy::workers::CancelResult::Cancelled {
                     disposition: funzzy::executor::CancelDisposition::Escalated,
+                    revision: None,
+                    revision_hash: None,
                 })
             },
         )
@@ -241,7 +266,13 @@ mod unix {
             &path,
             state,
             vec![],
-            |_target, _sequential| Ok(1),
+            |_target, _sequential| {
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 1,
+                    revision: None,
+                    revision_hash: None,
+                })
+            },
             |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
             None,
             None,
@@ -437,9 +468,14 @@ mod unix {
             name: "checks".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server =
-            ControlServer::start_with_runner(&path, state, targets, |_, _sequential| Ok(1))
-                .unwrap();
+        let _server = ControlServer::start_with_runner(&path, state, targets, |_, _sequential| {
+            Ok(funzzy::control::ScheduledRun {
+                run_id: 1,
+                revision: None,
+                revision_hash: None,
+            })
+        })
+        .unwrap();
 
         let response = call(
             &path,

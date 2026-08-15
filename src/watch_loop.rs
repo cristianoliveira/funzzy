@@ -7,9 +7,10 @@
 //! [`watch_loop`].
 
 use crate::awaiting::AwaitCoordinator;
+use crate::config_revision::ConfigRevision;
 use crate::control::{
-    ControlInstance, ControlServer, ControlState, ControlTarget, EmitOutcome,
-    TargetEstimateProvider,
+    ControlInstance, ControlRunError, ControlServer, ControlState, ControlTarget, EmitOutcome,
+    ScheduledRun, TargetEstimateProvider,
 };
 use crate::diagnostics;
 use crate::duration_recorder::DurationRecorder;
@@ -54,8 +55,11 @@ pub trait RunStrategy {
 
     /// Executes plan selected for init. Returns the scheduled generation when
     /// the strategy schedules asynchronous work (restart policy); blocking
-    /// strategies run in-process and return `None`.
-    fn run_init(&self, plan: RunPlan) -> Option<u64>;
+    /// strategies run in-process and return `None`. `revision` is the frozen
+    /// config revision read under the same shared lock as the plan
+    /// (TASK-0091, AC7): the scheduled generation must freeze exactly that
+    /// revision, never a later commit's.
+    fn run_init(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64>;
 
     /// The busy-run policy this strategy implements: `restart` replaces the
     /// active run with newer work; `wait` runs in-process and blocks.
@@ -65,7 +69,15 @@ pub trait RunStrategy {
     /// debounce identity and complete changed-path set (contract §1); the
     /// trigger path is the deterministic first match. Returns the scheduled
     /// generation for non-blocking strategies, `None` for in-process runs.
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64>;
+    /// `revision` is the frozen config revision read under the same shared
+    /// lock as the plan (TASK-0091, AC7).
+    fn run_change(
+        &self,
+        plan: RunPlan,
+        filepath: &str,
+        batch: &Batch,
+        revision: Option<ConfigRevision>,
+    ) -> Option<u64>;
 
     /// Called with each normalized batch before routing (default no-op), so
     /// the pending-debounce observation reflects open windows.
@@ -107,11 +119,12 @@ pub fn watch_loop(
             strategy.on_ready();
 
             let initial = watches.lock().unwrap().clone();
+            let init_revision = initial.revision().cloned();
             match init_action(initial.run_on_init_plan(), run_on_init) {
                 InitAction::Run(plan) => {
                     stdout::info("Running on init commands.");
                     let commands = plan.commands().len();
-                    let generation = strategy.run_init(plan);
+                    let generation = strategy.run_init(plan, init_revision);
                     // Blocking strategies emit their own in-process run
                     // record; only non-blocking init schedules are recorded
                     // here with their generation.
@@ -139,15 +152,18 @@ pub fn watch_loop(
             }
             strategy.on_batch(&batch);
             // Lock once per batch: the whole routing decision (match/ignore,
-            // plan, trigger) reads one committed revision (contract §4).
+            // plan, trigger, frozen revision) reads one committed revision
+            // (contract §4). The revision rides the schedule so the generated
+            // run freezes exactly the routed revision (TASK-0091, AC7).
             let watches_guard = watches.lock().unwrap();
+            let revision = watches_guard.revision().cloned();
             match watches_guard.watch_plan_batch(&batch.changed) {
                 Some((plan, trigger)) => {
                     stdout::clear_screen();
                     if verbose {
                         emit_matched_decisions(&watches_guard, &batch, &trigger);
                     }
-                    let generation = strategy.run_change(plan, &trigger, &batch);
+                    let generation = strategy.run_change(plan, &trigger, &batch, revision);
                     if verbose {
                         observe_triggers(&watches_guard, &batch, &trigger, generation);
                     }
@@ -300,7 +316,7 @@ impl RunStrategy for BlockingStrategy {
         "wait"
     }
 
-    fn run_init(&self, plan: RunPlan) -> Option<u64> {
+    fn run_init(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
         match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
             Ok(completed) => stdout::present_results(
                 completed.results,
@@ -312,7 +328,13 @@ impl RunStrategy for BlockingStrategy {
         None
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64> {
+    fn run_change(
+        &self,
+        plan: RunPlan,
+        filepath: &str,
+        batch: &Batch,
+        _revision: Option<ConfigRevision>,
+    ) -> Option<u64> {
         let metadata =
             RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
         match self.workflow.run(plan, metadata, Some(filepath)) {
@@ -330,9 +352,17 @@ impl RunStrategy for BlockingStrategy {
 /// Cancellable executor: schedules runs on the worker, cancelling any active
 /// run before replacement work, and publishes the control surface after
 /// readiness.
+///
+/// Target/emit/estimate decisions read the SHARED watch config (TASK-0091,
+/// AC6/AC7): the reload transaction swaps it at the commit boundary, so
+/// `targets`, `run`, and `emit` after a valid reload reflect the new
+/// revision and every decision binds to exactly one revision under one lock.
 pub struct NonBlockStrategy {
     worker: Arc<workers::Worker>,
-    watches: Watches,
+    /// Shared watch config: the same handle the routing loop locks per batch
+    /// and the reload transaction swaps at commit. Never a private copy — a
+    /// private copy would go stale on reload.
+    shared: Arc<std::sync::Mutex<Watches>>,
     control_socket: Option<PathBuf>,
     control_state: Arc<Mutex<ControlState>>,
     coordinator: Option<Arc<AwaitCoordinator>>,
@@ -347,11 +377,16 @@ pub struct NonBlockStrategy {
     /// Optional duration recorder (TASK-0055): wires the estimate provider
     /// into `targets`, capabilities, and correlated snapshots.
     recorder: Option<Arc<DurationRecorder>>,
+    /// Optional config lifecycle source (TASK-0091, AC3): wired from the
+    /// reload coordinator; the control server serves `config` and await
+    /// observations carry the live transition.
+    lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
 }
 
 impl NonBlockStrategy {
     /// Creates the strategy inside an `Arc`; the arc lets the control server
-    /// call back through the run orchestration contract.
+    /// call back through the run orchestration contract. The watch config is
+    /// wrapped in a fresh shared handle (no reload wiring).
     pub fn new_arc(
         worker: Arc<workers::Worker>,
         watches: Watches,
@@ -360,14 +395,15 @@ impl NonBlockStrategy {
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
     ) -> Arc<Self> {
-        Self::new_arc_with_subscription(
+        Self::new_arc_with_shared(
             worker,
-            watches,
+            Arc::new(std::sync::Mutex::new(watches)),
             control_socket,
             control_state,
             coordinator,
             outputs,
             Arc::new(ControlInstance::new()),
+            None,
             None,
             None,
         )
@@ -388,9 +424,40 @@ impl NonBlockStrategy {
         broker: Option<Arc<SnapshotBroker>>,
         recorder: Option<Arc<DurationRecorder>>,
     ) -> Arc<Self> {
+        Self::new_arc_with_shared(
+            worker,
+            Arc::new(std::sync::Mutex::new(watches)),
+            control_socket,
+            control_state,
+            coordinator,
+            outputs,
+            instance,
+            broker,
+            recorder,
+            None,
+        )
+    }
+
+    /// Creates the strategy around the SHARED watch config handle (TASK-0091,
+    /// AC6/AC7): the reload transaction swaps this handle at commit, so every
+    /// target/emit/estimate decision after a valid reload reflects the new
+    /// revision under one lock — never a stale private copy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_arc_with_shared(
+        worker: Arc<workers::Worker>,
+        shared: Arc<std::sync::Mutex<Watches>>,
+        control_socket: Option<PathBuf>,
+        control_state: Arc<Mutex<ControlState>>,
+        coordinator: Option<Arc<AwaitCoordinator>>,
+        outputs: Option<Arc<OutputRegistry>>,
+        instance: Arc<ControlInstance>,
+        broker: Option<Arc<SnapshotBroker>>,
+        recorder: Option<Arc<DurationRecorder>>,
+        lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
+    ) -> Arc<Self> {
         let strategy = Arc::new(NonBlockStrategy {
             worker,
-            watches,
+            shared,
             control_socket,
             control_state,
             coordinator,
@@ -401,6 +468,7 @@ impl NonBlockStrategy {
             pending_old_server: Mutex::new(None),
             self_arc: Mutex::new(None),
             recorder,
+            lifecycle,
         });
         *strategy.self_arc.lock().unwrap() = Some(Arc::clone(&strategy));
         strategy
@@ -430,7 +498,10 @@ impl NonBlockStrategy {
     }
 
     /// Builds a control server bound to `path` with the current targets and
-    /// the same orchestration closures as startup (TASK-0090 AC8).
+    /// the same orchestration closures as startup (TASK-0090 AC8). Targets
+    /// and estimates are resolved from the SHARED config at request time
+    /// (TASK-0091, AC6), so a valid reload is served by the same server
+    /// without a rebuild.
     fn build_control_server(&self, path: &Path) -> Result<ControlServer, String> {
         let runner = self
             .self_arc
@@ -439,7 +510,9 @@ impl NonBlockStrategy {
             .clone()
             .expect("self arc set by new_arc");
         let targets = self
-            .watches
+            .shared
+            .lock()
+            .unwrap()
             .targets()
             .into_iter()
             .map(|rule| {
@@ -460,14 +533,16 @@ impl NonBlockStrategy {
         let broker = self.broker.clone();
         // TASK-0055: estimate provider computed at request time from the
         // target's resolved plan signature; None when no recorder is wired.
+        // Reads the shared config so estimates reflect the live revision
+        // after a reload (TASK-0091, AC6).
         let estimates: Option<TargetEstimateProvider> = self.recorder.as_ref().map(|recorder| {
-            let watches = self.watches.clone();
+            let shared = Arc::clone(&self.shared);
             let recorder = Arc::clone(recorder);
             let concurrency = self.worker.concurrency();
             let fail_fast = self.worker.fail_fast();
-            let root = self.watches.root().to_path_buf();
+            let root = self.shared.lock().unwrap().root().to_path_buf();
             let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
-                let Some(plan) = watches.target_plan(&target.name) else {
+                let Some(plan) = shared.lock().unwrap().target_plan(&target.name) else {
                     return None;
                 };
                 let Ok(plan) = plan.resolve_context(&root) else {
@@ -478,7 +553,46 @@ impl NonBlockStrategy {
             });
             provider
         });
-        let start = if let Some(broker) = broker {
+        let start = if let (Some(broker), Some(estimates), Some(lifecycle)) =
+            (broker.clone(), estimates.clone(), self.lifecycle.clone())
+        {
+            // TASK-0091 AC3/AC6: the full surface serves the `config`
+            // lifecycle method, await observations carry the live transition,
+            // and `targets` resolves from the SHARED config at request time.
+            ControlServer::start_with_lifecycle(
+                path,
+                Arc::clone(&self.control_state),
+                targets,
+                {
+                    let shared = Arc::clone(&self.shared);
+                    let provider: crate::control::TargetsProvider = Arc::new(move || {
+                        shared
+                            .lock()
+                            .unwrap()
+                            .targets()
+                            .into_iter()
+                            .map(|rule| {
+                                let commands = rule.commands();
+                                ControlTarget {
+                                    name: rule.name,
+                                    commands,
+                                }
+                            })
+                            .collect()
+                    });
+                    provider
+                },
+                move |target, sequential| run_runner.run_target(&target, sequential),
+                move |path| emit_runner.emit_path(&path),
+                coordinator,
+                outputs,
+                move |generation| cancel_runner.cancel_generation(generation),
+                instance,
+                broker,
+                estimates,
+                lifecycle,
+            )
+        } else if let Some(broker) = broker {
             match estimates {
                 Some(estimates) => ControlServer::start_with_broker_and_estimates(
                     path,
@@ -560,14 +674,35 @@ impl NonBlockStrategy {
     /// `sequential` (TASK-0073) requests effective concurrency one for this
     /// exact generation only; later native generations keep their configured
     /// concurrency.
-    pub fn run_target(&self, target: &str, sequential: bool) -> Result<u64, String> {
-        let plan = self
-            .watches
-            .target_plan(target)
-            .ok_or_else(|| format!("No target found for '{}'", target))?;
+    ///
+    /// The plan and its frozen config revision are read under ONE shared
+    /// lock (TASK-0091, AC7): a run concurrent with reload binds to exactly
+    /// one revision; a target that left the revision is a typed
+    /// `TargetNotFound` outcome.
+    pub fn run_target(
+        &self,
+        target: &str,
+        sequential: bool,
+    ) -> Result<ScheduledRun, ControlRunError> {
+        let (plan, revision) = {
+            let shared = self.shared.lock().unwrap();
+            match shared.target_plan(target) {
+                Some(plan) => (plan, shared.revision().cloned()),
+                None => {
+                    return Err(ControlRunError::TargetNotFound {
+                        target: target.to_owned(),
+                    })
+                }
+            }
+        };
         let commands = plan.commands().len();
-        self.worker.cancel_running_tasks()?;
-        let run_id = self.worker.schedule_target(plan, target, sequential)?;
+        self.worker
+            .cancel_running_tasks()
+            .map_err(ControlRunError::Internal)?;
+        let run_id = self
+            .worker
+            .schedule_target(plan, target, sequential, revision.clone())
+            .map_err(ControlRunError::Internal)?;
         diagnostics::debug(&diagnostics::Record {
             source: Some("control"),
             decision: Some("scheduled"),
@@ -577,53 +712,67 @@ impl NonBlockStrategy {
             task: Some(target.to_owned()),
             ..Default::default()
         });
-        Ok(run_id)
+        Ok(ScheduledRun {
+            run_id,
+            revision: revision.as_ref().map(|r| r.number),
+            revision_hash: revision.map(|r| r.hash),
+        })
     }
 
     /// Routes one synthetic path change through the exact shared policy used
     /// for native filesystem events: `watch_plan` (normalization, change
     /// match, ignore precedence, task ordering, `run_on_init` exclusions),
-    /// then the same cancel-and-schedule busy-run contract. Unmatched and
-    /// ignored paths are explicit outcomes with no scheduled generation.
+    /// then the same cancel-and-schedule busy-run contract. The plan and its
+    /// frozen config revision are read under ONE shared lock (TASK-0091,
+    /// AC7), so an emit concurrent with reload binds to exactly one revision.
+    /// Unmatched and ignored paths are explicit outcomes with no scheduled
+    /// generation.
     pub fn emit_path(&self, path: &str) -> Result<EmitOutcome, String> {
-        match self.watches.watch_plan(path) {
-            Some(plan) => {
-                let matched = plan.task_names();
-                let commands = plan.commands().len();
-                self.worker.cancel_running_tasks()?;
-                let run_id = self.worker.schedule_plan(plan, path)?;
-                diagnostics::debug(&diagnostics::Record {
-                    source: Some("control"),
-                    decision: Some("scheduled"),
-                    generation: Some(run_id),
-                    policy: Some("restart"),
-                    commands: Some(commands),
-                    path: Some(path.to_owned()),
-                    normalized: Some(self.watches.normalized_path(path)),
-                    ..Default::default()
-                });
-                Ok(EmitOutcome::scheduled(matched, run_id))
-            }
-            None => {
-                let explained = self.watches.explain(path);
-                diagnostics::debug(&diagnostics::Record {
-                    source: Some("control"),
-                    decision: Some(if explained.ignored.is_empty() {
-                        "unmatched"
+        let (matched, plan, revision) = {
+            let shared = self.shared.lock().unwrap();
+            match shared.watch_plan(path) {
+                Some(plan) => (plan.task_names(), plan, shared.revision().cloned()),
+                None => {
+                    let explained = shared.explain(path);
+                    diagnostics::debug(&diagnostics::Record {
+                        source: Some("control"),
+                        decision: Some(if explained.ignored.is_empty() {
+                            "unmatched"
+                        } else {
+                            "ignored"
+                        }),
+                        path: Some(path.to_owned()),
+                        normalized: Some(shared.normalized_path(path)),
+                        ..Default::default()
+                    });
+                    return Ok(if explained.ignored.is_empty() {
+                        EmitOutcome::unmatched()
                     } else {
-                        "ignored"
-                    }),
-                    path: Some(path.to_owned()),
-                    normalized: Some(self.watches.normalized_path(path)),
-                    ..Default::default()
-                });
-                Ok(if explained.ignored.is_empty() {
-                    EmitOutcome::unmatched()
-                } else {
-                    EmitOutcome::ignored()
-                })
+                        EmitOutcome::ignored()
+                    });
+                }
             }
-        }
+        };
+        let commands = plan.commands().len();
+        self.worker.cancel_running_tasks()?;
+        let run_id = self.worker.schedule_plan_correlated(
+            plan,
+            path,
+            Some(path),
+            None,
+            vec![],
+            revision.clone(),
+        )?;
+        diagnostics::debug(&diagnostics::Record {
+            source: Some("control"),
+            decision: Some("scheduled"),
+            generation: Some(run_id),
+            policy: Some("restart"),
+            commands: Some(commands),
+            path: Some(path.to_owned()),
+            ..Default::default()
+        });
+        Ok(EmitOutcome::scheduled_at(matched, run_id, revision))
     }
 }
 
@@ -638,8 +787,8 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
-    fn run_init(&self, plan: RunPlan) -> Option<u64> {
-        match self.worker.schedule_plan(plan, "") {
+    fn run_init(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        match self.worker.schedule_plan(plan, "", revision) {
             Ok(run_id) => Some(run_id),
             Err(err) => {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
@@ -660,7 +809,13 @@ impl RunStrategy for NonBlockStrategy {
         }
     }
 
-    fn run_change(&self, plan: RunPlan, filepath: &str, batch: &Batch) -> Option<u64> {
+    fn run_change(
+        &self,
+        plan: RunPlan,
+        filepath: &str,
+        batch: &Batch,
+        revision: Option<ConfigRevision>,
+    ) -> Option<u64> {
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
                 "failed to cancel current running tasks: {:?}",
@@ -675,6 +830,7 @@ impl RunStrategy for NonBlockStrategy {
             Some(filepath),
             Some(batch.id.0),
             batch.changed.clone(),
+            revision,
         ) {
             Ok(run_id) => {
                 diagnostics::debug(&diagnostics::Record {
@@ -702,7 +858,7 @@ mod tests {
     use super::InitAction;
     use super::NonBlockStrategy;
     use super::RunStrategy;
-    use crate::control::{ControlServer, ControlState};
+    use crate::control::{ControlRunError, ControlServer, ControlState};
     use crate::plan::RunPlan;
     use crate::rules::Rules;
     use crate::watches::Watches;
@@ -812,10 +968,11 @@ mod tests {
         let control_state = Arc::new(Mutex::new(ControlState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
-        let run_id = strategy
+        let scheduled = strategy
             .run_target("my tests", false)
             .expect("known target should schedule");
-        assert_eq!(run_id, 1);
+        assert_eq!(scheduled.run_id, 1);
+        assert_eq!(scheduled.revision, None, "legacy shape has no revision");
     }
 
     #[test]
@@ -828,11 +985,18 @@ mod tests {
         let err = strategy
             .run_target("nope", false)
             .expect_err("unknown target");
-        assert!(
-            err.contains("No target found for 'nope'"),
-            "unexpected: {}",
-            err
-        );
+        // TASK-0091, AC7: a stale/unknown target is an actionable typed
+        // outcome, never a message an agent would have to parse.
+        let ControlRunError::TargetNotFound { target } = err else {
+            panic!("expected target_not_found, got {err:?}")
+        };
+        assert_eq!(target, "nope");
+        let (code, message, _) = ControlRunError::TargetNotFound {
+            target: "nope".to_owned(),
+        }
+        .to_rpc();
+        assert_eq!(code, -32016);
+        assert_eq!(message, "target_not_found");
     }
 
     #[test]
@@ -858,11 +1022,9 @@ mod tests {
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let relative = strategy.emit_path("src/main.rs").expect("relative");
+        let root = strategy.shared.lock().unwrap().root().to_path_buf();
         let absolute = strategy
-            .emit_path(&format!(
-                "{}/src/main.rs",
-                strategy.watches.root().display()
-            ))
+            .emit_path(&format!("{}/src/main.rs", root.display()))
             .expect("absolute");
         assert_eq!(relative.outcome, "scheduled");
         assert_eq!(absolute.outcome, "scheduled");
@@ -931,9 +1093,275 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.latest_batch, Some(9));
         assert!(!result.pending_work.debounce_active);
+    }
+
+    #[test]
+    fn run_target_reads_the_shared_config_so_reload_is_served_by_the_same_strategy() {
+        // TASK-0091, AC6/AC7: the strategy resolves targets from the SHARED
+        // watch config, so after a reload commit (shared swap + new revision)
+        // the same strategy schedules the new job and reports its revision —
+        // never a stale private copy.
+        let root = std::env::temp_dir().join(format!("fzz-shared-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let shared = Arc::new(Mutex::new(
+            Watches::with_root_and_concurrency(vec![rule("build")], root.clone(), 2).with_revision(
+                crate::config_revision::ConfigRevision {
+                    number: 1,
+                    hash: "hash-1".to_owned(),
+                },
+            ),
+        ));
+        let worker = Arc::new(workers::Worker::with_root_and_concurrency(
+            false,
+            false,
+            root.clone(),
+            2,
+            |_| {},
+        ));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc_with_shared(
+            worker,
+            Arc::clone(&shared),
+            None,
+            control_state,
+            None,
+            None,
+            Arc::new(crate::control::ControlInstance::new()),
+            None,
+            None,
+            None,
+        );
+
+        // Before the reload: build is the only target, frozen under revision 1.
+        let first = strategy
+            .run_target("build", false)
+            .expect("build exists at rev 1");
+        assert_eq!(first.run_id, 1);
+        assert_eq!(first.revision, Some(1));
+        assert_eq!(first.revision_hash.as_deref(), Some("hash-1"));
+        assert!(matches!(
+            strategy.run_target("lint", false),
+            Err(crate::control::ControlRunError::TargetNotFound { .. })
+        ));
+
+        // Reload commit: swap the shared config to revision 2 with a new job.
+        shared.lock().unwrap().swap_config(
+            Watches::with_root_and_concurrency(vec![rule("build"), rule("lint")], root.clone(), 2)
+                .with_revision(crate::config_revision::ConfigRevision {
+                    number: 2,
+                    hash: "hash-2".to_owned(),
+                }),
+        );
+
+        // The same strategy now serves the new revision: lint schedules under
+        // revision 2, and build too.
+        let lint = strategy
+            .run_target("lint", false)
+            .expect("lint exists after reload");
+        assert_eq!(lint.run_id, 2);
+        assert_eq!(lint.revision, Some(2));
+        assert_eq!(lint.revision_hash.as_deref(), Some("hash-2"));
+        let build = strategy
+            .run_target("build", false)
+            .expect("build still exists");
+        assert_eq!(build.revision, Some(2));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn emit_binds_to_the_shared_config_revision_after_reload() {
+        // TASK-0091, AC7: emit routes under the shared config and reports the
+        // frozen revision it scheduled under — a reload swap is observed by
+        // the next emit without any strategy rebuild.
+        let root = std::env::temp_dir().join(format!("fzz-emit-shared-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        let shared = Arc::new(Mutex::new(
+            Watches::with_root_and_concurrency(
+                vec![Rules::new(
+                    "build".to_owned(),
+                    vec!["echo hi".to_owned()],
+                    vec!["src/**".to_owned()],
+                    vec![],
+                    false,
+                )],
+                root.clone(),
+                2,
+            )
+            .with_revision(crate::config_revision::ConfigRevision {
+                number: 1,
+                hash: "hash-1".to_owned(),
+            }),
+        ));
+        let worker = Arc::new(workers::Worker::with_root_and_concurrency(
+            false,
+            false,
+            root.clone(),
+            2,
+            |_| {},
+        ));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let strategy = NonBlockStrategy::new_arc_with_shared(
+            worker,
+            Arc::clone(&shared),
+            None,
+            control_state,
+            None,
+            None,
+            Arc::new(crate::control::ControlInstance::new()),
+            None,
+            None,
+            None,
+        );
+
+        let first = strategy
+            .emit_path("src/a.rs")
+            .expect("src matches at rev 1");
+        assert_eq!(first.outcome, "scheduled");
+        assert_eq!(first.revision, Some(1));
+
+        // Reload: the docs job joins under revision 2.
+        shared.lock().unwrap().swap_config(
+            Watches::with_root_and_concurrency(
+                vec![
+                    Rules::new(
+                        "build".to_owned(),
+                        vec!["echo hi".to_owned()],
+                        vec!["src/**".to_owned()],
+                        vec![],
+                        false,
+                    ),
+                    Rules::new(
+                        "docs".to_owned(),
+                        vec!["echo docs".to_owned()],
+                        vec!["docs/**".to_owned()],
+                        vec![],
+                        false,
+                    ),
+                ],
+                root.clone(),
+                2,
+            )
+            .with_revision(crate::config_revision::ConfigRevision {
+                number: 2,
+                hash: "hash-2".to_owned(),
+            }),
+        );
+
+        let docs = strategy
+            .emit_path("docs/guide.md")
+            .expect("docs matches after reload");
+        assert_eq!(docs.outcome, "scheduled");
+        assert_eq!(docs.matched, vec!["docs".to_owned()]);
+        assert_eq!(docs.revision, Some(2));
+        assert_eq!(docs.revision_hash.as_deref(), Some("hash-2"));
+
+        // src still matches and now reports revision 2 too.
+        let src = strategy
+            .emit_path("src/a.rs")
+            .expect("src matches after reload");
+        assert_eq!(src.revision, Some(2));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn live_server_targets_reflect_the_shared_config_after_reload() {
+        // TASK-0091, AC6: the running control server's `targets` method
+        // resolves from the SHARED config at request time, so after a reload
+        // swap the same server serves the new jobs.
+        use std::io::BufRead as _;
+        use std::io::Write as _;
+
+        let root = std::env::temp_dir().join(format!("fzz-live-targets-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let shared = Arc::new(Mutex::new(
+            Watches::with_root_and_concurrency(vec![rule("build")], root.clone(), 2).with_revision(
+                crate::config_revision::ConfigRevision {
+                    number: 1,
+                    hash: "hash-1".to_owned(),
+                },
+            ),
+        ));
+        let worker = Arc::new(workers::Worker::with_root_and_concurrency(
+            false,
+            false,
+            root.clone(),
+            2,
+            |_| {},
+        ));
+        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let coordinator = Arc::new(crate::awaiting::AwaitCoordinator::new());
+        let broker = Arc::new(crate::snapshot::SnapshotBroker::new(
+            crate::control::ControlInstance {
+                token: "fz-test".to_owned(),
+                started_at_epoch_ms: 1,
+            },
+            Arc::clone(&control_state),
+            Arc::clone(&coordinator),
+        ));
+        let recorder = Arc::new(crate::duration_recorder::DurationRecorder::new(
+            crate::duration_store::DurationStore::new(root.join("run-durations-v1.json")),
+        ));
+        let strategy = NonBlockStrategy::new_arc_with_shared(
+            worker,
+            Arc::clone(&shared),
+            Some(root.join("sock")),
+            control_state,
+            Some(coordinator),
+            Some(Arc::new(crate::output::OutputRegistry::new())),
+            Arc::new(crate::control::ControlInstance::new()),
+            Some(broker),
+            Some(recorder),
+            Some(Arc::new(crate::config_lifecycle::ConfigLifecycle::new())),
+        );
+        let server = strategy
+            .start_control_server()
+            .expect("control server starts");
+
+        let list_targets = || -> Vec<String> {
+            let mut stream =
+                std::os::unix::net::UnixStream::connect(&root.join("sock")).expect("connect");
+            writeln!(
+                stream,
+                r#"{{"jsonrpc":"2.0","id":1,"method":"targets","params":{{}}}}"#
+            )
+            .expect("write");
+            let mut line = String::new();
+            std::io::BufReader::new(&mut stream)
+                .read_line(&mut line)
+                .expect("read");
+            let value: serde_json::Value = serde_json::from_str(&line).expect("json");
+            value["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|t| t["name"].as_str().map(str::to_owned))
+                .collect()
+        };
+
+        assert_eq!(list_targets(), vec!["build".to_owned()]);
+
+        // Reload commit: swap the shared config to revision 2 with lint.
+        shared.lock().unwrap().swap_config(
+            Watches::with_root_and_concurrency(vec![rule("build"), rule("lint")], root.clone(), 2)
+                .with_revision(crate::config_revision::ConfigRevision {
+                    number: 2,
+                    hash: "hash-2".to_owned(),
+                }),
+        );
+
+        let targets = list_targets();
+        assert_eq!(
+            targets,
+            vec!["build".to_owned(), "lint".to_owned()],
+            "targets must reflect the reloaded shared config"
+        );
+        drop(server);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

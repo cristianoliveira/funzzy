@@ -77,7 +77,9 @@ without the awaited generation reaching its own terminal state.
 - `disconnected`: socket closed or read failed while waiting; the client must
   re-negotiate, never assume continuity.
 - `restarted`: instance token changed while waiting (watcher died and was
-  replaced, or config reload restarted the process); all prior IDs are invalid.
+  replaced); all prior IDs are invalid. A valid config reload hot-swaps
+  in-process (TASK-0091) and preserves the instance token — it is not a
+  restart.
 
 ### Invariants
 

@@ -6,6 +6,7 @@
 //! Waiters block on a condition variable — never a busy-poll — and are
 //! bounded by their own deadlines; the watcher schedules and runs unaffected.
 
+use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::control::{ControlState, ExecutionState};
 use crate::executor::Event;
 use crate::output::{FailureEvidence, OutputRegistry};
@@ -79,6 +80,12 @@ pub struct AwaitResult {
     /// passed/superseded/timeout outcomes and legacy servers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_evidence: Option<FailureEvidence>,
+    /// Live config lifecycle transition at return time (TASK-0091, AC4):
+    /// present only when a lifecycle source is wired. An await that spans a
+    /// valid reload reports the committed revision transition in its
+    /// observation without disconnecting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_lifecycle: Option<ConfigTransition>,
 }
 
 #[derive(Clone, Debug)]
@@ -220,12 +227,21 @@ impl AwaitCoordinator {
         mut probe: Option<&mut dyn FnMut() -> bool>,
         outputs: Option<&OutputRegistry>,
         instance_token: &str,
+        lifecycle: Option<&ConfigLifecycle>,
     ) -> AwaitResult {
         let deadline = Instant::now() + timeout;
         loop {
             let inner = self.inner.lock().unwrap();
             if let Some((reason, generation)) = Self::evaluate(&inner, mode) {
-                return Self::build(inner, snapshot, reason, generation, outputs, instance_token);
+                return Self::build(
+                    inner,
+                    snapshot,
+                    reason,
+                    generation,
+                    outputs,
+                    instance_token,
+                    lifecycle,
+                );
             }
             let now = Instant::now();
             if now >= deadline {
@@ -236,6 +252,7 @@ impl AwaitCoordinator {
                     0,
                     outputs,
                     instance_token,
+                    lifecycle,
                 );
             }
             let slice = (deadline - now).min(Duration::from_millis(500));
@@ -249,6 +266,7 @@ impl AwaitCoordinator {
                         0,
                         outputs,
                         instance_token,
+                        lifecycle,
                     );
                 }
             }
@@ -283,6 +301,7 @@ impl AwaitCoordinator {
         generation: u64,
         outputs: Option<&OutputRegistry>,
         instance_token: &str,
+        lifecycle: Option<&ConfigLifecycle>,
     ) -> AwaitResult {
         let snapshot = snapshot.lock().unwrap().clone();
         let latest_generation = inner.latest_generation;
@@ -316,6 +335,7 @@ impl AwaitCoordinator {
             pending_work,
             freshness,
             failure_evidence,
+            config_lifecycle: lifecycle.map(ConfigLifecycle::current),
         }
     }
 }
@@ -388,7 +408,15 @@ mod tests {
         mode: AwaitMode,
         state: &Arc<Mutex<ControlState>>,
     ) -> AwaitResult {
-        coordinator.await_generation(mode, Duration::from_secs(30), state, None, None, "fz-test")
+        coordinator.await_generation(
+            mode,
+            Duration::from_secs(30),
+            state,
+            None,
+            None,
+            "fz-test",
+            None,
+        )
     }
 
     fn spawn_wait(
@@ -401,6 +429,42 @@ mod tests {
 
     fn wait_for<T>(handle: std::thread::JoinHandle<T>) -> T {
         handle.join().expect("waiter finished")
+    }
+
+    #[test]
+    fn await_result_carries_the_config_lifecycle_transition_at_return() {
+        // TASK-0091, AC4: an await observation includes the live config
+        // lifecycle transition, so a reload that happens while waiting is
+        // visible in the returned observation without reconnecting.
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        let state = Arc::new(Mutex::new(ControlState::default()));
+        coordinator.observe(&started(7, None));
+        state.lock().unwrap().apply(started(7, None));
+        coordinator.observe(&finished(7, false));
+        state.lock().unwrap().apply(finished(7, false));
+
+        let lifecycle = crate::config_lifecycle::ConfigLifecycle::new();
+        lifecycle.reloaded(&crate::config_revision::ConfigRevision {
+            number: 2,
+            hash: "hash-2".to_owned(),
+        });
+
+        let result = coordinator.await_generation(
+            AwaitMode::Exact(7),
+            Duration::from_millis(100),
+            &state,
+            None,
+            None,
+            "fz-test",
+            Some(&lifecycle),
+        );
+        assert_eq!(result.terminal_reason, TerminalReason::Passed);
+        let transition = result.config_lifecycle.expect("lifecycle present");
+        assert_eq!(
+            transition.phase,
+            crate::config_lifecycle::ConfigPhase::ConfigReloaded
+        );
+        assert_eq!(transition.revision, Some(2));
     }
 
     #[test]
@@ -419,6 +483,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
         assert_eq!(result.latest_generation, 7);
@@ -496,6 +561,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Passed);
         assert_eq!(result.latest_generation, 2);
@@ -514,6 +580,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
         assert_eq!(result.snapshot.generation(), 3);
@@ -552,6 +619,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Timeout);
         // A zero timeout returns immediately too (bounded, never unbounded).
@@ -562,6 +630,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(zero.terminal_reason, TerminalReason::Timeout);
     }
@@ -584,6 +653,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.latest_batch, Some(5));
         assert_eq!(result.pending_work, PendingWork::default());
@@ -606,6 +676,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Superseded);
         assert_eq!(result.latest_generation, 2);
@@ -653,6 +724,7 @@ mod tests {
             None,
             None,
             "fz-test",
+            None,
         );
         assert_eq!(result.terminal_reason, TerminalReason::Cancelled);
     }

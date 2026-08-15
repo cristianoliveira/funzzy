@@ -6,6 +6,7 @@ pub mod awaiting;
 pub mod cli;
 pub mod cmd;
 pub mod config;
+pub mod config_lifecycle;
 pub mod config_revision;
 pub mod control;
 pub mod control_client;
