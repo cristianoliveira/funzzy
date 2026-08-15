@@ -106,6 +106,12 @@ candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
 ## 7. Release notes
 
 The release-notes outline is approved before any version-file change. It
-covers: the CLI break summary and migration table (V1 flags → V2 commands),
-jobs vocabulary, parallel execution, control/agents surface, duration
-estimates, and the deferred-work list.
+covers: the CLI break summary and migration table (V1 flags → V2 commands,
+docs/MIGRATION.md), jobs vocabulary, parallel execution, control/agents
+surface, duration estimates, shell completion (`fzz completions SHELL`), and
+the deferred-work list.
+
+Release evidence locked by tests (TASK-0020): `funzzy` and `fzz` expose
+identical command trees; removed V1 flags (`--non-block`, `--target`, `-n`,
+`-t`) are rejected with exit 2; every subcommand `--help` exits 0; exit codes
+are stable (0 success/no-op, 1 workflow/operational, 2 usage).

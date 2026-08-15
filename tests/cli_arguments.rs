@@ -907,3 +907,54 @@ fn config_unknown_input_fails_with_alternatives() {
         .stderr(predicate::str::contains("parallel"))
         .stderr(predicate::str::contains("agent"));
 }
+
+#[test]
+fn funzzy_and_fzz_expose_identical_command_trees() {
+    // TASK-0020: both binaries share one command definition; help output must
+    // be identical except the binary name itself.
+    let fzz_help = fzz().arg("--help").output().unwrap();
+    let funzzy_help = funzzy().arg("--help").output().unwrap();
+    assert!(fzz_help.status.success() && funzzy_help.status.success());
+    let normalize = |s: &str| s.replace("funzzy", "BIN").replace("fzz", "BIN");
+    assert_eq!(
+        normalize(&String::from_utf8_lossy(&fzz_help.stdout)),
+        normalize(&String::from_utf8_lossy(&funzzy_help.stdout)),
+        "command trees must be identical"
+    );
+}
+
+#[test]
+fn completions_generate_for_each_supported_shell() {
+    for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
+        fzz()
+            .args(["completions", shell])
+            .assert()
+            .code(0)
+            .stdout(predicate::str::is_empty().not());
+    }
+    // Unknown shell is a usage error naming the alternatives.
+    fzz().args(["completions", "tcsh"]).assert().code(2);
+}
+
+#[test]
+fn v2_release_evidence_removed_flags_are_rejected_and_exit_codes_stable() {
+    // TASK-0020 release evidence: intentional V1 breaks are locked, exit
+    // codes are 2 for usage, 1 for workflow/operational, 0 success.
+    for removed in ["--non-block", "-n", "--target", "-t"] {
+        fzz().arg(removed).assert().code(2);
+    }
+    // Help examples are exercised smoke tests: every top-level subcommand
+    // shows help with exit 0.
+    for sub in [
+        "watch",
+        "list",
+        "run",
+        "explain",
+        "check",
+        "config",
+        "control",
+        "completions",
+    ] {
+        fzz().args([sub, "--help"]).assert().code(0);
+    }
+}

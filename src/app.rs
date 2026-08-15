@@ -83,6 +83,25 @@ pub fn run() {
     match args.action {
         // Commands
         Action::Check => check_config(&args.config),
+        Action::Completions { shell } => {
+            let mut cmd = crate::arguments::command();
+            use clap::CommandFactory;
+            let name = cmd.get_name().to_string();
+            let generator = match shell.as_str() {
+                "bash" => clap_complete::Shell::Bash,
+                "zsh" => clap_complete::Shell::Zsh,
+                "fish" => clap_complete::Shell::Fish,
+                "elvish" => clap_complete::Shell::Elvish,
+                "powershell" => clap_complete::Shell::PowerShell,
+                other => {
+                    stdout::failure(
+                        "Invalid shell",
+                        format!("expected bash, zsh, fish, elvish, or powershell, got {other}"),
+                    );
+                }
+            };
+            clap_complete::generate(generator, &mut cmd, name, &mut std::io::stdout());
+        }
         Action::Config {
             schema_section,
             example_profile,

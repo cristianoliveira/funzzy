@@ -32,6 +32,7 @@ notify-debouncer-mini = "0.3.0"
 nix = "0.26.2"
 once_cell = "1.19"
 clap = "4.6"
+clap_complete = "4.5"
 sha2 = "0.10"
 
 [dev-dependencies]

@@ -31,6 +31,8 @@ pub enum Action {
     List,
     /// `fzz check`: validate configuration without starting a watcher.
     Check,
+    /// `fzz completions SHELL`: emit shell completion scripts.
+    Completions { shell: String },
     /// `fzz config schema|example`: agent-discoverable config surface.
     Config {
         /// `schema` (Some(section) when --section given) vs `example`.
@@ -115,6 +117,15 @@ impl Arguments {
             }
             Some(("list", _)) => (Action::List, false),
             Some(("check", _)) => (Action::Check, false),
+            Some(("completions", sub)) => (
+                Action::Completions {
+                    shell: sub
+                        .get_one::<String>("shell")
+                        .cloned()
+                        .expect("shell is required by clap"),
+                },
+                false,
+            ),
             Some(("config", sub)) => {
                 let action = match sub.subcommand() {
                     Some(("schema", schema_sub)) => {
@@ -291,7 +302,7 @@ impl Arguments {
     }
 }
 
-fn command() -> Command {
+pub fn command() -> Command {
     Command::new("funzzy")
         .about("Funzzy the watcher.\n\nAlias:\n  fzz -> funzzy")
         .version(env!("CARGO_PKG_VERSION"))
@@ -451,6 +462,22 @@ fn command() -> Command {
                 .version(env!("CARGO_PKG_VERSION"))
                 .long_about(
                     "Load and validate the configured workflow: schema, globs, durations, concurrency, parallel groups, and paths. Never starts a watcher, executes a command, or opens a socket. Exit 0 when valid; non-zero with actionable errors when not.",
+                ),
+        )
+        .subcommand(
+            Command::new("completions")
+                .about("Generate shell completion scripts.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .long_about(
+                    "Generate shell completion scripts for bash, zsh, fish, elvish, or powershell.\n\nExamples:\n  fzz completions bash > /etc/bash_completion.d/fzz\n  fzz completions zsh > ${fpath[1]}/_fzz\n  fzz completions fish > ~/.config/fish/completions/fzz.fish",
+                )
+                .arg(
+                    Arg::new("shell")
+                        .value_name("SHELL")
+                        .num_args(1)
+                        .required(true)
+                        .value_parser(clap::builder::PossibleValuesParser::new(["bash", "zsh", "fish", "elvish", "powershell"]))
+                        .help("Shell to generate completions for."),
                 ),
         )
         .subcommand(
@@ -1644,5 +1671,24 @@ mod config_command_tests {
         assert!(parse(&["config", "schema", "--section", "bogus"]).is_err());
         assert!(parse(&["config", "example", "bogus"]).is_err());
         assert!(parse(&["config", "example"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod completions_tests {
+    use super::tests::parse;
+    use super::{Action, Arguments};
+
+    #[test]
+    fn completions_parses_shell_and_rejects_unknown() {
+        let args = parse(&["completions", "zsh"]).expect("parse");
+        assert_eq!(
+            args.action,
+            Action::Completions {
+                shell: "zsh".to_owned()
+            }
+        );
+        assert!(parse(&["completions"]).is_err());
+        assert!(parse(&["completions", "tcsh"]).is_err());
     }
 }
