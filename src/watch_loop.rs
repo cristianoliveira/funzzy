@@ -267,6 +267,12 @@ impl BlockingStrategy {
             ),
         }
     }
+
+    /// Attaches run-level terminal hooks (TASK-0040).
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.workflow = self.workflow.with_hooks(hooks);
+        self
+    }
 }
 
 impl RunStrategy for BlockingStrategy {

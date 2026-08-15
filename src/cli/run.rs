@@ -52,6 +52,12 @@ impl RunCommand {
         }
     }
 
+    /// Attaches run-level terminal hooks (TASK-0040).
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.workflow = self.workflow.with_hooks(hooks);
+        self
+    }
+
     pub fn execute(&self, plan: RunPlan, target: &str) -> Result<bool, String> {
         // Structural target identity (TASK-0054): the recorder never parses
         // the trigger string; the signature is filled from the resolved plan

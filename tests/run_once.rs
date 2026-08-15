@@ -471,3 +471,30 @@ fn run_events_flag_writes_ndjson_stream() {
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn success_and_failure_hooks_run_once_per_generation() {
+    // TASK-0040: on.success runs once on pass, on.failure runs once on fail;
+    // hook failure never changes the combined outcome.
+    let directory = fixture("hooks");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\n  success: 'echo ok > hook-success.txt'\n  failure: 'echo bad > hook-failure.txt'\njobs:\n  - name: good @quick\n    run: 'true'\n  - name: bad @quick\n    run: 'exit 1'\n",
+    );
+
+    // Failing run: only the failure hook fires; exit stays 1.
+    fzz(&directory).args(["run", "bad"]).assert().code(1);
+    assert_eq!(
+        std::fs::read_to_string(directory.join("hook-failure.txt")).unwrap(),
+        "bad\n"
+    );
+    assert!(!directory.join("hook-success.txt").exists());
+
+    // Passing run: only the success hook fires; exit 0.
+    fzz(&directory).args(["run", "good"]).assert().code(0);
+    assert_eq!(
+        std::fs::read_to_string(directory.join("hook-success.txt")).unwrap(),
+        "ok\n"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}

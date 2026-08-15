@@ -207,6 +207,9 @@ pub struct RunMetadata {
     /// Override source label (TASK-0073): "control" when this generation was
     /// explicitly requested sequential over the control socket.
     pub concurrency_source: Option<&'static str>,
+    /// Run-level terminal hooks (TASK-0040): `success`/`failure` commands run
+    /// once at the generation terminal outcome.
+    pub hooks: crate::config::RunHooks,
 }
 
 impl RunMetadata {
@@ -222,6 +225,7 @@ impl RunMetadata {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            hooks: crate::config::RunHooks::default(),
         }
     }
 
@@ -245,6 +249,7 @@ impl RunMetadata {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            hooks: crate::config::RunHooks::default(),
         }
     }
 
@@ -272,6 +277,12 @@ impl RunMetadata {
     /// generation was explicitly requested sequential over the control socket.
     pub fn with_concurrency_source(mut self, concurrency_source: Option<&'static str>) -> Self {
         self.concurrency_source = concurrency_source;
+        self
+    }
+
+    /// Attaches run-level terminal hooks (TASK-0040).
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.hooks = hooks;
         self
     }
 }
@@ -757,6 +768,65 @@ impl Executor {
         }
     }
 
+    /// Runs the applicable terminal hook once (TASK-0040): success hook on
+    /// pass, failure hook on fail. Hook failure never changes the run
+    /// outcome; it is surfaced via a warning for loop diagnosis. The hook is
+    /// spawned with the same process runner and reaped to completion.
+    fn run_terminal_hook(&self, metadata: &RunMetadata, outcome: &RunOutcome) {
+        let command = if outcome.is_success() {
+            metadata.hooks.success.as_deref()
+        } else {
+            metadata.hooks.failure.as_deref()
+        };
+        let Some(command) = command else { return };
+        let label = if outcome.is_success() {
+            "success"
+        } else {
+            "failure"
+        };
+        if self.verbose {
+            diagnostics::debug(&diagnostics::Record {
+                generation: Some(metadata.run_id),
+                source: Some("hook"),
+                decision: Some("started"),
+                note: Some(format!("{label} hook: {command}")),
+                ..Default::default()
+            });
+        }
+        let result = self
+            .runner
+            .spawn(
+                "hook",
+                &CommandLine::Shell(command.to_owned()),
+                &TaskContext::default(),
+                None,
+                None,
+            )
+            .and_then(|mut child| {
+                // Wait via the trait's try_wait (the runner returns a
+                // trait object; LoggedChild::try_wait joins forwarding
+                // threads on exit, so no output is lost).
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => return Ok(status),
+                        Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                        Err(err) => return Err(format!("hook wait failed: {}", err)),
+                    }
+                }
+            });
+        match result {
+            Ok(status) if status.success() => {}
+            Ok(status) => stdout::warn(&format!(
+                "{} hook for generation {} failed with {}",
+                label, metadata.run_id, status
+            )),
+            Err(err) => stdout::warn(&format!(
+                "{} hook for generation {} errored: {}",
+                label, metadata.run_id, err
+            )),
+        }
+    }
+
     pub fn finish(&self, mut run: Run) -> CompletedRun {
         let elapsed = self.clock.elapsed(run.started);
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
@@ -779,6 +849,11 @@ impl Executor {
                 ..Default::default()
             });
         }
+        // TASK-0040: run the applicable terminal hook (success/failure) once,
+        // after the generation's tasks reached terminal. Hook failure never
+        // changes the combined outcome or exit code; it is surfaced for
+        // diagnosis only. Superseded/cancelled generations never reach here.
+        self.run_terminal_hook(&run.metadata, &outcome);
         self.events.emit(Event::Finished {
             run_id: run.metadata.run_id,
             superseded_by: run.superseded_by,

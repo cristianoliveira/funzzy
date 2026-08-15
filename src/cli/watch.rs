@@ -50,7 +50,8 @@ impl Command for WatchCommand {
             self.fail_fast,
             self.watches.concurrency(),
             self.events.clone(),
-        );
+        )
+        .with_hooks(self.watches.hooks());
         watch_loop(
             &self.watches,
             self.run_on_init,

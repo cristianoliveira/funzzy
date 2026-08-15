@@ -19,11 +19,19 @@ pub struct WorkflowRunner {
     executor: Executor,
     concurrency: usize,
     fail_fast: bool,
+    /// Run-level terminal hooks (TASK-0040) applied to each finite run.
+    hooks: crate::config::RunHooks,
 }
 
 impl WorkflowRunner {
     pub fn new(root: PathBuf, verbose: bool, fail_fast: bool, concurrency: usize) -> Self {
         Self::with_recorder_and_events(root, verbose, fail_fast, concurrency, None, None)
+    }
+
+    /// Attaches run-level terminal hooks (TASK-0040).
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.hooks = hooks;
+        self
     }
 
     /// Creates a runner that also records exact target runs into duration
@@ -93,6 +101,7 @@ impl WorkflowRunner {
             executor,
             concurrency,
             fail_fast,
+            hooks: crate::config::RunHooks::default(),
         }
     }
 
@@ -108,6 +117,7 @@ impl WorkflowRunner {
             paths: vec![],
             current_dir: self.root.display().to_string(),
         });
+        let metadata = metadata.with_hooks(self.hooks.clone());
         if self.verbose {
             // Blocking strategy: one in-process run per decision; the record
             // carries the debounce batch when scheduled from a file change.

@@ -258,6 +258,8 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                             && key_str != "watch_backend"
                             && key_str != "poll_interval"
                             && key_str != "respect_gitignore"
+                            && key_str != "success"
+                            && key_str != "failure"
                         {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
@@ -1998,4 +2000,74 @@ pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
     respect_gitignore_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod hooks_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_default_to_none() {
+        let hooks = hooks_from_yaml("on:\n  change: '**/*'\n").unwrap();
+        assert_eq!(hooks.success, None);
+        assert_eq!(hooks.failure, None);
+    }
+
+    #[test]
+    fn hooks_parse_success_and_failure_commands() {
+        let hooks = hooks_from_yaml(
+            "on:\n  change: '**/*'\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
+        )
+        .unwrap();
+        assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
+        assert_eq!(hooks.failure.as_deref(), Some("echo failed > failed.txt"));
+    }
+
+    #[test]
+    fn hooks_reject_non_string_values() {
+        assert!(hooks_from_yaml("on:\n  success: [a, b]\n").is_err());
+        assert!(hooks_from_yaml("on:\n  failure: 1\n").is_err());
+    }
+}
+
+/// Parsed run-level hooks (`on.success` / `on.failure`), TASK-0040.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunHooks {
+    pub success: Option<String>,
+    pub failure: Option<String>,
+}
+
+/// Parses `on.success` / `on.failure` hook commands; absent = None,
+/// non-string values are rejected loudly.
+pub fn hooks_from_yaml(content: &str) -> Result<RunHooks, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+    if on == &Yaml::BadValue {
+        return Ok(RunHooks::default());
+    }
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+    let read_hook = |key: &str| -> Result<Option<String>, String> {
+        match &on[key] {
+            Yaml::BadValue => Ok(None),
+            Yaml::String(value) => Ok(Some(value.clone())),
+            _ => Err(format!("Property 'on.{}' must be a command string", key)),
+        }
+    };
+    Ok(RunHooks {
+        success: read_hook("success")?,
+        failure: read_hook("failure")?,
+    })
+}
+
+pub fn hooks_from_file(filename: &str) -> Result<RunHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    hooks_from_yaml(&content)
 }

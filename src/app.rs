@@ -148,7 +148,8 @@ pub fn run() {
             )
             .with_debounce(debounce)
             .with_backend(backend)
-            .with_gitignore(load_respect_gitignore(&args.config));
+            .with_gitignore(load_respect_gitignore(&args.config))
+            .with_hooks(load_hooks(&args.config));
             match wanted {
                 Some(target) => match watches.select_target(target) {
                     Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
@@ -204,7 +205,8 @@ pub fn run() {
                     ),
                 )))),
                 event_stream.clone(),
-            );
+            )
+            .with_hooks(load_hooks(&args.config));
             let result = command.execute(plan, target);
             let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
             if signal_exit != 0 {
@@ -228,7 +230,8 @@ pub fn run() {
             )
             .with_debounce(load_debounce(&args.config))
             .with_backend(load_watch_backend(&args.config))
-            .with_gitignore(load_respect_gitignore(&args.config));
+            .with_gitignore(load_respect_gitignore(&args.config))
+            .with_hooks(load_hooks(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
                 concurrency: watches.concurrency(),
@@ -501,6 +504,25 @@ fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBack
     config::watch_backend_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid watch backend config", err))
         .unwrap_or(crate::watcher::WatchBackend::Auto)
+}
+
+/// The run-level terminal hooks from `on.success`/`on.failure` (TASK-0040).
+fn load_hooks(config_file: &Option<String>) -> config::RunHooks {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return config::RunHooks::default();
+    };
+    config::hooks_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid hooks config", err))
 }
 
 /// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.

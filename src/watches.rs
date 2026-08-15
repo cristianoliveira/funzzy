@@ -94,6 +94,8 @@ pub struct Watches {
     backend: crate::watcher::WatchBackend,
     /// Whether workspace `.gitignore` rules are respected (TASK-0036).
     respect_gitignore: bool,
+    /// Run-level terminal hooks (TASK-0040): success/failure commands.
+    hooks: crate::config::RunHooks,
     /// Root-anchored gitignore matcher; rebuilt when the gitignore changes.
     /// Interior mutability so routing can refresh before each batch without
     /// an event-loss gap (TASK-0036 §4).
@@ -129,6 +131,7 @@ impl Watches {
             backend: crate::watcher::WatchBackend::Auto,
             respect_gitignore: false,
             gitignore: None,
+            hooks: crate::config::RunHooks::default(),
         }
     }
 
@@ -188,6 +191,17 @@ impl Watches {
         self.respect_gitignore
     }
 
+    /// Overrides run-level terminal hooks (TASK-0040).
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.hooks = hooks;
+        self
+    }
+
+    /// The configured run-level terminal hooks.
+    pub fn hooks(&self) -> crate::config::RunHooks {
+        self.hooks.clone()
+    }
+
     /// Narrows visible rules while retaining barriers from original topology.
     pub fn select_target(&self, target: &str) -> Option<Self> {
         let rules: Vec<Rules> = self
@@ -211,6 +225,7 @@ impl Watches {
             backend: self.backend,
             respect_gitignore: self.respect_gitignore,
             gitignore: self.gitignore.clone(),
+            hooks: self.hooks.clone(),
         })
     }
 

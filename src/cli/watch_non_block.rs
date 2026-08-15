@@ -102,22 +102,26 @@ impl Command for WatchNonBlockCommand {
         let broker_state = Arc::clone(&broker);
         let recorder_state = Arc::clone(&recorder);
         let events_state = self.events.clone();
-        let worker = Arc::new(workers::Worker::with_root_and_concurrency_and_outputs(
-            self.verbose,
-            self.fail_fast,
-            self.watches.root().to_path_buf(),
-            self.watches.concurrency(),
-            move |event| {
-                recorder_state.observe(&event);
-                coordinator_state.observe(&event);
-                if let Some(stream) = &events_state {
-                    stream.emit_event(event.clone());
-                }
-                worker_state.lock().unwrap().apply(event);
-                broker_state.publish();
-            },
-            Some(worker_outputs),
-        ));
+        let hooks = self.watches.hooks();
+        let worker = Arc::new(
+            workers::Worker::with_root_and_concurrency_and_outputs(
+                self.verbose,
+                self.fail_fast,
+                self.watches.root().to_path_buf(),
+                self.watches.concurrency(),
+                move |event| {
+                    recorder_state.observe(&event);
+                    coordinator_state.observe(&event);
+                    if let Some(stream) = &events_state {
+                        stream.emit_event(event.clone());
+                    }
+                    worker_state.lock().unwrap().apply(event);
+                    broker_state.publish();
+                },
+                Some(worker_outputs),
+            )
+            .with_hooks(hooks),
+        );
 
         let strategy = NonBlockStrategy::new_arc_with_subscription(
             worker,

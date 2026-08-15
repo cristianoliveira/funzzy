@@ -36,6 +36,8 @@ struct RunRequest {
     /// Override source label (TASK-0073): "control" when the generation was
     /// explicitly requested sequential over the control socket.
     concurrency_source: Option<&'static str>,
+    /// Run-level terminal hooks (TASK-0040).
+    hooks: crate::config::RunHooks,
 }
 
 /// Result of an exact-generation cancel (TASK-0046): the generation matched
@@ -207,6 +209,8 @@ pub struct Worker {
     concurrency: usize,
     /// Fail-fast policy; part of the execution signature (TASK-0054).
     fail_fast: bool,
+    /// Run-level terminal hooks (TASK-0040), applied to target runs.
+    hooks: crate::config::RunHooks,
 
     consumer: Option<JoinHandle<()>>,
 }
@@ -310,7 +314,8 @@ impl Worker {
                                     req.execution_signature.clone(),
                                 )
                                 .with_effective_concurrency(req.effective_concurrency)
-                                .with_concurrency_source(req.concurrency_source),
+                                .with_concurrency_source(req.concurrency_source)
+                                .with_hooks(req.hooks.clone()),
                                 req.plan,
                             ),
                         );
@@ -333,7 +338,8 @@ impl Worker {
                                         req.execution_signature.clone(),
                                     )
                                     .with_effective_concurrency(req.effective_concurrency)
-                                    .with_concurrency_source(req.concurrency_source),
+                                    .with_concurrency_source(req.concurrency_source)
+                                    .with_hooks(req.hooks.clone()),
                                     req.plan,
                                 ),
                             );
@@ -404,6 +410,7 @@ impl Worker {
             root,
             concurrency,
             fail_fast,
+            hooks: crate::config::RunHooks::default(),
             consumer: Some(consumer),
         }
     }
@@ -429,6 +436,12 @@ impl Worker {
     /// signature (TASK-0054/0055).
     pub fn fail_fast(&self) -> bool {
         self.fail_fast
+    }
+
+    /// Attaches run-level terminal hooks (TASK-0040) applied to target runs.
+    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+        self.hooks = hooks;
+        self
     }
 
     /// Cancels an exact generation through the worker command stream
@@ -506,6 +519,7 @@ impl Worker {
             execution_signature: Some(request.plan.execution_signature(effective, self.fail_fast)),
             effective_concurrency: Some(effective),
             concurrency_source: sequential.then_some("control"),
+            hooks: self.hooks.clone(),
             ..request
         };
         self.dispatch(request)
@@ -560,6 +574,7 @@ impl Worker {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
+            hooks: crate::config::RunHooks::default(),
         })
     }
 
