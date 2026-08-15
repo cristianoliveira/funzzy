@@ -13,6 +13,7 @@ use crate::errors;
 use crate::errors::FzzError;
 use crate::watches::Watches;
 use crate::{config, diagnostics, environment, logging, rules, stdout, watcher};
+use std::path::PathBuf;
 
 use nix::{
     sys::signal::{self, Signal},
@@ -163,6 +164,7 @@ pub fn run() {
                     backend,
                     load_respect_gitignore(&args.config),
                     load_hooks(&args.config),
+                    args.control_socket.as_deref().map(std::path::PathBuf::from),
                 );
                 match tracker.observe(&runtime) {
                     crate::config_revision::RevisionDecision::New(revision) => {
@@ -696,6 +698,29 @@ fn execute_watch_command(
         })
         .collect();
     let startup_config_paths = config_file_paths.clone();
+    // AC9: the reload watcher anchors to the config paths' PARENT directories
+    // (not the file paths themselves), so atomic editor saves (rename over the
+    // destination) and delete/recreate resolve to the canonical path and are
+    // still observed after any root swap. Events are then filtered to the
+    // exact config filenames below.
+    let config_watch_roots: Vec<String> = {
+        let mut parents: Vec<PathBuf> = startup_config_paths
+            .iter()
+            .filter_map(|path| {
+                std::path::Path::new(path)
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .map(|parent| parent.to_path_buf())
+            })
+            .collect();
+        parents.sort();
+        parents.dedup();
+        parents
+            .into_iter()
+            .map(|p| p.display().to_string())
+            .collect()
+    };
+    let reload_config_paths = startup_config_paths.clone();
     let reload_coordinator = coordinator.clone();
     let reload_root = watches.root().to_path_buf();
     let reload_concurrency = watches.concurrency();
@@ -703,6 +728,10 @@ fn execute_watch_command(
     let reload_backend = watches.backend();
     let reload_gitignore = watches.respects_gitignore();
     let reload_hooks = watches.hooks();
+    // AC8: the current control socket path (as configured at startup); the
+    // reload thread detects candidate path changes and requests a
+    // bind-new-before-retire-old handoff through the coordinator.
+    let reload_current_socket = args.control_socket.clone();
     let initial_revision = watches.revision().cloned();
     // TASK-0090: the reload watcher signals readiness after registering its
     // config-path roots; the main loop gates init on it so a config-touching
@@ -719,16 +748,37 @@ fn execute_watch_command(
             tracker.lock().unwrap().seed(initial);
         }
         let reload_ready_tx = reload_ready_tx;
+        let reload_config_paths = reload_config_paths;
+        let reload_current_socket = reload_current_socket;
         watcher::events(
-            startup_config_paths,
+            config_watch_roots,
             move || {
                 let _ = reload_ready_tx.send(());
             },
             move |_batch_id: u64, events: &[watcher::FileEvent]| {
+                // AC9: only events targeting the canonical config paths (or
+                // their parents' watched subtrees) trigger validation. Atomic
+                // editor saves surface as a change on the config filename
+                // under the watched parent; unrelated files never validate.
                 let file_changed = events
-                    .first()
+                    .iter()
                     .map(|event| event.path.clone())
+                    .find(|path| {
+                        reload_config_paths.iter().any(|candidate| {
+                            path == candidate
+                                || path.ends_with(candidate)
+                                || std::path::Path::new(path)
+                                    .canonicalize()
+                                    .ok()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .as_deref()
+                                    == Some(candidate.as_str())
+                        })
+                    })
                     .unwrap_or_default();
+                if file_changed.is_empty() {
+                    return;
+                }
 
                 // Ignore events that do not reflect a real modification since
                 // the watcher started (historical FSEvents replays).
@@ -766,6 +816,16 @@ fn execute_watch_command(
                     }
                 };
 
+                // AC8: parse the candidate's control socket path up front so
+                // it participates in the semantic decision (a socket move is
+                // a real revision change, never a no-op).
+                let candidate_socket = config::control_socket_from_yaml(&content)
+                    .unwrap_or_else(|err| {
+                        stdout::warn(&format!("Cannot read socket from candidate: {err}"));
+                        None
+                    })
+                    .map(std::path::PathBuf::from);
+
                 match crate::reload::decide(
                     &mut tracker.lock().unwrap(),
                     &content,
@@ -775,6 +835,7 @@ fn execute_watch_command(
                     reload_backend,
                     reload_gitignore,
                     reload_hooks.clone(),
+                    candidate_socket.clone(),
                 ) {
                     crate::reload::ReloadDecision::NoOp => {
                         stdout::info("Config save has no semantic change; nothing to reload.");
@@ -792,6 +853,62 @@ fn execute_watch_command(
                         );
                         match candidate_watches {
                             Ok(candidate) => {
+                                let log_sink = |msg: &str| stdout::warn(msg);
+                                // AC8: if the candidate changes the control
+                                // socket path, bind the NEW socket before
+                                // commit (failure is fatal — never a silent
+                                // stale socket) and retire the OLD one after.
+                                let socket_changed = match (
+                                    reload_current_socket.as_deref(),
+                                    candidate_socket.as_deref(),
+                                ) {
+                                    (Some(current), Some(candidate)) => current != candidate,
+                                    (None, Some(_)) | (Some(_), None) => true,
+                                    (None, None) => false,
+                                };
+                                if socket_changed {
+                                    if let Some(new_path) = candidate_socket.as_deref() {
+                                        if let Err(err) =
+                                            reload_coordinator.prepare_socket(new_path)
+                                        {
+                                            fatal_reload(
+                                                &reload_coordinator,
+                                                &format!("control socket rebind failed: {err}"),
+                                            );
+                                            return;
+                                        }
+                                    }
+                                }
+                                // Prepare→commit→retire (contract §4): added
+                                // roots register on the live backend BEFORE
+                                // the pointer swap; any prepare failure takes
+                                // the invalid fatal path with nothing mutated.
+                                let transaction = match reload_coordinator.begin(
+                                    revision.clone(),
+                                    candidate,
+                                    &log_sink,
+                                    candidate_socket.clone(),
+                                ) {
+                                    Ok(transaction) => transaction,
+                                    Err(err) => {
+                                        fatal_reload(
+                                            &reload_coordinator,
+                                            &format!("reload prepare failed: {err}"),
+                                        );
+                                        return;
+                                    }
+                                };
+                                if let Err(err) = reload_coordinator.commit(&transaction) {
+                                    fatal_reload(
+                                        &reload_coordinator,
+                                        &format!("reload commit failed: {err}"),
+                                    );
+                                    return;
+                                }
+                                // AC10: truncate-on-change fires only after a
+                                // committed valid semantic reload, preserving
+                                // the deterministic notice order (truncate
+                                // notice precedes the reload notice).
                                 if truncate_on_config_change {
                                     match logging::truncate() {
                                         Ok(()) => stdout::info(
@@ -802,17 +919,16 @@ fn execute_watch_command(
                                         )),
                                     }
                                 }
-                                let log_sink = |msg: &str| stdout::warn(msg);
-                                if let Err(err) = reload_coordinator.commit(
-                                    revision.clone(),
-                                    candidate,
-                                    &log_sink,
-                                ) {
-                                    fatal_reload(
-                                        &reload_coordinator,
-                                        &format!("reload commit failed: {err}"),
-                                    );
+                                // Obsolete roots/backend resources retire only
+                                // after the commit boundary (contract §4).
+                                if let Err(err) = reload_coordinator.retire(&transaction, &log_sink)
+                                {
+                                    stdout::warn(&format!("reload retire warning: {err}"));
                                 }
+                                // AC8: retire the OLD control socket after the
+                                // boundary; its file is removed by the server
+                                // drop, and the new socket is already live.
+                                reload_coordinator.retire_socket();
                                 // The commit (shared config swap + worker
                                 // revision + backend root swap) completed;
                                 // only now is the reload observable (contract

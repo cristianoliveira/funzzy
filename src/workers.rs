@@ -66,6 +66,22 @@ enum WorkerCommand {
         /// the generation actually matched instead of guessing.
         reply: Option<std::sync::mpsc::Sender<CancelResult>>,
     },
+    /// TASK-0090 AC6: gracefully stop the named managed services owned by the
+    /// active generation (changed/removed by the reloaded revision) and
+    /// report the names still running (unchanged services stay owned).
+    ReconcileServices {
+        stop_names: Vec<String>,
+        reply: std::sync::mpsc::Sender<Vec<String>>,
+    },
+    /// TASK-0090 AC6: append a service-only plan to the ACTIVE generation so
+    /// new/changed services start under the new revision WITHOUT replacing
+    /// the active run (active finite work and unchanged services stay
+    /// owned). No-op reply; errors surface through the generation outcome.
+    StartServices {
+        run_id: u64,
+        plan: RunPlan,
+        revision: Option<crate::config_revision::ConfigRevision>,
+    },
 }
 
 /// Ordered command queue: at most one queued Run (newest wins), while
@@ -183,6 +199,10 @@ impl Scheduler {
                     reply,
                 });
             }
+            WorkerCommand::ReconcileServices { .. } | WorkerCommand::StartServices { .. } => {
+                // Direct command: never coalesced with runs or cancels.
+                state.queue.push_back(command);
+            }
         }
         self.ready.notify_one();
     }
@@ -210,7 +230,9 @@ pub struct Worker {
     next_run_id: AtomicU64,
     root: PathBuf,
     /// Task concurrency bound; part of the execution signature (TASK-0054).
-    concurrency: usize,
+    /// Interior-mutable (TASK-0090 AC7): a reload swaps the shared bound so
+    /// newly planned generations use the committed revision's concurrency.
+    concurrency: Arc<std::sync::atomic::AtomicUsize>,
     /// Fail-fast policy; part of the execution signature (TASK-0054).
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040), applied to target runs.
@@ -289,6 +311,11 @@ impl Worker {
         });
         let scheduler = Arc::new(Scheduler::new(Arc::clone(&events)));
         let consumer_scheduler = Arc::clone(&scheduler);
+        // TASK-0090 AC7: one shared bound handle drives both the executor's
+        // stage planning and the worker's scheduling/signature reads, so a
+        // config reload swaps concurrency for newly planned generations
+        // without rebuilding the worker or resizing a running group.
+        let concurrency_handle = Arc::new(std::sync::atomic::AtomicUsize::new(concurrency));
         let executor = Executor::with_outputs(
             Arc::new(SystemProcessRunner),
             Arc::new(SystemClock),
@@ -298,7 +325,8 @@ impl Worker {
             verbose,
             outputs,
         )
-        .expect("worker concurrency must be positive");
+        .expect("worker concurrency must be positive")
+        .with_concurrency_handle(Arc::clone(&concurrency_handle));
 
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
@@ -371,6 +399,41 @@ impl Worker {
                                 }
                             }
                         }
+                        Some(WorkerCommand::ReconcileServices {
+                            stop_names: _,
+                            reply,
+                        }) => {
+                            // No active generation: nothing to stop; every
+                            // desired service still needs starting.
+                            let _ = reply.send(vec![]);
+                        }
+                        Some(WorkerCommand::StartServices {
+                            run_id,
+                            plan,
+                            revision,
+                        }) => {
+                            // No active generation: start the service plan as
+                            // its own generation (services keep it alive).
+                            active = Some(
+                                executor.start(
+                                    RunMetadata::correlated(
+                                        run_id,
+                                        "reload:services".to_owned(),
+                                        None,
+                                        None,
+                                        vec![],
+                                    )
+                                    .with_revision(
+                                        revision.as_ref().map(|r| r.number).unwrap_or(0),
+                                        revision
+                                            .as_ref()
+                                            .map(|r| r.hash.clone())
+                                            .unwrap_or_default(),
+                                    ),
+                                    plan,
+                                ),
+                            );
+                        }
                         None => break,
                     }
                     continue;
@@ -423,6 +486,56 @@ impl Worker {
                                 }
                             }
                         }
+                        Some(WorkerCommand::ReconcileServices { stop_names, reply }) => {
+                            // TASK-0090 AC6: stop the named changed/removed
+                            // services owned by the active generation; the
+                            // reply names the services still running (the
+                            // reload starts new/changed ones under the new
+                            // revision). No generation replacement happens, so
+                            // active finite work and unchanged services are
+                            // untouched (contract §4).
+                            if let Some(active) = active.as_mut() {
+                                let stop: Vec<&str> =
+                                    stop_names.iter().map(String::as_str).collect();
+                                let still = executor.reconcile_services(active, &stop);
+                                let _ = reply.send(still);
+                            } else {
+                                let _ = reply.send(vec![]);
+                            }
+                        }
+                        Some(WorkerCommand::StartServices {
+                            run_id,
+                            plan,
+                            revision,
+                        }) => {
+                            // Append the service-only plan to the ACTIVE
+                            // generation: new/changed services start under the
+                            // committed revision while active finite work and
+                            // unchanged services stay owned (contract §4).
+                            if let Some(active) = active.as_mut() {
+                                executor.append_plan(active, plan);
+                            } else {
+                                active = Some(
+                                    executor.start(
+                                        RunMetadata::correlated(
+                                            run_id,
+                                            "reload:services".to_owned(),
+                                            None,
+                                            None,
+                                            vec![],
+                                        )
+                                        .with_revision(
+                                            revision.as_ref().map(|r| r.number).unwrap_or(0),
+                                            revision
+                                                .as_ref()
+                                                .map(|r| r.hash.clone())
+                                                .unwrap_or_default(),
+                                        ),
+                                        plan,
+                                    ),
+                                );
+                            }
+                        }
                         Some(WorkerCommand::Cancel { generation, reply }) => match generation {
                             Some(id) => {
                                 if active.as_ref().is_some_and(|run| run.run_id() == id) {
@@ -461,7 +574,7 @@ impl Worker {
             scheduler: Some(scheduler),
             next_run_id: AtomicU64::new(0),
             root,
-            concurrency,
+            concurrency: concurrency_handle,
             fail_fast,
             hooks: crate::config::RunHooks::default(),
             revision: std::sync::Mutex::new(None),
@@ -483,7 +596,16 @@ impl Worker {
     /// Task concurrency bound the worker executes with; part of the
     /// execution signature (TASK-0054/0055).
     pub fn concurrency(&self) -> usize {
+        self.concurrency.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Swaps the task concurrency bound at the reload commit boundary
+    /// (TASK-0090 AC7): plans prepared after this call carry the new bound;
+    /// a currently running group is never resized inconsistently.
+    pub fn set_concurrency(&self, concurrency: usize) {
+        assert!(concurrency > 0, "worker concurrency must be positive");
         self.concurrency
+            .store(concurrency, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Fail-fast policy the worker executes with; part of the execution
@@ -576,7 +698,7 @@ impl Worker {
         target: &str,
         sequential: bool,
     ) -> Result<u64, String> {
-        let effective = if sequential { 1 } else { self.concurrency };
+        let effective = if sequential { 1 } else { self.concurrency() };
         // The trigger label stays `control:<target>` (compatibility surface);
         // profile identity is carried structurally via `target` + signature,
         // never parsed from the trigger string.
@@ -647,6 +769,43 @@ impl Worker {
             revision: revision.as_ref().map(|r| r.number),
             revision_hash: revision.as_ref().map(|r| r.hash.clone()),
         })
+    }
+
+    /// Reconciles managed services after a reload commit (TASK-0090 AC6):
+    /// gracefully stops the named services owned by the active generation
+    /// (changed/removed by the new revision) and returns the names still
+    /// running. The caller starts the new/changed services under the new
+    /// revision; unchanged services remain owned. Synchronous, bounded by the
+    /// shutdown grace plus a margin.
+    pub fn reconcile_services(&self, stop_names: Vec<String>) -> Result<Vec<String>, String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_string());
+        };
+        let (reply, receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ReconcileServices { stop_names, reply });
+        let (_, grace) = crate::process_owner::shutdown_policy();
+        let bound = grace + Duration::from_secs(5);
+        receipt
+            .recv_timeout(bound)
+            .map_err(|_| "service reconciliation timed out".to_string())
+    }
+
+    /// Starts new/changed managed services under the current revision without
+    /// replacing the active generation (TASK-0090 AC6). The service-only plan
+    /// is appended to the active run, or becomes its own generation when the
+    /// worker is idle. Active finite work and unchanged services stay owned.
+    pub fn start_services(&self, plan: RunPlan) -> Result<u64, String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_string());
+        };
+        let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let revision = self.revision.lock().unwrap().clone();
+        scheduler.send(WorkerCommand::StartServices {
+            run_id,
+            plan,
+            revision,
+        });
+        Ok(run_id)
     }
 
     /// Sends a prepared run request through the scheduler.

@@ -174,6 +174,18 @@ impl Command for WatchNonBlockCommand {
             Some(broker),
             Some(recorder),
         );
+        // TASK-0090 AC8: when the reloaded config changes the control socket
+        // path, the transaction binds the new socket before commit and
+        // retires the old after — through the strategy that owns the live
+        // server. A bind failure surfaces as a prepare error (fatal path).
+        if let Some(reload) = &self.reload {
+            let swapper_strategy = Arc::clone(&strategy);
+            let retire_strategy = Arc::clone(&strategy);
+            reload.install_socket_swapper(crate::reload_coordinator::SocketSwapper::new(
+                move |path| swapper_strategy.prepare_socket_swap(path.to_path_buf()),
+                move || retire_strategy.retire_socket_swap(),
+            ));
+        }
         watch_loop(
             &shared,
             self.run_on_init,

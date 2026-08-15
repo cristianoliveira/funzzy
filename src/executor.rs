@@ -420,7 +420,11 @@ enum TaskStep {
 pub struct Executor {
     runner: Arc<dyn ProcessRunner>,
     clock: Arc<dyn Clock>,
-    concurrency_limit: usize,
+    /// Task concurrency bound (TASK-0054). Interior-mutable (TASK-0090): a
+    /// config reload swaps the bound so newly planned generations use the
+    /// committed revision's concurrency while a running group keeps the limit
+    /// it was planned under (AC7 — never resize a running group).
+    concurrency_limit: Arc<std::sync::atomic::AtomicUsize>,
     events: Arc<dyn EventSink>,
     fail_fast: bool,
     verbose: bool,
@@ -445,7 +449,7 @@ impl Executor {
         Ok(Self {
             runner,
             clock,
-            concurrency_limit,
+            concurrency_limit: Arc::new(std::sync::atomic::AtomicUsize::new(concurrency_limit)),
             events,
             fail_fast,
             verbose,
@@ -472,7 +476,7 @@ impl Executor {
         Ok(Self {
             runner,
             clock,
-            concurrency_limit,
+            concurrency_limit: Arc::new(std::sync::atomic::AtomicUsize::new(concurrency_limit)),
             events,
             fail_fast,
             verbose,
@@ -482,6 +486,34 @@ impl Executor {
 
     pub fn concurrency_limit(&self) -> usize {
         self.concurrency_limit
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Swaps the task concurrency bound (TASK-0090 AC7): stages planned AFTER
+    /// this call use the new bound; a running group keeps the `stage_limit`
+    /// it was planned under and is never resized inconsistently.
+    pub fn set_concurrency_limit(&self, limit: usize) {
+        assert!(limit > 0, "executor concurrency limit must be positive");
+        self.concurrency_limit
+            .store(limit, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The shared bound handle; lets the worker swap the same value the
+    /// executor reads (TASK-0090 AC7).
+    pub fn concurrency_handle(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::clone(&self.concurrency_limit)
+    }
+
+    /// Adopts an externally owned bound handle so the worker and executor
+    /// share one value (TASK-0090 AC7): a reload swap through the worker
+    /// immediately affects stages the executor plans afterwards.
+    pub fn with_concurrency_handle(mut self, handle: Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        assert!(
+            handle.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "executor concurrency limit must be positive"
+        );
+        self.concurrency_limit = handle;
+        self
     }
 
     pub fn start(&self, metadata: RunMetadata, plan: RunPlan) -> Run {
@@ -538,7 +570,7 @@ impl Executor {
                         let limit = run
                             .metadata
                             .effective_concurrency
-                            .unwrap_or(self.concurrency_limit);
+                            .unwrap_or_else(|| self.concurrency_limit());
                         run.stage_limit = limit.min(tasks.len());
                         run.queued.extend(tasks);
                     }
@@ -1219,6 +1251,61 @@ impl Executor {
         escalated
     }
 
+    /// Reconciles the background services of one generation by name
+    /// (TASK-0090 AC6): a service whose name is in `stop_names` is gracefully
+    /// stopped (bounded kill/reap via the ownership path) and removed from
+    /// the background pool. Services not named remain owned and untouched.
+    /// Returns the names still running after reconciliation.
+    ///
+    /// The caller (reload transaction) computes the stop set from the
+    /// revision diff (removed services + signature-changed services) and
+    /// starts the new/changed services under the new revision; this method
+    /// never spawns — it only retires.
+    /// Appends a plan's stages to a RUNNING generation (TASK-0090 AC6): used
+    /// by the reload transaction to start new/changed managed services inside
+    /// the active generation without replacing it — active finite work and
+    /// unchanged services stay untouched (contract §4: a config save alone
+    /// never kills an active generation). The appended service tasks are
+    /// spawned by the next `advance` and moved to the background pool.
+    pub fn append_plan(&self, run: &mut Run, plan: RunPlan) {
+        for stage in plan.stages {
+            run.stages.push_back(stage);
+        }
+    }
+
+    /// Reconciles the background services of one generation by name
+    /// (TASK-0090 AC6): a service whose name is in `stop_names` is gracefully
+    /// stopped (bounded kill/reap via the ownership path) and removed from
+    /// the background pool. Services not named remain owned and untouched.
+    /// Returns the names still running after reconciliation.
+    ///
+    /// The caller (reload transaction) computes the stop set from the
+    /// revision diff (removed services + signature-changed services) and
+    /// starts the new/changed services under the new revision; this method
+    /// never spawns — it only retires.
+    pub fn reconcile_services(&self, run: &mut Run, stop_names: &[&str]) -> Vec<String> {
+        let mut index = 0;
+        let mut still_running = vec![];
+        while index < run.services.len() {
+            let service = &run.services[index];
+            if stop_names.contains(&service.name.as_str()) {
+                // Graceful, bounded stop of a changed/removed service.
+                let mut removed = run.services.remove(index);
+                self.shutdown_task(&mut removed);
+                run.outcomes.push((
+                    removed.position,
+                    removed.name.clone(),
+                    removed.group_occurrence.clone(),
+                    TaskOutcome::Cancelled,
+                ));
+                continue;
+            }
+            still_running.push(service.name.clone());
+            index += 1;
+        }
+        still_running
+    }
+
     pub fn run_to_completion(&self, metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
         let mut run = self.start(metadata, plan);
         loop {
@@ -1691,6 +1778,111 @@ mod tests {
         assert!(runner.state.lock().unwrap().shutdown.contains("b"));
         assert!(!runner.started_commands().contains(&"c".to_owned()));
         assert!(!runner.started_commands().contains(&"d".to_owned()));
+    }
+
+    #[test]
+    fn concurrency_change_affects_only_newly_planned_generation() {
+        // TASK-0090 AC7: swapping the shared bound must not resize a RUNNING
+        // group (its stage_limit is frozen at plan time) while the next
+        // generation plans under the new bound.
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let plan = RunPlan::from_rules(vec![
+            task("A", Some("g"), &["a"]),
+            task("B", Some("g"), &["b"]),
+        ]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        executor.advance(&mut run);
+        // With limit 1 the running group planned one slot; B is queued.
+        assert_eq!(runner.state.lock().unwrap().active, 1);
+
+        // Swap the bound to 3 while the group runs: the RUNNING group must
+        // keep its frozen stage_limit (still one slot).
+        executor.set_concurrency_limit(3);
+        assert_eq!(executor.concurrency_limit(), 3);
+        executor.advance(&mut run);
+        assert!(
+            runner.state.lock().unwrap().active <= 1,
+            "running group must not be resized inconsistently"
+        );
+
+        // Finish the running generation so its tasks do not pollute the
+        // fresh-generation accounting.
+        runner.complete("a", true);
+        while !matches!(executor.advance(&mut run), Step::Finished) {
+            runner.complete("b", true);
+        }
+        let _ = executor.finish(run);
+
+        // A NEW generation plans under the new bound: three tasks fill
+        // three slots.
+        let big = RunPlan::from_rules(vec![
+            task("A", Some("g"), &["a"]),
+            task("B", Some("g"), &["b"]),
+            task("C", Some("g"), &["c"]),
+        ]);
+        let mut fresh = executor.start(RunMetadata::new(2, "test"), big);
+        executor.advance(&mut fresh);
+        assert_eq!(
+            runner.state.lock().unwrap().active,
+            3,
+            "new generation must plan under the committed bound"
+        );
+    }
+
+    #[test]
+    fn reconcile_services_stops_named_services_and_keeps_others_owned() {
+        // TASK-0090 AC6: reconcile retires only the named services (graceful,
+        // bounded shutdown) and leaves unnamed ones owned. It never spawns.
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 2, false);
+        let plan = RunPlan::from_rules(vec![
+            task("svc-a", None, &["sa"]).with_service(true),
+            task("svc-b", None, &["sb"]).with_service(true),
+        ]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        // Both services spawn and move to the background pool.
+        while run.services.len() < 2 {
+            executor.advance(&mut run);
+        }
+        assert_eq!(runner.started_commands().len(), 2);
+
+        // Stop only svc-a: svc-b must stay owned and running.
+        let still = executor.reconcile_services(&mut run, &["svc-a"]);
+        assert_eq!(still, vec!["svc-b".to_owned()]);
+        assert!(
+            runner.state.lock().unwrap().shutdown.contains("sa"),
+            "svc-a must be gracefully shut down"
+        );
+        assert!(
+            !runner.state.lock().unwrap().shutdown.contains("sb"),
+            "svc-b must stay owned"
+        );
+    }
+
+    #[test]
+    fn append_plan_starts_services_without_replacing_active_generation() {
+        // TASK-0090 AC6: append_plan injects a service plan into the RUNNING
+        // generation; the executor keeps running it (services keep the
+        // generation alive) and the new service spawns into the background.
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 2, false);
+        let plan =
+            RunPlan::from_rules(vec![task("svc-a", Some("srv"), &["sa"]).with_service(true)]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        executor.advance(&mut run);
+        assert_eq!(runner.started_commands().len(), 1);
+
+        // Reload adds svc-b: append it to the live generation.
+        let addition =
+            RunPlan::from_rules(vec![task("svc-b", Some("srv"), &["sb"]).with_service(true)]);
+        executor.append_plan(&mut run, addition);
+        executor.advance(&mut run);
+        assert_eq!(
+            runner.started_commands().len(),
+            2,
+            "new service must start without replacing the generation"
+        );
     }
 
     #[test]

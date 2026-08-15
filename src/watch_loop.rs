@@ -24,7 +24,7 @@ use crate::watcher::{self, FileEvent};
 use crate::watches::Watches;
 use crate::workers;
 use crate::workflow::WorkflowRunner;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -340,6 +340,9 @@ pub struct NonBlockStrategy {
     instance: Arc<ControlInstance>,
     broker: Option<Arc<SnapshotBroker>>,
     control_server: Mutex<Option<ControlServer>>,
+    /// Old server parked during a socket-path handoff (AC8); dropped on
+    /// retire after the commit boundary.
+    pending_old_server: Mutex<Option<ControlServer>>,
     self_arc: Mutex<Option<Arc<NonBlockStrategy>>>,
     /// Optional duration recorder (TASK-0055): wires the estimate provider
     /// into `targets`, capabilities, and correlated snapshots.
@@ -395,6 +398,7 @@ impl NonBlockStrategy {
             instance,
             broker,
             control_server: Mutex::new(None),
+            pending_old_server: Mutex::new(None),
             self_arc: Mutex::new(None),
             recorder,
         });
@@ -409,6 +413,25 @@ impl NonBlockStrategy {
     /// bring the watcher down. We log a warning and continue without it.
     pub fn start_control_server(&self) -> Option<ControlServer> {
         let path = self.control_socket.as_ref()?;
+        match self.build_control_server(path) {
+            Ok(server) => {
+                stdout::info(&format!("Control socket listening at {}", path.display()));
+                Some(server)
+            }
+            Err(err) => {
+                stdout::warn(&format!(
+                    "Control socket unavailable at {}: {}. Continuing without it.",
+                    path.display(),
+                    err
+                ));
+                None
+            }
+        }
+    }
+
+    /// Builds a control server bound to `path` with the current targets and
+    /// the same orchestration closures as startup (TASK-0090 AC8).
+    fn build_control_server(&self, path: &Path) -> Result<ControlServer, String> {
         let runner = self
             .self_arc
             .lock()
@@ -495,19 +518,29 @@ impl NonBlockStrategy {
                 move |generation| cancel_runner.cancel_generation(generation),
             )
         };
-        match start {
-            Ok(server) => {
-                stdout::info(&format!("Control socket listening at {}", path.display()));
-                Some(server)
-            }
-            Err(err) => {
-                stdout::warn(&format!(
-                    "Control socket unavailable at {}: {}. Continuing without it.",
-                    path.display(),
-                    err
-                ));
-                None
-            }
+        start.map_err(|err| err.to_string())
+    }
+
+    /// AC8 socket-path handoff, prepare phase: binds a NEW server at
+    /// `new_path` BEFORE the config commit and parks the current server for
+    /// retirement. A bind failure returns an error — the reload takes the
+    /// invalid fatal path (never a silent stale socket).
+    pub fn prepare_socket_swap(&self, new_path: PathBuf) -> Result<(), String> {
+        let new_server = self.build_control_server(&new_path)?;
+        let old_server = self.control_server.lock().unwrap().replace(new_server);
+        *self.pending_old_server.lock().unwrap() = old_server;
+        stdout::info(&format!(
+            "Control socket rebinding to {} (old socket retired after commit).",
+            new_path.display()
+        ));
+        Ok(())
+    }
+
+    /// AC8 socket-path handoff, retire phase: drops the OLD server (its
+    /// socket file is removed) after the commit boundary.
+    pub fn retire_socket_swap(&self) {
+        if let Some(old) = self.pending_old_server.lock().unwrap().take() {
+            drop(old);
         }
     }
 

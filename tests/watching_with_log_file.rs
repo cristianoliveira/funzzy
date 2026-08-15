@@ -168,8 +168,28 @@ fn test_it_truncates_log_on_config_change() {
                 "Failed to observe watcher output in log file"
             );
 
-            let mutated_config = format!("{}\n# temp change\n", original_config);
-            std::fs::write(&config_path, mutated_config).expect("failed to mutate config file");
+            // AC10: a comment-only (NoOp) save must NOT truncate — truncate-
+            // on-change fires only for a committed valid semantic reload.
+            let noop_config = format!("{}\n# temp change\n", original_config);
+            std::fs::write(&config_path, noop_config).expect("failed to mutate config file");
+
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            let noop_log = std::fs::read_to_string(&log_path).unwrap_or_default();
+            assert!(
+                !noop_log.contains("Log file truncated before reloading configuration."),
+                "comment-only save must not truncate the log (AC10): {noop_log}"
+            );
+            assert!(
+                noop_log.contains("something changed in workdir!"),
+                "prior task output must survive a no-op save: {noop_log}"
+            );
+
+            // A real semantic change commits a reload and then truncates.
+            let semantic_config = format!(
+                "{}\n- name: reload-proof\n  run: echo reloaded\n  change: 'examples/workdir/reload-*.txt'\n",
+                original_config
+            );
+            std::fs::write(&config_path, semantic_config).expect("failed to mutate config file");
 
             let mut final_contents = None;
             for _ in 0..50 {

@@ -47,12 +47,17 @@ pub struct RuntimeConfig {
     pub backend: WatchBackend,
     pub respect_gitignore: bool,
     pub hooks: RunHooks,
+    /// Control socket path from `on.socket` (TASK-0090 AC8): part of the
+    /// semantic surface so a socket path change is a real revision change
+    /// and takes the bind-new-before-retire-old handoff, never a no-op.
+    pub control_socket: Option<PathBuf>,
 }
 
 impl RuntimeConfig {
     /// Captures a complete immutable snapshot from the effective watch
     /// configuration. Callers (composition root) build it from a validated
     /// candidate; an invalid candidate never reaches this point.
+    #[allow(clippy::too_many_arguments)]
     pub fn capture(
         root: PathBuf,
         rules: Vec<Rules>,
@@ -61,6 +66,7 @@ impl RuntimeConfig {
         backend: WatchBackend,
         respect_gitignore: bool,
         hooks: RunHooks,
+        control_socket: Option<PathBuf>,
     ) -> Self {
         Self {
             root,
@@ -70,6 +76,7 @@ impl RuntimeConfig {
             backend,
             respect_gitignore,
             hooks,
+            control_socket,
         }
     }
 
@@ -77,6 +84,18 @@ impl RuntimeConfig {
     /// generation's plan derives from the same revision as its policy.
     pub fn plan(&self) -> RunPlan {
         RunPlan::from_rules(self.rules.clone())
+    }
+
+    /// The managed services declared by this revision (TASK-0090 AC6): one
+    /// `(name, service_signature)` per `service: true` rule, in config order.
+    /// Signatures let the reload transaction keep unchanged services owned
+    /// while changed/removed services are gracefully replaced/removed.
+    pub fn services(&self) -> Vec<(String, String)> {
+        self.rules
+            .iter()
+            .filter(|rule| rule.service())
+            .map(|rule| (rule.name.clone(), service_signature(rule)))
+            .collect()
     }
 }
 
@@ -94,6 +113,13 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
     canonical.string(&backend_tag(config.backend));
     canonical.bool(config.respect_gitignore);
     canonical.string(&hooks_tag(&config.hooks));
+    // AC8: the control socket path is part of the semantic surface.
+    canonical.optional_string(
+        config
+            .control_socket
+            .as_ref()
+            .map(|p| p.display().to_string()),
+    );
 
     // Rules encode their full semantic surface: name, run_on_init, parallel
     // group, service, output policy, change/ignore patterns (sorted), commands
@@ -152,6 +178,38 @@ fn backend_tag(backend: WatchBackend) -> String {
         WatchBackend::Poll { interval } => format!("poll:{}", interval.as_millis()),
         WatchBackend::Auto => "auto".to_owned(),
     }
+}
+
+/// Per-service execution signature (TASK-0090 AC6): the canonical SHA-256
+/// over the service rule's own semantic surface — name, service flag, output
+/// policy, cwd, commands (hashed, never displayed), and environment KEYS
+/// only. Two revisions with the same signature for a service name mean the
+/// running process stays owned; a difference means graceful replacement.
+/// Secrets-safe: environment VALUES never enter the digest.
+pub fn service_signature(rule: &Rules) -> String {
+    let mut canonical = CanonicalEncoder::new();
+    canonical.u64(REVISION_SCHEMA_VERSION);
+    canonical.bool(true); // service rule tag
+    canonical.string(&rule.name);
+    canonical.bool(rule.service());
+    canonical.string(&output_policy_tag(&rule.output()));
+    canonical.optional_string(rule.cwd().map(str::to_owned));
+
+    let mut commands = rule.commands();
+    commands.sort();
+    canonical.u64(commands.len() as u64);
+    for command in &commands {
+        canonical.string(command);
+    }
+
+    let mut env_keys: Vec<&String> = rule.environment().keys().collect();
+    env_keys.sort();
+    canonical.u64(env_keys.len() as u64);
+    for key in env_keys {
+        canonical.string(key);
+    }
+
+    hex(&Sha256::digest(&canonical.bytes))
 }
 
 /// Stable output-policy tag for hashing.
@@ -288,6 +346,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         )
     }
 
@@ -444,6 +503,78 @@ mod tests {
     }
 
     #[test]
+    fn service_signature_is_stable_secret_safe_and_semantic() {
+        // TASK-0090 AC6: per-service signature keeps unchanged services owned
+        // and flags changed ones; environment VALUES never enter it.
+        let svc = |config: &str| capture(rules(config)).services()[0].1.clone();
+        let base = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n",
+        );
+        // Identical rule → identical signature.
+        let same = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n",
+        );
+        assert_eq!(base, same);
+        // Command change → signature change (must be replaced).
+        let changed_command = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev --port 4000'\n    change: 'src/**'\n    service: true\n",
+        );
+        assert_ne!(base, changed_command);
+        // Env VALUE change → same signature (secrets-safe); KEY change differs.
+        let with_key = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n    env: { TOKEN: first }\n",
+        );
+        let value_changed = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n    env: { TOKEN: other-value }\n",
+        );
+        let key_added = svc(
+            "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n    env: { TOKEN: first, EXTRA: k }\n",
+        );
+        assert_eq!(
+            with_key, value_changed,
+            "env values never enter the signature"
+        );
+        assert_ne!(with_key, key_added, "env keys are semantic");
+    }
+
+    #[test]
+    fn control_socket_path_is_semantic_surface() {
+        // TASK-0090 AC8: a socket path change is a real revision change so
+        // the bind-new-before-retire-old handoff runs; identical socket is
+        // a no-op.
+        let base = capture(rules(
+            "on:\n  socket: sock\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+        ));
+        let mut with_socket = base.clone();
+        with_socket.control_socket = Some(std::path::PathBuf::from("sock"));
+        let mut moved = with_socket.clone();
+        moved.control_socket = Some(std::path::PathBuf::from("sock2"));
+        let same = with_socket.clone();
+        assert_ne!(
+            semantic_hash(&with_socket),
+            semantic_hash(&moved),
+            "socket move is semantic"
+        );
+        assert_eq!(
+            semantic_hash(&with_socket),
+            semantic_hash(&same),
+            "same socket is no-op"
+        );
+    }
+
+    #[test]
+    fn runtime_config_services_lists_only_service_rules_in_order() {
+        let runtime = capture(rules(
+            "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n  - name: worker\n    run: 'sleep 1'\n    change: 'src/**'\n    service: true\n",
+        ));
+        let services = runtime.services();
+        assert_eq!(services.len(), 2);
+        assert_eq!(services[0].0, "server");
+        assert_eq!(services[1].0, "worker");
+        assert_ne!(services[0].1, services[1].1, "different services differ");
+    }
+
+    #[test]
     fn revision_hash_is_stable_and_never_reused_across_semantic_changes() {
         let v1 = capture(rules(
             "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
@@ -487,6 +618,7 @@ mod history_tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         )
     }
 

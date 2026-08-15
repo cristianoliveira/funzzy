@@ -49,6 +49,7 @@ pub fn validate_candidate(
     backend: WatchBackend,
     respect_gitignore: bool,
     hooks: RunHooks,
+    control_socket: Option<PathBuf>,
 ) -> Result<RuntimeConfig, ConfigError> {
     // Syntactic gate: parses as YAML documents.
     let rules: Vec<Rules> = crate::config::from_yaml(content).map_err(|err| ConfigError {
@@ -70,6 +71,7 @@ pub fn validate_candidate(
         backend,
         respect_gitignore,
         hooks,
+        control_socket,
     ))
 }
 
@@ -99,6 +101,7 @@ pub fn decide(
     backend: WatchBackend,
     respect_gitignore: bool,
     hooks: RunHooks,
+    control_socket: Option<PathBuf>,
 ) -> ReloadDecision {
     match validate_candidate(
         content,
@@ -108,6 +111,7 @@ pub fn decide(
         backend,
         respect_gitignore,
         hooks,
+        control_socket,
     ) {
         Err(error) => ReloadDecision::Fatal(error),
         Ok(config) => match tracker.observe(&config) {
@@ -159,6 +163,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         )
         .expect("valid base config")
     }
@@ -173,6 +178,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         )
         .expect_err("invalid yaml must fail");
         assert_eq!(err.gate, ValidationGate::Syntactic);
@@ -188,6 +194,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         )
         .expect_err("invalid rule value must fail");
         assert!(matches!(
@@ -220,6 +227,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         );
         let ReloadDecision::Commit(r1) = first else {
             panic!("first observe must commit");
@@ -236,6 +244,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         );
         assert_eq!(noop, ReloadDecision::NoOp);
 
@@ -249,6 +258,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         );
         let ReloadDecision::Commit(r2) = second else {
             panic!("semantic change must commit");
@@ -270,6 +280,7 @@ mod tests {
             WatchBackend::Native,
             false,
             RunHooks::default(),
+            None,
         );
         let ReloadDecision::Fatal(error) = fatal else {
             panic!("invalid candidate must be fatal");
