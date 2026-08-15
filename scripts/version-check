@@ -25,6 +25,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 MODE="${1:---check}"
+CANDIDATE=0
+if [ "$1" = "--candidate" ]; then
+  MODE="--candidate"
+  CANDIDATE=1
+fi
 
 CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
 LOCK_VERSION="$(grep -A1 'name = "funzzy"' Cargo.lock | grep '^version' | head -1 | sed 's/^version = "\(.*\)"/\1/')"
@@ -58,10 +63,12 @@ if [ -f nix/package.nix ]; then
   NIX_REV="$(grep -m1 'rev = ' nix/package.nix | sed 's/.*rev = "\(.*\)";/\1/')"
   echo "Nix stable:      $NIX_VERSION ($NIX_REV)"
   if [[ "$CARGO_VERSION" != *"-"* ]]; then
-    if [ "$NIX_VERSION" != "$CARGO_VERSION" ]; then
+    if [ "$CANDIDATE" = "1" ]; then
+      echo "  (candidate: stable Nix package updates at publication, TASK-0063)"
+    elif [ "$NIX_VERSION" != "$CARGO_VERSION" ]; then
       fail "nix/package.nix version ($NIX_VERSION) != Cargo ($CARGO_VERSION)"
     fi
-    if [ "$NIX_REV" != "v${CARGO_VERSION}" ]; then
+    if [ "$CANDIDATE" != "1" ] && [ "$NIX_REV" != "v${CARGO_VERSION}" ]; then
       fail "nix/package.nix rev ($NIX_REV) != v${CARGO_VERSION}"
     fi
   else
@@ -69,12 +76,17 @@ if [ -f nix/package.nix ]; then
   fi
 fi
 
-# 4. Tag: for a release candidate the tag must exist and match exactly.
+# 4. Tag: for a stable release the tag must exist and match exactly. The
+#    candidate prep (TASK-0062) is pre-tag by design: --candidate skips the
+#    existence check (the tag is created at publication, TASK-0063) while
+#    still enforcing everything else.
 if [[ "$CARGO_VERSION" != *"-"* ]]; then
-  if ! git rev-parse -q --verify "refs/tags/v${CARGO_VERSION}" >/dev/null 2>&1; then
-    fail "tag v${CARGO_VERSION} does not exist (required for non-prerelease versions)"
-  else
+  if git rev-parse -q --verify "refs/tags/v${CARGO_VERSION}" >/dev/null 2>&1; then
     echo "Tag:             v${CARGO_VERSION} (exists)"
+  elif [ "$CANDIDATE" = "1" ]; then
+    echo "Tag:             v${CARGO_VERSION} (pending at publication, candidate mode)"
+  else
+    fail "tag v${CARGO_VERSION} does not exist (required for non-prerelease versions)"
   fi
 else
   echo "Tag:             (prerelease $CARGO_VERSION, tag not required)"

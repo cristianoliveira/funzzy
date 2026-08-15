@@ -19,9 +19,9 @@ Current repository state (the inconsistency this boundary resolves):
 | Surface | Value |
 |---|---|
 | Latest git tag | `v1.6.0` |
-| `Cargo.toml` / `Cargo.lock` package | `2.0.0-beta.1` |
-| `nix/package.nix` | `1.5.0` |
-| README | documents V2 behavior, still labeled around V1.6 claims |
+| `Cargo.toml` / `Cargo.lock` package | `2.0.0` (candidate) |
+| `nix/package.nix` | `1.5.0` (updates at publication, TASK-0063) |
+| README | documents V2 behavior |
 | pi-watcher package | private `0.1.0` — a compatibility consumer, not a Funzzy release version |
 
 ## 2. Scope matrix
@@ -103,13 +103,29 @@ candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
 - Verification after publish uses fresh install locations, never local build
   outputs (TASK-0064).
 
-## 7. Release notes
+## 7. Release notes (2.0.0 candidate)
 
-The release-notes outline is approved before any version-file change. It
-covers: the CLI break summary and migration table (V1 flags → V2 commands,
-docs/MIGRATION.md), jobs vocabulary, parallel execution, control/agents
-surface, duration estimates, shell completion (`fzz completions SHELL`), and
-the deferred-work list.
+Breaking CLI grammar/flags/exit behavior (migration: docs/MIGRATION.md):
+
+- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
+
+Preserved compatibility:
+
+- `funzzy` and `fzz` binary names; zero-argument configured watch; legacy root-list and grouped `tasks:` YAML accepted (preferred `jobs:` emitted); additive control-protocol fields.
+
+New in 2.0.0:
+
+- Parallel execution: named contiguous groups, barriers, `on.concurrency`.
+- Control socket: `control`/`ctl`, status/list/run/emit/await/cancel/output/capabilities, `--format toon|json|human`.
+- Agent feedback: exact-generation await, freshness, bounded evidence, NDJSON `--events`, capability negotiation.
+- Duration estimates (XDG history, execution-signature keyed).
+- Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
+- Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
+- Shell completion: `fzz completions SHELL`.
+
+Deferred: service tasks (TASK-0035), workflow hooks (TASK-0040), task-aware output policies (TASK-0041), docs deep dives.
+
+Release evidence locked by tests (TASK-0020): `funzzy`/`fzz` identical command trees; removed V1 flags rejected with exit 2; every subcommand `--help` exits 0.
 
 Release evidence locked by tests (TASK-0020): `funzzy` and `fzz` expose
 identical command trees; removed V1 flags (`--non-block`, `--target`, `-n`,
