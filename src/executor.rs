@@ -6,6 +6,7 @@
 
 use crate::cmd::{self, CaptureHandle, LoggedChild, ShutdownOutcome};
 use crate::diagnostics;
+use crate::logging;
 use crate::output::OutputRegistry;
 use crate::plan::{
     ExecutionSignature, RunOutcome, RunPlan, Stage, TaskContext, TaskOutcome, TaskPlan,
@@ -137,6 +138,7 @@ pub trait ProcessRunner: Send + Sync {
         context: &TaskContext,
         capture: Option<Arc<CaptureHandle>>,
         label: Option<String>,
+        quiet: bool,
     ) -> Result<Box<dyn ChildProcess>, String>;
 }
 
@@ -150,10 +152,11 @@ impl ProcessRunner for SystemProcessRunner {
         context: &TaskContext,
         capture: Option<Arc<CaptureHandle>>,
         label: Option<String>,
+        quiet: bool,
     ) -> Result<Box<dyn ChildProcess>, String> {
         let child = match command {
             CommandLine::Shell(command) => {
-                cmd::spawn_in_with_capture(command, context, capture, label)
+                cmd::spawn_in_with_capture_quiet(command, context, capture, label, quiet)
             }
             CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
         }?;
@@ -327,6 +330,8 @@ struct ActiveTask {
     /// and the total command count; drive the `command=1/3` diagnostics.
     command_index: usize,
     command_total: usize,
+    /// Per-job output policy (TASK-0041).
+    output: crate::config::OutputPolicy,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -345,6 +350,7 @@ impl From<TaskPlan> for ActiveTask {
             capture: None,
             command_index: 0,
             command_total: task.commands.len(),
+            output: task.output,
         }
     }
 }
@@ -572,7 +578,14 @@ impl Executor {
                 };
                 let display = command.display();
                 task.current_command = Some(display.clone());
-                if task.capture.is_none() && self.outputs.is_some() {
+                // Capture whenever a retention registry exists OR the task
+                // needs buffered output for its policy (TASK-0041):
+                // quiet/capture/show-on-failure hold output for retrieval or
+                // reveal even when no control surface is wired.
+                if task.capture.is_none()
+                    && (self.outputs.is_some()
+                        || task.output != crate::config::OutputPolicy::Inherit)
+                {
                     task.capture = Some(Arc::new(CaptureHandle::new()));
                 }
                 match self.runner.spawn(
@@ -582,9 +595,11 @@ impl Executor {
                     task.capture.clone(),
                     // TASK-0028: attribute live lines to the task only when
                     // it runs in a parallel group, where output can interleave.
-                    // Serial tasks keep today's raw passthrough (contract §7:
-                    // configurations without `parallel` execute exactly as today).
+                    // Serial tasks keep today's raw passthrough (contract §7).
                     task.group_occurrence.is_some().then(|| task.name.clone()),
+                    // TASK-0041: quiet/capture/show-on-failure suppress live
+                    // output; inherit streams it.
+                    !matches!(task.output, crate::config::OutputPolicy::Inherit),
                 ) {
                     Ok(child) => {
                         task.child = Some(child);
@@ -683,7 +698,37 @@ impl Executor {
         });
     }
 
+    /// Reveals a task's captured output once on failure for the
+    /// show-on-failure policy (TASK-0041): streams the buffered stdout/stderr
+    /// with task attribution exactly once, so failures are diagnosable while
+    /// passing jobs stay quiet.
+    fn reveal_on_failure(&self, task: &ActiveTask, failures: &[String]) {
+        if task.output != crate::config::OutputPolicy::ShowOnFailure || failures.is_empty() {
+            return;
+        }
+        if let Some(capture) = &task.capture {
+            let data = capture.finish();
+            let label = task.group_occurrence.as_deref().unwrap_or(&task.name);
+            for (bytes, stream) in [
+                (data.stdout.bytes(), "stdout"),
+                (data.stderr.bytes(), "stderr"),
+            ] {
+                if bytes.is_empty() {
+                    continue;
+                }
+                let text = String::from_utf8_lossy(bytes);
+                for line in text.lines() {
+                    let attributed = format!("[{}:{}] {}", label, stream, line);
+                    println!("{}", attributed);
+                    logging::log_plain(&attributed);
+                }
+            }
+        }
+    }
+
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
+        let task_failed = !task.failures.is_empty();
+        self.reveal_on_failure(&task, &task.failures);
         if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
             outputs.record(run.metadata.run_id, task.name.clone(), capture.finish());
         }
@@ -801,6 +846,7 @@ impl Executor {
                 &TaskContext::default(),
                 None,
                 None,
+                false,
             )
             .and_then(|mut child| {
                 // Wait via the trait's try_wait (the runner returns a
@@ -1014,6 +1060,7 @@ mod tests {
                 group_occurrence: None,
                 rule,
                 context: crate::plan::TaskContext::default(),
+                output: crate::config::OutputPolicy::Inherit,
             })],
         };
         Executor::new(
@@ -1095,6 +1142,7 @@ mod tests {
             context: &TaskContext,
             capture: Option<Arc<CaptureHandle>>,
             label: Option<String>,
+            quiet: bool,
         ) -> Result<Box<dyn ChildProcess>, String> {
             self.commands.lock().unwrap().push(format!(
                 "{}:{}:{}",
@@ -1102,7 +1150,7 @@ mod tests {
                 command.display(),
                 label.is_some()
             ));
-            SystemProcessRunner.spawn(task, command, context, capture, label)
+            SystemProcessRunner.spawn(task, command, context, capture, label, quiet)
         }
     }
 
@@ -1274,6 +1322,7 @@ mod tests {
             _context: &TaskContext,
             _capture: Option<Arc<CaptureHandle>>,
             _label: Option<String>,
+            _quiet: bool,
         ) -> Result<Box<dyn ChildProcess>, String> {
             let command = command.display();
             if command == "spawn-error" {

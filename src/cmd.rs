@@ -188,8 +188,13 @@ pub enum ShutdownOutcome {
 }
 
 impl LoggedChild {
-    fn new(mut child: Child, capture: Option<Arc<CaptureHandle>>, label: Option<String>) -> Self {
-        let forward_handles = forward_child_output(&mut child, capture, label);
+    fn new(
+        mut child: Child,
+        capture: Option<Arc<CaptureHandle>>,
+        label: Option<String>,
+        quiet: bool,
+    ) -> Self {
+        let forward_handles = forward_child_output(&mut child, capture, label, quiet);
         Self {
             child,
             forward_handles,
@@ -347,7 +352,7 @@ fn run_to_completion(cmd: &mut Command, display: &str) -> Result<(), String> {
             .spawn()
             .map_err(|error| format!("Command {} has errored with {}", display, error))?;
 
-        let mut handles = forward_child_output(&mut child, None, None);
+        let mut handles = forward_child_output(&mut child, None, None, false);
 
         match child.wait() {
             Ok(status) if status.success() => {
@@ -385,6 +390,26 @@ pub fn spawn_in(command: &String, context: &TaskContext) -> Result<LoggedChild, 
     spawn_in_with_capture(command, context, None, None)
 }
 
+/// Like [`spawn_in_with_capture`] with a quiet flag (TASK-0041): when quiet,
+/// live output is suppressed (capture still keeps raw bytes) so policies
+/// like quiet/capture/show-on-failure can hold output until reveal.
+pub fn spawn_in_with_capture_quiet(
+    command: &String,
+    context: &TaskContext,
+    capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
+    quiet: bool,
+) -> Result<LoggedChild, String> {
+    println!();
+    logging::log_line("");
+    stdout::info(&format!("{} \n", String::from(command)));
+
+    let mut cmd = prepare_command(command);
+    apply_context(&mut cmd, context);
+
+    spawn_configured(&mut cmd, command, capture, label, quiet)
+}
+
 /// Spawns with an optional bounded output capture (TASK-0045, contract §6).
 /// The capture shares the child's pipe reads: live forwarding and the log
 /// file keep working exactly as before, with one read, multiple sinks.
@@ -403,7 +428,7 @@ pub fn spawn_in_with_capture(
     let mut cmd = prepare_command(command);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, command, capture, label)
+    spawn_configured(&mut cmd, command, capture, label, false)
 }
 
 /// Spawns an exact argv (program plus arguments) directly, without a shell.
@@ -421,7 +446,7 @@ pub fn spawn_argv_in(argv: &[String], context: &TaskContext) -> Result<LoggedChi
     let mut cmd = prepare_argv_command(argv);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, &display, None, None)
+    spawn_configured(&mut cmd, &display, None, None, false)
 }
 
 fn apply_context(command: &mut Command, context: &TaskContext) {
@@ -436,13 +461,14 @@ fn spawn_configured(
     display: &str,
     capture: Option<Arc<CaptureHandle>>,
     label: Option<String>,
+    quiet: bool,
 ) -> Result<LoggedChild, String> {
     // Pipe child output whenever we need to forward it: logging, bounded
-    // capture, or live task attribution (TASK-0028). Attribution requires the
-    // forwarding thread, so parallel-group tasks always pipe even without
-    // `--log-file`; serial tasks without logging/capture keep inherited
-    // stdout today's passthrough.
-    if logging::is_enabled() || capture.is_some() || label.is_some() {
+    // capture, quiet suppression (TASK-0041), or live task attribution
+    // (TASK-0028). Attribution requires the forwarding thread, so
+    // parallel-group tasks always pipe even without `--log-file`; serial
+    // tasks without logging/capture/quiet keep inherited stdout passthrough.
+    if logging::is_enabled() || capture.is_some() || label.is_some() || quiet {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
     }
@@ -481,7 +507,7 @@ fn spawn_configured(
             // shutdown path can reach the whole task tree (TASK-0030).
             let pid = child.id() as i32;
             crate::process_owner::register(pid);
-            Ok(LoggedChild::new(child, capture, label))
+            Ok(LoggedChild::new(child, capture, label, quiet))
         }
         Err(error) => Err(format!("Command {} has errored with {}", display, error)),
     }
@@ -615,6 +641,7 @@ fn forward_child_output(
     child: &mut Child,
     capture: Option<Arc<CaptureHandle>>,
     label: Option<String>,
+    quiet: bool,
 ) -> ForwardHandles {
     let mut handles = ForwardHandles::new();
 
@@ -624,11 +651,12 @@ fn forward_child_output(
             false,
             capture.clone(),
             label.clone(),
+            quiet,
         ));
     }
 
     if let Some(stderr) = child.stderr.take() {
-        handles.stderr = Some(spawn_forwarding_thread(stderr, true, capture, label));
+        handles.stderr = Some(spawn_forwarding_thread(stderr, true, capture, label, quiet));
     }
 
     handles
@@ -658,6 +686,7 @@ fn spawn_forwarding_thread<R: std::io::Read + Send + 'static>(
     is_stderr: bool,
     capture: Option<Arc<CaptureHandle>>,
     label: Option<String>,
+    quiet: bool,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = BufReader::new(reader);
@@ -673,15 +702,21 @@ fn spawn_forwarding_thread<R: std::io::Read + Send + 'static>(
                     // reaches the console instead of silently dropping the
                     // rest of the stream.
                     let attributed = render_live_line(&line, label.as_deref());
-                    if is_stderr {
-                        eprint!("{}", attributed);
-                        let _ = std::io::stderr().flush();
-                    } else {
-                        print!("{}", attributed);
-                        let _ = std::io::stdout().flush();
+                    // TASK-0041: quiet/capture/show-on-failure suppress the
+                    // live stream; the capture still keeps raw bytes so the
+                    // output is retrievable and revealable on failure.
+                    if !quiet {
+                        if is_stderr {
+                            eprint!("{}", attributed);
+                            let _ = std::io::stderr().flush();
+                        } else {
+                            print!("{}", attributed);
+                            let _ = std::io::stdout().flush();
+                        }
                     }
-
-                    logging::log_plain(&attributed);
+                    if !quiet {
+                        logging::log_plain(&attributed);
+                    }
                     if let Some(capture) = &capture {
                         // Raw bytes: no secret inference, no UTF-8 validation
                         // here (retrieval renders lossy), and no prefix.

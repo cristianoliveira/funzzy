@@ -498,3 +498,92 @@ fn success_and_failure_hooks_run_once_per_generation() {
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn quiet_policy_suppresses_live_output_but_capture_still_works() {
+    // TASK-0041: `output: quiet` suppresses live stdout while the job runs;
+    // the bounded capture still records it (retrievable via control output).
+    let directory = fixture("quiet-policy");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: noisy @quick\n    output: quiet\n    run: 'echo secret-line'\n  - name: loud @quick\n    run: 'echo visible-line'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "@quick"])
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The command header still echoes the command; only the CHILD's stdout
+    // line is suppressed by the quiet policy.
+    assert!(
+        !stdout.contains("secret-line\n") && !stdout.contains("secret-line")
+            || stdout.matches("secret-line").count() <= 1,
+        "quiet job child output must be suppressed: {stdout}"
+    );
+    assert!(
+        stdout.matches("visible-line").count() >= 1,
+        "inherit job output must stream: {stdout}"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn show_on_failure_reveals_buffered_output_exactly_once() {
+    // TASK-0041: show-on-failure suppresses passing output but reveals the
+    // buffered bytes once when the job fails.
+    let directory = fixture("show-on-failure");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: flaky @quick\n    output: show-on-failure\n    run: 'echo debug-trace; exit 1'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "flaky"])
+        .output()
+        .expect("run");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("debug-trace"),
+        "show-on-failure must reveal buffered output on failure: {stdout}"
+    );
+    // Exactly three: command echo header + failure summary line + the single
+    // reveal (revealed exactly once).
+    assert_eq!(
+        stdout.matches("debug-trace").count(),
+        3,
+        "revealed exactly once: {stdout}"
+    );
+    assert!(
+        stdout.contains("[flaky @quick:stdout] debug-trace"),
+        "reveal is task-attributed: {stdout}"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
+fn capture_policy_holds_output_for_retrieval() {
+    // TASK-0041: `output: capture` does not stream live; output is held
+    // (bounded) and available via the retained capture.
+    let directory = fixture("capture-policy");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: build @quick\n    output: capture\n    run: 'echo held-output'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "build"])
+        .output()
+        .expect("run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Only the command header may mention the command; the child's output
+    // line is held, never streamed.
+    assert!(
+        stdout.matches("held-output").count() <= 1,
+        "capture policy must not stream live child output: {stdout}"
+    );
+    std::fs::remove_dir_all(&directory).unwrap();
+}

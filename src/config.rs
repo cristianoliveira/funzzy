@@ -260,6 +260,7 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                             && key_str != "respect_gitignore"
                             && key_str != "success"
                             && key_str != "failure"
+                            && key_str != "output"
                         {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
@@ -309,10 +310,30 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
     let cwd = yaml::extract_optional_string(yaml, "cwd")?;
     let environment = yaml::extract_optional_string_map(yaml, "env")?;
+    let output = match yaml::extract_optional_string(yaml, "output")? {
+        None => OutputPolicy::Inherit,
+        Some(raw) => match raw.as_str() {
+            "inherit" => OutputPolicy::Inherit,
+            "quiet" => OutputPolicy::Quiet,
+            "capture" => OutputPolicy::Capture,
+            "show-on-failure" => OutputPolicy::ShowOnFailure,
+            other => {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!(
+                        "Invalid output policy '{}' for job '{}': expected inherit, quiet, capture, or show-on-failure",
+                        other, name
+                    ),
+                    None,
+                    None,
+                ))
+            }
+        },
+    };
 
     let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
         .with_execution_context(cwd, environment)
-        .with_inherited_patterns(inherited_patterns(common));
+        .with_inherited_patterns(inherited_patterns(common))
+        .with_output(output);
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
@@ -680,6 +701,8 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
 #[cfg(test)]
 mod tests {
     extern crate yaml_rust;
+
+    use crate::config::OutputPolicy;
 
     use self::yaml_rust::YamlLoader;
     use super::concurrency_from_yaml;
@@ -2070,4 +2093,82 @@ pub fn hooks_from_file(filename: &str) -> Result<RunHooks, String> {
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
     hooks_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod output_policy_tests {
+    use super::*;
+
+    #[test]
+    fn output_policy_defaults_to_inherit() {
+        assert_eq!(
+            output_policy_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            OutputPolicy::Inherit
+        );
+        assert_eq!(
+            output_policy_from_yaml("jobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n")
+                .unwrap(),
+            OutputPolicy::Inherit
+        );
+    }
+
+    #[test]
+    fn output_policy_parses_all_values() {
+        for (raw, expected) in [
+            ("inherit", OutputPolicy::Inherit),
+            ("quiet", OutputPolicy::Quiet),
+            ("capture", OutputPolicy::Capture),
+            ("show-on-failure", OutputPolicy::ShowOnFailure),
+        ] {
+            let yaml = format!("on:\n  change: '**/*'\n  output: {raw}\n");
+            assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn output_policy_rejects_unknown_values() {
+        assert!(output_policy_from_yaml("on:\n  output: loud\n").is_err());
+        assert!(output_policy_from_yaml("on:\n  output: 1\n").is_err());
+    }
+}
+
+/// Per-job output policy (OUTPUT-POLICY-CONTRACT, TASK-0041). `Inherit` is
+/// the default and matches today's streaming behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputPolicy {
+    #[default]
+    Inherit,
+    Quiet,
+    Capture,
+    ShowOnFailure,
+}
+
+/// Parses `output:` (on-level default or job-level) into an OutputPolicy;
+/// unknown values are rejected loudly.
+pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+    let raw = if on != &Yaml::BadValue {
+        match &on["output"] {
+            Yaml::BadValue => None,
+            Yaml::String(value) => Some(value.clone()),
+            _ => return Err("Property 'on.output' must be a string".to_owned()),
+        }
+    } else {
+        None
+    };
+    match raw.as_deref() {
+        None => Ok(OutputPolicy::Inherit),
+        Some("inherit") => Ok(OutputPolicy::Inherit),
+        Some("quiet") => Ok(OutputPolicy::Quiet),
+        Some("capture") => Ok(OutputPolicy::Capture),
+        Some("show-on-failure") => Ok(OutputPolicy::ShowOnFailure),
+        Some(other) => Err(format!(
+            "invalid output policy '{}': expected inherit, quiet, capture, or show-on-failure",
+            other
+        )),
+    }
 }

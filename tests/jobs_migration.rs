@@ -227,6 +227,7 @@ fn usage_guide_yaml_blocks_parse_through_the_production_parser() {
     // the same production parser — docs never drift from the parser.
     let usage = std::fs::read_to_string("docs/USAGE.md").expect("usage guide");
     let advanced = std::fs::read_to_string("docs/ADVANCED-GUIDE.md").expect("advanced guide");
+    let hooks = std::fs::read_to_string("docs/RUN-HOOKS-CONTRACT.md").expect("hooks contract");
     let all = format!("{}\n{advanced}", usage);
     let mut in_block = false;
     let mut current = String::new();

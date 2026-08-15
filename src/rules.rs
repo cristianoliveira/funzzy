@@ -35,6 +35,8 @@ pub struct Rules {
     /// use this to report `rule_origin=group` vs `task` for the effective
     /// rule responsible for a decision. Empty for plain task lists.
     inherited: Vec<String>,
+    /// Per-job output policy (TASK-0041); Inherit is the default.
+    output: crate::config::OutputPolicy,
 }
 
 impl Rules {
@@ -56,6 +58,7 @@ impl Rules {
             cwd: None,
             environment: BTreeMap::new(),
             inherited: vec![],
+            output: crate::config::OutputPolicy::Inherit,
         }
     }
 
@@ -80,6 +83,7 @@ impl Rules {
             cwd: None,
             environment: BTreeMap::new(),
             inherited: vec![],
+            output: crate::config::OutputPolicy::Inherit,
         }
     }
 
@@ -117,6 +121,17 @@ impl Rules {
 
     /// Declares the task as a member of the named `parallel` group. Only
     /// consecutive tasks sharing the same non-empty group name run together.
+    /// Sets the per-job output policy (TASK-0041).
+    pub fn with_output(mut self, output: crate::config::OutputPolicy) -> Self {
+        self.output = output;
+        self
+    }
+
+    /// The per-job output policy.
+    pub fn output(&self) -> crate::config::OutputPolicy {
+        self.output
+    }
+
     pub fn with_parallel(mut self, group: String) -> Self {
         self.parallel = Some(group);
         self

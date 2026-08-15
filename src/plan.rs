@@ -59,6 +59,8 @@ pub struct TaskPlan {
     pub rule: Rules,
     /// Effective child process context. Relative cwd is resolved before spawn.
     pub context: TaskContext,
+    /// Per-job output policy (TASK-0041).
+    pub output: crate::config::OutputPolicy,
 }
 
 /// One stage of a run: a serial task or a named parallel-group occurrence.
@@ -220,6 +222,7 @@ impl RunPlan {
         };
 
         for (position, rule) in rules.into_iter().enumerate() {
+            let output = rule.output();
             let plan = TaskPlan {
                 name: rule.name.clone(),
                 position,
@@ -231,6 +234,7 @@ impl RunPlan {
                     environment: rule.environment().clone(),
                 },
                 rule,
+                output,
             };
 
             match (plan.parallel.as_deref(), open_group.as_mut()) {
