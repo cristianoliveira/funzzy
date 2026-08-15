@@ -90,6 +90,40 @@ fn wait_for_socket(scratch: &std::path::Path) {
     }
 }
 
+/// True when the watcher's latest generation is running (generation >= 1).
+/// Used to wait for a triggered generation to start before a reload, so the
+/// test never races the debounce window against the commit boundary.
+fn status_generation_running(scratch: &std::path::Path) -> bool {
+    use std::io::{BufRead, BufReader, Write};
+    let socket = scratch.join("sock");
+    let mut stream = match std::os::unix::net::UnixStream::connect(&socket) {
+        Ok(stream) => stream,
+        Err(_) => return false,
+    };
+    if writeln!(
+        stream,
+        r#"{{"jsonrpc":"2.0","id":"status","method":"status","params":{{}}}}"#
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let mut line = String::new();
+    if BufReader::new(&mut stream).read_line(&mut line).is_err() {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(&line)
+        .ok()
+        .and_then(|value| {
+            let result = value["result"].clone();
+            Some(
+                result["generation"].as_u64().unwrap_or(0) >= 1
+                    && result["state"].as_str() == Some("running"),
+            )
+        })
+        .unwrap_or(false)
+}
+
 /// AC1 root remove: after a reload that drops the docs root, writing to
 /// docs/ no longer triggers, while src/ still does. Process never exits.
 #[test]
@@ -270,7 +304,21 @@ fn active_finite_task_survives_config_save() {
 
         // Trigger the slow generation, then immediately reload the config.
         std::fs::write(scratch.join("src/a.rs"), "x").unwrap();
-        std::thread::sleep(Duration::from_millis(600));
+        // Deterministic ordering: wait until the slow generation is RUNNING
+        // (status generation 1, running) before rewriting the config. A fixed
+        // sleep races the 1s debounce window: under parallel load the batch
+        // can fire after the reload commit and route the fast job instead,
+        // which would never produce the slow verdict.
+        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut slow_running = false;
+        while std::time::Instant::now() < deadline {
+            if status_generation_running(&scratch) {
+                slow_running = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(slow_running, "slow generation must start before the reload");
         let new_config = "on:\n  socket: sock\njobs:\n  - name: fast\n    run: 'echo fast > fast-verdict.txt'\n    change: 'src/**'\n";
         std::fs::write(scratch.join(".watch.yaml"), new_config).unwrap();
         wait_for_log(&scratch, "hot-reloading to revision 2");
