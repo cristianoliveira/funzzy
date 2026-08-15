@@ -1,7 +1,7 @@
 ---
 id: TASK-0068
 title: Replace stale V1 flag pages and modernize executable examples
-status: todo
+status: done
 depends_on: [TASK-0066, TASK-0067, TASK-0078]
 priority: high
 tags: [docs, migration, examples, v1, v2, cleanup]
