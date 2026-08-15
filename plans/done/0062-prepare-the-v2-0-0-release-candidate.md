@@ -1,7 +1,7 @@
 ---
 id: TASK-0062
 title: Prepare the v2.0.0 release candidate
-status: todo
+status: done
 depends_on: [TASK-0061, TASK-0020, TASK-0029, TASK-0049, TASK-0056, TASK-0059]
 priority: high
 tags: [release, v2, migration, packaging, verification]
