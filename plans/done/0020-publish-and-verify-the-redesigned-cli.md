@@ -1,7 +1,7 @@
 ---
 id: TASK-0020
 title: Publish and verify the redesigned CLI
-status: todo
+status: done
 depends_on: [TASK-0016, TASK-0017, TASK-0018, TASK-0019, TASK-0021, TASK-0022, TASK-0023, TASK-0069]
 priority: high
 tags: [rust, cli, docs, release]
