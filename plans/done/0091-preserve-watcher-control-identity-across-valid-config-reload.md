@@ -1,7 +1,7 @@
 ---
 id: TASK-0091
 title: Preserve watcher control identity across valid config reload
-status: doing
+status: done
 depends_on: [TASK-0089, TASK-0090, TASK-0050, TASK-0082]
 priority: high
 tags: [rust, watcher, control-socket, identity, reload, snapshots]
