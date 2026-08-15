@@ -310,6 +310,22 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
     let cwd = yaml::extract_optional_string(yaml, "cwd")?;
     let environment = yaml::extract_optional_string_map(yaml, "env")?;
+    // Strict: `service` must be a boolean when present (TASK-0035); a typo
+    // like `yes` must not silently disable service management.
+    let service = match &yaml["service"] {
+        Yaml::BadValue => false,
+        Yaml::Boolean(value) => *value,
+        _ => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Invalid 'service' value for job '{}': must be a boolean",
+                    name
+                ),
+                None,
+                None,
+            ))
+        }
+    };
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => OutputPolicy::Inherit,
         Some(raw) => match raw.as_str() {
@@ -333,7 +349,8 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
         .with_execution_context(cwd, environment)
         .with_inherited_patterns(inherited_patterns(common))
-        .with_output(output);
+        .with_output(output)
+        .with_service(service);
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
@@ -2170,5 +2187,34 @@ pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
             "invalid output policy '{}': expected inherit, quiet, capture, or show-on-failure",
             other
         )),
+    }
+}
+
+#[cfg(test)]
+mod service_tests {
+    use super::*;
+
+    #[test]
+    fn service_defaults_to_false() {
+        let rules =
+            from_yaml("on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n").unwrap();
+        assert!(!rules[0].service());
+    }
+
+    #[test]
+    fn service_parses_true() {
+        let rules = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: server\n    service: true\n    run: 'sleep 1000'\n",
+        )
+        .unwrap();
+        assert!(rules[0].service());
+    }
+
+    #[test]
+    fn service_rejects_non_boolean() {
+        assert!(from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    service: yes\n    run: echo a\n"
+        )
+        .is_err());
     }
 }

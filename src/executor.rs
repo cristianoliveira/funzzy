@@ -13,6 +13,11 @@ use crate::plan::{
 };
 use crate::rules::CommandLine;
 use crate::stdout;
+
+/// Bounded service restart attempts on unexpected exit (TASK-0035).
+pub const SERVICE_MAX_RESTARTS: usize = 3;
+/// Backoff between service restarts (TASK-0035).
+pub const SERVICE_RESTART_BACKOFF_MS: u64 = 500;
 use serde_derive::Serialize;
 use std::collections::VecDeque;
 use std::io;
@@ -332,6 +337,10 @@ struct ActiveTask {
     command_total: usize,
     /// Per-job output policy (TASK-0041).
     output: crate::config::OutputPolicy,
+    /// Managed long-running service (TASK-0035).
+    service: bool,
+    /// Unexpected-exit restart attempts remaining for a service (TASK-0035).
+    service_restarts_left: usize,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -351,6 +360,8 @@ impl From<TaskPlan> for ActiveTask {
             command_index: 0,
             command_total: task.commands.len(),
             output: task.output,
+            service: task.service,
+            service_restarts_left: crate::executor::SERVICE_MAX_RESTARTS,
         }
     }
 }
@@ -359,6 +370,9 @@ pub struct Run {
     stages: VecDeque<Stage>,
     queued: VecDeque<TaskPlan>,
     active: Vec<ActiveTask>,
+    /// Running managed services (TASK-0035): spawned, alive, and NOT blocking
+    /// later stages. Reaped on cancellation/supersession/shutdown.
+    services: Vec<ActiveTask>,
     stage_limit: usize,
     results: Vec<Result<(), String>>,
     outcomes: Vec<(usize, String, Option<String>, TaskOutcome)>,
@@ -465,6 +479,7 @@ impl Executor {
             stages: plan.stages.into(),
             queued: VecDeque::new(),
             active: vec![],
+            services: vec![],
             stage_limit: 0,
             results: vec![],
             outcomes: vec![],
@@ -478,6 +493,12 @@ impl Executor {
         loop {
             if run.active.is_empty() && run.queued.is_empty() {
                 let Some(stage) = run.stages.pop_front() else {
+                    // TASK-0035: background services keep the generation
+                    // alive (polled for restart/failure) until reaped.
+                    if !run.services.is_empty() {
+                        self.advance_services(run);
+                        return Step::Running;
+                    }
                     return Step::Finished;
                 };
                 match stage {
@@ -508,7 +529,17 @@ impl Executor {
                     &mut run.results,
                     run.metadata.run_id,
                 ) {
-                    TaskStep::Running => index += 1,
+                    TaskStep::Running => {
+                        // TASK-0035: a spawned-and-running service is moved
+                        // to the background set so it never blocks later
+                        // stages; it is reaped at cancellation/shutdown.
+                        if run.active[index].service {
+                            let service = run.active.remove(index);
+                            run.services.push(service);
+                            continue;
+                        }
+                        index += 1;
+                    }
                     TaskStep::Finished => {
                         let task = run.active.remove(index);
                         self.record_task_outcome(run, task);
@@ -523,8 +554,21 @@ impl Executor {
                 }
             }
 
+            // TASK-0035: background services are polled for unexpected exit
+            // (restart with bound) without blocking stage progression.
+            if !run.services.is_empty() {
+                self.advance_services(run);
+            }
+
             if run.active.is_empty() && run.queued.is_empty() {
-                continue;
+                // TASK-0035: background services keep the generation alive
+                // until superseded/cancelled/finished, so their restart and
+                // failure policy is polled; a generation with only services
+                // is still Running (scheduled) rather than Finished.
+                if run.services.is_empty() {
+                    continue;
+                }
+                return Step::Running;
             }
 
             if task_finished && run.active.len() < run.stage_limit && !run.queued.is_empty() {
@@ -647,7 +691,44 @@ impl Executor {
                 }
                 Ok(Some(status)) => {
                     task.child = None;
+                    let service_command = task.current_command.clone();
                     task.current_command = None;
+                    // TASK-0035: a managed service restarts on unexpected
+                    // (non-zero) exit with bounded attempts and backoff; a
+                    // zero exit is a deliberate stop. A running service never
+                    // finishes the generation — it returns Running until
+                    // superseded or shut down.
+                    if task.service {
+                        if status.success() {
+                            // Deliberate stop: the service is done for this
+                            // generation (e.g. it exited on its own request).
+                            results.push(Ok(()));
+                            return TaskStep::Finished;
+                        }
+                        if task.service_restarts_left > 0 {
+                            task.service_restarts_left -= 1;
+                            stdout::warn(&format!(
+                                "service '{}' exited with {}; restarting ({} left)",
+                                task.name, status, task.service_restarts_left
+                            ));
+                            self.clock
+                                .sleep(Duration::from_millis(SERVICE_RESTART_BACKOFF_MS));
+                            // The service command was consumed at spawn; put it
+                            // back so the next loop iteration respawns it.
+                            if let Some(cmd) = &service_command {
+                                task.commands.push_front(CommandLine::Shell(cmd.clone()));
+                            }
+                            continue;
+                        }
+                        let failure = format!(
+                            "Service {} has failed after {} restarts",
+                            task.name, SERVICE_MAX_RESTARTS
+                        );
+                        task.failures.push(failure.clone());
+                        results.push(Err(failure));
+                        return TaskStep::Finished;
+                    }
+
                     if status.success() {
                         results.push(Ok(()));
                         continue;
@@ -809,6 +890,120 @@ impl Executor {
                     task.group_occurrence.clone(),
                     TaskOutcome::Skipped,
                 ));
+            }
+        }
+    }
+
+    /// Polls background services (TASK-0035): a service that exited
+    /// unexpectedly restarts with a bounded attempt count; exceeding the
+    /// bound records a failure. Deliberate zero-exit stops remove the
+    /// service from the background set.
+    fn advance_services(&self, run: &mut Run) {
+        let mut index = 0;
+        while index < run.services.len() {
+            let service = &mut run.services[index];
+            // Respawn a restarted service whose child was reaped and whose
+            // command was queued for the next attempt.
+            if service.child.is_none() {
+                let Some(command) = service.commands.pop_front() else {
+                    index += 1;
+                    continue;
+                };
+                let display = command.display();
+                service.current_command = Some(display.clone());
+                match self.runner.spawn(
+                    &service.name,
+                    &command,
+                    &service.context,
+                    service.capture.clone(),
+                    service
+                        .group_occurrence
+                        .is_some()
+                        .then(|| service.name.clone()),
+                    !matches!(service.output, crate::config::OutputPolicy::Inherit),
+                ) {
+                    Ok(child) => {
+                        service.child = Some(child);
+                        if service.started.is_none() {
+                            service.started = Some(self.clock.now());
+                        }
+                        if self.verbose {
+                            diagnostics::debug(&diagnostics::Record {
+                                generation: Some(run.metadata.run_id),
+                                command_position: Some((1, 1)),
+                                state: Some("started"),
+                                command: Some(display.clone()),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        let failure = format!("Service {} respawn failed: {}", service.name, err);
+                        service.failures.push(failure.clone());
+                        run.results.push(Err(failure));
+                        let done = run.services.remove(index);
+                        run.outcomes.push((
+                            done.position,
+                            done.name.clone(),
+                            done.group_occurrence.clone(),
+                            TaskOutcome::Failed {
+                                failures: done.failures.clone(),
+                            },
+                        ));
+                        continue;
+                    }
+                }
+                index += 1;
+                continue;
+            }
+            let child = service.child.as_mut().expect("child present");
+            match child.try_wait() {
+                Ok(None) => index += 1,
+                Ok(Some(status)) => {
+                    service.child = None;
+                    let command = service.current_command.clone();
+                    service.current_command = None;
+                    if status.success() {
+                        // Deliberate stop: remove from background.
+                        let done = run.services.remove(index);
+                        run.outcomes.push((
+                            done.position,
+                            done.name.clone(),
+                            done.group_occurrence.clone(),
+                            TaskOutcome::Passed,
+                        ));
+                        continue;
+                    }
+                    if service.service_restarts_left > 0 {
+                        service.service_restarts_left -= 1;
+                        stdout::warn(&format!(
+                            "service '{}' exited with {}; restarting ({} left)",
+                            service.name, status, service.service_restarts_left
+                        ));
+                        if let Some(cmd) = command {
+                            service.commands.push_front(CommandLine::Shell(cmd));
+                        }
+                        index += 1;
+                        continue;
+                    }
+                    let failure = format!(
+                        "Service {} has failed after {} restarts",
+                        service.name, SERVICE_MAX_RESTARTS
+                    );
+                    service.failures.push(failure.clone());
+                    run.results.push(Err(failure));
+                    let done = run.services.remove(index);
+                    run.outcomes.push((
+                        done.position,
+                        done.name.clone(),
+                        done.group_occurrence.clone(),
+                        TaskOutcome::Failed {
+                            failures: done.failures.clone(),
+                        },
+                    ));
+                    continue;
+                }
+                Err(_) => index += 1,
             }
         }
     }
@@ -1061,6 +1256,7 @@ mod tests {
                 rule,
                 context: crate::plan::TaskContext::default(),
                 output: crate::config::OutputPolicy::Inherit,
+                service: false,
             })],
         };
         Executor::new(
@@ -1616,5 +1812,90 @@ mod tests {
             false,
         );
         assert!(parallel.is_ok(), "positive limits must be accepted");
+    }
+
+    fn service_rule(name: &str, commands: &[&str], service: bool) -> Rules {
+        let mut rule = Rules::new(
+            name.to_owned(),
+            commands.iter().map(|c| c.to_string()).collect(),
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        if service {
+            rule = rule.with_service(true);
+        }
+        rule
+    }
+
+    #[test]
+    fn finite_task_exits_are_failures_not_restarts() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let plan = RunPlan::from_rules(vec![service_rule("finite", &["boom"], false)]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        executor.advance(&mut run);
+        runner.complete("boom", false);
+        assert!(matches!(executor.advance(&mut run), Step::Finished));
+        let completed = executor.finish(run);
+        assert!(completed.outcome.has_failures());
+        assert_eq!(runner.state.lock().unwrap().started.len(), 1, "no restarts");
+    }
+
+    #[test]
+    fn service_restarts_on_unexpected_exit_up_to_the_bound() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let plan = RunPlan::from_rules(vec![service_rule("svc", &["serve"], true)]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        executor.advance(&mut run);
+        assert_eq!(runner.state.lock().unwrap().started.len(), 1, "first spawn");
+        // The fake child is terminal once marked; each advance polls the
+        // service and exhausts one restart. Drive past the bound.
+        runner.complete("serve", false);
+        // Each restart needs a respawn poll + an exit poll; drive well past
+        // the bound so the final failure is recorded deterministically.
+        for _ in 0..=(4 + SERVICE_MAX_RESTARTS) {
+            let _ = executor.advance(&mut run);
+        }
+        // After the bound, the service failure is recorded in outcomes.
+        assert!(
+            run.outcomes
+                .iter()
+                .any(|(_, _, _, o)| matches!(o, TaskOutcome::Failed { .. })),
+            "service must fail after the restart bound: {:?}",
+            run.outcomes
+        );
+        assert_eq!(
+            runner.state.lock().unwrap().started.len(),
+            1 + SERVICE_MAX_RESTARTS,
+            "1 + 3 spawns"
+        );
+    }
+
+    #[test]
+    fn running_service_is_background_and_does_not_block_generation() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let plan = RunPlan::from_rules(vec![
+            service_rule("svc", &["serve"], true),
+            service_rule("after", &["next"], false),
+        ]);
+        let mut run = executor.start(RunMetadata::new(1, "test"), plan);
+        // The service spawns and is moved to the background set; the next
+        // stage (finite work) proceeds without waiting for the service.
+        executor.advance(&mut run);
+        runner.complete("next", true);
+        executor.advance(&mut run);
+        assert_eq!(
+            runner.state.lock().unwrap().started.len(),
+            2,
+            "both spawned"
+        );
+        let completed = executor.finish(run);
+        assert!(
+            completed.outcome.is_success(),
+            "service never blocks later work"
+        );
     }
 }

@@ -587,3 +587,83 @@ fn capture_policy_holds_output_for_retrieval() {
     );
     std::fs::remove_dir_all(&directory).unwrap();
 }
+
+#[cfg(feature = "test-integration")]
+#[test]
+fn service_task_runs_across_generations_and_shuts_down() {
+    // TASK-0035: a `service: true` job is spawned and kept running (not
+    // treated as finite work); it survives a change-triggered generation and
+    // is reaped on watcher shutdown. Uses a bounded service script so the
+    // test never hangs.
+    use std::io::Write;
+    use std::time::Duration;
+
+    let directory = fixture("service");
+    std::fs::write(
+        directory.join("service.sh"),
+        "#!/usr/bin/env bash\ntouch svc-ready\nwhile true; do touch svc-ready; sleep 0.2; done\n",
+    )
+    .unwrap();
+    let mut perms = std::fs::metadata(directory.join("service.sh"))
+        .unwrap()
+        .permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+    }
+    std::fs::set_permissions(directory.join("service.sh"), perms).unwrap();
+
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: dev-server\n    service: true\n    run: './service.sh'\n    change: '*.txt'\n  - name: prep\n    run: 'echo prep > prep.txt'\n    change: '*.txt'\n",
+    );
+
+    let output_log = std::fs::File::create(directory.join("child.out")).unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(&directory)
+        .env("FUNZZY_COLORED", "false")
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
+        .stdout(std::process::Stdio::from(output_log))
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+
+    // A change triggers the generation: the finite prep job runs and the
+    // service is started and kept running (svc-ready written).
+    std::fs::write(directory.join("a.txt"), "change").unwrap();
+    let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let mut prepped = false;
+    while std::time::Instant::now() < deadline {
+        if directory.join("prep.txt").exists() && directory.join("svc-ready").exists() {
+            prepped = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !prepped {
+        let log = std::fs::read_to_string(directory.join("child.out")).unwrap_or_default();
+        eprintln!("watcher log: {log}");
+        eprintln!(
+            "files: {:?}",
+            std::fs::read_dir(&directory).map(|d| d
+                .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+                .collect::<Vec<_>>())
+        );
+    }
+    assert!(prepped, "finite prep and service must run on change");
+    // The service keeps running after the finite job completed.
+    let _ = std::fs::remove_file(directory.join("svc-ready"));
+    std::thread::sleep(Duration::from_millis(600));
+    assert!(
+        directory.join("svc-ready").exists(),
+        "service must still be running after prep finished"
+    );
+
+    // Graceful shutdown: kill the watcher; the service process is reaped.
+    let _ = child.kill();
+    let _ = child.wait();
+    std::fs::remove_dir_all(&directory).unwrap();
+}

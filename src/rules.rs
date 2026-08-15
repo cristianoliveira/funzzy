@@ -37,6 +37,8 @@ pub struct Rules {
     inherited: Vec<String>,
     /// Per-job output policy (TASK-0041); Inherit is the default.
     output: crate::config::OutputPolicy,
+    /// Managed long-running service task (TASK-0035); opt-in, default false.
+    service: bool,
 }
 
 impl Rules {
@@ -59,6 +61,7 @@ impl Rules {
             environment: BTreeMap::new(),
             inherited: vec![],
             output: crate::config::OutputPolicy::Inherit,
+            service: false,
         }
     }
 
@@ -84,6 +87,7 @@ impl Rules {
             environment: BTreeMap::new(),
             inherited: vec![],
             output: crate::config::OutputPolicy::Inherit,
+            service: false,
         }
     }
 
@@ -130,6 +134,17 @@ impl Rules {
     /// The per-job output policy.
     pub fn output(&self) -> crate::config::OutputPolicy {
         self.output
+    }
+
+    /// Marks the job as a managed long-running service (TASK-0035).
+    pub fn with_service(mut self, service: bool) -> Self {
+        self.service = service;
+        self
+    }
+
+    /// True when the job is a managed long-running service.
+    pub fn service(&self) -> bool {
+        self.service
     }
 
     pub fn with_parallel(mut self, group: String) -> Self {
