@@ -226,10 +226,12 @@ fn usage_guide_yaml_blocks_parse_through_the_production_parser() {
     // TASK-0066: every copyable YAML block in docs/USAGE.md must parse with
     // the same production parser — docs never drift from the parser.
     let usage = std::fs::read_to_string("docs/USAGE.md").expect("usage guide");
+    let advanced = std::fs::read_to_string("docs/ADVANCED-GUIDE.md").expect("advanced guide");
+    let all = format!("{}\n{advanced}", usage);
     let mut in_block = false;
     let mut current = String::new();
     let mut parsed = 0;
-    for line in usage.lines() {
+    for line in all.lines() {
         if line.trim_start().starts_with("```yaml") {
             in_block = true;
             current.clear();
