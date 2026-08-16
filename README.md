@@ -2,7 +2,7 @@
 
 **Run checks on every edit. Give coding agents results they can trust.**
 
-Funzzy (`fzz`) is a fast Rust file watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output—no log scraping, no stale green.
+Funzzy (`fzz`) is a fast Rust file watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output, because log scraping waste tokens.
 
 ```bash
 fzz init    # create .watch.yaml
@@ -15,28 +15,16 @@ One YAML workflow works for developers, coding agents, and CI. Use `fzz run TARG
 > [!WARNING]
 > V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
-## Capabilities
-
-- **Watch or run once:** use the same workflow locally, in CI, or in an editor feedback loop.
-- **Precise matching:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
-- **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
-- **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
-- **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
-- **Workflow automation:** run generation-level `on.success` and `on.failure` hooks without changing the workflow result.
-- **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
-- **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
-- **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
-- **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
-
-For ad-hoc work over paths from stdin:
+As simple as:
 
 ```bash
 find . -name '*.ts' | fzz exec -- npx eslint {{relative_filepath}}
 ```
 
-For a configured workflow, create `.watch.yaml`:
+Or for more complex workflows like:
 
 ```yaml
+# .watch.yml
 on:
   change: ["src/**", "tests/**"]
   ignore: ["target/**", "**/*.log"]
