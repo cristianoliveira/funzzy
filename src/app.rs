@@ -1113,46 +1113,83 @@ fn emit_startup_record(
     });
 }
 
-/// Catches SIGINT and SIGTERM on a dedicated thread and routes them through
-/// the shared process-group ownership path (`process_owner::shutdown_all`)
-/// before exiting, so descendants in their own groups are not orphaned.
+/// Catches SIGINT and SIGTERM via a disposition-based handler plus
+/// self-pipe and routes them through the shared process-group ownership path
+/// (`process_owner::shutdown_all`) before exiting with the conventional
+/// code (130/143), so descendants in their own groups are not orphaned.
 ///
 /// Installed for non-block watch and finite local run because executor child
 /// tasks lead separate process groups and need explicit signal forwarding.
+/// A handler (not block+sigwait) is required: any thread with an unblocked
+/// signal is an eligible delivery target, and library threads created before
+/// installation keep empty masks, which made the old design die to the
+/// default action without cleanup on loaded Linux systems.
 fn install_shutdown_signal_handler() -> std::sync::Arc<std::sync::atomic::AtomicI32> {
-    use nix::sys::signal::{sigprocmask, SigSet, SigmaskHow};
+    use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet};
+    use nix::unistd;
     use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::Arc;
 
+    /// Self-pipe write end handed to the signal handler (TASK-0030). The
+    /// handler performs only the async-signal-safe write(2); all real work
+    /// happens on a normal thread after the byte arrives.
+    static WAKE_WRITE_FD: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+
+    extern "C" fn on_shutdown_signal(signal: nix::libc::c_int) {
+        // Async-signal-safe: one best-effort byte; nothing else.
+        if let Some(fd) = WAKE_WRITE_FD.get() {
+            let _ = unistd::write(*fd, &[signal as u8]);
+        }
+    }
+
     let exit_code = Arc::new(AtomicI32::new(0));
     let signal_exit_code = Arc::clone(&exit_code);
-    let mut mask = SigSet::empty();
-    mask.add(Signal::SIGINT);
-    mask.add(Signal::SIGTERM);
-    // Block process-wide so the default action (terminate) does not fire; the
-    // sigwait thread below drains pending signals.
-    let _ = sigprocmask(SigmaskHow::SIG_BLOCK, Some(&mask), None);
+
+    // A disposition-based handler is required: the previous block+sigwait
+    // design silently depended on every thread keeping SIGINT/SIGTERM
+    // blocked, but any library thread spawned with an empty mask (watcher,
+    // control socket, executor helpers) becomes an eligible delivery
+    // target, and a process-directed signal then runs the DEFAULT action
+    // and kills funzzy without cleanup or a conventional exit code. A
+    // handler is process-wide regardless of per-thread masks; the self-pipe
+    // keeps the handler itself async-signal-safe.
+    let (wake_read_fd, wake_write_fd) = unistd::pipe().expect("shutdown self-pipe");
+    // Task children must not hold the shutdown pipe across exec; execve
+    // already resets caught-signal dispositions, and CLOEXEC keeps the pipe
+    // itself out of the children too.
+    use nix::fcntl::{fcntl, FdFlag, F_SETFD};
+    let _ = fcntl(wake_read_fd, F_SETFD(FdFlag::FD_CLOEXEC));
+    let _ = fcntl(wake_write_fd, F_SETFD(FdFlag::FD_CLOEXEC));
+    let _ = WAKE_WRITE_FD.set(wake_write_fd);
+    let action = SigAction::new(
+        SigHandler::Handler(on_shutdown_signal),
+        SaFlags::SA_RESTART,
+        SigSet::all(),
+    );
+    if let Err(err) = unsafe { sigaction(Signal::SIGINT, &action) } {
+        stdout::error(&format!("failed to install SIGINT handler: {err:?}"));
+    }
+    if let Err(err) = unsafe { sigaction(Signal::SIGTERM, &action) } {
+        stdout::error(&format!("failed to install SIGTERM handler: {err:?}"));
+    }
 
     std::thread::spawn(move || {
-        let mut set = SigSet::empty();
-        set.add(Signal::SIGINT);
-        set.add(Signal::SIGTERM);
+        let mut signal_byte = [0u8; 1];
         loop {
-            match set.wait() {
-                Ok(Signal::SIGINT) => {
-                    signal_exit_code.store(130, Ordering::SeqCst);
+            match unistd::read(wake_read_fd, &mut signal_byte) {
+                Ok(_) => {
+                    let code = if signal_byte[0] == Signal::SIGINT as u8 {
+                        130
+                    } else {
+                        143
+                    };
+                    signal_exit_code.store(code, Ordering::SeqCst);
                     let (signal, grace) = crate::process_owner::shutdown_policy();
                     let _ = crate::process_owner::shutdown_all(signal, grace, false);
-                    std::process::exit(130);
+                    std::process::exit(code);
                 }
-                Ok(Signal::SIGTERM) => {
-                    signal_exit_code.store(143, Ordering::SeqCst);
-                    let (signal, grace) = crate::process_owner::shutdown_policy();
-                    let _ = crate::process_owner::shutdown_all(signal, grace, false);
-                    std::process::exit(143);
-                }
-                Ok(_) => continue,
-                Err(_) => continue,
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(_) => return,
             }
         }
     });

@@ -42,6 +42,9 @@ fn setup_directory(test_name: &str, config: &str) -> std::path::PathBuf {
 fn start_watcher(directory: &std::path::Path) -> TestProcess {
     let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        // Verbose: typed diagnostics (batches, matches, scheduling) land in
+        // child.err so CI failures can be diagnosed from the logs alone.
+        .arg("-v")
         .current_dir(directory)
         .env_remove("FUNZZY_BAIL")
         .env_remove("FUNZZY_NON_BLOCK")
@@ -94,6 +97,30 @@ fn wait_until<F: FnMut() -> bool>(mut condition: F) {
     panic!("wait_until timed out");
 }
 
+/// CI debugging aid: on timeout, surface the watcher's captured verbose
+/// output and its final control-socket status before panicking, so a red CI
+/// run is diagnosable from the log without local reproduction.
+fn wait_until_or_dump(
+    directory: &std::path::Path,
+    socket: &std::path::Path,
+    mut condition: impl FnMut() -> bool,
+) {
+    for _ in 0..200 {
+        if condition() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("--- watcher child.err (verbose) ---");
+    match std::fs::read_to_string(directory.join("child.err")) {
+        Ok(log) => eprintln!("{log}"),
+        Err(e) => eprintln!("<unreadable: {e}>",),
+    }
+    eprintln!("--- control status ---");
+    eprintln!("{}", call(socket, "status", serde_json::json!({})));
+    panic!("wait_until timed out (watcher diagnostics above)");
+}
+
 /// The latest generation the watcher has reached (baseline or after a
 /// real write), via `status` — the correlated snapshot.
 fn latest_generation(socket: &std::path::Path) -> u64 {
@@ -121,7 +148,7 @@ fn write_and_await_generation(
     let target = directory.join(relative);
     std::fs::create_dir_all(target.parent().unwrap()).unwrap();
     std::fs::write(&target, "change").unwrap();
-    wait_until(|| latest_generation(socket) > baseline);
+    wait_until_or_dump(directory, socket, || latest_generation(socket) > baseline);
     let generation = latest_generation(socket);
     let awaited = await_generation(socket, generation);
     (generation, awaited)
@@ -181,7 +208,9 @@ fn created_matching_file_produces_one_generation_with_exact_path_and_job() {
             .ends_with("src/new/lib.rs"),
         true
     );
-    wait_until(|| directory.join("verdict.txt").exists());
+    wait_until_or_dump(&directory, &socket, || {
+        directory.join("verdict.txt").exists()
+    });
 }
 
 const NESTED_CONFIG: &str = r#"
@@ -335,7 +364,9 @@ fn burst_in_one_window_is_one_generation_then_next_window_is_next() {
         std::fs::create_dir_all(directory.join("src")).unwrap();
         std::fs::write(directory.join(format!("src/file{i}.rs")), "x").unwrap();
     }
-    wait_until(|| latest_generation(&socket) > baseline);
+    wait_until_or_dump(&directory, &socket, || {
+        latest_generation(&socket) > baseline
+    });
     let g1 = latest_generation(&socket);
     let awaited1 = await_generation(&socket, g1);
     assert_eq!(awaited1["terminalReason"], "passed");

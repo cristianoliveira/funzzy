@@ -220,8 +220,16 @@ fn accepts_full_or_relativepaths() {
                 output
             );
 
+            // Each of f1 and f2 must land in its own debounce window: the
+            // batch router schedules one generation per window and routes on
+            // the first matching path (contract §1), so one rapid burst
+            // coalesces into a single matched decision. FSEvents delivery
+            // spacing made this pass by accident on macOS; inotify delivers
+            // the whole burst in one window, so space the writes explicitly.
             write_to_file!(f1.as_str());
+            std::thread::sleep(std::time::Duration::from_millis(1500));
             write_to_file!(f2.as_str());
+            std::thread::sleep(std::time::Duration::from_millis(1500));
             write_to_file!(f3.as_str());
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
             write_to_file!(fixture.join("examples/workdir/ignored/modify.txt"));
@@ -232,24 +240,31 @@ fn accepts_full_or_relativepaths() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
+                    // Matched decision lines carry the winning PATTERN
+                    // (change=...), not the event path: f1/f2 patterns are
+                    // the rewritten absolute paths themselves, while the
+                    // workdir trigger routes through its glob. All three
+                    // watched surfaces must have matched their own task.
+                    // `contains`, not `starts_with`: verbose records can
+                    // be prefixed by the ANSI clear-screen sequence.
                     output
                         .split("\n")
                         .filter(|line| {
-                            line.starts_with("Funzzy debug:")
+                            line.contains("Funzzy debug:")
                                 && line.contains("decision=matched")
                                 && (line.contains(&f1)
                                     || line.contains(&f2)
-                                    || line.contains("examples/workdir/trigger-watcher.txt"))
+                                    || line.contains("change=\"examples/workdir/**/*\""))
                         })
                         .count()
                         == 3
                         && output
                             .split("\n")
                             .find(|line| {
-                                line.starts_with("Funzzy debug:")
+                                line.contains("Funzzy debug:")
                                     && line.contains("decision=matched")
                                     && (line.contains(&f3)
-                                        || line.contains("examples/workdir/ignored/modify.txt"))
+                                        || line.contains("examples/workdir/ignored"))
                             })
                             .is_none()
                 },
@@ -427,7 +442,7 @@ fn gitignored_paths_do_not_trigger_tasks_when_respected() {
         std::fs::create_dir_all(scratch.join("generated")).unwrap();
         std::fs::write(
         scratch.join(".watch.yaml"),
-        "on:\n  change: '**/*'\n  respect_gitignore: true\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: 'captured.txt'\n",
+        "on:\n  change: '**/*'\n  respect_gitignore: true\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: ['captured.txt', 'child.out', 'child.err']\n",
     )
     .unwrap();
 

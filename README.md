@@ -2,7 +2,7 @@
 
 **Run checks on every edit. Give coding agents results they can trust.**
 
-Funzzy (`fzz`) is a fast Rust file watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output—no log scraping, no stale green.
+Funzzy (`fzz`) is a fast Rust watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output—no log scraping, no stale green.
 
 ```bash
 fzz init    # create .watch.yaml
@@ -82,7 +82,7 @@ Funzzy pairs well with these tools:
 
 ## Motivation
 
-Traditional file watchers are optimized for human watching terminal output. Agentic coding also needs exact run identity, freshness, cancellation, structured state, and bounded evidence—without replacing the fast local workflow developers already use.
+Traditional watchers are optimized for human watching terminal output. Agentic coding also needs exact run identity, freshness, cancellation, structured state, and bounded evidence—without replacing the fast local workflow developers already use.
 
 Funzzy brings GitHub Actions-like checks into the local edit loop and makes that loop observable by both humans and coding agents. Rust keeps watcher fast and lightweight.
 
