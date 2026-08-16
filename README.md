@@ -1,14 +1,19 @@
 # funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![Building package with nix](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-**The file watcher for the agentic coding era.**
+**Run checks on every edit. Give coding agents results they can trust.**
 
-Funzzy gives developers and coding agents the same fast feedback loop: observe a change, run the exact workflow, await a fresh result, and retrieve bounded failure evidence. It combines lightweight file watching with deterministic, machine-readable execution control.
+Funzzy (`fzz`) is a fast Rust file watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output—no log scraping, no stale green.
 
-Inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr), `fzz` still works as a simple local command runner. Agent-facing capabilities extend that workflow instead of creating another one.
+```bash
+fzz init    # create .watch.yaml
+fzz check   # validate it
+fzz         # watch, run, repeat
+```
+
+One YAML workflow works for developers, coding agents, and CI. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
 
 > [!WARNING]
-> ### Version 2.0.0
-> This README describes unreleased V2 behavior on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
+> V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
 ## Capabilities
 
@@ -80,6 +85,8 @@ Funzzy pairs well with these tools:
 Traditional file watchers are optimized for human watching terminal output. Agentic coding also needs exact run identity, freshness, cancellation, structured state, and bounded evidence—without replacing the fast local workflow developers already use.
 
 Funzzy brings GitHub Actions-like checks into the local edit loop and makes that loop observable by both humans and coding agents. Rust keeps watcher fast and lightweight.
+
+Funzzy is inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr).
 
 ## Installing
 
