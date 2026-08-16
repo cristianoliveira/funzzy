@@ -1,7 +1,7 @@
 ---
 id: TASK-0093
 title: Define complete commented init template contract
-status: todo
+status: done
 depends_on: [TASK-0033, TASK-0057, TASK-0075]
 priority: high
 tags: [design, cli, init, config, documentation, determinism]
