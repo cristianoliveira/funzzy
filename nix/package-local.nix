@@ -30,8 +30,14 @@ rustPlatform.buildRustPackage {
 # see .watch.yaml
 # Creating here the temporary directory in order it to be created with
 # the right permissions
+  # Deterministic gate: unit tests only. The full integration suite is
+  # timing-sensitive (real watchers, subprocess scheduling) and runs on real
+  # runners in CI (on-push-integration-test.yml + the agent-final watcher
+  # gate). Inside the nix build sandbox task commands run an order of
+  # magnitude slower, which makes bounded-timeout integration assertions
+  # unreliable; keep the sandbox gate deterministic like the stable package.
   checkPhase = ''
-    RUST_BACKTRACE=1 make integration
+    cargo test $UNIT_TEST --lib
   '';
 
   # Common commands here
