@@ -2,6 +2,11 @@ name: Release publish to crates.io
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact release tag to publish from (must equal Cargo version)'
+        required: false
+        default: ''
   release:
     types: [created]
 
@@ -11,6 +16,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          # Release-created: the release tag. Manual dispatch: explicit tag input
+          # (defaults to the dispatched ref's SHA so the gate fails closed).
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
@@ -22,9 +31,9 @@ jobs:
 
       - name: Version + docs drift gate (exact tag/version/package equality)
         run: |
-          make version-check
-          make docs-drift
           git fetch --tags
+          ./scripts/version-check --release
+          make docs-drift
           test "v$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')" = \
             "$(git describe --tags --exact-match HEAD)" || \
             { echo "tag must equal v<Cargo version>"; exit 1; }

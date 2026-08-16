@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Exact release tag to build and attach (must exist)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -33,18 +38,27 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
       SYSTEM: ${{ matrix.system }}
-      RELEASE_TAG: ${{ github.ref_name }}
+      # Tag push: the pushed tag. Manual dispatch: the explicit tag input
+      # (defaults to the dispatched ref name so naming fails visibly).
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
+      # Tag push: the pushed tag. Manual dispatch: the explicit tag input
+      # (defaults to the dispatched ref so the gate fails closed).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v27
+        uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          # macOS runner images ship Nix pre-installed; v31 detects it and
+          # skips reinstall. extra-sandbox-paths for macOS SDK frameworks were
+          # removed: they broke Linux runners and package.nix notes the default
+          # SDK (via SDKROOT) provides CoreServices now.
           extra_nix_config: |
             extra-platforms = aarch64-linux i686-linux aarch64-darwin x86_64-darwin
-            extra-sandbox-paths = /System/Library/Frameworks /System/Library/PrivateFrameworks /usr/lib
 
       - name: Setup Cachix
         uses: cachix/cachix-action@v15
@@ -127,8 +141,9 @@ jobs:
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: ${{ env.ARTIFACT }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,6 +29,14 @@ CANDIDATE=0
 if [ "${1:-}" = "--candidate" ]; then
   MODE="--candidate"
   CANDIDATE=1
+elif [ "${1:-}" = "--release" ]; then
+  MODE="--release"
+  # Release mode: tag must exist and match Cargo exactly, but the stable Nix
+  # package is the FINAL channel in the publication lifecycle (RELEASE-BOUNDARY
+  # §5: tag -> release -> crates.io -> stable Nix -> verify). The crates.io gate
+  # runs from the tagged checkout where nix/package.nix may still lag one
+  # release; Nix consistency is enforced by its own channel gate.
+  CANDIDATE=1
 fi
 
 CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
@@ -64,7 +72,11 @@ if [ -f nix/package.nix ]; then
   echo "Nix stable:      $NIX_VERSION ($NIX_REV)"
   if [[ "$CARGO_VERSION" != *"-"* ]]; then
     if [ "$CANDIDATE" = "1" ]; then
-      echo "  (candidate: stable Nix package updates at publication, TASK-0063)"
+      if [ "$MODE" = "--candidate" ]; then
+        echo "  (candidate: stable Nix package updates at publication, TASK-0063)"
+      else
+        echo "  (release: stable Nix package is the final publication channel, TASK-0063)"
+      fi
     elif [ "$NIX_VERSION" != "$CARGO_VERSION" ]; then
       fail "nix/package.nix version ($NIX_VERSION) != Cargo ($CARGO_VERSION)"
     fi
