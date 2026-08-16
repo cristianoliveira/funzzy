@@ -1,7 +1,7 @@
 ---
 id: TASK-0095
 title: Prove init template completeness readability and drift safety
-status: todo
+status: doing
 depends_on: [TASK-0094, TASK-0059, TASK-0069]
 priority: high
 tags: [integration-tests, cli, init, config, schema, docs, reliability]
