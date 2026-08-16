@@ -2,12 +2,13 @@
 
 > Status: **normative** — defined by TASK-0088. Drives TASK-0089 (immutable
 > runtime config revisions), TASK-0090 (root/policy swap without exit),
-> TASK-0091 (control identity across reload), TASK-0092 (reload continuity
-> proof). Coordinates with `docs/WATCH-DISCOVERY-CONTRACT.md` (root plan),
+> TASK-0091 (control identity across reload); black-box proven by TASK-0092
+> (reload continuity proof, `tests/config_reload_lifecycle.rs`). Coordinates with `docs/WATCH-DISCOVERY-CONTRACT.md` (root plan),
 > `docs/GITIGNORE-CONTRACT.md` (ignore precedence), `docs/JOBS-CONFIG-CONTRACT.md`
 > (settings surface), and `docs/AGENT-CONFIG-CONTRACT.md` (`fzz check`).
-> Current behavior anchor: `src/app.rs` `execute_watch_command` (self-SIGTERM
-> thread), `src/process_owner.rs` (owned process groups).
+> Current behavior anchor: `src/reload.rs` (four gates + decide),
+> `src/reload_coordinator.rs` (prepare→commit→retire), `src/app.rs`
+> `execute_watch_command` (reload thread + graceful fatal shutdown).
 
 Today every real `.watch.yaml` edit sends SIGTERM to the watcher's own PID:
 even a valid change destroys process continuity (new instance token, reset

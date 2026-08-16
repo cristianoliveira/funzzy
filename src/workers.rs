@@ -248,7 +248,10 @@ pub struct Worker {
     /// Fail-fast policy; part of the execution signature (TASK-0054).
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040), applied to target runs.
-    hooks: crate::config::RunHooks,
+    /// Interior-mutable (TASK-0092): a reload swaps the shared hooks at the
+    /// commit boundary so post-commit generations run the committed hooks
+    /// while active runs keep the request they started with.
+    hooks: std::sync::Mutex<crate::config::RunHooks>,
     /// Immutable config revision all plans prepared through this worker are
     /// frozen under (TASK-0089). Captured before plan creation; a reload
     /// (TASK-0090) swaps it at the commit boundary. Interior mutability so
@@ -605,7 +608,7 @@ impl Worker {
             root,
             concurrency: concurrency_handle,
             fail_fast,
-            hooks: crate::config::RunHooks::default(),
+            hooks: std::sync::Mutex::new(crate::config::RunHooks::default()),
             revision: std::sync::Mutex::new(None),
             consumer: Some(consumer),
         }
@@ -644,9 +647,16 @@ impl Worker {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040) applied to target runs.
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
-        self.hooks = hooks;
+    pub fn with_hooks(self, hooks: crate::config::RunHooks) -> Self {
+        *self.hooks.lock().unwrap() = hooks;
         self
+    }
+
+    /// Swaps the run-level terminal hooks at the reload commit boundary
+    /// (TASK-0092): plans prepared after this call carry the committed
+    /// revision's hooks; active runs keep the hooks they started under.
+    pub fn set_hooks(&self, hooks: crate::config::RunHooks) {
+        *self.hooks.lock().unwrap() = hooks;
     }
 
     /// Binds the immutable config revision all plans prepared through this
@@ -755,7 +765,7 @@ impl Worker {
             execution_signature: Some(request.plan.execution_signature(effective, self.fail_fast)),
             effective_concurrency: Some(effective),
             concurrency_source: sequential.then_some("control"),
-            hooks: self.hooks.clone(),
+            hooks: self.hooks.lock().unwrap().clone(),
             ..request
         };
         self.dispatch(request)
@@ -816,7 +826,11 @@ impl Worker {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
-            hooks: crate::config::RunHooks::default(),
+            // TASK-0092: the WATCH path must carry the worker's current
+            // hooks (startup hooks at first; the reload commit swaps them via
+            // `set_hooks`), exactly like the control path — never the empty
+            // default.
+            hooks: self.hooks.lock().unwrap().clone(),
             revision: revision.as_ref().map(|r| r.number),
             revision_hash: revision.as_ref().map(|r| r.hash.clone()),
         })

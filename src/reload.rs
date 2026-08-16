@@ -38,18 +38,28 @@ pub struct ConfigError {
     pub reason: String,
 }
 
+/// Startup policy values used when a candidate does not declare a key.
+/// The candidate's OWN declared policy participates in the revision
+/// (CONFIG-RELOAD-CONTRACT §6): a concurrency/debounce/backend/gitignore/
+/// hooks/socket change is a real semantic change, never a silent no-op
+/// (TASK-0092).
+#[derive(Clone, Debug)]
+pub struct PolicyDefaults {
+    pub concurrency: usize,
+    pub debounce: Duration,
+    pub backend: WatchBackend,
+    pub gitignore: bool,
+    pub hooks: RunHooks,
+}
+
 /// Validates a candidate config text against the first three pure gates and
-/// builds the frozen runtime config. Operational preparation (roots/services)
-/// is checked separately by the caller before commit.
+/// builds the frozen runtime config from the candidate's OWN declared policy
+/// (missing keys keep the startup defaults). Operational preparation
+/// (roots/services) is checked separately by the caller before commit.
 pub fn validate_candidate(
     content: &str,
     root: PathBuf,
-    concurrency: usize,
-    debounce: Duration,
-    backend: WatchBackend,
-    respect_gitignore: bool,
-    hooks: RunHooks,
-    control_socket: Option<PathBuf>,
+    defaults: &PolicyDefaults,
 ) -> Result<RuntimeConfig, ConfigError> {
     // Syntactic gate: parses as YAML documents.
     let rules: Vec<Rules> = crate::config::from_yaml(content).map_err(|err| ConfigError {
@@ -62,6 +72,31 @@ pub fn validate_candidate(
         gate: ValidationGate::Semantic,
         reason: err.to_string(),
     })?;
+
+    // TASK-0092: the candidate's policy surface (concurrency, debounce,
+    // backend, gitignore, hooks, control socket) is parsed from the
+    // candidate itself so a policy change is a real revision change.
+    // Missing keys fall back to the startup defaults so omitting them
+    // stays a no-op. Parse errors (e.g. `concurrency: 0`) are Semantic.
+    let semantic = |reason: String| ConfigError {
+        gate: ValidationGate::Semantic,
+        reason,
+    };
+    let concurrency = crate::config::concurrency_from_yaml(content)
+        .map_err(semantic)?
+        .unwrap_or(defaults.concurrency);
+    let debounce = crate::config::debounce_from_yaml(content)
+        .map_err(semantic)?
+        .unwrap_or(defaults.debounce);
+    let backend = crate::config::watch_backend_from_yaml(content)
+        .map_err(semantic)?
+        .unwrap_or(defaults.backend.clone());
+    let respect_gitignore =
+        crate::config::respect_gitignore_from_yaml(content).map_err(semantic)?;
+    let hooks = crate::config::hooks_from_yaml(content).map_err(semantic)?;
+    let control_socket = crate::config::control_socket_from_yaml(content)
+        .map_err(semantic)?
+        .map(std::path::PathBuf::from);
 
     Ok(RuntimeConfig::capture(
         root,
@@ -89,30 +124,16 @@ pub enum ReloadDecision {
 }
 
 /// Runs the validate→track flow for one candidate: builds the runtime config
-/// (pure gates), then asks the tracker whether it is a semantic change.
-/// Operational preparation is NOT part of this decision; the caller prepares
-/// roots before committing.
+/// (pure gates + candidate-declared policy), then asks the tracker whether it
+/// is a semantic change. Operational preparation is NOT part of this
+/// decision; the caller prepares roots before committing.
 pub fn decide(
     tracker: &mut RevisionTracker,
     content: &str,
     root: PathBuf,
-    concurrency: usize,
-    debounce: Duration,
-    backend: WatchBackend,
-    respect_gitignore: bool,
-    hooks: RunHooks,
-    control_socket: Option<PathBuf>,
+    defaults: &PolicyDefaults,
 ) -> ReloadDecision {
-    match validate_candidate(
-        content,
-        root,
-        concurrency,
-        debounce,
-        backend,
-        respect_gitignore,
-        hooks,
-        control_socket,
-    ) {
+    match validate_candidate(content, root, defaults) {
         Err(error) => ReloadDecision::Fatal(error),
         Ok(config) => match tracker.observe(&config) {
             crate::config_revision::RevisionDecision::New(revision) => {
@@ -154,18 +175,19 @@ pub struct RootDiff {
 mod tests {
     use super::*;
 
+    fn defaults() -> PolicyDefaults {
+        PolicyDefaults {
+            concurrency: 2,
+            debounce: Duration::from_millis(1000),
+            backend: WatchBackend::Native,
+            gitignore: false,
+            hooks: RunHooks::default(),
+        }
+    }
+
     fn base_runtime(content: &str) -> RuntimeConfig {
-        validate_candidate(
-            content,
-            std::env::current_dir().unwrap(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
-        )
-        .expect("valid base config")
+        validate_candidate(content, std::env::current_dir().unwrap(), &defaults())
+            .expect("valid base config")
     }
 
     #[test]
@@ -173,12 +195,7 @@ mod tests {
         let err = validate_candidate(
             "jobs: [unclosed",
             std::env::current_dir().unwrap(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
+            &defaults(),
         )
         .expect_err("invalid yaml must fail");
         assert_eq!(err.gate, ValidationGate::Syntactic);
@@ -189,12 +206,7 @@ mod tests {
         let err = validate_candidate(
             "jobs:\n  - name: x\n    run: echo hi\n    change: 'src/**'\n    service: not-a-bool\n",
             std::env::current_dir().unwrap(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
+            &defaults(),
         )
         .expect_err("invalid rule value must fail");
         assert!(matches!(
@@ -213,22 +225,76 @@ mod tests {
     }
 
     #[test]
+    fn candidate_declared_policy_wins_over_defaults() {
+        // TASK-0092: the candidate's OWN concurrency/debounce/backend/hooks
+        // participate in the frozen runtime — a policy change is semantic.
+        let runtime = base_runtime(
+            "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\n  watch_backend: poll\n  poll_interval: 100ms\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+        );
+        assert_eq!(runtime.concurrency, 8);
+        assert_eq!(runtime.debounce, Duration::from_millis(250));
+        assert_eq!(
+            runtime.backend,
+            WatchBackend::Poll {
+                interval: Duration::from_millis(100)
+            }
+        );
+        assert_eq!(runtime.hooks.success.as_deref(), Some("echo done"));
+    }
+
+    #[test]
+    fn missing_policy_keys_keep_startup_defaults() {
+        let runtime =
+            base_runtime("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n");
+        assert_eq!(runtime.concurrency, defaults().concurrency);
+        assert_eq!(runtime.debounce, defaults().debounce);
+        assert_eq!(runtime.backend, defaults().backend);
+        assert_eq!(runtime.hooks, RunHooks::default());
+    }
+
+    #[test]
+    fn invalid_candidate_concurrency_is_semantic_fatal() {
+        // `concurrency: 0` parses as YAML but fails the value gate; it must
+        // be a Semantic fatal, never silently ignored.
+        let err = validate_candidate(
+            "on:\n  concurrency: 0\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+            std::env::current_dir().unwrap(),
+            &defaults(),
+        )
+        .expect_err("zero concurrency must fail");
+        assert_eq!(err.gate, ValidationGate::Semantic);
+        assert!(err.reason.contains("concurrency"), "{}", err.reason);
+    }
+
+    #[test]
+    fn candidate_control_socket_is_parsed_from_content() {
+        // TASK-0092: the reload hash must see the candidate's `on.socket`
+        // exactly like the startup capture — otherwise a config-declared
+        // socket makes every save look like a semantic change.
+        let with_socket = validate_candidate(
+            "on:\n  socket: sock\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+            std::env::current_dir().unwrap(),
+            &defaults(),
+        )
+        .expect("valid with socket");
+        assert_eq!(with_socket.control_socket, Some(PathBuf::from("sock")));
+
+        let without_socket =
+            base_runtime("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n");
+        assert_eq!(without_socket.control_socket, None);
+        assert_ne!(
+            crate::config_revision::semantic_hash(&with_socket),
+            crate::config_revision::semantic_hash(&without_socket)
+        );
+    }
+
+    #[test]
     fn decide_commits_on_semantic_change_and_noops_on_identical() {
         let mut tracker = RevisionTracker::new();
         let content = "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
         let root = std::env::current_dir().unwrap();
 
-        let first = decide(
-            &mut tracker,
-            content,
-            root.clone(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
-        );
+        let first = decide(&mut tracker, content, root.clone(), &defaults());
         let ReloadDecision::Commit(r1) = first else {
             panic!("first observe must commit");
         };
@@ -239,12 +305,7 @@ mod tests {
             &mut tracker,
             "# comment\njobs:\n  - name: build\n    change: 'src/**'\n    run: cargo build\n",
             root.clone(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
+            &defaults(),
         );
         assert_eq!(noop, ReloadDecision::NoOp);
 
@@ -253,17 +314,40 @@ mod tests {
             &mut tracker,
             "jobs:\n  - name: build\n    run: cargo test\n    change: 'src/**'\n",
             root,
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
+            &defaults(),
         );
         let ReloadDecision::Commit(r2) = second else {
-            panic!("semantic change must commit");
+            panic!("command change must commit");
         };
         assert_eq!(r2.number, 2);
+    }
+
+    #[test]
+    fn policy_change_in_candidate_is_semantic() {
+        // TASK-0092 regression: a concurrency/debounce/hooks change in the
+        // candidate must commit a new revision, never a no-op.
+        let mut tracker = RevisionTracker::new();
+        let root = std::env::current_dir().unwrap();
+        let base = "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
+
+        let ReloadDecision::Commit(r1) = decide(&mut tracker, base, root.clone(), &defaults())
+        else {
+            panic!("first observe must commit");
+        };
+        assert_eq!(r1.number, 1);
+
+        let changed = "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
+        let ReloadDecision::Commit(r2) = decide(&mut tracker, changed, root.clone(), &defaults())
+        else {
+            panic!("policy change must commit");
+        };
+        assert_eq!(r2.number, 2);
+
+        // Dropping the keys back to the defaults is also a change.
+        let ReloadDecision::Commit(r3) = decide(&mut tracker, base, root, &defaults()) else {
+            panic!("policy revert must commit");
+        };
+        assert_eq!(r3.number, 3);
     }
 
     #[test]
@@ -271,17 +355,7 @@ mod tests {
         let mut tracker = RevisionTracker::new();
         let root = std::env::current_dir().unwrap();
 
-        let fatal = decide(
-            &mut tracker,
-            "jobs: [unclosed",
-            root,
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
-        );
+        let fatal = decide(&mut tracker, "jobs: [unclosed", root, &defaults());
         let ReloadDecision::Fatal(error) = fatal else {
             panic!("invalid candidate must be fatal");
         };

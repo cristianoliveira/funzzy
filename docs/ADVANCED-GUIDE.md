@@ -173,9 +173,42 @@ the `legacy` profile, never assumed facts.
 | Superseded generation | newer batch replaced it → await the newer runId |
 | Truncated output | retention cap → `output --tail N` / `--full`, bounds reported |
 | Process cleanup | cancelled children must be reaped → verify `cancel --wait` terminal |
-| Config reload | invalid config is fatal (nonzero exit, terminal error); a valid reload hot-swaps in-process — the instance token is preserved (only a process restart changes it) |
+| Config reload | see §6.1 — four distinct behaviors, never guess from a single symptom |
 | Corrupt history | state file damaged → delete to reset, or rely on confidence=None |
 | Feedback loop | watcher noise from generated files → `ignore` or `respect_gitignore: true` |
+
+### 6.1 Config reload — four distinct behaviors
+
+Editing `.watch.yaml` while a watcher runs is **not** one behavior. Four
+outcomes exist, and each is observable (CONFIG-RELOAD-CONTRACT):
+
+| Behavior | When | What you see | Process identity |
+| --- | --- | --- | --- |
+| **Valid hot reload** | candidate passes all four gates and differs semantically | `Config change is valid; hot-reloading to revision N.` — jobs/roots/policy swap in-process | same PID, same instance token, revisions increment monotonically, subscribers stay connected |
+| **No-op save** | formatting/comment-only rewrite, or semantically identical | `Config save has no semantic change; nothing to reload.` | unchanged revision, no churn |
+| **Invalid fatal exit** | any gate fails (broken YAML, schema/semantic error, occupied new socket, unwatchable root) | `Fatal configuration error; terminating watcher.` + gate/reason + nonzero exit; `configInvalid` published to subscribers before the socket closes | process exits; descendants/services reaped; no stale config kept silently |
+| **True external restart** | you (or a supervisor) start a new watcher process | new process start, new instance token in `capabilities` | PID and instance token change; generations restart at 1 |
+
+Additional rules:
+
+- **Managed services** (`service: true`) are reconciled at the commit
+  boundary: an unchanged service stays owned; a changed/removed one is
+  gracefully replaced/stopped — a config edit never leaks a second server
+  on the same port.
+- **A config save never kills an active finite run**: the running generation
+  completes under its original revision; later events route under the new
+  one (output references carry each generation's frozen revision).
+- **A deleted config is fatal** (`config unreadable after change`): the
+  watcher cannot run without a config. A transient delete+recreate inside
+  the debounce window settles on the final candidate without spinning.
+- **Partial editor writes** settle inside the debounce/stable-read window: a
+  truncated write followed by the valid final content reloads once; content
+  left invalid after the window is a fatal exit.
+- **Rapid saves** debounce to the final candidate: one revision commit, never
+  a mixed or intermediate revision.
+- **Distinguish reload from restart by fact, not feel**: compare
+  `capabilities.instance.token` (or the PID) across the change. A preserved
+  token means the watcher hot-reloaded; a changed token means a new process.
 
 ## 7. Machine-readable output
 

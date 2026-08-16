@@ -79,6 +79,12 @@ pub struct ReloadCoordinator {
     socket: Arc<Mutex<Option<SocketSwapper>>>,
     /// Pending socket swap prepared at `begin`; retired at `retire`.
     socket_pending: Arc<Mutex<bool>>,
+    /// Path of a prepared-but-not-retired replacement socket; also removed
+    /// on fatal shutdown (TASK-0092, CONFIG-RELOAD-CONTRACT §5).
+    pending_socket_path: Arc<Mutex<Option<PathBuf>>>,
+    /// The active control socket path (TASK-0092): `process::exit` skips the
+    /// ControlServer Drop, so a fatal shutdown removes this file explicitly.
+    active_socket: Arc<Mutex<Option<PathBuf>>>,
     /// Config lifecycle state source (TASK-0091, AC3): the reload thread
     /// writes transitions; the snapshot broker and control server read them.
     lifecycle: Arc<ConfigLifecycle>,
@@ -95,6 +101,8 @@ impl ReloadCoordinator {
             publisher: Arc::new(Mutex::new(None)),
             socket: Arc::new(Mutex::new(None)),
             socket_pending: Arc::new(Mutex::new(false)),
+            pending_socket_path: Arc::new(Mutex::new(None)),
+            active_socket: Arc::new(Mutex::new(None)),
             lifecycle: Arc::new(ConfigLifecycle::new()),
         }
     }
@@ -124,6 +132,30 @@ impl ReloadCoordinator {
     /// retire-old handoff for socket path changes.
     pub fn install_socket_swapper(&self, swapper: SocketSwapper) {
         *self.socket.lock().unwrap() = Some(swapper);
+    }
+
+    /// Records the active control socket path so a fatal shutdown can remove
+    /// the socket file before exit (TASK-0092, contract §5).
+    pub fn set_active_socket(&self, path: Option<PathBuf>) {
+        *self.active_socket.lock().unwrap() = path;
+    }
+
+    /// The socket file(s) a fatal shutdown must remove: the active socket
+    /// plus any prepared-but-not-retired replacement (AC8).
+    pub fn socket_paths_to_cleanup(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self
+            .active_socket
+            .lock()
+            .unwrap()
+            .clone()
+            .into_iter()
+            .collect();
+        if let Some(pending) = self.pending_socket_path.lock().unwrap().clone() {
+            if !paths.contains(&pending) {
+                paths.push(pending);
+            }
+        }
+        paths
     }
 
     /// True when a socket swap was prepared and not yet retired (diagnostics).
@@ -229,6 +261,7 @@ impl ReloadCoordinator {
             Some(swapper) => {
                 swapper.prepare(new_path)?;
                 *self.socket_pending.lock().unwrap() = true;
+                *self.pending_socket_path.lock().unwrap() = Some(new_path.to_path_buf());
                 Ok(())
             }
             None => Err("control socket rebind requested but no swapper installed".to_owned()),
@@ -242,6 +275,7 @@ impl ReloadCoordinator {
                 swapper.retire();
             }
             *self.socket_pending.lock().unwrap() = false;
+            *self.pending_socket_path.lock().unwrap() = None;
         }
     }
 
@@ -261,6 +295,9 @@ impl ReloadCoordinator {
             // AC7: concurrency/policy changes apply to generations planned
             // after the boundary only; the running group is never resized.
             worker.set_concurrency(concurrency);
+            // TASK-0092: hooks are part of the committed policy surface —
+            // post-commit generations run the committed hooks (swap).
+            worker.set_hooks(transaction.candidate.hooks());
             // AC6: reconcile managed services — stop removed/signature-changed
             // services gracefully; start new/changed services under the new
             // revision appended to the active generation (unchanged services
@@ -750,17 +787,16 @@ mod tests {
     #[test]
     fn runtime_config_round_trips_through_validate() {
         let content = "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
-        let runtime = crate::reload::validate_candidate(
-            content,
-            std::env::current_dir().unwrap(),
-            2,
-            Duration::from_millis(1000),
-            WatchBackend::Native,
-            false,
-            RunHooks::default(),
-            None,
-        )
-        .expect("valid candidate");
+        let defaults = crate::reload::PolicyDefaults {
+            concurrency: 2,
+            debounce: Duration::from_millis(1000),
+            backend: WatchBackend::Native,
+            gitignore: false,
+            hooks: RunHooks::default(),
+        };
+        let runtime =
+            crate::reload::validate_candidate(content, std::env::current_dir().unwrap(), &defaults)
+                .expect("valid candidate");
         let _ = RuntimeConfig::capture(
             runtime.root.clone(),
             runtime.rules.clone(),

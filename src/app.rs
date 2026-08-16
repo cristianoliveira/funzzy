@@ -151,6 +151,16 @@ pub fn run() {
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
             .with_hooks(load_hooks(&args.config));
+            // TASK-0092: resolve the config-declared control socket BEFORE
+            // freezing the initial revision so the startup revision's semantic
+            // surface matches every reload candidate (which always carries
+            // `on.socket`). Otherwise a config-declared socket makes every
+            // valid save — even a formatting-only rewrite — look like a
+            // semantic change and commit a new revision.
+            let control_socket = args
+                .control_socket
+                .clone()
+                .or_else(|| config_control_socket(&args.config, &workspace_root));
             // TASK-0089: freeze the initial immutable revision before any
             // plan is created; reload (TASK-0090) observes candidates through
             // the same tracker and only commits on semantic change.
@@ -164,7 +174,7 @@ pub fn run() {
                     backend,
                     load_respect_gitignore(&args.config),
                     load_hooks(&args.config),
-                    args.control_socket.as_deref().map(std::path::PathBuf::from),
+                    control_socket.as_deref().map(std::path::PathBuf::from),
                 );
                 match tracker.observe(&runtime) {
                     crate::config_revision::RevisionDecision::New(revision) => {
@@ -604,7 +614,9 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
 /// Graceful fatal config shutdown (contract §5): emit the terminal error,
 /// publish the terminal `configInvalid` lifecycle transition so control
 /// subscribers observe it, reap owned children/services through process
-/// ownership, and exit nonzero. Never SIGKILL/panic/self-SIGTERM.
+/// ownership, remove the control socket file(s) explicitly (`process::exit`
+/// skips the ControlServer Drop), and exit nonzero. Never
+/// SIGKILL/panic/self-SIGTERM.
 fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reason: &str) {
     let current = coordinator.current();
     stdout::error(&format!(
@@ -619,25 +631,42 @@ fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reas
     coordinator
         .lifecycle()
         .invalid(current.revision(), reason.to_owned());
+    // TASK-0092 AC9: `process::exit` skips destructors, so the ControlServer
+    // Drop never removes the socket file. Remove the active (and any
+    // prepared-but-uncommitted) socket file(s) explicitly before exit.
+    for path in coordinator.socket_paths_to_cleanup() {
+        let _ = std::fs::remove_file(path);
+    }
     let (signal, grace) = crate::process_owner::shutdown_policy();
     let _ = crate::process_owner::shutdown_all(signal, grace, false);
     std::process::exit(1);
 }
 
 /// Builds a fresh `Watches` from a validated config candidate, bound to the
-/// new revision (TASK-0090 commit).
+/// new revision (TASK-0090 commit). The candidate's OWN declared policy
+/// (concurrency/debounce/backend/gitignore/hooks) is parsed from the content;
+/// missing keys keep the startup defaults — so a policy change committed by
+/// the reload is actually applied to post-commit generations (TASK-0092).
 fn build_watches_from_content(
     content: &str,
     root: &std::path::Path,
-    concurrency: usize,
-    debounce: std::time::Duration,
-    backend: crate::watcher::WatchBackend,
-    respect_gitignore: bool,
-    hooks: crate::config::RunHooks,
+    defaults: &crate::reload::PolicyDefaults,
     revision: crate::config_revision::ConfigRevision,
 ) -> Result<Watches, String> {
     let rules = crate::config::from_yaml(content).map_err(|err| err.to_string())?;
     crate::rules::validate_rules(&rules).map_err(|err| err.to_string())?;
+    let concurrency = crate::config::concurrency_from_yaml(content)
+        .map_err(|err| err.to_string())?
+        .unwrap_or(defaults.concurrency);
+    let debounce = crate::config::debounce_from_yaml(content)
+        .map_err(|err| err.to_string())?
+        .unwrap_or(defaults.debounce);
+    let backend = crate::config::watch_backend_from_yaml(content)
+        .map_err(|err| err.to_string())?
+        .unwrap_or(defaults.backend.clone());
+    let respect_gitignore =
+        crate::config::respect_gitignore_from_yaml(content).map_err(|err| err.to_string())?;
+    let hooks = crate::config::hooks_from_yaml(content).map_err(|err| err.to_string())?;
     Ok(
         Watches::with_root_and_concurrency(rules, root.to_path_buf(), concurrency)
             .with_debounce(debounce)
@@ -646,6 +675,29 @@ fn build_watches_from_content(
             .with_hooks(hooks)
             .with_revision(revision),
     )
+}
+
+/// The control socket declared by the selected config file (`on.socket`),
+/// mirroring `execute_watch_command` path resolution (explicit path, else
+/// `.watch.yaml`/`.watch.yml` under the workspace root). Missing config or
+/// missing key yields `None`. Used by the Watch command so the initial
+/// revision's semantic surface includes the same socket the reload
+/// candidates carry (TASK-0092).
+fn config_control_socket(config: &Option<String>, root: &std::path::Path) -> Option<String> {
+    let possible = match config.as_deref() {
+        None => vec![
+            root.join(cli::watch::DEFAULT_FILENAME),
+            root.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml")),
+        ],
+        Some(config_file) => vec![std::path::PathBuf::from(config_file)],
+    };
+    possible
+        .into_iter()
+        .find(|path| path.exists())
+        .and_then(|path| {
+            config::control_socket_from_file(&path.to_string_lossy())
+                .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
+        })
 }
 
 fn execute_watch_command(
@@ -679,12 +731,7 @@ fn execute_watch_command(
         .collect::<Vec<String>>();
 
     if args.control_socket.is_none() {
-        args.control_socket = config_file_paths
-            .first()
-            .map(|path| config::control_socket_from_file(path))
-            .transpose()
-            .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
-            .flatten();
+        args.control_socket = config_control_socket(&args.config, watches.root());
     }
 
     // TASK-0088/0090: replace unconditional self-SIGTERM with a
@@ -696,6 +743,9 @@ fn execute_watch_command(
     let shared = std::sync::Arc::new(std::sync::Mutex::new(watches.clone()));
     let coordinator =
         crate::reload_coordinator::ReloadCoordinator::new(std::sync::Arc::clone(&shared));
+    // TASK-0092: track the active control socket so a fatal shutdown can
+    // remove its file before exit (`process::exit` skips the server Drop).
+    coordinator.set_active_socket(args.control_socket.clone().map(std::path::PathBuf::from));
     let baselines: std::collections::HashMap<String, std::time::SystemTime> = config_file_paths
         .iter()
         .filter_map(|path| {
@@ -731,11 +781,18 @@ fn execute_watch_command(
     let reload_config_paths = startup_config_paths.clone();
     let reload_coordinator = coordinator.clone();
     let reload_root = watches.root().to_path_buf();
-    let reload_concurrency = watches.concurrency();
-    let reload_debounce = debounce;
-    let reload_backend = watches.backend();
-    let reload_gitignore = watches.respects_gitignore();
-    let reload_hooks = watches.hooks();
+    // TASK-0092: the startup policy doubles as the reload defaults for keys
+    // a candidate does not declare. The candidate's OWN declared policy is
+    // parsed from its content (see `reload::validate_candidate`), so a
+    // concurrency/debounce/backend/gitignore/hooks/socket change is a real
+    // semantic change and is applied at commit.
+    let reload_defaults = crate::reload::PolicyDefaults {
+        concurrency: watches.concurrency(),
+        debounce,
+        backend: watches.backend(),
+        gitignore: watches.respects_gitignore(),
+        hooks: watches.hooks(),
+    };
     // AC8: the current control socket path (as configured at startup); the
     // reload thread detects candidate path changes and requests a
     // bind-new-before-retire-old handoff through the coordinator.
@@ -838,12 +895,7 @@ fn execute_watch_command(
                     &mut tracker.lock().unwrap(),
                     &content,
                     reload_root.clone(),
-                    reload_concurrency,
-                    reload_debounce,
-                    reload_backend,
-                    reload_gitignore,
-                    reload_hooks.clone(),
-                    candidate_socket.clone(),
+                    &reload_defaults,
                 ) {
                     crate::reload::ReloadDecision::NoOp => {
                         stdout::info("Config save has no semantic change; nothing to reload.");
@@ -857,11 +909,7 @@ fn execute_watch_command(
                         let candidate_watches = build_watches_from_content(
                             &content,
                             &reload_root,
-                            reload_concurrency,
-                            reload_debounce,
-                            reload_backend,
-                            reload_gitignore,
-                            reload_hooks.clone(),
+                            &reload_defaults,
                             revision.clone(),
                         );
                         match candidate_watches {

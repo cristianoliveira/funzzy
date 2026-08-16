@@ -629,7 +629,23 @@ fn service_task_runs_across_generations_and_shuts_down() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    std::thread::sleep(Duration::from_millis(500));
+    // Deterministic readiness: wait until the watcher registered its roots
+    // ("Watching..." prints inside the on-ready callback) before writing the
+    // trigger — a fixed sleep races root registration under debug builds and
+    // loses the very first event (never assert on timing).
+    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Ok(log) = std::fs::read_to_string(directory.join("child.out")) {
+            if log.contains("Watching...") {
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "watcher never became ready"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 
     // A change triggers the generation: the finite prep job runs and the
     // service is started and kept running (svc-ready written).

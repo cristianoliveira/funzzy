@@ -21,7 +21,7 @@ Cargo.lock
 
 funzzy*
 tests/integration/workdir/
-*.log
+*.log*
 tests/integration/release/
 
 # Agent tooling caches (e.g. AST index)
