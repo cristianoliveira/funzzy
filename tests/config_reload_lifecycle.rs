@@ -253,6 +253,11 @@ fn valid_atomic_rewrite_preserves_pid_token_and_routes_new_job_once() {
 
     // The NEW job routes through the same process without a restart.
     std::fs::create_dir_all(directory.join("docs")).unwrap();
+    // Settle before writing the file inside: inotify registers the watch for
+    // a newly created subdir asynchronously, and a file written in the same
+    // instant can be missed (FSEvents on macOS does not have this race, so
+    // these reload tests only surface it on Linux CI).
+    std::thread::sleep(Duration::from_millis(300));
     std::fs::write(directory.join("docs/guide.md"), "x").unwrap();
     wait_until(
         || directory.join("docs-verdict.txt").exists(),
@@ -441,6 +446,11 @@ fn reload_adds_missing_future_root_and_observes_later_create() {
 
     // Create the future path: the stable ancestor observes the create.
     std::fs::create_dir_all(directory.join("future")).unwrap();
+    // Settle before writing the file inside: inotify registers the watch for
+    // a newly created subdir asynchronously, and a file written in the same
+    // instant can be missed (FSEvents on macOS does not have this race, so
+    // these reload tests only surface it on Linux CI).
+    std::thread::sleep(Duration::from_millis(300));
     std::fs::write(directory.join("future/new.rs"), "x").unwrap();
     wait_until(
         || directory.join("future-verdict.txt").exists(),
