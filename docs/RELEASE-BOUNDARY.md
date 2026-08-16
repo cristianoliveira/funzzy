@@ -47,12 +47,13 @@ Current repository state (the inconsistency this boundary resolves):
 - `fzz check` validation and `explain` topology (TASK-0033..0034).
 - Preferred `jobs:` vocabulary with deterministic migration (TASK-0075..0078).
 - Agent end-to-end feedback loop (TASK-0049).
+- Managed long-running service tasks (TASK-0035), workflow hooks
+  (TASK-0040), task-aware output policies (TASK-0041) — required ancestors of
+  the output-evidence/reload work on `develop`, fully implemented and tested
+  (see TASK-0084 compatibility decision).
 
 ### Explicitly deferred (post-2.0.0)
 
-- Managed long-running service tasks (TASK-0035), gitignore precedence
-  (TASK-0036), polling fallback (TASK-0037), workflow hooks (TASK-0040),
-  task-aware output policies (TASK-0041).
 - V2 documentation revamp pages beyond release-blocking essentials
   (TASK-0066/0067 deep dives).
 - Any runtime/protocol rename of "task" (JOBS-CONFIG-CONTRACT §7).
@@ -131,9 +132,14 @@ New in 2.0.0:
 - Duration estimates (XDG history, execution-signature keyed).
 - Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
+- Managed long-running service tasks (`service: true`), run-level
+  success/failure hooks (`on.success`/`on.failure`), task-aware output
+  policies (`inherit`/`quiet`/`capture`/`show-on-failure`).
 - Shell completion: `fzz completions SHELL`.
 
-Deferred: service tasks (TASK-0035), workflow hooks (TASK-0040), task-aware output policies (TASK-0041), docs deep dives.
+(No longer deferred: TASK-0035/0040/0041 are ancestors of the output-evidence
+and reload work on `develop` and ship in 2.0.0 — TASK-0084 compatibility
+decision.)
 
 Release evidence locked by tests (TASK-0020): `funzzy`/`fzz` identical command trees; removed V1 flags rejected with exit 2; every subcommand `--help` exits 0.
 
