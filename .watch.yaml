@@ -1,22 +1,13 @@
 ## Funzzy events file
-# more details see: https://github.com/cristianoliveira/funzzy
+# Fast edit loop by default; expensive gates are explicit targets.
 #
-# list here all the events and the commands that it should execute
-#
-# HOWTO: use in a workflow
-#
-# My current workflow is very simple I start by spining up funzzy and
-# then start making my changes, everytime all the tests pass the changed file
-# is staged to git. Once I'm done with my changes I simply commit. :)
-#
-# Run all tasks with `fzz --restart`
-# Run quick tasks with `fzz --restart watch @quick`
-#
+# Run the edit loop:   fzz --restart watch @quick
+# Run final checks:    fzz control run @agent-final --wait
+# Run Nix checks:      fzz control run @nixbuild --wait
+
 on:
   socket: .tmp/funzzy/control.sock
-  change:
-    - "src/**"
-    - "tests/**"
+  concurrency: 2
   ignore:
     - "src/**/*log*"
     # Watchers can emit either the directory event or events for files inside it.
@@ -24,109 +15,67 @@ on:
     - "**/.pi/**"
 
 tasks:
-  - name: start by updating deps @quick
-    run: direnv exec . cargo update
-    run_on_init: true
-
-  - name: run my build
+  # These two contiguous tasks overlap. Formatting is cheap while the test
+  # task owns all compilation, avoiding the previous build/test duplication.
+  - name: format @quick @agent-final
     parallel: quick-check
-    run: "direnv exec . make build"
-    change: ["Cargo.*"]
-
-  - name: run lint and formatter @quick @agent-final
-    parallel: quick-check
-    run:
-      - direnv exec . cargo fmt -- {{filepath}}
-      - direnv exec . cargo fmt -- --check {{filepath}}
-      - direnv exec . cargo fmt
+    run: direnv exec . cargo fmt --all
     run_on_init: true
+    change:
+      - "src/**/*.rs"
+      - "tests/**/*.rs"
     ignore:
-      - "examples/*.yml"
-      - "examples/*.yaml"
-      - "examples/workdir/**"
-      # cargo fmt only accepts Rust sources; markdown/docs edits under src/ must not trigger it.
       - "**/*.md"
 
-  - name: run my test @quick @agent-final
+  - name: unit and drift checks @quick @agent-final
     parallel: quick-check
-    run: |
-     cat .github/workflows/on-push.yml \
-      | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
-      | xargs -I {} direnv exec . bash -c {}
-    run_on_init: true
-
-    # Moved integration to earlier because it is faster than @nixbuild
-  - name: run integration @agent-final
     run:
-      # NOTE: integration tests create their own per-run scratch roots
-      # (see tests/watching_configured_rules.rs), so no shared dir prep is
-      # needed here.
-      # Serialized because each integration test spawns a real `fzz` watcher;
-      # running them in parallel exhausts the process table under the dev
-      # watcher (EAGAIN on fork -> spawn panics). CI stays parallel.
-      # Filter with `INTEGRATION_TEST=watching_configured_rules fzz watch integration`
-      # if fails open nvim with the failing logs
-      - "direnv exec . cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture --test-threads=1"
-    ignore:
-      - "examples/reload-config-example.yml"
-      - "examples/workdir/**"
+      - direnv exec . cargo test
+      - direnv exec . make docs-drift
     run_on_init: true
+    change:
+      - "src/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "examples/**"
+      - "docs/**"
+      - "scripts/docs-drift-check"
 
+  # Full integration is intentionally manual. It takes about eight minutes
+  # and spawns real watchers, so running it on every edit slows feedback and
+  # risks exhausting the process table. Keep test threads serialized.
+  - name: integration @agent-final
+    parallel: quick-check
+    run: "direnv exec . cargo test --features test-integration --test ${INTEGRATION_TEST:-'*'} -- --nocapture --test-threads=1"
+    change:
+      - "src/**"
+      - "tests/**"
+    # Ignore every filesystem event; explicit target runs do not path-filter.
+    ignore: "**"
+
+  # Nix is a separate packaging gate. Nix commands already build the package;
+  # an extra cargo release build here only duplicated that work.
   - name: nix checks @nixbuild
     run:
-      # This avoids running integration test if the pckg is not even buildin
-      - direnv exec . cargo build --release
-      # Build and run integration tests
       - direnv exec . make nix-flake-check
       - direnv exec . make nix-build-nightly
     change:
-      # Uncomment these for when having to debug issues with nix builds
-      # when you want to run commands in the integration tests to debug
-      # directories or the environment where the build is happening
-      #
-      # Eg running
-      # ```rust
-      # shell!("ls -la");
-      # ```
-      # See: tests/common/macros.rs
-      # And the usage in: tests/common/lib.rs
-      #
-      # To debug use `fzz --restart watch @nixbuild`
-      #
-      # IN NIGHTLY VERSION `fzz --restart --fail-fast watch @nixbuild`
-      # which bails fast
-      # - "src/**"
-      - "tests/**"
       - "**/*.nix"
-    run_on_init: true
+      - "flake.lock"
     ignore:
       - "**/*.txt"
 
-  # - name: after all checks if no error stage to git @quick @nixbuild
-  #   run:
-  #     - 'git add $(echo "{{filepath}}" | sed "s#$PWD/##")'
-  #     - 'git add . -p'
-  #     # - 'git commit'
-  #   change:
-  #     - ".watch.yaml"
-  #     - "README.md"
-  #     - "src/**"
-  #     - "tests/**"
-  #     - "**/*.nix"
-  #   ignore:
-  #     - "examples/workdir/**"
-  #     - "examples/reload-config-example.yml"
-  #   run_on_init: true
-
   - name: install locally @quick
-    # Check if .tmp/install exists then install otherwise skip
-    run:
-      - if [ -f .tmp/install ]; then
-          echo "Installing locally";
-          direnv exec . cargo install --path . --force;
-        else
-          echo "Skipping local install, create the file .tmp/install to enable";
-        fi
+    # Opt in by creating .tmp/install.
+    run: |
+      if [ -f .tmp/install ]; then
+        echo "Installing locally"
+        direnv exec . cargo install --path . --force
+      else
+        echo "Skipping local install, create .tmp/install to enable"
+      fi
     change:
       - "src/**"
-      - "Cargo.*"
+      - "Cargo.toml"
+      - "Cargo.lock"
