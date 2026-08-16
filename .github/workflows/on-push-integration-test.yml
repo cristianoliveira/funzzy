@@ -31,4 +31,6 @@ jobs:
         run: cargo test --no-fail-fast --features test-integration --test '*' -- --test-threads=1
 
       - name: Run integration e2e tests
-        run: make integration-e2e
+        # Same determinism rationale as the integration step: serialized
+        # threads and no fail-fast.
+        run: cargo test --no-fail-fast --features test-integration-e2e --test '*' -- --test-threads=1
