@@ -427,7 +427,7 @@ fn gitignored_paths_do_not_trigger_tasks_when_respected() {
         std::fs::create_dir_all(scratch.join("generated")).unwrap();
         std::fs::write(
         scratch.join(".watch.yaml"),
-        "on:\n  change: '**/*'\n  respect_gitignore: true\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: 'captured.txt'\n",
+        "on:\n  change: '**/*'\n  respect_gitignore: true\njobs:\n  - name: capture\n    run: 'echo captured > captured.txt'\n    change: '*.txt'\n    ignore: ['captured.txt', 'child.out', 'child.err']\n",
     )
     .unwrap();
 
