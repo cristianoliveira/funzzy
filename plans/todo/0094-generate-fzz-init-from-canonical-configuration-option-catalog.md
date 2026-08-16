@@ -1,7 +1,7 @@
 ---
 id: TASK-0094
 title: Generate fzz init from canonical configuration option catalog
-status: todo
+status: doing
 depends_on: [TASK-0093, TASK-0058, TASK-0069]
 priority: high
 tags: [rust, cli, init, config, schema, tdd]
