@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "funzzy";
-  version = "b3cf3c9";
+  version = "23b2591";
 
   ## build with local source
   src = ../.;
@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage {
 #   allowBuiltinFetchGit = true;
 # };
 
-  cargoHash = "sha256-/TUmIB7loqStESLBSMUnrG/4mFXL9lM8OnHA35V6kwY=";
+  cargoHash = "sha256-n2QeEPsGo1/bnwpE8i+ttdGnAsuUa8qIrPJUpjqN8Zc=";
 
   # NOTE: legacy darwin.apple_sdk.frameworks references were removed in
   # nixpkgs; the default SDK (via SDKROOT) provides CoreServices now.
