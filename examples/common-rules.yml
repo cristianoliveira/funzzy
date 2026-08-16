@@ -45,7 +45,6 @@ tasks:
       - "src/generated/**"
       - "**/*.bak"
 
-  # This task inherits common rules and has a custom filter
+  # This task inherits common rules
   - name: format
     run: cargo fmt
-    filter: "filters/rust_files.lua"

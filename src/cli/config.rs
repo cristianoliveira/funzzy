@@ -6,6 +6,7 @@
 use crate::cli::format::render_document;
 use crate::cli::OutputFormat;
 use crate::errors::FzzError;
+use crate::option_catalog::{self, OptionSpec, Owner, SpecKind};
 use serde_json::{json, Value};
 
 /// Schema sections (AGENT-CONFIG-CONTRACT §4).
@@ -43,21 +44,61 @@ fn full_schema() -> Value {
     })
 }
 
+/// Maps one catalog property to its JSON Schema fragment (TASK-0094: the
+/// schema and the init renderer consume the same option metadata).
+fn schema_property(spec: &OptionSpec) -> Value {
+    let mut prop = match spec.kind {
+        SpecKind::Bool => json!({ "type": "boolean" }),
+        SpecKind::Int => json!({ "type": "integer", "minimum": 1 }),
+        SpecKind::String => json!({ "type": "string" }),
+        SpecKind::StringList => json!({
+            "type": ["string", "array"],
+            "items": { "type": "string" }
+        }),
+        SpecKind::Duration => json!({
+            "type": "string",
+            "pattern": "^[0-9]+(ms|s|m)?$"
+        }),
+        SpecKind::Enum(values) => json!({ "type": "string", "enum": values }),
+        SpecKind::StringMap => json!({
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+        }),
+    };
+    prop["description"] = json!(spec.help);
+    // Literal defaults only: textual defaults like "machine parallelism" are
+    // guidance for comments, not schema values.
+    if let Some(default) = spec.default {
+        match spec.kind {
+            SpecKind::Bool => prop["default"] = json!(default == "true"),
+            SpecKind::Enum(_) | SpecKind::String | SpecKind::Duration => {
+                prop["default"] = json!(default)
+            }
+            _ => {}
+        }
+    }
+    prop
+}
+
+/// Structural properties for a section, driven by the canonical catalog.
+fn section_properties(owner: Owner) -> Value {
+    let mut props = serde_json::Map::new();
+    for spec in match owner {
+        Owner::On => option_catalog::on_specs(),
+        Owner::Job => option_catalog::job_specs(),
+        Owner::Root => option_catalog::root_specs(),
+    } {
+        props.insert(spec.name.to_string(), schema_property(spec));
+    }
+    Value::Object(props)
+}
+
 fn section_on() -> Value {
     json!({
         "type": "object",
         "title": "on",
         "description": "Common watch settings shared by every job.",
-        "properties": {
-            "change": { "type": ["string", "array"], "items": {"type": "string"}, "description": "Common change globs applied to all jobs." },
-            "ignore": { "type": ["string", "array"], "items": {"type": "string"}, "description": "Common ignore globs; explicit config ignore always wins over gitignore." },
-            "socket": { "type": "string", "description": "Control socket path; enables the control surface." },
-            "concurrency": { "type": "integer", "minimum": 1, "description": "Global cap on simultaneously active tasks (default: available parallelism)." },
-            "debounce": { "type": "string", "pattern": "^[0-9]+(ms|s|m)?$", "description": "Filesystem batch debounce window (default 1s)." },
-            "watch_backend": { "type": "string", "enum": ["native", "poll", "auto"], "default": "auto" },
-            "poll_interval": { "type": "string", "pattern": "^[0-9]+(ms|s|m)?$", "description": "Poll backend interval (default 500ms)." },
-            "respect_gitignore": { "type": "boolean", "default": false, "description": "Respect workspace .gitignore rules (GITIGNORE-CONTRACT)." }
-        },
+        "properties": section_properties(Owner::On),
         "additionalProperties": false
     })
 }
@@ -68,16 +109,7 @@ fn section_job() -> Value {
         "title": "job",
         "description": "One configured workflow unit. Runs as a task in each generation.",
         "required": ["name", "run"],
-        "properties": {
-            "name": { "type": "string", "description": "Stable job identity; also the runtime task name." },
-            "run": { "type": ["string", "array"], "items": {"type": "string"}, "description": "Command(s); shell string or argv list." },
-            "cwd": { "type": "string", "description": "Working directory for this job (relative to workspace)." },
-            "env": { "type": "object", "additionalProperties": {"type": "string"}, "description": "Environment for this job. Values are never echoed in schema/examples." },
-            "change": { "type": ["string", "array"], "items": {"type": "string"}, "description": "Globs that trigger this job." },
-            "ignore": { "type": ["string", "array"], "items": {"type": "string"}, "description": "Globs that suppress a change match; strongest precedence." },
-            "run_on_init": { "type": "boolean", "default": false, "description": "Run this job when the watcher starts." },
-            "parallel": { "type": "string", "description": "Named contiguous group; members may overlap (PARALLEL-EXECUTION-CONTRACT)." }
-        },
+        "properties": section_properties(Owner::Job),
         "additionalProperties": false
     })
 }
@@ -318,4 +350,66 @@ fn schema_document(section: &str) -> Value {
     doc["section"] = identity["section"].clone();
     doc["fullSchemaCommand"] = identity["fullSchemaCommand"].clone();
     doc
+}
+
+#[cfg(test)]
+mod catalog_parity_tests {
+    use super::*;
+    use crate::option_catalog::{self, Owner};
+
+    fn prop_names(section: &str) -> Vec<String> {
+        let full = full_schema();
+        full["$defs"][section]["properties"]
+            .as_object()
+            .expect("section properties object")
+            .keys()
+            .map(|k| k.to_string())
+            .collect()
+    }
+
+    /// TASK-0094: structural schema properties for on/job must exactly equal
+    /// the canonical catalog — no accepted field missing, no pseudo-field.
+    #[test]
+    fn on_section_matches_catalog_exactly() {
+        let mut expected: Vec<String> = option_catalog::property_names(Owner::On)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        expected.sort();
+        let mut actual = prop_names("on");
+        actual.sort();
+        assert_eq!(actual, expected);
+        assert!(actual.contains(&"success".to_string()));
+        assert!(actual.contains(&"failure".to_string()));
+        assert!(actual.contains(&"output".to_string()));
+    }
+
+    #[test]
+    fn job_section_matches_catalog_exactly() {
+        let mut expected: Vec<String> = option_catalog::property_names(Owner::Job)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        expected.sort();
+        let mut actual = prop_names("job");
+        actual.sort();
+        assert_eq!(actual, expected);
+        assert!(actual.contains(&"service".to_string()));
+        assert!(actual.contains(&"output".to_string()));
+    }
+
+    /// Conceptual sections (matching/execution/parallel/control) must stay
+    /// separate and never leak into structural on/job definitions. `parallel`
+    /// is a real job property, so the pseudo-fields are matching/execution/control.
+    #[test]
+    fn conceptual_sections_do_not_masquerade_as_config_keys() {
+        for section in ["on", "job"] {
+            for prop in prop_names(section) {
+                assert!(
+                    !["matching", "execution", "control"].contains(&prop.as_str()),
+                    "{prop} leaked into {section} structural properties"
+                );
+            }
+        }
+    }
 }

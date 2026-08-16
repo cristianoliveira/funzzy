@@ -246,26 +246,21 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             let change = yaml::extract_list(yaml, "change").unwrap_or_default();
             let ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
 
+            // Allowlist comes from the canonical option catalog (TASK-0094,
+            // INIT-TEMPLATE-CONTRACT §10) so the parser, schema, and init
+            // template can never drift apart.
+            let allowed = crate::option_catalog::property_names(crate::option_catalog::Owner::On);
+
             // Validate that only allowed properties are present
             if let Yaml::Hash(ref hash) = yaml {
                 for (key, _) in hash {
                     if let Yaml::String(ref key_str) = key {
-                        if key_str != "change"
-                            && key_str != "ignore"
-                            && key_str != "socket"
-                            && key_str != "concurrency"
-                            && key_str != "debounce"
-                            && key_str != "watch_backend"
-                            && key_str != "poll_interval"
-                            && key_str != "respect_gitignore"
-                            && key_str != "success"
-                            && key_str != "failure"
-                            && key_str != "output"
-                        {
+                        if !allowed.contains(&key_str.as_str()) {
                             return Err(errors::FzzError::InvalidConfigError(
                                 format!(
-                                    "Invalid property '{}' in 'on' section. Only 'change', 'ignore', 'socket', 'concurrency', 'debounce', 'watch_backend', 'poll_interval', and 'respect_gitignore' are allowed.",
-                                    key_str
+                                    "Invalid property '{}' in 'on' section. Only {} are allowed.",
+                                    key_str,
+                                    allowed.join(", ")
                                 ),
                                 None,
                                 Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock\n  concurrency: 2\n  debounce: 500ms".to_owned()),
@@ -294,6 +289,31 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
 
 /// Parse a rule from YAML and merge with common rules
 fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Rules> {
+    // Job-level allowlist from the canonical catalog (TASK-0094): an unknown
+    // property is an actionable config bug, never a silent accept
+    // (JOBS-CONFIG-CONTRACT §5, schema `additionalProperties: false`).
+    if let Yaml::Hash(ref hash) = yaml {
+        let allowed = crate::option_catalog::property_names(crate::option_catalog::Owner::Job);
+        for (key, _) in hash {
+            if let Yaml::String(ref key_str) = key {
+                if !allowed.contains(&key_str.as_str()) {
+                    let name =
+                        yaml::extract_string(yaml, "name").unwrap_or_else(|_| "?".to_owned());
+                    return Err(errors::FzzError::InvalidConfigError(
+                        format!(
+                            "Invalid property '{}' in job '{}'. Only {} are allowed.",
+                            key_str,
+                            name,
+                            allowed.join(", ")
+                        ),
+                        None,
+                        Some("Each job needs a unique name and a run command; check the property spelling".to_owned()),
+                    ));
+                }
+            }
+        }
+    }
+
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
 
@@ -2216,5 +2236,80 @@ mod service_tests {
             "on:\n  change: '**/*'\njobs:\n  - name: a\n    service: yes\n    run: echo a\n"
         )
         .is_err());
+    }
+}
+
+mod catalog_allowlist_tests {
+    use super::*;
+
+    /// Allowlist rejection = an "Invalid property" error; value-shape errors
+    /// are separate.
+    fn allowlist_rejects(msg: &errors::FzzError) -> bool {
+        matches!(
+            msg,
+            errors::FzzError::InvalidConfigError(m, _, _) if m.contains("Invalid property")
+        )
+    }
+
+    /// TASK-0094: parser allowlists consume the canonical option catalog
+    /// (INIT-TEMPLATE-CONTRACT §10).
+    #[test]
+    fn on_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\n  {name}: x\njobs:\n  - name: a\n    run: echo a\n"
+            );
+            // Keys with a fixed shape accept a probing scalar; the allowlist
+            // itself must never reject a catalog property by name.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in 'on'"
+            );
+        }
+    }
+
+    #[test]
+    fn on_section_error_lists_every_catalog_property() {
+        let err =
+            from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
+                .expect_err("unknown on property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'bogus' in 'on' section"));
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            assert!(
+                message.contains(name),
+                "error must name allowed '{name}': {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn job_section_rejects_unknown_properties_actionably() {
+        // JOBS-CONFIG-CONTRACT §5: unknown job property must be an actionable
+        // error, not a silent accept (schema declares additionalProperties: false).
+        let err = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    bogus_key: 1\n",
+        )
+        .expect_err("unknown job property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'bogus_key' in job"));
+        assert!(message.contains("a"), "error must name the job: {message}");
+    }
+
+    #[test]
+    fn job_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::Job) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    {name}: x\n"
+            );
+            // Probe with a scalar; value-shape errors are separate from the
+            // allowlist and must not be raised here.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in job"
+            );
+        }
     }
 }

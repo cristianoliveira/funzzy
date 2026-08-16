@@ -21,6 +21,7 @@ pub mod executor;
 pub mod gitignore;
 pub mod identity;
 pub mod logging;
+pub mod option_catalog;
 pub mod output;
 pub mod plan;
 pub mod process_owner;
