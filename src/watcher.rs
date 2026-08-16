@@ -230,6 +230,7 @@ fn run_native(
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(debounced_evts) => {
                 let (events, malformed) = normalize_batch(debounced_evts);
+                let events = reconcile_new_directories(events);
                 if events.is_empty() {
                     // Malformed or empty windows never schedule; still surface
                     // the observation when diagnostics are enabled.
@@ -391,6 +392,50 @@ fn normalize_batch(
     events.sort_by(|a, b| a.path.cmp(&b.path));
     events.dedup_by(|a, b| a.path == b.path);
     (events, false)
+}
+
+/// Closes the native-backend registration race (WATCH-DISCOVERY-CONTRACT
+/// §4): inotify adds the watch for a newly created directory only when its
+/// create event is processed, so files written inside in the same instant
+/// are never observed. After each debounced window, every non-continuous
+/// event whose path is an existing directory is walked and its descendants
+/// are synthesized into the same batch (sorted, deduped), making tree
+/// creation observable exactly like the poll backend (§7 equivalence).
+/// Continuous (modify) events never rescan, so a touched long-lived
+/// directory does not flood the batch with its whole subtree.
+fn reconcile_new_directories(mut events: Vec<FileEvent>) -> Vec<FileEvent> {
+    let mut known: std::collections::HashSet<String> =
+        events.iter().map(|event| event.path.clone()).collect();
+    let mut synthesized: Vec<FileEvent> = Vec::new();
+    for event in &events {
+        if event.continuous {
+            continue;
+        }
+        let path = Path::new(&event.path);
+        let is_dir = std::fs::metadata(path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false);
+        if !is_dir {
+            continue;
+        }
+        let mut descendants: Vec<PathBuf> = Vec::new();
+        walk_descendants(path, &mut descendants);
+        for descendant in descendants {
+            let Some(descendant_path) = descendant.to_str() else {
+                continue;
+            };
+            if known.insert(descendant_path.to_owned()) {
+                synthesized.push(FileEvent {
+                    path: descendant_path.to_owned(),
+                    continuous: false,
+                });
+            }
+        }
+    }
+    events.append(&mut synthesized);
+    events.sort_by(|a, b| a.path.cmp(&b.path));
+    events.dedup_by(|a, b| a.path == b.path);
+    events
 }
 
 #[cfg(test)]
@@ -774,6 +819,106 @@ mod poll_tests {
             }
         );
         assert!(WatchBackend::parse(Some("bogus"), None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("funzzy-reconcile-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn files_created_inside_new_directory_are_synthesized_into_the_batch() {
+        // Contract §4: a directory tree + file created in one operation
+        // routes on the canonical final file path. inotify registers the
+        // watch for a new directory only when its create event is processed,
+        // so a file written in the same instant is never observed; the
+        // directory event itself is all the batch sees.
+        let dir = scratch("synthesize");
+        std::fs::create_dir_all(dir.join("src/new")).unwrap();
+        std::fs::write(dir.join("src/new/lib.rs"), "x").unwrap();
+
+        let events = vec![FileEvent {
+            path: dir.join("src").display().to_string(),
+            continuous: false,
+        }];
+        let reconciled = reconcile_new_directories(events);
+        assert!(
+            reconciled
+                .iter()
+                .any(|e| e.path.ends_with("src/new/lib.rs")),
+            "file created before watch registration must be synthesized: {reconciled:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reconcile_dedupes_paths_already_observed_in_the_batch() {
+        let dir = scratch("dedupe");
+        std::fs::create_dir_all(dir.join("tree")).unwrap();
+        std::fs::write(dir.join("tree/a.rs"), "x").unwrap();
+        std::fs::write(dir.join("tree/b.rs"), "x").unwrap();
+
+        let events = vec![
+            FileEvent {
+                path: dir.join("tree").display().to_string(),
+                continuous: false,
+            },
+            FileEvent {
+                path: dir.join("tree/a.rs").display().to_string(),
+                continuous: false,
+            },
+        ];
+        let reconciled = reconcile_new_directories(events);
+        let a_count = reconciled
+            .iter()
+            .filter(|e| e.path.ends_with("tree/a.rs"))
+            .count();
+        assert_eq!(
+            a_count, 1,
+            "already observed paths stay unique: {reconciled:?}"
+        );
+        assert!(
+            reconciled.iter().any(|e| e.path.ends_with("tree/b.rs")),
+            "sibling created in the same instant is synthesized: {reconciled:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reconcile_skips_continuous_dir_events_and_missing_paths() {
+        // A continuous (modify) event on a long-lived directory must not
+        // rescan its whole subtree, and removed paths must pass through
+        // untouched.
+        let dir = scratch("skip-continuous");
+        std::fs::create_dir_all(dir.join("old")).unwrap();
+        std::fs::write(dir.join("old/pre-existing.rs"), "x").unwrap();
+
+        let events = vec![
+            FileEvent {
+                path: dir.join("old").display().to_string(),
+                continuous: true,
+            },
+            FileEvent {
+                path: dir.join("gone").display().to_string(),
+                continuous: false,
+            },
+        ];
+        let reconciled = reconcile_new_directories(events.clone());
+        let mut expected = events;
+        expected.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(
+            reconciled, expected,
+            "continuous and nonexistent paths must not synthesize anything"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 
