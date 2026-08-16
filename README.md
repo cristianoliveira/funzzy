@@ -181,6 +181,12 @@ fzz run build                  # run the exact target once, no watcher
 fzz                            # zero-argument configured watch
 ```
 
+The file `fzz init` writes is a **comprehensive commented starter**: a small
+active hello/change example that runs immediately, plus every supported
+setting documented as a comment next to its owning section (the same
+metadata drives `fzz config schema`). Uncomment any documented example to
+activate it; `fzz init && fzz` is the zero-dependency trial.
+
 Both binary names work — `funzzy` and its short alias `fzz`; examples use
 `fzz`. Migrate a legacy task-list config with `fzz init --migrate` (emits the
 preferred `jobs:` form). The installed binary is the config reference:

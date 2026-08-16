@@ -468,4 +468,67 @@ mod renderer_tests {
             content.len()
         );
     }
+
+    /// Criterion 8 (TASK-0095): `fzz config example` profiles never inherit
+    /// the human-commented init output (agent carries its own lean comments).
+    #[test]
+    fn example_profiles_do_not_inherit_init_header() {
+        for profile in crate::cli::config::PROFILES {
+            let yaml = crate::cli::config::example_yaml(profile).expect("example renders");
+            assert!(
+                !yaml.contains("Comprehensive commented starter"),
+                "{profile} must not inherit init header comments"
+            );
+            assert!(
+                !yaml.contains("option documented in comments"),
+                "{profile} must not inherit init header text"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod init_command_tests {
+    use super::InitCommand;
+    use crate::cli::Command;
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "funzzy-init-custom-{}-{}",
+            std::process::id(),
+            label
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch");
+        dir
+    }
+
+    /// TASK-0094/0095: `InitCommand` preserves custom-filename behavior and
+    /// create-only semantics.
+    #[test]
+    fn custom_filename_creates_that_file_and_refuses_overwrite() {
+        let dir = scratch("custom");
+        let custom = dir.join("custom.yml");
+
+        InitCommand::new(custom.to_str().unwrap())
+            .execute()
+            .expect("init must create custom.yml");
+        assert!(custom.exists(), "custom.yml must be created");
+        let bytes = std::fs::read(&custom).expect("read custom.yml");
+        assert!(
+            bytes == super::render_init_template().as_bytes(),
+            "custom file must carry the deterministic template bytes"
+        );
+
+        // Create-only: second init refuses without mutating the file.
+        let err = InitCommand::new(custom.to_str().unwrap()).execute();
+        assert!(err.is_err(), "second init on existing file must fail");
+        assert_eq!(
+            std::fs::read(&custom).expect("re-read custom.yml"),
+            bytes,
+            "refused init must not mutate"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

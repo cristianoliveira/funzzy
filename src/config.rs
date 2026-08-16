@@ -139,6 +139,10 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
 struct CommonRules {
     change: Vec<String>,
     ignore: Vec<String>,
+    /// On-level default output policy (`on.output`), applied to jobs without
+    /// their own `output:` (TASK-0095: the schema/catalog-documented default
+    /// must actually be consumed by the parser).
+    output_policy: OutputPolicy,
 }
 
 /// Parse the grouped root format: `{ on: {...}, jobs: [...] }` (preferred V2,
@@ -240,11 +244,35 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             Ok(CommonRules {
                 change: vec![],
                 ignore: vec![],
+                output_policy: OutputPolicy::Inherit,
             })
         }
         Yaml::Hash(_) => {
             let change = yaml::extract_list(yaml, "change").unwrap_or_default();
             let ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+
+            // `on.output` is the default output policy for jobs that do not
+            // declare their own; an invalid value is a config bug, rejected
+            // loudly (TASK-0095, catalog parity).
+            let output_policy = match yaml::extract_optional_string(yaml, "output")? {
+                None => OutputPolicy::Inherit,
+                Some(raw) => match raw.as_str() {
+                    "inherit" => OutputPolicy::Inherit,
+                    "quiet" => OutputPolicy::Quiet,
+                    "capture" => OutputPolicy::Capture,
+                    "show-on-failure" => OutputPolicy::ShowOnFailure,
+                    other => {
+                        return Err(errors::FzzError::InvalidConfigError(
+                            format!(
+                                "Invalid output policy '{}' in 'on' section: expected inherit, quiet, capture, or show-on-failure",
+                                other
+                            ),
+                            None,
+                            None,
+                        ))
+                    }
+                },
+            };
 
             // Allowlist comes from the canonical option catalog (TASK-0094,
             // INIT-TEMPLATE-CONTRACT §10) so the parser, schema, and init
@@ -273,6 +301,7 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             Ok(CommonRules {
                 change: ensure_glob_only(change, "on.change")?,
                 ignore: ensure_glob_only(ignore, "on.ignore")?,
+                output_policy,
             })
         }
         _ => Err(errors::FzzError::InvalidConfigError(
@@ -347,7 +376,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         }
     };
     let output = match yaml::extract_optional_string(yaml, "output")? {
-        None => OutputPolicy::Inherit,
+        None => common.output_policy.clone(),
         Some(raw) => match raw.as_str() {
             "inherit" => OutputPolicy::Inherit,
             "quiet" => OutputPolicy::Quiet,

@@ -80,8 +80,31 @@ else
   fail "broken internal links:\n$MISSING_LINKS"
 fi
 
+# 6. Init template golden snapshot + size budget (TASK-0095): the installed
+#    version-matched binary must emit byte-identical init output, and the
+#    template must stay within the documented ceiling (200 lines / 8 KiB).
+GOLDEN="$ROOT/scripts/golden/init-template.yaml"
+if [ ! -x "$ROOT/target/debug/fzz" ]; then
+  (cd "$ROOT" && cargo build -q) || fail "init snapshot: could not build fzz"
+fi
+SNAP_DIR=$(mktemp -d)
+trap 'rm -rf "$SNAP_DIR"' EXIT
+if (cd "$SNAP_DIR" && "$ROOT/target/debug/fzz" init >/dev/null 2>&1) \
+  && cmp -s "$SNAP_DIR/.watch.yaml" "$GOLDEN"; then
+  note "init template matches golden snapshot"
+else
+  fail "init template drift: regenerate with 'make build && d=\$(mktemp -d) && (cd \$d && fzz init) && cp \$d/.watch.yaml scripts/golden/init-template.yaml'"
+fi
+LINES=$(wc -l < "$SNAP_DIR/.watch.yaml" | tr -d ' ')
+BYTES=$(wc -c < "$SNAP_DIR/.watch.yaml" | tr -d ' ')
+if [ "$LINES" -le 200 ] && [ "$BYTES" -le 8192 ]; then
+  note "init template within budget ($LINES lines / $BYTES bytes)"
+else
+  fail "init template exceeds budget: $LINES lines / $BYTES bytes (ceiling 200 lines / 8192 bytes)"
+fi
+
 if [ "$errors" -gt 0 ]; then
   echo "docs-drift FAILED ($errors issue(s))" >&2
   exit 1
 fi
-echo "docs-drift OK: help/schema/examples/links/version/vocabulary consistent"
+echo "docs-drift OK: help/schema/examples/links/version/vocabulary/init consistent"

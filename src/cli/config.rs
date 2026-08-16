@@ -200,7 +200,7 @@ fn schema_command(section: Option<&str>, format: OutputFormat) -> Result<(), Fzz
 
 /// The three runnable example configs; each parses through the production
 /// parser and passes structural validation.
-fn example_yaml(profile: &str) -> Result<String, FzzError> {
+pub(crate) fn example_yaml(profile: &str) -> Result<String, FzzError> {
     let yaml = match profile {
         "minimal" => {
             r#"on:
