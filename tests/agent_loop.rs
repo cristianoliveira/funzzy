@@ -259,8 +259,9 @@ fn cancellation_kills_descendant_tree_and_newer_generation_unaffected() {
     wait_until_socket(&directory);
     let socket = directory.join("sock");
 
-    // Start a long-running job, then cancel the exact generation.
-    std::fs::write(directory.join("ok.txt"), "start").unwrap();
+    // Start a long-running job, then cancel the exact generation. Synthetic
+    // emit is the controlled path: a real file write would also fire the
+    // watcher's own event, which can race the emits (machine-speed dependent).
     let emit = result(call(&socket, "emit", serde_json::json!({"path": "ok.txt"})));
     let gen = emit["runId"].as_u64().unwrap();
     wait_until(|| {
@@ -283,8 +284,9 @@ fn cancellation_kills_descendant_tree_and_newer_generation_unaffected() {
     assert_eq!(awaited["terminalReason"], "cancelled");
 
     // A newer generation still runs normally after the cancellation (it is
-    // NOT cancelled by the earlier exact-generation cancel).
-    std::fs::write(directory.join("ok.txt"), "again").unwrap();
+    // NOT cancelled by the earlier exact-generation cancel). Synthetic emit is
+    // the controlled path: a real file write would race the emit and can
+    // supersede this generation during the await (machine-speed dependent).
     let emit = result(call(&socket, "emit", serde_json::json!({"path": "ok.txt"})));
     let gen2 = emit["runId"].as_u64().unwrap();
     assert!(gen2 > gen);
@@ -341,9 +343,26 @@ fn config_restart_returns_explicit_instance_change() {
     );
 }
 
+/// Config with a fast check job plus a long-running job. The long job makes
+/// timeout assertions deterministic: awaiting it always returns "timeout"
+/// because the job outlives any short bound, regardless of machine speed.
+const BOUNDED_CONFIG: &str = r#"
+on:
+  socket: sock
+  concurrency: 2
+jobs:
+  - name: check
+    run: 'test -f ok.txt && echo green > verdict.txt || echo red > verdict.txt'
+    change: "*.txt"
+    ignore: "verdict.txt"
+  - name: slow
+    run: 'sleep 30'
+    change: "slow.txt"
+"#;
+
 #[test]
 fn no_match_ignored_timeout_and_malformed_paths_are_bounded() {
-    let directory = setup_directory("bounded", LOOP_CONFIG);
+    let directory = setup_directory("bounded", BOUNDED_CONFIG);
     let _watcher = start_watcher(&directory);
     wait_until_socket(&directory);
     let socket = directory.join("sock");
@@ -364,8 +383,14 @@ fn no_match_ignored_timeout_and_malformed_paths_are_bounded() {
     ));
     assert_eq!(emit["outcome"], "ignored");
 
-    // Timeout: await returns timeout reason, performs no cancellation.
-    let emit = result(call(&socket, "emit", serde_json::json!({"path": "ok.txt"})));
+    // Timeout: await returns timeout reason, performs no cancellation. The
+    // slow job outlives the 100 ms bound deterministically (no race with
+    // machine speed), so "timeout" is the only possible terminal reason.
+    let emit = result(call(
+        &socket,
+        "emit",
+        serde_json::json!({"path": "slow.txt"}),
+    ));
     let gen = emit["runId"].as_u64().unwrap();
     let awaited = result(call(
         &socket,
