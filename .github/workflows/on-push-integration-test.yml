@@ -26,7 +26,9 @@ jobs:
         # timing-sensitive assertions (reload, cancel, timeout bounds) flake
         # under parallel threads on fast CI runners. This matches the
         # deterministic agent-final gate (see .watch.yaml).
-        run: cargo test --features test-integration --test '*' -- --test-threads=1
+        # --no-fail-fast: cargo stops at the first failing test binary by
+        # default, hiding later failures; surface every binary in one run.
+        run: cargo test --no-fail-fast --features test-integration --test '*' -- --test-threads=1
 
       - name: Run integration e2e tests
         run: make integration-e2e
