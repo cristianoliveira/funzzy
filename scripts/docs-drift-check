@@ -51,10 +51,17 @@ fi
 # 5. Internal markdown links and referenced repo paths exist.
 MISSING_LINKS=$(python3 - << 'PY'
 import os, re
+# Submodules (.gitmodules) are not checked out in CI; links into them are
+# valid (they resolve on GitHub) but the target file is absent locally.
+submodules = set()
+if os.path.exists(".gitmodules"):
+    for line in open(".gitmodules"):
+        m = re.match(r"\s*path = (.+)", line)
+        if m:
+            submodules.add(m.group(1).strip())
 missing = []
-for root, _, files in os.walk("."):
-    if any(part in root for part in (".git", "target", ".gwt", "node_modules")):
-        continue
+for root, dirs, files in os.walk("."):
+    dirs[:] = [d for d in dirs if d not in ("target", ".gwt", "node_modules") and not d.startswith(".git")]
     for f in files:
         if not f.endswith(".md"):
             continue
@@ -68,6 +75,10 @@ for root, _, files in os.walk("."):
             if not target:
                 continue
             resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            # A link into a submodule root is valid; do not require the
+            # submodule working tree in CI.
+            if any(resolved == os.path.normpath(sm) or resolved.startswith(os.path.normpath(sm) + os.sep) for sm in submodules):
+                continue
             if not os.path.exists(resolved):
                 missing.append(f"{path}: -> {target}")
 for line in sorted(set(missing)):
