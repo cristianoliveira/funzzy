@@ -1,104 +1,73 @@
 # funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![Building package with nix](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-A lightweight blazingly fast file watcher inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr).
+**The file watcher for the agentic coding era.**
 
-Configure auto-execution of different commands using semantic YAML and [Unix shell style pattern match](https://en.wikipedia.org/wiki/Glob_(programming)) or stdin.
+Funzzy gives developers and coding agents the same fast feedback loop: observe a change, run the exact workflow, await a fresh result, and retrieve bounded failure evidence. It combines lightweight file watching with deterministic, machine-readable execution control.
+
+Inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr), `fzz` still works as a simple local command runner. Agent-facing capabilities extend that workflow instead of creating another one.
 
 > [!WARNING]
 > ### Version 2.0.0
-> These are instructions of the new V2 version yet to be released, check [V1](https://github.com/cristianoliveira/funzzy/tree/v1) if you are using v1.5.0
+> This README describes unreleased V2 behavior on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
-For a workflow as simple as:
+## Capabilities
+
+- **Watch or run once:** use the same workflow locally, in CI, or in an editor feedback loop.
+- **Precise matching:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
+- **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
+- **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
+- **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
+- **Workflow automation:** run generation-level `on.success` and `on.failure` hooks without changing the workflow result.
+- **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
+- **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
+- **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
+- **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
+
+For ad-hoc work over paths from stdin:
+
 ```bash
-find . -name '*.ts' | funzzy 'npx eslint {{relative_path}}'
+find . -name '*.ts' | fzz exec -- npx eslint {{relative_filepath}}
 ```
 
-Or more complex workflows like:
+For a configured workflow, create `.watch.yaml`:
+
 ```yaml
-# .watch.yaml (or .watch.yml)
-# list here all the events and the commands that it should execute
-# TIP: include '.watch.yaml' in your .git/info/exclude to ignore it.
-# TIP2: List the tasks/steps from quicker to slower for better workflows
-#
-# Run: `fzz --fail-fast --restart` to restart busy runs on change.
-
-- name: run my tests
-  run: make test
-  change: "tests/**"
-  ignore: "tests/integration/**"
-  run_on_init: true
-
-- name: Starwars ascii art
-  run: telnet towel.blinkenlights.nl
-  change:
-    - "/tmp/starwars.txt"
-    - ".watch.yaml"
-
-# Command path templates for custom scripts
-- name: run test & linter for a single file
-  run:
-   - "npm run lint -- {{relative_path}}",
-   - "npm test -- $(echo '{{absolute_path}}' | sed -r s/.(j|t)sx?//)"
-  change: ["src/**", "libs/**"]
-  ignore: ["src/**/*.stories.*", "libs/**/*.log"]
-
-- name: run ci checks @quick @ci
-  run: | ## Watch with `fzz watch @ci`
-   cat .github/workflows/on-push.yml \
-    | yq '.jobs | .[] | .steps | .[] | .run | select(. != null)' \
-    | xargs -I {} bash -c {}
-  change: "src/**"
-  run_on_init: true
-
-- name: finally stage the changed files in git
-  run:
-    - git add {{relative_path}}
-    - git commit
-  change:
-    - "src/**"
-    - "tests/**"
-  ignore: "**/*.log"
-```
-
-**New in v1.6.0**: Common rules format to reduce duplication!
-```yaml
-# Share common watch patterns across tasks
 on:
-  change: ["src/**", "lib/**"]
-  ignore: ["**/*.log"]
+  change: ["src/**", "tests/**"]
+  ignore: ["target/**", "**/*.log"]
+  debounce: 500ms
+  concurrency: 2
+  socket: .tmp/funzzy/control.sock
+  success: "notify-send 'checks passed'"
+  failure: "notify-send 'checks failed'"
 
-tasks:
-  - name: build
-    run: cargo build
-  - name: test
+jobs:
+  - name: lint @quick
+    parallel: checks
+    run: cargo clippy
+
+  - name: test @quick
+    parallel: checks
     run: cargo test
-    change: "tests/**"  # Override for specific task
+
+  - name: dev-server
+    service: true
+    run: cargo run
+    change: "src/**"
 ```
 
-** Nested groups for organizing tasks by domain!
-```yaml
-# Frontend tasks
-- on:
-    change: ["src/frontend/**"]
-  tasks:
-    - name: frontend-build
-      run: npm run build
+Declaration order is semantic. Only consecutive jobs with same `parallel` name overlap; ordinary jobs create serial barriers. Legacy root task lists and grouped `tasks:` configs remain accepted and can be rewritten with `fzz init --migrate`.
 
-# Backend tasks
-- on:
-    change: ["src/backend/**"]
-  tasks:
-    - name: backend-build
-      run: cargo build
-```
+Learn more:
 
-See more:
+- [Getting started and daily workflows](docs/USAGE.md)
+- [Advanced control and agent workflows](docs/ADVANCED-GUIDE.md)
+- [V1 to V2 migration](docs/MIGRATION.md)
+- [Configuration schema and agent discovery](docs/AGENT-CONFIG-CONTRACT.md)
+- [Pi watcher extension](pi-watcher/README.md)
+- [Examples](examples/README.md)
 
- - [Documentation](docs/USAGE.md)
- - [Check our workflow in funzzy](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6) :)
- - [Check the examples folder](https://github.com/cristianoliveira/funzzy/tree/master/examples)
-
-### Enhance your workflows
+## Enhance your workflows
 
 Funzzy pairs well with these tools:
 
@@ -108,8 +77,9 @@ Funzzy pairs well with these tools:
 
 ## Motivation
 
-To create a lightweight watcher that **allows me to set up personal local workflows with specific automated checks and steps, similar to GitHub Actions**.
-Funzzy was built with Rust, which makes it blazingly fast and light.
+Traditional file watchers are optimized for human watching terminal output. Agentic coding also needs exact run identity, freshness, cancellation, structured state, and bounded evidence—without replacing the fast local workflow developers already use.
+
+Funzzy brings GitHub Actions-like checks into the local edit loop and makes that loop observable by both humans and coding agents. Rust keeps watcher fast and lightweight.
 
 ## Installing
 
@@ -220,8 +190,8 @@ Use a different config file:
 fzz -c ~/watch.yaml
 ```
 
-Fail fast which bails the execution if any task fails. Useful for workflows that
-depend on all task to be successful. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6)
+Fail fast stops execution when any task fails. Use it when later work depends
+on every earlier task succeeding. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6)
 
 ```bash
 fzz --fail-fast # or fzz -b (bail)
@@ -251,20 +221,25 @@ fzz run "@quick"
 # Exits with combined configured task outcome; useful in CI.
 ```
 
-Run with some arbitrary command and stdin
+Inspect or control a watcher configured with `on.socket`:
 
 ```bash
-find . -name '*.rs' | fzz 'cargo build'
+fzz ctl capabilities --format toon
+fzz ctl status --format toon
+fzz ctl run "@quick" --wait --timeout 5m --format toon
 ```
 
-Templates for composing commands
+Run an arbitrary argv over paths from stdin:
 
 ```bash
-find . -name '*.[jt]s' | fzz 'npx eslint {{filepath}}'
+find . -name '*.rs' | fzz exec -- cargo build
+find . -name '*.[jt]s' | fzz exec -- npx eslint {{filepath}}
 ```
 
-Restart busy policy: cancels the currently running task when new change events arrive from files.
-It is super useful when a workflow contains long-running tasks. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
+Funzzy does not implicitly invoke a shell for `exec`; use `fzz exec -- sh -c '...'` when shell operators are required.
+
+Restart busy policy cancels and reaps active work when a newer change batch arrives.
+It is useful for long-running workflows. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
 
 ```bash
 fzz --on-busy restart # or fzz --restart
