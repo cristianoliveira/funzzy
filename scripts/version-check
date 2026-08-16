@@ -26,7 +26,7 @@ cd "$ROOT"
 
 MODE="${1:---check}"
 CANDIDATE=0
-if [ "$1" = "--candidate" ]; then
+if [ "${1:-}" = "--candidate" ]; then
   MODE="--candidate"
   CANDIDATE=1
 fi

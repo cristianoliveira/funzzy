@@ -33,6 +33,13 @@ Current repository state (the inconsistency this boundary resolves):
   (TASK-0024..0029).
 - Control socket: status/targets/run/emit/await/cancel/output/capabilities,
   `ctl` alias (TASK-0021..0023, 0043..0048, 0070..0074).
+- Agent output evidence: exact output references in correlated snapshots,
+  typed instance-exact errors, paging/tail bounds, bounded retrieval
+  (TASK-0079..0083; OUTPUT-EVIDENCE-CONTRACT).
+- Config hot reload: valid saves swap jobs/roots/policy in-process (PID +
+  instance token preserved, revisions monotonic); invalid saves are a
+  graceful fatal exit with a terminal error (TASK-0088..0092;
+  CONFIG-RELOAD-CONTRACT).
 - Duration estimates (TASK-0051..0056).
 - Structured control output `--format toon|json|human` (TASK-0048).
 - NDJSON run events `--events FILE` (TASK-0039).
@@ -81,7 +88,8 @@ scope reduction before cut:
 - Protocol/schema versions: declared in `capabilities` (protocolVersion,
   schemaVersion); additive evolution only.
 - pi-watcher compatibility: the extension consumes the control socket and
-  must pass its 417-test suite against the released funzzy.
+  must pass its suite (unit + real-server one-hop E2E, TASK-0022/0084)
+  against the released funzzy.
 
 ## 5. Version lifecycle
 
@@ -118,6 +126,8 @@ New in 2.0.0:
 - Parallel execution: named contiguous groups, barriers, `on.concurrency`.
 - Control socket: `control`/`ctl`, status/list/run/emit/await/cancel/output/capabilities, `--format toon|json|human`.
 - Agent feedback: exact-generation await, freshness, bounded evidence, NDJSON `--events`, capability negotiation.
+- Agent output evidence: exact output references (instance token + generation + optional task), typed instance-exact errors, tail/paging bounds under the transport cap; `output` retrieves bounded evidence in one call (OUTPUT-EVIDENCE-CONTRACT).
+- Config reload: valid hot reload keeps the process alive and preserves PID, instance token, and monotonic revisions; a formatting-only save is a no-op; an invalid config exits nonzero with a terminal gate/reason (`configInvalid` to subscribers); a deleted config is fatal; managed services reconcile at the commit boundary (CONFIG-RELOAD-CONTRACT).
 - Duration estimates (XDG history, execution-signature keyed).
 - Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
