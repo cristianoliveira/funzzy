@@ -16,15 +16,16 @@ One YAML workflow works for developers, coding agents, and CI. Use `fzz run TARG
 > V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
 
-For ad-hoc work over paths from stdin:
+As simple as:
 
 ```bash
 find . -name '*.ts' | fzz exec -- npx eslint {{relative_filepath}}
 ```
 
-For a configured workflow, create `.watch.yaml`:
+Or for more complex workflows like:
 
 ```yaml
+# .watch.yml
 on:
   change: ["src/**", "tests/**"]
   ignore: ["target/**", "**/*.log"]
