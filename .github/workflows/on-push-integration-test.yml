@@ -22,7 +22,11 @@ jobs:
           components: rustfmt
 
       - name: Run integration
-        run: make integration
+        # Serialize test threads: the suite spawns real watcher processes and
+        # timing-sensitive assertions (reload, cancel, timeout bounds) flake
+        # under parallel threads on fast CI runners. This matches the
+        # deterministic agent-final gate (see .watch.yaml).
+        run: cargo test --features test-integration --test '*' -- --test-threads=1
 
       - name: Run integration e2e tests
         run: make integration-e2e
