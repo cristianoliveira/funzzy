@@ -796,8 +796,12 @@ fn control_format_json_and_toon_produce_one_structured_document() {
     assert!(toon_out.status.success());
     let toon_stdout = String::from_utf8_lossy(&toon_out.stdout);
     assert!(toon_stdout.contains("state"), "toon: {toon_stdout}");
+    // The init task may be running, already idle, or already completed
+    // (state "passed") depending on machine speed — all three are valid.
     assert!(
-        toon_stdout.contains("idle") || toon_stdout.contains("running"),
+        toon_stdout.contains("idle")
+            || toon_stdout.contains("running")
+            || toon_stdout.contains("passed"),
         "toon: {toon_stdout}"
     );
 
