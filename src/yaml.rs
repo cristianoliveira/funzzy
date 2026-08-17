@@ -324,3 +324,131 @@ Hint: Check if the property is defined, with the right type and identation",
         }
     }
 }
+
+#[cfg(test)]
+mod characterization_tests {
+    //! Parser-boundary characterization for the accepted YAML dialect
+    //! (TASK-0112). These tests pin current behavior — anchors, block
+    //! scalars, quoting, nulls, duplicate keys, scalar typing quirks,
+    //! multi-document input, and scan-error surface — so a parser swap
+    //! surfaces every difference instead of hiding it.
+    use super::*;
+    use yaml_rust::YamlLoader;
+
+    fn parse_one(src: &str) -> Yaml {
+        let docs = YamlLoader::load_from_str(src).expect("valid yaml under test");
+        assert_eq!(docs.len(), 1, "expected exactly one document: {src:?}");
+        docs.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn substitutes_scalar_hash_and_array_anchors() {
+        let doc = parse_one(
+            "a: &x hello\nrun: *x\nbase: &b\n  change: src\nmap: *b\nlist: &l\n  - one\nref: *l",
+        );
+        assert_eq!(doc["run"].as_str(), Some("hello"));
+        assert_eq!(doc["map"]["change"].as_str(), Some("src"));
+        assert_eq!(doc["ref"].as_vec().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merge_key_is_kept_as_literal_not_merged() {
+        let doc = parse_one("defaults: &d\n  change: c1\njobs:\n  - <<: *d\n    run: r");
+        let job = &doc["jobs"][0];
+        // Merge is not performed: `<<` survives as a plain key.
+        assert_eq!(job["<<"]["change"].as_str(), Some("c1"));
+        assert_eq!(job["run"].as_str(), Some("r"));
+        assert_eq!(job["change"], Yaml::BadValue);
+    }
+
+    #[test]
+    fn literal_block_scalar_preserves_lines_and_trailing_newline() {
+        let doc = parse_one("run: |\n  echo one\n  echo two");
+        assert_eq!(doc["run"].as_str(), Some("echo one\necho two"));
+
+        let doc = parse_one("run: |\n  echo one\n");
+        assert_eq!(doc["run"].as_str(), Some("echo one\n"));
+    }
+
+    #[test]
+    fn folded_block_scalar_joins_lines_with_spaces() {
+        let doc = parse_one("run: >\n  echo one\n  two");
+        assert_eq!(doc["run"].as_str(), Some("echo one two"));
+    }
+
+    #[test]
+    fn quoting_rules_for_single_and_double_quoted_scalars() {
+        let doc = parse_one("run: 'echo ''quoted'''\ntitle: \"line1\\nline2\"");
+        assert_eq!(doc["run"].as_str(), Some("echo 'quoted'"));
+        assert_eq!(doc["title"].as_str(), Some("line1\nline2"));
+    }
+
+    #[test]
+    fn null_forms_parse_to_null_and_render_as_null() {
+        for src in ["name: ~", "name:", "name: null"] {
+            let doc = parse_one(src);
+            assert_eq!(doc["name"], Yaml::Null, "for {src:?}");
+        }
+        assert_eq!(yaml_to_string(&parse_one("name: ~"), 0), "name: Null");
+    }
+
+    #[test]
+    fn null_run_is_rejected_as_unknown_type_not_silent_empty() {
+        let doc = parse_one("run: ~");
+        let err = extract_string(&doc, "run").expect_err("Null run must be rejected");
+        assert!(
+            err.to_string().contains("Expected 'String'"),
+            "typed error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn duplicate_keys_last_value_wins() {
+        let doc = parse_one("name: a\nname: b");
+        assert_eq!(doc["name"].as_str(), Some("b"));
+    }
+
+    #[test]
+    fn only_lowercase_true_false_are_booleans() {
+        let doc = parse_one("a: true\nb: True\nc: on");
+        assert!(matches!(doc["a"], Yaml::Boolean(true)));
+        assert_eq!(doc["b"].as_str(), Some("True"));
+        assert_eq!(doc["c"].as_str(), Some("on"));
+    }
+
+    #[test]
+    fn integer_forms_include_hex_and_decimal_leading_zero() {
+        let doc = parse_one("a: 1\nb: 0x10\nc: 010\nd: +5");
+        assert!(matches!(doc["a"], Yaml::Integer(1)));
+        assert!(matches!(doc["b"], Yaml::Integer(16)));
+        // Quirk: leading-zero is parsed as decimal 10, not octal and not a string.
+        assert!(matches!(doc["c"], Yaml::Integer(10)));
+        assert!(matches!(doc["d"], Yaml::Integer(5)));
+    }
+
+    #[test]
+    fn tab_after_key_is_a_scalar_string_quirk() {
+        // Compatibility quirk: `a:` followed by a tab-indented scalar is
+        // accepted and keeps the tab inside the string value.
+        let docs = YamlLoader::load_from_str("a:\n\t- b").expect("yaml-rust accepts this");
+        assert_eq!(docs[0]["a"].as_str(), Some("\t- b"));
+    }
+
+    #[test]
+    fn multi_document_input_returns_each_document() {
+        let docs = YamlLoader::load_from_str("a: 1\n---\nb: 2").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(matches!(docs[0]["a"], Yaml::Integer(1)));
+        assert!(matches!(docs[1]["b"], Yaml::Integer(2)));
+    }
+
+    #[test]
+    fn malformed_flow_sequence_is_a_scan_error_with_position() {
+        let err = YamlLoader::load_from_str("name: [unclosed").unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("flow sequence") && text.contains("line 2"),
+            "scan error names the construct and position, got: {text}"
+        );
+    }
+}
