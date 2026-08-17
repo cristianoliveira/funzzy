@@ -47,7 +47,7 @@ notify-debouncer-mini = "0.3.0"
 nix = "0.26.2"
 clap = "4.6"
 clap_complete = "4.6"
-sha2 = "0.10"
+sha2 = "0.11"
 
 [dev-dependencies]
 assert_cmd = "=2.2.2"
