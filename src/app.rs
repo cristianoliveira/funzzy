@@ -113,8 +113,12 @@ pub fn run() {
                 stdout::failure("config command failed", err.to_string());
             }
         }
-        Action::Init if args.migrate => execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME)),
-        Action::Init => execute(InitCommand::new(cli::watch::DEFAULT_FILENAME)),
+        Action::Init { template: _ } if args.migrate => {
+            execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME))
+        }
+        Action::Init { template } => {
+            execute(InitCommand::new(cli::watch::DEFAULT_FILENAME, template))
+        }
         Action::Control {
             action,
             socket,

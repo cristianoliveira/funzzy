@@ -9,6 +9,7 @@
 
 use clap::{Arg, ArgAction, Command};
 
+use crate::cli::templates::Profile;
 use crate::cli::{ControlAction, OutputFormat};
 use std::time::Duration;
 
@@ -45,8 +46,12 @@ pub enum Action {
     Run { target: String },
     /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
     Explain { path: String },
-    /// `fzz init [--migrate]`: create or migrate the default config file.
-    Init,
+    /// `fzz init [--template PROFILE] [--migrate]`: create a starter config
+    /// (or migrate legacy config until TASK-0098 replaces `--migrate`).
+    Init {
+        /// Which template profile to create; comprehensive is the default.
+        template: Profile,
+    },
     /// `fzz control status|list|run TARGET`: talk to a running watcher.
     Control {
         action: ControlAction,
@@ -170,7 +175,13 @@ impl Arguments {
                     .expect("path is required by clap");
                 (Action::Explain { path }, false)
             }
-            Some(("init", sub)) => (Action::Init, sub.get_flag("migrate")),
+            Some(("init", sub)) => {
+                let template = sub
+                    .get_one::<String>("template")
+                    .and_then(|raw| Profile::parse(raw))
+                    .unwrap_or(Profile::Comprehensive);
+                (Action::Init { template }, sub.get_flag("migrate"))
+            }
             Some(("control", sub)) => {
                 let socket = sub.get_one::<String>("socket").cloned();
                 let format = match sub
@@ -397,8 +408,19 @@ pub fn command() -> Command {
         )
         .subcommand(
             Command::new("init")
-                .about("Create or migrate a '.watch.yaml' file.")
+                .about("Create a '.watch.yaml' starter file (never overwrites).")
                 .version(env!("CARGO_PKG_VERSION"))
+                .arg(
+                    Arg::new("template")
+                        .long("template")
+                        .value_name("PROFILE")
+                        .num_args(1)
+                        .default_value("comprehensive")
+                        .value_parser(clap::builder::PossibleValuesParser::new(
+                            crate::cli::templates::Profile::NAMES,
+                        ))
+                        .help("Starter template: comprehensive (default), minimal, parallel, or agent; bytes match `fzz config example PROFILE`."),
+                )
                 .arg(
                     Arg::new("migrate")
                         .long("migrate")
@@ -510,15 +532,17 @@ pub fn command() -> Command {
                         .version(env!("CARGO_PKG_VERSION"))
                         .about("Print a runnable .watch.yaml example to stdout.")
                         .long_about(
-                            "Print a valid runnable .watch.yaml to stdout with no prose mixed in. The output parses through the same production parser. Exit 0. No config, watcher, or socket is read.\n\nExamples:\n  fzz config example minimal\n  fzz config example parallel\n  fzz config example agent",
+                            "Print a valid runnable .watch.yaml to stdout with no prose mixed in. The output parses through the same production parser and is byte-identical to `fzz init --template PROFILE`. Exit 0. No config, watcher, or socket is read.\n\nExamples:\n  fzz config example minimal\n  fzz config example parallel\n  fzz config example agent",
                         )
                         .arg(
                             Arg::new("profile")
                                 .value_name("PROFILE")
                                 .num_args(1)
                                 .required(true)
-                                .value_parser(clap::builder::PossibleValuesParser::new(["minimal", "parallel", "agent"]))
-                                .help("Example profile: minimal, parallel, or agent."),
+                                                        .value_parser(clap::builder::PossibleValuesParser::new(
+                            crate::cli::templates::Profile::NAMES,
+                        ))
+                        .help("Example profile: comprehensive, minimal, parallel, or agent."),
                         )
                         .arg(
                             Arg::new("config_format")
@@ -938,13 +962,18 @@ mod tests {
 
     #[test]
     fn init_subcommand_selects_init() {
-        assert_eq!(parse_action(&["init"]), Action::Init);
+        assert_eq!(
+            parse_action(&["init"]),
+            Action::Init {
+                template: Profile::Comprehensive
+            }
+        );
     }
 
     #[test]
     fn init_with_migrate_flag_sets_migrate() {
         let args = parse(&["init", "--migrate"]).expect("parse");
-        assert_eq!(args.action, Action::Init);
+        assert!(matches!(args.action, Action::Init { .. }));
         assert!(args.migrate);
     }
 
@@ -952,6 +981,46 @@ mod tests {
     fn migrate_without_init_is_unknown() {
         // `--migrate` is scoped to `init`; without it, it is not a valid flag.
         assert!(parse(&["--migrate"]).is_err());
+    }
+
+    /// TASK-0097: `--template` selects one typed profile; the default stays
+    /// `comprehensive` so `fzz init && fzz` keeps the generic starter.
+    #[test]
+    fn init_template_selects_the_typed_profile() {
+        for name in Profile::NAMES {
+            let args = parse(&["init", "--template", name]).expect("parse");
+            match args.action {
+                Action::Init { template } => {
+                    assert_eq!(template.name(), name);
+                }
+                other => panic!("expected Init, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn init_rejects_unknown_template_names() {
+        assert!(parse(&["init", "--template", "bogus"]).is_err());
+    }
+
+    /// The typed selector is the single source: `init --template` and
+    /// `config example` accept exactly `Profile::NAMES` (parity with the
+    /// clap possible-values wiring).
+    #[test]
+    fn init_and_config_example_accept_the_same_profile_set() {
+        for name in Profile::NAMES {
+            assert!(parse(&["init", "--template", name]).is_ok(), "init {name}");
+            assert!(
+                parse(&["config", "example", name]).is_ok(),
+                "example {name}"
+            );
+        }
+        for rejected in ["bogus", "comprehensive ", ""] {
+            assert!(parse(&["init", "--template", rejected]).is_err());
+            if !rejected.is_empty() {
+                assert!(parse(&["config", "example", rejected]).is_err());
+            }
+        }
     }
 
     // -------------------------------------------------------------------

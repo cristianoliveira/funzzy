@@ -1,3 +1,4 @@
+use crate::cli::templates::Profile;
 use crate::cli::Command;
 use crate::errors::FzzError;
 
@@ -128,13 +129,15 @@ pub fn render_init_template() -> String {
 pub struct InitCommand {
     pub file_name: String,
     migrate: bool,
+    template: Profile,
 }
 
 impl InitCommand {
-    pub fn new(file: &str) -> Self {
+    pub fn new(file: &str, template: Profile) -> Self {
         InitCommand {
             file_name: file.to_string(),
             migrate: false,
+            template,
         }
     }
 
@@ -142,6 +145,7 @@ impl InitCommand {
         InitCommand {
             file_name: file.to_string(),
             migrate: true,
+            template: Profile::Comprehensive,
         }
     }
 
@@ -314,7 +318,7 @@ impl Command for InitCommand {
 
         match File::create(&self.file_name) {
             Ok(mut yaml) => {
-                if let Err(err) = yaml.write_all(render_init_template().as_bytes()) {
+                if let Err(err) = yaml.write_all(self.template.render().as_bytes()) {
                     return Err(FzzError::IoConfigError(
                         "Failed to write into configuration file".to_string(),
                         Some(err),
@@ -471,9 +475,14 @@ mod renderer_tests {
 
     /// Criterion 8 (TASK-0095): `fzz config example` profiles never inherit
     /// the human-commented init output (agent carries its own lean comments).
+    /// `comprehensive` (TASK-0097) is by definition the init template, so it
+    /// is excluded from the lean-profile set.
     #[test]
     fn example_profiles_do_not_inherit_init_header() {
-        for profile in crate::cli::config::PROFILES {
+        for profile in crate::cli::config::PROFILES
+            .iter()
+            .filter(|p| **p != "comprehensive")
+        {
             let yaml = crate::cli::config::example_yaml(profile).expect("example renders");
             assert!(
                 !yaml.contains("Comprehensive commented starter"),
@@ -490,9 +499,11 @@ mod renderer_tests {
 #[cfg(test)]
 mod init_command_tests {
     use super::InitCommand;
+    use crate::cli::templates::Profile;
     use crate::cli::Command;
 
-    fn scratch(label: &str) -> std::path::PathBuf {
+    fn scratch(label: impl AsRef<str>) -> std::path::PathBuf {
+        let label = label.as_ref();
         let dir = std::env::temp_dir().join(format!(
             "funzzy-init-custom-{}-{}",
             std::process::id(),
@@ -510,7 +521,7 @@ mod init_command_tests {
         let dir = scratch("custom");
         let custom = dir.join("custom.yml");
 
-        InitCommand::new(custom.to_str().unwrap())
+        InitCommand::new(custom.to_str().unwrap(), Profile::Comprehensive)
             .execute()
             .expect("init must create custom.yml");
         assert!(custom.exists(), "custom.yml must be created");
@@ -521,7 +532,7 @@ mod init_command_tests {
         );
 
         // Create-only: second init refuses without mutating the file.
-        let err = InitCommand::new(custom.to_str().unwrap()).execute();
+        let err = InitCommand::new(custom.to_str().unwrap(), Profile::Comprehensive).execute();
         assert!(err.is_err(), "second init on existing file must fail");
         assert_eq!(
             std::fs::read(&custom).expect("re-read custom.yml"),
@@ -530,5 +541,57 @@ mod init_command_tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TASK-0097: `fzz init --template P` writes bytes identical to
+    /// `fzz config example P` stdout — one renderer, any destination.
+    #[test]
+    fn init_template_bytes_match_config_example_stdout_for_every_profile() {
+        for profile in Profile::NAMES.map(|n| Profile::parse(n).unwrap()) {
+            let dir = scratch(profile.name());
+            let target = dir.join(".watch.yaml");
+
+            InitCommand::new(target.to_str().unwrap(), profile)
+                .execute()
+                .unwrap_or_else(|err| panic!("{} init must succeed: {err}", profile.name()));
+
+            let written = std::fs::read(&target).expect("read generated config");
+            let exported = crate::cli::templates::render_profile(profile.name())
+                .unwrap_or_else(|err| panic!("{} example must render: {err}", profile.name()));
+            assert_eq!(
+                written,
+                exported.as_bytes(),
+                "{}: init bytes must equal config example stdout",
+                profile.name()
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// Create-only refusal fires for every profile and never mutates the
+    /// existing file (INIT-TEMPLATE-CONTRACT §1a).
+    #[test]
+    fn refusal_leaves_existing_bytes_unchanged_for_every_profile() {
+        for profile in Profile::NAMES.map(|n| Profile::parse(n).unwrap()) {
+            let dir = scratch(format!("refuse-{}", profile.name()));
+            let target = dir.join(".watch.yaml");
+            std::fs::write(&target, "# existing bytes\n").expect("seed existing config");
+
+            let err = InitCommand::new(target.to_str().unwrap(), profile).execute();
+            assert!(
+                err.is_err(),
+                "{}: existing file must be refused",
+                profile.name()
+            );
+            assert_eq!(
+                std::fs::read(&target).expect("re-read"),
+                b"# existing bytes\n",
+                "{}: refused init must not mutate bytes",
+                profile.name()
+            );
+
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

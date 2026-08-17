@@ -12,8 +12,10 @@ use serde_json::{json, Value};
 /// Schema sections (AGENT-CONFIG-CONTRACT §4).
 pub const SECTIONS: [&str; 6] = ["on", "job", "matching", "execution", "parallel", "control"];
 
-/// Example profiles (AGENT-CONFIG-CONTRACT §4).
-pub const PROFILES: [&str; 3] = ["minimal", "parallel", "agent"];
+/// Example profiles (AGENT-CONFIG-CONTRACT §4). The full profile set —
+/// including `comprehensive` — is owned by `cli::templates::Profile`
+/// (TASK-0097); this list feeds the schema-section docs and parity tests.
+pub const PROFILES: [&str; 4] = ["comprehensive", "minimal", "parallel", "agent"];
 
 /// The full deterministic JSON Schema for the preferred `jobs:` config.
 fn full_schema() -> Value {
@@ -198,64 +200,11 @@ fn schema_command(section: Option<&str>, format: OutputFormat) -> Result<(), Fzz
     Ok(())
 }
 
-/// The three runnable example configs; each parses through the production
-/// parser and passes structural validation.
+/// Renders one shared profile artifact (TASK-0097): the same bytes
+/// `fzz init --template PROFILE` writes. The YAML constants live in
+/// `cli::templates` so no command-specific copies remain.
 pub(crate) fn example_yaml(profile: &str) -> Result<String, FzzError> {
-    let yaml = match profile {
-        "minimal" => {
-            r#"on:
-  change: "**/*"
-
-jobs:
-  - name: build
-    run: "cargo build"
-"#
-        }
-        "parallel" => {
-            r#"on:
-  change: "src/**"
-  concurrency: 2
-
-jobs:
-  - name: lint
-    parallel: checks
-    run: "cargo clippy"
-
-  - name: test
-    parallel: checks
-    run: "cargo test"
-
-  - name: package
-    run: "cargo build"
-"#
-        }
-        "agent" => {
-            r#"# Agent loop example: control socket + a verify-style job.
-# Next commands:
-#   fzz check          # validate this config
-#   fzz list           # see the targets
-#   fzz run verify     # run once locally
-#   fzz watch          # start the watcher + control socket
-on:
-  change: "**/*"
-  concurrency: 2
-  socket: .tmp/funzzy/control.sock
-
-jobs:
-  - name: verify @agent-final
-    run: "cargo test"
-    change: "src/**"
-    ignore: "target/**"
-
-  - name: lint @quick
-    run: "cargo fmt -- --check"
-    change: "src/**"
-    run_on_init: true
-"#
-        }
-        _ => unreachable!("clap validates profile"),
-    };
-    Ok(yaml.to_owned())
+    crate::cli::templates::render_profile(profile)
 }
 
 /// Handles `fzz config example PROFILE`.
