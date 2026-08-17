@@ -1,7 +1,7 @@
 ---
 id: TASK-0103
 title: Define dependency update baseline and policy
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: [design, dependencies, rust, node, nix, security, release]
