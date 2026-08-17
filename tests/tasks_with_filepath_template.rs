@@ -39,20 +39,6 @@ fn test_it_replaces_filepath_template_with_changed_file() {
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
-            wait_until!(
-                {
-                    output_log
-                        .read_to_string(&mut output)
-                        .expect("failed to read from file");
-
-                    output.contains("this file has changed")
-                        && output.contains("foobar-watcher.txt")
-                        && output.contains("Success; Completed")
-                },
-                "was not possible to find filepath: {}",
-                output
-            );
-
             let dir = fixture;
             let expected = "Funzzy: Running on init commands.
 
@@ -82,11 +68,26 @@ Funzzy: echo '$PWD/examples/workdir/trigger-watcher.txt' | sed -r s/trigger/foob
 
 $PWD/examples/workdir/foobar-watcher.txt
 Funzzy results ----------------------------
-Success; Completed: 3; Failed: 0; Duration: 0.0000s";
+Success; Completed: 3; Failed: 0; Duration: 0.0000s"
+                .replace("$PWD", &dir.to_string_lossy());
+
+            // Waiting for individual markers races the final summary flush;
+            // wait until the whole log settles to the expected content.
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    setup::strip_ansi_codes(&setup::clean_output(&output)) == expected
+                },
+                "was not possible to find filepath: {}",
+                output
+            );
 
             assert_eq!(
                 setup::strip_ansi_codes(&setup::clean_output(&output)),
-                expected.replace("$PWD", &dir.to_string_lossy())
+                expected
             )
         },
     );
@@ -125,19 +126,6 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
             );
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
-
-            wait_until!(
-                {
-                    output_log
-                        .read_to_string(&mut output)
-                        .expect("failed to read from file");
-
-                    output.contains("echo 'examples/workdir/trigger-watcher.txt'")
-                        && output.match_indices("Funzzy results").count() == 2
-                },
-                "output: {}\nreason: was not possible to echo with relative path",
-                output
-            );
 
             let dir = fixture;
             let expected = "Funzzy: Running on init commands.
@@ -178,11 +166,26 @@ Funzzy: echo 'this is invalid: {{ foobar }} (no!)'
 
 this is invalid: {{ foobar }} (no!)
 Funzzy results ----------------------------
-Success; Completed: 4; Failed: 0; Duration: 0.0000s";
+Success; Completed: 4; Failed: 0; Duration: 0.0000s"
+                .replace("$PWD", &dir.to_string_lossy());
+
+            // Same as the absolute-path test: wait for the whole log to
+            // settle to the expected content, not just marker lines.
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    setup::strip_ansi_codes(&setup::clean_output(&output)) == expected
+                },
+                "output: {}\nreason: was not possible to echo with relative path",
+                output
+            );
 
             assert_eq!(
                 setup::strip_ansi_codes(&setup::clean_output(&output)),
-                expected.replace("$PWD", &dir.to_string_lossy())
+                expected
             )
         },
     );
