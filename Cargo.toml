@@ -43,7 +43,7 @@ ignore = "0.4.33"
 yaml-rust = "0.4.5"
 glob = "0.3"
 notify-debouncer-mini = "0.7"
-nix = "0.26.2"
+nix = { version = "0.31", default-features = false, features = ["fs", "signal"] }
 clap = "4.6"
 clap_complete = "4.6"
 sha2 = "0.11"

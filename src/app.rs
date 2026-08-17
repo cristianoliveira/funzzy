@@ -1245,12 +1245,12 @@ fn install_shutdown_signal_handler(
     /// Self-pipe write end handed to the signal handler (TASK-0030). The
     /// handler performs only the async-signal-safe write(2); all real work
     /// happens on a normal thread after the byte arrives.
-    static WAKE_WRITE_FD: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    static WAKE_WRITE_FD: std::sync::OnceLock<std::os::fd::OwnedFd> = std::sync::OnceLock::new();
 
     extern "C" fn on_shutdown_signal(signal: nix::libc::c_int) {
         // Async-signal-safe: one best-effort byte; nothing else.
         if let Some(fd) = WAKE_WRITE_FD.get() {
-            let _ = unistd::write(*fd, &[signal as u8]);
+            let _ = unistd::write(fd, &[signal as u8]);
         }
     }
 
@@ -1271,8 +1271,8 @@ fn install_shutdown_signal_handler(
     // already resets caught-signal dispositions, and CLOEXEC keeps the pipe
     // itself out of the children too.
     use nix::fcntl::{fcntl, FdFlag, F_SETFD};
-    let _ = fcntl(wake_read_fd, F_SETFD(FdFlag::FD_CLOEXEC));
-    let _ = fcntl(wake_write_fd, F_SETFD(FdFlag::FD_CLOEXEC));
+    let _ = fcntl(&wake_read_fd, F_SETFD(FdFlag::FD_CLOEXEC));
+    let _ = fcntl(&wake_write_fd, F_SETFD(FdFlag::FD_CLOEXEC));
     let _ = WAKE_WRITE_FD.set(wake_write_fd);
     let action = SigAction::new(
         SigHandler::Handler(on_shutdown_signal),
@@ -1289,7 +1289,7 @@ fn install_shutdown_signal_handler(
     std::thread::spawn(move || {
         let mut signal_byte = [0u8; 1];
         loop {
-            match unistd::read(wake_read_fd, &mut signal_byte) {
+            match unistd::read(&wake_read_fd, &mut signal_byte) {
                 Ok(_) => {
                     let code = if signal_byte[0] == Signal::SIGINT as u8 {
                         130
