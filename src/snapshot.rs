@@ -289,7 +289,6 @@ mod tests {
     use super::*;
     use crate::awaiting::AwaitCoordinator;
     use crate::executor::Event;
-    use crate::identity::Batch;
     use std::time::Duration;
 
     fn broker() -> (

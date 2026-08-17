@@ -1,5 +1,5 @@
-use pretty_assertions::assert_eq;
-use std::io::prelude::*;
+#[cfg(feature = "test-integration")]
+use std::io::{Read, Write};
 
 #[path = "./common/lib.rs"]
 mod setup;
@@ -9,6 +9,7 @@ mod setup;
 /// into two batches under load, running the task twice; the duplicate echo
 /// must land in the phase that triggered it, not leak into the next phase's
 /// assertion window after `output.truncate(0)`.
+#[cfg(feature = "test-integration")]
 fn drain_until_quiet(output_log: &mut std::fs::File, output: &mut String, quiet_ms: u64) {
     loop {
         let before = output.len();

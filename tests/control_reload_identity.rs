@@ -129,7 +129,7 @@ fn capabilities_instance(socket_path: &std::path::Path) -> serde_json::Value {
 }
 
 fn wait_until<F: FnMut() -> bool>(mut condition: F, what: &str) {
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < deadline {
         if condition() {
             return;
@@ -141,7 +141,7 @@ fn wait_until<F: FnMut() -> bool>(mut condition: F, what: &str) {
 
 fn wait_for_reload(directory: &std::path::Path, revision: u64) {
     let needle = format!("revision {revision}");
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if let Ok(log) = std::fs::read_to_string(directory.join("child.err")) {
             if log.contains(&needle) {
@@ -463,7 +463,7 @@ fn invalid_config_publishes_terminal_lifecycle_and_exits_nonzero() {
     std::fs::write(directory.join(".watch.yaml"), "jobs: [unclosed").unwrap();
 
     // The watcher must exit nonzero with the terminal error.
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let exit = loop {
         if let Some(status) = watcher.child.try_wait().expect("try_wait") {
             break status;

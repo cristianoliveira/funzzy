@@ -379,7 +379,6 @@ mod tests {
     #[test]
     fn estimate_at_start_is_frozen_and_survives_terminal() {
         let (recorder, _temp) = recorder();
-        let signature = sig(1);
         // Two prior samples -> a measured estimate exists at run start.
         recorder.observe(&started(1, Some("build"), Some(1)));
         recorder.observe(&finished(1, false, None));

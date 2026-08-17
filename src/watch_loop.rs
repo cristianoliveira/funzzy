@@ -1065,7 +1065,6 @@ mod tests {
     fn it_marks_pending_debounce_through_the_coordinator() {
         use crate::awaiting::AwaitCoordinator;
         use crate::identity::Batch;
-        use crate::output::OutputRegistry;
 
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));

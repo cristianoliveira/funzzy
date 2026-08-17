@@ -345,7 +345,7 @@ fn apply_root_swap(
     current_roots: &mut Vec<String>,
     swap: RootSwap,
 ) {
-    use notify_debouncer_mini::notify::{RecursiveMode, Watcher};
+    use notify_debouncer_mini::notify::RecursiveMode;
     for root in current_roots.iter() {
         if !swap.roots.contains(root) {
             let _ = watcher.unwatch(Path::new(root));

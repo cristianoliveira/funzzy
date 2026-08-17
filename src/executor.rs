@@ -881,7 +881,6 @@ impl Executor {
     }
 
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
-        let task_failed = !task.failures.is_empty();
         self.reveal_on_failure(&task, &task.failures);
         if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
             outputs.record(

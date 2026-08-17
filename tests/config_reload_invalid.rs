@@ -2,7 +2,6 @@
 //! terminal error — never a silent stale continuation, never an abrupt
 //! self-SIGTERM that skips cleanup.
 
-use std::io::prelude::*;
 use std::time::Duration;
 
 #[path = "./common/lib.rs"]
@@ -42,7 +41,7 @@ fn invalid_config_replacement_is_fatal_with_nonzero_exit() {
             .unwrap();
 
         // Wait for the watcher to be up.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
         loop {
             if let Ok(log) = std::fs::read_to_string(scratch.join("child.out")) {
                 if log.contains("Watching...") {
@@ -60,7 +59,7 @@ fn invalid_config_replacement_is_fatal_with_nonzero_exit() {
         std::fs::write(scratch.join(".watch.yaml"), "jobs: [unclosed").unwrap();
 
         // The watcher must exit nonzero with a terminal config error.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let exit = loop {
             if let Some(status) = child.try_wait().expect("try_wait") {
                 break status;
@@ -120,7 +119,7 @@ fn valid_reload_adds_new_root_and_observes_files_after_commit() {
             .unwrap();
 
         // Wait for the control socket (the watcher is up and subscribing).
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let socket = scratch.join("sock");
         loop {
             if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
@@ -141,7 +140,7 @@ fn valid_reload_adds_new_root_and_observes_files_after_commit() {
         .unwrap();
 
         // Wait for the hot-reload message.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
         loop {
             if let Ok(log) = std::fs::read_to_string(scratch.join("child.out")) {
                 if log.contains("hot-reloading to revision 2") {
@@ -162,7 +161,7 @@ fn valid_reload_adds_new_root_and_observes_files_after_commit() {
         // Create a file in the NEW root AFTER the commit boundary: the docs
         // job must run.
         std::fs::write(scratch.join("docs/guide.md"), "content").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut ran = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("docs-verdict.txt").exists() {

@@ -335,7 +335,8 @@ mod tests {
     }
 }
 
-/// Returns a full section document (used by tests and the command).
+/// Returns a full section document used by focused schema tests.
+#[cfg(test)]
 fn schema_document(section: &str) -> Value {
     let full = full_schema();
     let body = full["$defs"][section].clone();

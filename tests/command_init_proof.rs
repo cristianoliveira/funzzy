@@ -6,9 +6,12 @@
 //! alternatives fail deterministically. Example profiles never inherit the
 //! human-commented init output.
 
-use std::io::prelude::*;
+#[cfg(feature = "test-integration")]
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(feature = "test-integration")]
+use std::process::Stdio;
 
 #[path = "./common/lib.rs"]
 mod setup;

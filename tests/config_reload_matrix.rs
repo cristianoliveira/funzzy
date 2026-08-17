@@ -4,7 +4,6 @@
 //! (or the new behavior appears) — never a process exit, never a silent
 //! stale continuation.
 
-use std::io::prelude::*;
 use std::time::Duration;
 
 #[path = "./common/lib.rs"]
@@ -35,7 +34,7 @@ fn spawn_watcher(scratch: &std::path::Path, config: &str) -> std::process::Child
         .stderr(std::process::Stdio::from(error_log))
         .spawn()
         .unwrap();
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if let Ok(log) = std::fs::read_to_string(scratch.join("child.out")) {
             if log.contains("Watching...") {
@@ -53,7 +52,7 @@ fn spawn_watcher(scratch: &std::path::Path, config: &str) -> std::process::Child
 
 /// Waits for `needle` in the child log; panics with the log on timeout.
 fn wait_for_log(scratch: &std::path::Path, needle: &str) -> String {
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if let Ok(log) = std::fs::read_to_string(scratch.join("child.out")) {
             if log.contains(needle) {
@@ -77,7 +76,7 @@ fn base_config() -> String {
 /// non-block watcher used across the matrix).
 fn wait_for_socket(scratch: &std::path::Path) {
     let socket = scratch.join("sock");
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
             break;
@@ -145,7 +144,7 @@ fn root_remove_stops_routing_after_commit() {
 
         // Docs must no longer route after the boundary.
         std::fs::write(scratch.join("docs/old.md"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             assert!(
                 !scratch.join("docs-verdict.txt").exists(),
@@ -156,7 +155,7 @@ fn root_remove_stops_routing_after_commit() {
 
         // src still routes under the new revision.
         std::fs::write(scratch.join("src/main.rs"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut ran = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("src-verdict.txt").exists() {
@@ -194,14 +193,12 @@ fn overlapping_roots_normalize_to_one_generation() {
 
         // Write in the overlap path: must route exactly once.
         std::fs::write(scratch.join("src/main.rs"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
-        let mut lines = 0;
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
-            if let Ok(contents) = std::fs::read_to_string(scratch.join("count.txt")) {
-                lines = contents.lines().count();
-                if lines >= 1 {
-                    break;
-                }
+            if std::fs::read_to_string(scratch.join("count.txt"))
+                .is_ok_and(|contents| contents.lines().next().is_some())
+            {
+                break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -240,7 +237,7 @@ fn job_rename_swaps_matching_without_process_exit() {
         );
 
         std::fs::write(scratch.join("src/main.rs"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut ran = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("src-v2-verdict.txt").exists() {
@@ -277,7 +274,7 @@ fn ignore_rule_added_on_reload_stops_routing_ignored_path() {
         let _ = std::fs::remove_file(scratch.join("src-verdict.txt"));
 
         std::fs::write(scratch.join("src/ignored/x.rs"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             assert!(
                 !scratch.join("src-verdict.txt").exists(),
@@ -309,7 +306,7 @@ fn active_finite_task_survives_config_save() {
         // sleep races the 1s debounce window: under parallel load the batch
         // can fire after the reload commit and route the fast job instead,
         // which would never produce the slow verdict.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut slow_running = false;
         while std::time::Instant::now() < deadline {
             if status_generation_running(&scratch) {
@@ -328,7 +325,7 @@ fn active_finite_task_survives_config_save() {
         );
 
         // The slow generation (old revision) completes despite the save.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut slow_done = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("slow-verdict.txt").exists() {
@@ -371,7 +368,7 @@ fn socket_path_change_binds_new_before_retiring_old() {
         );
 
         // The NEW socket is live and connectable.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut new_connected = false;
         while std::time::Instant::now() < deadline {
             if std::os::unix::net::UnixStream::connect(&scratch.join("sock2")).is_ok() {
@@ -386,7 +383,7 @@ fn socket_path_change_binds_new_before_retiring_old() {
         // the wait observed), so poll instead of asserting on an exact
         // instant — the invariant is eventual removal, never a stale socket
         // left live.
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut old_retired = false;
         while std::time::Instant::now() < deadline {
             if !scratch.join("sock").exists() {
@@ -430,7 +427,7 @@ fn service_signature_change_replaces_service_without_process_exit() {
         // the old process must be gracefully replaced (new pid file) and the
         // process never exits.
         std::fs::write(scratch.join("src/a.rs"), "x").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut started = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("svc-ready").exists() {
@@ -451,7 +448,7 @@ fn service_signature_change_replaces_service_without_process_exit() {
         // The reloaded service keeps running (the replaced process touches
         // svc-ready again).
         let _ = std::fs::remove_file(scratch.join("svc-ready"));
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut replaced = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("svc-ready").exists() {

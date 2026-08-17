@@ -15,10 +15,7 @@ use crate::watches::Watches;
 use crate::{config, diagnostics, environment, logging, rules, stdout, watcher};
 use std::path::PathBuf;
 
-use nix::{
-    sys::signal::{self, Signal},
-    unistd::Pid,
-};
+use nix::sys::signal::Signal;
 use std::io::prelude::*;
 use std::io::{self, IsTerminal};
 use std::process;
@@ -86,7 +83,6 @@ pub fn run() {
         Action::Check => check_config(&args.config),
         Action::Completions { shell } => {
             let mut cmd = crate::arguments::command();
-            use clap::CommandFactory;
             let name = cmd.get_name().to_string();
             let generator = match shell.as_str() {
                 "bash" => clap_complete::Shell::Bash,

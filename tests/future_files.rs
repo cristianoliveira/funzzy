@@ -86,17 +86,6 @@ fn result(response: serde_json::Value) -> serde_json::Value {
     response["result"].clone()
 }
 
-/// Waits until `condition` holds (max ~20s), panicking otherwise.
-fn wait_until<F: FnMut() -> bool>(mut condition: F) {
-    for _ in 0..200 {
-        if condition() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("wait_until timed out");
-}
-
 /// CI debugging aid: on timeout, surface the watcher's captured verbose
 /// output and its final control-socket status before panicking, so a red CI
 /// run is diagnosable from the log without local reproduction.

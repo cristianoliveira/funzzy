@@ -63,4 +63,4 @@ path = "src/main.rs"
 # alias
 [[bin]]
 name = "fzz"
-path = "src/main.rs"
+path = "src/fzz.rs"

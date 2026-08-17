@@ -45,9 +45,10 @@ fn test_it_replaces_filepath_template_with_changed_file() {
                         .read_to_string(&mut output)
                         .expect("failed to read from file");
 
-                    output.contains("this file has changed")
-                        && output.contains("foobar-watcher.txt")
-                        && output.contains("Success; Completed")
+                    let visible = setup::strip_ansi_codes(&output);
+                    visible.contains("this file has changed")
+                        && visible.contains("foobar-watcher.txt")
+                        && visible.contains("Success; Completed")
                 },
                 "was not possible to find filepath: {}",
                 output
