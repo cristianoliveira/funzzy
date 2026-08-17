@@ -1,7 +1,7 @@
 ---
 id: TASK-0099
 title: Prove the simplified configuration command workflow
-status: todo
+status: doing
 depends_on: [TASK-0097, TASK-0098]
 priority: high
 tags: [integration-tests, cli, init, config, migration, docs, reliability]
