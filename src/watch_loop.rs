@@ -114,13 +114,13 @@ impl ModificationGate {
         }
     }
 
-    /// Baselines every existing file under the roots (TASK-0114): a
+    /// Baselines every existing file under the initial roots (TASK-0114): a
     /// pre-existing file may never route as a "first sighting" — the §4
     /// directory walk synthesizes pre-existing siblings on Linux (a file
-    /// create bumps the parent dir, whose walk re-lists them), and startup
-    /// replays are noise on every backend. Entries are only filled, never
-    /// overwritten, so a re-seed (root swap) cannot mask in-flight writes:
-    /// a real modification still moves mtime past any baseline.
+    /// create bumps the parent dir, whose walk re-lists them). Entries are
+    /// fill-only, so callers can seed disjoint roots without masking an
+    /// already-tracked write. Live reloads deliberately do NOT re-seed: a
+    /// file created under a newly added root must route on first sighting.
     fn seed(&mut self, roots: &[String]) {
         for root in roots {
             let Ok(entries) = std::fs::read_dir(root) else {
@@ -189,7 +189,6 @@ pub fn watch_loop(
     let ready_shutdown = shutdown;
     let gate = std::cell::RefCell::new(ModificationGate::new());
     gate.borrow_mut().seed(&list_of_watched_paths);
-    let gated_revision = std::cell::RefCell::new(initial.revision().cloned());
 
     watcher::events(
         list_of_watched_paths,
@@ -249,15 +248,6 @@ pub fn watch_loop(
             // run freezes exactly the routed revision (TASK-0091, AC7).
             let watches_guard = watches.lock().unwrap();
             let revision = watches_guard.revision().cloned();
-            // A revision change may swap watch roots: baseline any NEW
-            // root's pre-existing files so a swap never replays them
-            // (same rule as startup; fill-only, never overwrite).
-            if revision != *gated_revision.borrow() {
-                if let Some(roots) = watches_guard.paths_to_watch() {
-                    gate.borrow_mut().seed(&roots);
-                }
-                *gated_revision.borrow_mut() = revision.clone();
-            }
             match watches_guard.watch_plan_batch(&batch.changed) {
                 Some((plan, trigger)) => {
                     stdout::clear_screen();
@@ -1634,8 +1624,7 @@ mod modification_gate_seed_tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A re-seed never overwrites a live baseline (fill-only): a rewrite
-    /// tracked between seeds still routes afterwards.
+    /// Calling seed twice never overwrites a live baseline (fill-only).
     #[test]
     fn reseed_never_masks_inflight_writes() {
         let dir = scratch("reseed");
@@ -1650,7 +1639,7 @@ mod modification_gate_seed_tests {
 
         // Rewrite bumps mtime past the baseline…
         std::fs::write(&file, "two-with-more-content").unwrap();
-        // …then a root swap triggers a re-seed before the event routes.
+        // Calling seed again is fill-only; it keeps the older baseline.
         gate.seed(&roots);
 
         let routed = gate.changed(vec![file.display().to_string()]);
