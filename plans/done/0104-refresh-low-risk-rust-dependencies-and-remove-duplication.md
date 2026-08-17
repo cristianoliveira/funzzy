@@ -1,7 +1,7 @@
 ---
 id: TASK-0104
 title: Refresh low-risk Rust dependencies and remove duplication
-status: doing
+status: done
 depends_on: [TASK-0103]
 priority: high
 tags: [rust, cargo, dependencies, cleanup, tdd]
