@@ -292,15 +292,6 @@ impl Arguments {
         })
     }
 
-    /// Rendered help text for the configured command (used by app fallbacks).
-    fn parse_config_format(raw: Option<&str>) -> OutputFormat {
-        match raw.unwrap_or("human") {
-            "toon" => OutputFormat::Toon,
-            "json" => OutputFormat::Json,
-            _ => OutputFormat::Human,
-        }
-    }
-
     pub fn help_text() -> String {
         command().render_help().to_string()
     }
@@ -1726,7 +1717,7 @@ mod tests {
 #[cfg(test)]
 mod format_tests {
     use super::tests::parse;
-    use super::{Action, Arguments};
+    use super::Action;
     use crate::cli::{ControlAction, OutputFormat};
 
     #[test]
@@ -1773,8 +1764,8 @@ mod format_tests {
 #[cfg(test)]
 mod config_command_tests {
     use super::tests::parse;
-    use super::{Action, Arguments};
-    use crate::cli::{ControlAction, OutputFormat};
+    use super::Action;
+    use crate::cli::OutputFormat;
 
     #[test]
     fn config_schema_parses_with_optional_section() {
@@ -1822,7 +1813,7 @@ mod config_command_tests {
 #[cfg(test)]
 mod completions_tests {
     use super::tests::parse;
-    use super::{Action, Arguments};
+    use super::Action;
 
     #[test]
     fn completions_parses_shell_and_rejects_unknown() {

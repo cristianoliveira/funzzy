@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
-use std::io::prelude::*;
+use std::io::{Read, Write};
+#[cfg(feature = "test-integration-file-system")]
 use std::path::PathBuf;
 
 #[path = "./common/lib.rs"]
@@ -11,6 +12,7 @@ mod setup;
 /// Concurrent integration runs (the Funzzy watcher generation, CI, manual
 /// invocations) each get an isolated scratch root, so no run can destroy
 /// another run's watch roots or trigger files.
+#[cfg(feature = "test-integration-file-system")]
 fn scratch_config(template: &str, label: &str) -> (PathBuf, PathBuf, String) {
     let scratch = std::env::temp_dir().join(format!(
         "funzzy-fzz-scratch-{}-{}",
@@ -371,7 +373,7 @@ fn poll_backend_detects_changes_and_runs_tasks() {
     setup::serialized(|| {
         // TASK-0037: `on.watch_backend: poll` drives the same batching/matching
         // path and must detect a file change and run the matching task.
-        use std::io::prelude::*;
+
         use std::time::Duration;
 
         let scratch = std::env::temp_dir().join(format!(
@@ -402,7 +404,7 @@ fn poll_backend_detects_changes_and_runs_tasks() {
 
         std::fs::write(scratch.join("trigger.txt"), "change").unwrap();
 
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut ran = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("captured.txt").exists() {
@@ -461,7 +463,7 @@ fn gitignored_paths_do_not_trigger_tasks_when_respected() {
         // the full debounce + margin instead of a single fixed sleep, so the
         // assertion is deterministic under load.
         std::fs::write(scratch.join("generated/out.txt"), "change").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(4);
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
         while std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(100));
             assert!(
@@ -472,7 +474,7 @@ fn gitignored_paths_do_not_trigger_tasks_when_respected() {
 
         // A normal file change DOES run the task.
         std::fs::write(scratch.join("real.txt"), "change").unwrap();
-        let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         let mut ran = false;
         while std::time::Instant::now() < deadline {
             if scratch.join("captured.txt").exists() {
@@ -498,6 +500,7 @@ fn gitignored_paths_do_not_trigger_tasks_when_respected() {
 /// it to a per-run scratch dir. Used with `setup::with_config` so discovery
 /// tests serialize through the harness mutex (never starving harness wait
 /// budgets) and write triggers inside the fixture.
+#[cfg(feature = "test-integration")]
 fn discovery_config(label: &str, change: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let scratch =
         std::env::temp_dir().join(format!("funzzy-discovery-{}-{}", std::process::id(), label));
@@ -554,7 +557,7 @@ fn newly_created_file_under_existing_watched_dir_triggers_job() {
             )
             .unwrap();
 
-            let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut ran = false;
             while std::time::Instant::now() < deadline {
                 if fixture.join("captured.txt").exists() {
@@ -609,7 +612,7 @@ fn directory_created_after_startup_becomes_covered_without_restart() {
             std::fs::create_dir_all(fixture.join("examples/workdir/deep/nested")).unwrap();
             std::fs::write(fixture.join("examples/workdir/deep/nested/out.txt"), "x").unwrap();
 
-            let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut ran = false;
             while std::time::Instant::now() < deadline {
                 if fixture.join("captured.txt").exists() {
@@ -658,7 +661,7 @@ fn delete_and_recreate_stays_observable_without_restart() {
 
             // First creation triggers.
             std::fs::write(&target, "v1").unwrap();
-            let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut first = false;
             while std::time::Instant::now() < deadline {
                 if captured.exists() {
@@ -673,7 +676,7 @@ fn delete_and_recreate_stays_observable_without_restart() {
             // Delete then recreate: still observable, no restart.
             std::fs::remove_file(&target).unwrap();
             std::fs::write(&target, "v2").unwrap();
-            let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut second = false;
             while std::time::Instant::now() < deadline {
                 if captured.exists() {
@@ -727,7 +730,7 @@ fn atomic_editor_save_triggers_destination_once_without_temp_leak() {
             std::fs::write(fixture.join("examples/workdir/notes.txt.tmp"), "draft\n").unwrap();
             std::fs::rename(fixture.join("examples/workdir/notes.txt.tmp"), &target).unwrap();
 
-            let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut ran = false;
             while std::time::Instant::now() < deadline {
                 if fixture.join("captured.txt").exists() {
@@ -741,6 +744,7 @@ fn atomic_editor_save_triggers_destination_once_without_temp_leak() {
     );
 }
 
+#[cfg(feature = "test-integration")]
 fn wait_watching(scratch: &std::path::Path) {
     use std::time::{Duration, Instant};
     let deadline = Instant::now() + Duration::from_secs(20);

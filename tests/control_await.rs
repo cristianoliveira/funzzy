@@ -29,7 +29,7 @@ impl Drop for TestProcess {
         // Graceful SIGTERM first: the watcher's shutdown handler reaps its
         // task process groups, so long-running sleep children never pile up
         // across tests. SIGKILL is the fallback for a stuck watcher.
-        let _ = unsafe { libc_kill(self.child.id() as i32, 15) };
+        let _ = libc_kill(self.child.id() as i32, 15);
         for _ in 0..50 {
             if self.child.try_wait().ok().flatten().is_some() {
                 break;
@@ -122,18 +122,6 @@ fn spawn_cli(directory: &std::path::Path, args: &[&str]) -> Child {
         .expect("fzz control client should spawn")
 }
 
-fn raw_status(socket_path: &std::path::Path) -> serde_json::Value {
-    let mut stream = UnixStream::connect(socket_path).expect("connect control socket");
-    writeln!(
-        stream,
-        r#"{{"jsonrpc":"2.0","id":"status","method":"status"}}"#
-    )
-    .unwrap();
-    let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
-}
-
 fn try_status(socket_path: &std::path::Path) -> Result<serde_json::Value, String> {
     let mut stream = match UnixStream::connect(socket_path) {
         Ok(stream) => stream,
@@ -161,16 +149,6 @@ fn run_cli_retry(directory: &std::path::Path, args: &[&str]) -> Output {
         last = run_cli(directory, args);
     }
     last
-}
-
-fn wait_until<F: FnMut() -> bool>(mut condition: F) {
-    for _ in 0..300 {
-        if condition() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("wait_until timed out");
 }
 
 fn wait_until_status<F: FnMut(&serde_json::Value) -> bool>(socket: &std::path::Path, mut f: F) {
@@ -349,7 +327,7 @@ fn await_superseded_generation_returns_superseded() {
             && status["state"].as_str() == Some("running")
     });
 
-    let mut waiter = spawn_cli(
+    let waiter = spawn_cli(
         &directory,
         &[
             "control",
@@ -384,7 +362,7 @@ fn await_watcher_disconnect_reports_disconnected() {
     let mut watcher = start_watcher(&directory);
     wait_until_socket(&directory);
 
-    let mut waiter = spawn_cli(
+    let waiter = spawn_cli(
         &directory,
         &["control", "await", "--after", "0", "--timeout", "60s"],
     );
@@ -409,7 +387,7 @@ fn await_watcher_restart_reports_restarted() {
     let socket = directory.join("sock");
     wait_until_status(&socket, |status| status["generation"].as_u64() == Some(1));
 
-    let mut waiter = spawn_cli(
+    let waiter = spawn_cli(
         &directory,
         &["control", "await", "--after", "1", "--timeout", "60s"],
     );
@@ -439,11 +417,11 @@ fn multiple_waiters_all_return_on_one_terminal_event() {
     let _watcher = start_watcher(&directory);
     wait_until_socket(&directory);
 
-    let mut first = spawn_cli(
+    let first = spawn_cli(
         &directory,
         &["control", "await", "--after", "0", "--timeout", "20s"],
     );
-    let mut second = spawn_cli(
+    let second = spawn_cli(
         &directory,
         &["control", "await", "--after", "0", "--timeout", "20s"],
     );
@@ -452,7 +430,7 @@ fn multiple_waiters_all_return_on_one_terminal_event() {
     let trigger = run_cli(&directory, &["control", "emit", "x.txt"]);
     assert!(trigger.status.success());
 
-    for mut waiter in [first, second] {
+    for waiter in [first, second] {
         let output = waiter.wait_with_output().expect("waiter finished");
         assert!(output.status.success(), "waiter must exit 0");
         let stdout = String::from_utf8_lossy(&output.stdout);

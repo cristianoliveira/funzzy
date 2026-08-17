@@ -122,17 +122,6 @@ fn raw_status(socket_path: &std::path::Path) -> serde_json::Value {
     try_status(socket_path).expect("connect control socket")
 }
 
-fn wait_until<F: FnMut() -> bool>(mut condition: F) {
-    let mut last_status = String::new();
-    for _ in 0..250 {
-        if condition() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    panic!("wait_until timed out (last status: {last_status})");
-}
-
 const LONG_RUNNING: &str = r#"
 on:
   socket: sock
@@ -201,13 +190,12 @@ fn wait_until_status<F: FnMut(&serde_json::Value) -> bool>(
     socket_path: &std::path::Path,
     mut condition: F,
 ) -> u64 {
-    let mut generation = 0;
     let mut last_error = String::new();
     let mut last_seen = String::new();
     for _ in 0..250 {
         match try_status(socket_path) {
             Ok(status) => {
-                generation = status["result"]["generation"].as_u64().unwrap_or(0);
+                let generation = status["result"]["generation"].as_u64().unwrap_or(0);
                 last_seen = status["result"].to_string();
                 if condition(&status["result"]) {
                     return generation;

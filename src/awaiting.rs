@@ -685,7 +685,6 @@ mod tests {
     #[test]
     fn history_is_bounded_and_evicts_oldest_first() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
         for generation in 1..=300 {
             coordinator.observe(&started(generation, None));
             coordinator.observe(&finished(generation, false));

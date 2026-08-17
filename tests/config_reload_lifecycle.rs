@@ -133,7 +133,7 @@ fn result(response: serde_json::Value) -> serde_json::Value {
 }
 
 fn wait_until<F: FnMut() -> bool>(mut condition: F, what: &str) {
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(25);
+    let deadline = std::time::Instant::now() + Duration::from_secs(25);
     while std::time::Instant::now() < deadline {
         if condition() {
             return;

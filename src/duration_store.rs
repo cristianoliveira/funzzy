@@ -556,8 +556,6 @@ mod tests {
 
     #[test]
     fn oversized_profile_snapshot_is_rejected_on_load() {
-        let temp = TempDir::new();
-        let path = temp.0.join("run-durations-v1.json");
         let snapshots = vec![ProfileSnapshot {
             signature: sig(1),
             successes: vec![0; SUCCESS_RETENTION + 1],

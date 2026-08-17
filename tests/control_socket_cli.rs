@@ -105,7 +105,7 @@ fn call(path: &std::path::Path, request: Value) -> Value {
         BufReader::new(stream).read_line(&mut response).unwrap();
         match serde_json::from_str(&response) {
             Ok(parsed) => return parsed,
-            Err(err) if Instant::now() < deadline => {
+            Err(_) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(err) => panic!(

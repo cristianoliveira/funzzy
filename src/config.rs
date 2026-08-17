@@ -768,8 +768,6 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
 mod tests {
     extern crate yaml_rust;
 
-    use crate::config::OutputPolicy;
-
     use self::yaml_rust::YamlLoader;
     use super::concurrency_from_yaml;
     use super::control_socket_from_yaml;
@@ -2268,6 +2266,7 @@ mod service_tests {
     }
 }
 
+#[cfg(test)]
 mod catalog_allowlist_tests {
     use super::*;
 

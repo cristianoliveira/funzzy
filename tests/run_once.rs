@@ -595,7 +595,6 @@ fn service_task_runs_across_generations_and_shuts_down() {
     // treated as finite work); it survives a change-triggered generation and
     // is reaped on watcher shutdown. Uses a bounded service script so the
     // test never hangs.
-    use std::io::Write;
     use std::time::Duration;
 
     let directory = fixture("service");
@@ -633,7 +632,7 @@ fn service_task_runs_across_generations_and_shuts_down() {
     // ("Watching..." prints inside the on-ready callback) before writing the
     // trigger — a fixed sleep races root registration under debug builds and
     // loses the very first event (never assert on timing).
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
     loop {
         if let Ok(log) = std::fs::read_to_string(directory.join("child.out")) {
             if log.contains("Watching...") {
@@ -650,7 +649,7 @@ fn service_task_runs_across_generations_and_shuts_down() {
     // A change triggers the generation: the finite prep job runs and the
     // service is started and kept running (svc-ready written).
     std::fs::write(directory.join("a.txt"), "change").unwrap();
-    let mut deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
     let mut prepped = false;
     while std::time::Instant::now() < deadline {
         if directory.join("prep.txt").exists() && directory.join("svc-ready").exists() {

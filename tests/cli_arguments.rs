@@ -573,7 +573,7 @@ fn spawn_with_config(extra_args: &[&str], log_name: &str) -> (Child, String) {
     let log_path = std::path::Path::new(&log_name);
     let _ = std::fs::remove_file(log_path);
     let log = std::fs::File::create(log_path).expect("failed to create log file");
-    let mut child = StdCommand::new(env!("CARGO_BIN_EXE_fzz"))
+    let child = StdCommand::new(env!("CARGO_BIN_EXE_fzz"))
         .arg("-c")
         .arg(FILTER_EXAMPLE)
         .args(extra_args)
@@ -587,17 +587,15 @@ fn spawn_with_config(extra_args: &[&str], log_name: &str) -> (Child, String) {
 
 #[cfg(feature = "test-integration")]
 fn wait_for_output(log_name: &str, needle: &str) -> String {
-    let mut output = String::new();
-    wait_until!(
-        {
-            output = std::fs::read_to_string(log_name).unwrap_or_default();
-            output.contains(needle)
-        },
-        "fzz output never contained {:?}: {}",
-        needle,
-        output
-    );
-    output
+    for _ in 0..100 {
+        let output = std::fs::read_to_string(log_name).unwrap_or_default();
+        if output.contains(needle) {
+            return output;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    let output = std::fs::read_to_string(log_name).unwrap_or_default();
+    panic!("fzz output never contained {needle:?}: {output}");
 }
 
 #[cfg(feature = "test-integration")]
