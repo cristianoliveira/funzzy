@@ -222,7 +222,7 @@ pub struct RunMetadata {
     pub concurrency_source: Option<&'static str>,
     /// Run-level terminal hooks (TASK-0040): `success`/`failure` commands run
     /// once at the generation terminal outcome.
-    pub hooks: crate::config::RunHooks,
+    pub hooks: crate::config::GenerationHooks,
     /// Immutable config revision this generation was frozen under
     /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4). None for legacy runs that
     /// never observe reload.
@@ -244,7 +244,7 @@ impl RunMetadata {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
-            hooks: crate::config::RunHooks::default(),
+            hooks: crate::config::GenerationHooks::default(),
             revision: None,
             revision_hash: None,
         }
@@ -270,7 +270,7 @@ impl RunMetadata {
             execution_signature: None,
             effective_concurrency: None,
             concurrency_source: None,
-            hooks: crate::config::RunHooks::default(),
+            hooks: crate::config::GenerationHooks::default(),
             revision: None,
             revision_hash: None,
         }
@@ -312,7 +312,7 @@ impl RunMetadata {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
         self
     }

@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use crate::config::RunHooks;
+use crate::config::{GenerationHooks, SessionHooks};
 use crate::config_revision::{ConfigRevision, RevisionTracker, RuntimeConfig};
 use crate::rules::Rules;
 use crate::watcher::WatchBackend;
@@ -49,7 +49,8 @@ pub struct PolicyDefaults {
     pub debounce: Duration,
     pub backend: WatchBackend,
     pub gitignore: bool,
-    pub hooks: RunHooks,
+    pub hooks: GenerationHooks,
+    pub session_hooks: SessionHooks,
 }
 
 /// Validates a candidate config text against the first three pure gates and
@@ -93,7 +94,8 @@ pub fn validate_candidate(
         .unwrap_or(defaults.backend.clone());
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(semantic)?;
-    let hooks = crate::config::hooks_from_yaml(content).map_err(semantic)?;
+    let hooks = crate::config::generation_hooks_from_yaml(content).map_err(semantic)?;
+    let session_hooks = crate::config::session_hooks_from_yaml(content).map_err(semantic)?;
     let control_socket = crate::config::control_socket_from_yaml(content)
         .map_err(semantic)?
         .map(std::path::PathBuf::from);
@@ -106,6 +108,7 @@ pub fn validate_candidate(
         backend,
         respect_gitignore,
         hooks,
+        session_hooks,
         control_socket,
     ))
 }
@@ -181,7 +184,8 @@ mod tests {
             debounce: Duration::from_millis(1000),
             backend: WatchBackend::Native,
             gitignore: false,
-            hooks: RunHooks::default(),
+            hooks: GenerationHooks::default(),
+            session_hooks: crate::config::SessionHooks::default(),
         }
     }
 
@@ -229,7 +233,7 @@ mod tests {
         // TASK-0092: the candidate's OWN concurrency/debounce/backend/hooks
         // participate in the frozen runtime — a policy change is semantic.
         let runtime = base_runtime(
-            "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\n  watch_backend: poll\n  poll_interval: 100ms\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+            "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\n  close: 'echo closed'\n  watch_backend: poll\n  poll_interval: 100ms\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
         );
         assert_eq!(runtime.concurrency, 8);
         assert_eq!(runtime.debounce, Duration::from_millis(250));
@@ -240,6 +244,7 @@ mod tests {
             }
         );
         assert_eq!(runtime.hooks.success.as_deref(), Some("echo done"));
+        assert_eq!(runtime.session_hooks.close.as_deref(), Some("echo closed"));
     }
 
     #[test]
@@ -249,7 +254,11 @@ mod tests {
         assert_eq!(runtime.concurrency, defaults().concurrency);
         assert_eq!(runtime.debounce, defaults().debounce);
         assert_eq!(runtime.backend, defaults().backend);
-        assert_eq!(runtime.hooks, RunHooks::default());
+        assert_eq!(runtime.hooks, GenerationHooks::default());
+        assert_eq!(
+            runtime.session_hooks,
+            crate::config::SessionHooks::default()
+        );
     }
 
     #[test]

@@ -64,6 +64,7 @@ Declaration order is semantic. Only consecutive jobs with same `parallel` name o
 - **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
 - **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
 - **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
+- **Lifecycle hooks:** `on.success`/`on.failure` observe generation outcomes; `on.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
 
 Learn more:
 
@@ -335,7 +336,8 @@ All `config` commands are non-interactive and side-effect-free: they never
 read a project config, start a watcher, open a socket, or run tasks. The
 schema is the single source of truth for structure; `fzz check` adds semantic
 validation. Legacy root-list configs remain accepted and are rewritten with
-`fzz migrate`.
+`fzz migrate`. Generation hooks use `on.success`/`on.failure`; watcher cleanup
+uses `on.close` once after scheduling stops and owned work is reaped.
 
 ## Parallel execution
 

@@ -134,7 +134,8 @@ New in 2.0.0:
 - Configuration commands: `fzz init` is create-only with `--template comprehensive|minimal|parallel|agent` (default `comprehensive`); `fzz migrate` is the explicit, atomic, idempotent legacy rewrite (`fzz init --migrate` is removed) — CLI-V2-CONTRACT §3a (TASK-0096).
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
 - Managed long-running service tasks (`service: true`), run-level
-  success/failure hooks (`on.success`/`on.failure`), task-aware output
+  success/failure hooks (`on.success`/`on.failure`), watcher-session close hook
+  (`on.close`, graceful ready-watcher shutdown only), task-aware output
   policies (`inherit`/`quiet`/`capture`/`show-on-failure`).
 - Shell completion: `fzz completions SHELL`.
 

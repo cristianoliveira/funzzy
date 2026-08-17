@@ -2095,14 +2095,14 @@ mod hooks_tests {
 
     #[test]
     fn hooks_default_to_none() {
-        let hooks = hooks_from_yaml("on:\n  change: '**/*'\n").unwrap();
+        let hooks = generation_hooks_from_yaml("on:\n  change: '**/*'\n").unwrap();
         assert_eq!(hooks.success, None);
         assert_eq!(hooks.failure, None);
     }
 
     #[test]
     fn hooks_parse_success_and_failure_commands() {
-        let hooks = hooks_from_yaml(
+        let hooks = generation_hooks_from_yaml(
             "on:\n  change: '**/*'\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
         )
         .unwrap();
@@ -2112,28 +2112,66 @@ mod hooks_tests {
 
     #[test]
     fn hooks_reject_non_string_values() {
-        assert!(hooks_from_yaml("on:\n  success: [a, b]\n").is_err());
-        assert!(hooks_from_yaml("on:\n  failure: 1\n").is_err());
+        assert!(generation_hooks_from_yaml("on:\n  success: [a, b]\n").is_err());
+        assert!(generation_hooks_from_yaml("on:\n  failure: 1\n").is_err());
+    }
+
+    #[test]
+    fn session_hook_defaults_to_none_and_parses_close_command() {
+        assert_eq!(
+            session_hooks_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            SessionHooks::default()
+        );
+        assert_eq!(
+            session_hooks_from_yaml("on:\n  close: './scripts/cleanup'\n")
+                .unwrap()
+                .close
+                .as_deref(),
+            Some("./scripts/cleanup")
+        );
+    }
+
+    #[test]
+    fn session_hook_rejects_non_string_empty_and_trigger_templates() {
+        for yaml in [
+            "on:\n  close: [a, b]\n",
+            "on:\n  close: ''\n",
+            "on:\n  close: 'echo {{filepath}}'\n",
+            "on:\n  close: 'echo {{paths}}'\n",
+        ] {
+            assert!(
+                session_hooks_from_yaml(yaml).is_err(),
+                "must reject: {yaml}"
+            );
+        }
     }
 }
 
-/// Parsed run-level hooks (`on.success` / `on.failure`), TASK-0040.
+/// Generation terminal hooks (`on.success` / `on.failure`), TASK-0040.
+/// Kept distinct from [`SessionHooks`] so finite runners cannot execute the
+/// watcher lifecycle hook accidentally.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RunHooks {
+pub struct GenerationHooks {
     pub success: Option<String>,
     pub failure: Option<String>,
 }
 
+/// Watcher-session lifecycle hook (`on.close`), TASK-0101.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionHooks {
+    pub close: Option<String>,
+}
+
 /// Parses `on.success` / `on.failure` hook commands; absent = None,
 /// non-string values are rejected loudly.
-pub fn hooks_from_yaml(content: &str) -> Result<RunHooks, String> {
+pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
     let on = &root["on"];
     if on == &Yaml::BadValue {
-        return Ok(RunHooks::default());
+        return Ok(GenerationHooks::default());
     }
     if !matches!(on, Yaml::Hash(_)) {
         return Err("Property 'on' must be an object".to_owned());
@@ -2145,18 +2183,66 @@ pub fn hooks_from_yaml(content: &str) -> Result<RunHooks, String> {
             _ => Err(format!("Property 'on.{}' must be a command string", key)),
         }
     };
-    Ok(RunHooks {
+    Ok(GenerationHooks {
         success: read_hook("success")?,
         failure: read_hook("failure")?,
     })
 }
 
-pub fn hooks_from_file(filename: &str) -> Result<RunHooks, String> {
+pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
     let mut file = File::open(filename).map_err(|err| err.to_string())?;
     let mut content = String::new();
     file.read_to_string(&mut content)
         .map_err(|err| err.to_string())?;
-    hooks_from_yaml(&content)
+    generation_hooks_from_yaml(&content)
+}
+
+/// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
+/// templates are rejected at config validation instead of expanding to empty.
+pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let on = &root["on"];
+    if on == &Yaml::BadValue {
+        return Ok(SessionHooks::default());
+    }
+    if !matches!(on, Yaml::Hash(_)) {
+        return Err("Property 'on' must be an object".to_owned());
+    }
+    let close = match &on["close"] {
+        Yaml::BadValue => None,
+        Yaml::String(value) if value.trim().is_empty() => {
+            return Err("Property 'on.close' must be a non-empty command string".to_owned())
+        }
+        Yaml::String(value) => Some(value.clone()),
+        _ => return Err("Property 'on.close' must be a command string".to_owned()),
+    };
+    if let Some(command) = &close {
+        for template in [
+            "{{filepath}}",
+            "{{absolute_path}}",
+            "{{relative_filepath}}",
+            "{{relative_path}}",
+            "{{paths}}",
+        ] {
+            if command.contains(template) {
+                return Err(format!(
+                    "Property 'on.close' cannot use {template}: close has no trigger path"
+                ));
+            }
+        }
+    }
+    Ok(SessionHooks { close })
+}
+
+pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    session_hooks_from_yaml(&content)
 }
 
 #[cfg(test)]

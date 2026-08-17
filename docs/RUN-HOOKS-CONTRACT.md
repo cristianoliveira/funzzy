@@ -27,10 +27,9 @@ confused:
 
 ## 2. Configuration shape and validation
 
-Preferred V2 form (rendered as `text` until TASK-0101 adds parser support;
-TASK-0102 must restore the `yaml` proof fence):
+Preferred V2 form (production-parser validated):
 
-```text
+```yaml
 on:
   success: ./scripts/on-success
   failure: ./scripts/on-failure
@@ -39,6 +38,7 @@ on:
 jobs:
   - name: test
     run: cargo test
+    change: "**/*"
 ```
 
 - `on.close` is a sibling of `on.success` and `on.failure`; `on_close` is

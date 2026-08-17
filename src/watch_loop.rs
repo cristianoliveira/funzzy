@@ -106,9 +106,14 @@ pub fn watch_loop(
     // running init, so a config-touching init task can never fire before
     // the reload watcher has registered its roots (TASK-0090).
     reload_ready: Option<std::sync::Arc<std::sync::mpsc::Receiver<()>>>,
+    shutdown: Option<std::sync::Arc<crate::shutdown::ShutdownCoordinator>>,
 ) -> Result<(), FzzError> {
     let initial = watches.lock().unwrap().clone();
     let list_of_watched_paths = initial.paths_to_watch().unwrap_or_default();
+    let shutdown_flag = shutdown
+        .as_ref()
+        .map(|coordinator| coordinator.requested_flag());
+    let ready_shutdown = shutdown;
 
     watcher::events(
         list_of_watched_paths,
@@ -117,6 +122,9 @@ pub fn watch_loop(
                 let _ = ready.recv_timeout(Duration::from_secs(30));
             }
             strategy.on_ready();
+            if let Some(shutdown) = &ready_shutdown {
+                shutdown.mark_ready();
+            }
 
             let initial = watches.lock().unwrap().clone();
             let init_revision = initial.revision().cloned();
@@ -181,6 +189,7 @@ pub fn watch_loop(
         initial.backend(),
         verbose,
         swap_rx,
+        shutdown_flag,
     )
     .map_err(FzzError::GenericError)
 }
@@ -305,7 +314,7 @@ impl BlockingStrategy {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.workflow = self.workflow.with_hooks(hooks);
         self
     }

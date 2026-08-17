@@ -37,7 +37,7 @@ struct RunRequest {
     /// explicitly requested sequential over the control socket.
     concurrency_source: Option<&'static str>,
     /// Run-level terminal hooks (TASK-0040).
-    hooks: crate::config::RunHooks,
+    hooks: crate::config::GenerationHooks,
     /// Immutable config revision this request is frozen under (TASK-0089).
     revision: Option<u64>,
     /// Non-secret semantic hash of the frozen config revision.
@@ -251,7 +251,7 @@ pub struct Worker {
     /// Interior-mutable (TASK-0092): a reload swaps the shared hooks at the
     /// commit boundary so post-commit generations run the committed hooks
     /// while active runs keep the request they started with.
-    hooks: std::sync::Mutex<crate::config::RunHooks>,
+    hooks: std::sync::Mutex<crate::config::GenerationHooks>,
     /// Immutable config revision all plans prepared through this worker are
     /// frozen under (TASK-0089). Captured before plan creation; a reload
     /// (TASK-0090) swaps it at the commit boundary. Interior mutability so
@@ -608,7 +608,7 @@ impl Worker {
             root,
             concurrency: concurrency_handle,
             fail_fast,
-            hooks: std::sync::Mutex::new(crate::config::RunHooks::default()),
+            hooks: std::sync::Mutex::new(crate::config::GenerationHooks::default()),
             revision: std::sync::Mutex::new(None),
             consumer: Some(consumer),
         }
@@ -647,7 +647,7 @@ impl Worker {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040) applied to target runs.
-    pub fn with_hooks(self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(self, hooks: crate::config::GenerationHooks) -> Self {
         *self.hooks.lock().unwrap() = hooks;
         self
     }
@@ -655,7 +655,7 @@ impl Worker {
     /// Swaps the run-level terminal hooks at the reload commit boundary
     /// (TASK-0092): plans prepared after this call carry the committed
     /// revision's hooks; active runs keep the hooks they started under.
-    pub fn set_hooks(&self, hooks: crate::config::RunHooks) {
+    pub fn set_hooks(&self, hooks: crate::config::GenerationHooks) {
         *self.hooks.lock().unwrap() = hooks;
     }
 

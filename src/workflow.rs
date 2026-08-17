@@ -20,7 +20,7 @@ pub struct WorkflowRunner {
     concurrency: usize,
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040) applied to each finite run.
-    hooks: crate::config::RunHooks,
+    hooks: crate::config::GenerationHooks,
 }
 
 impl WorkflowRunner {
@@ -29,7 +29,7 @@ impl WorkflowRunner {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
         self
     }
@@ -101,7 +101,7 @@ impl WorkflowRunner {
             executor,
             concurrency,
             fail_fast,
-            hooks: crate::config::RunHooks::default(),
+            hooks: crate::config::GenerationHooks::default(),
         }
     }
 

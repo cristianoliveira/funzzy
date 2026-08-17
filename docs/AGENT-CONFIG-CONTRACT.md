@@ -49,7 +49,7 @@ fzz config example comprehensive|minimal|parallel|agent
 
 | Section | Covers |
 |---|---|
-| `on` | `change`, `ignore`, `socket`, `concurrency`, `debounce`, `watch_backend`, `poll_interval`, `respect_gitignore` |
+| `on` | `change`, `ignore`, `socket`, `concurrency`, `debounce`, `watch_backend`, `poll_interval`, `respect_gitignore`, `success`, `failure`, `close`, `output` |
 | `job` | `name`, `run` (shell/argv), `cwd`, `env`, `change`, `ignore`, `run_on_init`, `parallel` |
 | `matching` | change/ignore glob semantics, gitignore precedence (GITIGNORE-CONTRACT), `{{filepath}}`/`{{paths}}` |
 | `execution` | busy policy, fail-fast, log file, `--sequential`, NDJSON `--events` |

@@ -16,6 +16,7 @@ pub struct WatchCommand {
     fail_fast: bool,
     run_on_init: bool,
     events: Option<std::sync::Arc<crate::event_stream::EventStream>>,
+    shutdown: Option<std::sync::Arc<crate::shutdown::ShutdownCoordinator>>,
 }
 
 impl WatchCommand {
@@ -38,7 +39,16 @@ impl WatchCommand {
             fail_fast,
             run_on_init,
             events,
+            shutdown: None,
         }
+    }
+
+    pub fn with_shutdown(
+        mut self,
+        shutdown: std::sync::Arc<crate::shutdown::ShutdownCoordinator>,
+    ) -> Self {
+        self.shutdown = Some(shutdown);
+        self
     }
 }
 
@@ -61,6 +71,7 @@ impl Command for WatchCommand {
             self.verbose,
             None,
             None,
+            self.shutdown.clone(),
         )
     }
 }

@@ -31,6 +31,8 @@ on:
   # success: echo ok > .fzz-success
   # failure: Hook command run after a failed generation
   # failure: echo failed > .fzz-failed
+  # close: Finite hook command run once when a ready watcher closes
+  # close: echo closed > .fzz-closed
   # output: Default output policy for every job (default: inherit) values: inherit | quiet | capture | show-on-failure
   # output: quiet
 

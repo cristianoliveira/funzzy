@@ -4,7 +4,6 @@
 //! responsibilities.
 
 use assert_cmd::cargo;
-use predicates::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

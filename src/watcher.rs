@@ -97,6 +97,7 @@ pub fn events(
     backend: WatchBackend,
     verbose: bool,
     swap_rx: Option<RootSwapReceiver>,
+    shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
     match backend {
         WatchBackend::Native => run_native(
@@ -106,10 +107,16 @@ pub fn events(
             debounce,
             verbose,
             swap_rx,
+            shutdown,
         ),
-        WatchBackend::Poll { interval } => {
-            run_poll(watch_path_list, on_ready, handler, interval, swap_rx)
-        }
+        WatchBackend::Poll { interval } => run_poll(
+            watch_path_list,
+            on_ready,
+            handler,
+            interval,
+            swap_rx,
+            shutdown,
+        ),
         WatchBackend::Auto => {
             // Try native first; on failure warn once and fall back to
             // deterministic polling (TASK-0037). The probe registers the
@@ -122,6 +129,7 @@ pub fn events(
                     debounce,
                     verbose,
                     swap_rx,
+                    shutdown,
                 ),
                 Err(native_err) => {
                     stdout::warn(&format!(
@@ -134,6 +142,7 @@ pub fn events(
                         handler,
                         Duration::from_millis(500),
                         swap_rx,
+                        shutdown,
                     )
                 }
             }
@@ -166,6 +175,7 @@ fn run_native(
     debounce: Duration,
     verbose: bool,
     swap_rx: Option<RootSwapReceiver>,
+    shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
     let mut debouncer = new_debouncer(debounce, None, tx)
@@ -207,6 +217,14 @@ fn run_native(
         }
     }
 
+    // A shutdown requested during startup never crosses the readiness gate,
+    // so its close hook is ineligible (RUN-HOOKS-CONTRACT §4).
+    if shutdown
+        .as_ref()
+        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+    {
+        return Ok(());
+    }
     // Run initialization only after every path has been registered. Otherwise a
     // fast init command can finish before the watcher is ready, allowing callers
     // to change a file in the gap and lose the first event.
@@ -216,6 +234,12 @@ fn run_native(
     let mut swap_rx = swap_rx;
 
     loop {
+        if shutdown
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return Ok(());
+        }
         // Apply any pending live root swaps before draining events, so a
         // batch is never routed against a stale root set (contract §4
         // commit boundary).
@@ -308,12 +332,25 @@ fn run_poll(
     handler: impl Fn(u64, &[FileEvent]),
     interval: Duration,
     swap_rx: Option<RootSwapReceiver>,
+    shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
     let batch_sequence = AtomicSequence::new();
     let mut scanner = PollScanner::new(watch_path_list);
     let mut swap_rx = swap_rx;
+    if shutdown
+        .as_ref()
+        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+    {
+        return Ok(());
+    }
     on_ready();
     loop {
+        if shutdown
+            .as_ref()
+            .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+        {
+            return Ok(());
+        }
         // A root swap rebuilds the scanner under the new root set; the next
         // scan seeds the new baseline, so a swap never reports old content
         // as changes (contract §7 parity).

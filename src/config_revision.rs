@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use crate::config::RunHooks;
+use crate::config::{GenerationHooks, SessionHooks};
 use crate::plan::RunPlan;
 use crate::rules::Rules;
 use crate::watcher::WatchBackend;
@@ -46,7 +46,8 @@ pub struct RuntimeConfig {
     pub debounce: Duration,
     pub backend: WatchBackend,
     pub respect_gitignore: bool,
-    pub hooks: RunHooks,
+    pub hooks: GenerationHooks,
+    pub session_hooks: SessionHooks,
     /// Control socket path from `on.socket` (TASK-0090 AC8): part of the
     /// semantic surface so a socket path change is a real revision change
     /// and takes the bind-new-before-retire-old handoff, never a no-op.
@@ -65,7 +66,8 @@ impl RuntimeConfig {
         debounce: Duration,
         backend: WatchBackend,
         respect_gitignore: bool,
-        hooks: RunHooks,
+        hooks: GenerationHooks,
+        session_hooks: SessionHooks,
         control_socket: Option<PathBuf>,
     ) -> Self {
         Self {
@@ -76,6 +78,7 @@ impl RuntimeConfig {
             backend,
             respect_gitignore,
             hooks,
+            session_hooks,
             control_socket,
         }
     }
@@ -113,6 +116,7 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
     canonical.string(&backend_tag(config.backend));
     canonical.bool(config.respect_gitignore);
     canonical.string(&hooks_tag(&config.hooks));
+    canonical.string(&format!("{:?}", config.session_hooks));
     // AC8: the control socket path is part of the semantic surface.
     canonical.optional_string(
         config
@@ -226,7 +230,7 @@ fn output_policy_tag(policy: &crate::config::OutputPolicy) -> String {
 /// Stable hooks tag for hashing: which hooks are configured (command content
 /// is hashed as part of the rule commands surface; here only presence and the
 /// exact command strings matter semantically).
-fn hooks_tag(hooks: &RunHooks) -> String {
+fn hooks_tag(hooks: &GenerationHooks) -> String {
     format!("{:?}", hooks)
 }
 
@@ -345,7 +349,8 @@ mod tests {
             Duration::from_millis(1000),
             WatchBackend::Native,
             false,
-            RunHooks::default(),
+            GenerationHooks::default(),
+            SessionHooks::default(),
             None,
         )
     }
@@ -456,6 +461,14 @@ mod tests {
             ..base.clone()
         };
         assert_ne!(semantic_hash(&base), semantic_hash(&with_gitignore));
+
+        let with_close_hook = RuntimeConfig {
+            session_hooks: SessionHooks {
+                close: Some("echo closed".to_owned()),
+            },
+            ..base.clone()
+        };
+        assert_ne!(semantic_hash(&base), semantic_hash(&with_close_hook));
     }
 
     #[test]
@@ -617,7 +630,8 @@ mod history_tests {
             Duration::from_millis(1000),
             WatchBackend::Native,
             false,
-            RunHooks::default(),
+            GenerationHooks::default(),
+            SessionHooks::default(),
             None,
         )
     }

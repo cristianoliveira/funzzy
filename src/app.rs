@@ -159,7 +159,8 @@ pub fn run() {
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
-            .with_hooks(load_hooks(&args.config));
+            .with_hooks(load_hooks(&args.config))
+            .with_session_hooks(load_session_hooks(&args.config));
             // TASK-0092: resolve the config-declared control socket BEFORE
             // freezing the initial revision so the startup revision's semantic
             // surface matches every reload candidate (which always carries
@@ -183,6 +184,7 @@ pub fn run() {
                     backend,
                     load_respect_gitignore(&args.config),
                     load_hooks(&args.config),
+                    load_session_hooks(&args.config),
                     control_socket.as_deref().map(std::path::PathBuf::from),
                 );
                 match tracker.observe(&runtime) {
@@ -232,7 +234,7 @@ pub fn run() {
                 Err(error) => stdout::failure("Cannot run target", error.to_string()),
             };
 
-            let shutdown = install_shutdown_signal_handler();
+            let shutdown = install_shutdown_signal_handler(None);
             let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
             let command = RunCommand::with_recorder_and_events(
                 workspace_root.clone(),
@@ -458,6 +460,9 @@ fn check_config(config_file: &Option<String>) {
     if let Err(err) = rules::validate_rules(&rules) {
         stdout::failure("Invalid config file.", err);
     }
+    if let Err(err) = config::session_hooks_from_file(&config_path) {
+        stdout::failure("Invalid watcher close hook.", err);
+    }
     // Debounce and concurrency reuse the exact watch-time parsers.
     if let Some(debounce) = config::debounce_from_file(&config_path)
         .unwrap_or_else(|err| stdout::failure("Invalid debounce config", err))
@@ -560,7 +565,7 @@ fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBack
 }
 
 /// The run-level terminal hooks from `on.success`/`on.failure` (TASK-0040).
-fn load_hooks(config_file: &Option<String>) -> config::RunHooks {
+fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
     let path = match config_file.as_deref() {
         Some(path) => Some(path.to_owned()),
         None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
@@ -572,10 +577,30 @@ fn load_hooks(config_file: &Option<String>) -> config::RunHooks {
         }
     };
     let Some(path) = path else {
-        return config::RunHooks::default();
+        return config::GenerationHooks::default();
     };
-    config::hooks_from_file(&path)
+    config::generation_hooks_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid hooks config", err))
+}
+
+/// Watcher-session close hook from `on.close` (TASK-0101). Kept separate
+/// from generation hooks so finite runners never receive it.
+fn load_session_hooks(config_file: &Option<String>) -> config::SessionHooks {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return config::SessionHooks::default();
+    };
+    config::session_hooks_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid session hooks config", err))
 }
 
 /// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.
@@ -626,7 +651,11 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
 /// ownership, remove the control socket file(s) explicitly (`process::exit`
 /// skips the ControlServer Drop), and exit nonzero. Never
 /// SIGKILL/panic/self-SIGTERM.
-fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reason: &str) {
+fn fatal_reload(
+    coordinator: &crate::reload_coordinator::ReloadCoordinator,
+    shutdown: &crate::shutdown::ShutdownCoordinator,
+    reason: &str,
+) {
     let current = coordinator.current();
     stdout::error(&format!(
         "Fatal configuration error; terminating watcher.\nWorkspace: {}\nReason: {}",
@@ -640,15 +669,14 @@ fn fatal_reload(coordinator: &crate::reload_coordinator::ReloadCoordinator, reas
     coordinator
         .lifecycle()
         .invalid(current.revision(), reason.to_owned());
-    // TASK-0092 AC9: `process::exit` skips destructors, so the ControlServer
-    // Drop never removes the socket file. Remove the active (and any
-    // prepared-but-uncommitted) socket file(s) explicitly before exit.
-    for path in coordinator.socket_paths_to_cleanup() {
-        let _ = std::fs::remove_file(path);
-    }
-    let (signal, grace) = crate::process_owner::shutdown_policy();
-    let _ = crate::process_owner::shutdown_all(signal, grace, false);
-    std::process::exit(1);
+    // TASK-0101: freeze the first fatal reason and last successfully
+    // committed close hook. The normal watch thread owns reaping, resource
+    // cleanup, hook execution, and the final exit — never this reload thread.
+    shutdown.set_cleanup_paths(coordinator.socket_paths_to_cleanup());
+    shutdown.request(crate::shutdown::ShutdownReason::FatalConfig {
+        detail: reason.to_owned(),
+        exit_code: 1,
+    });
 }
 
 /// Builds a fresh `Watches` from a validated config candidate, bound to the
@@ -675,13 +703,17 @@ fn build_watches_from_content(
         .unwrap_or(defaults.backend.clone());
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(|err| err.to_string())?;
-    let hooks = crate::config::hooks_from_yaml(content).map_err(|err| err.to_string())?;
+    let hooks =
+        crate::config::generation_hooks_from_yaml(content).map_err(|err| err.to_string())?;
+    let session_hooks =
+        crate::config::session_hooks_from_yaml(content).map_err(|err| err.to_string())?;
     Ok(
         Watches::with_root_and_concurrency(rules, root.to_path_buf(), concurrency)
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(respect_gitignore)
             .with_hooks(hooks)
+            .with_session_hooks(session_hooks)
             .with_revision(revision),
     )
 }
@@ -743,6 +775,21 @@ fn execute_watch_command(
         args.control_socket = config_control_socket(&args.config, watches.root());
     }
 
+    // Composition root owns one shutdown coordinator for the whole ready
+    // watcher session. Finite commands never receive it (TASK-0101).
+    let shutdown = crate::shutdown::ShutdownCoordinator::system(
+        watches.root().to_path_buf(),
+        watches.session_hooks(),
+        args.verbose,
+    );
+    shutdown.set_cleanup_paths(
+        args.control_socket
+            .clone()
+            .map(std::path::PathBuf::from)
+            .into_iter()
+            .collect(),
+    );
+
     // TASK-0088/0090: replace unconditional self-SIGTERM with a
     // validate-first branch. The reload thread watches the config file
     // paths (baseline mtime guard rejects stale/historical replays), reads
@@ -789,6 +836,7 @@ fn execute_watch_command(
     };
     let reload_config_paths = startup_config_paths.clone();
     let reload_coordinator = coordinator.clone();
+    let reload_shutdown = std::sync::Arc::clone(&shutdown);
     let reload_root = watches.root().to_path_buf();
     // TASK-0092: the startup policy doubles as the reload defaults for keys
     // a candidate does not declare. The candidate's OWN declared policy is
@@ -801,6 +849,7 @@ fn execute_watch_command(
         backend: watches.backend(),
         gitignore: watches.respects_gitignore(),
         hooks: watches.hooks(),
+        session_hooks: watches.session_hooks(),
     };
     // AC8: the current control socket path (as configured at startup); the
     // reload thread detects candidate path changes and requests a
@@ -811,6 +860,7 @@ fn execute_watch_command(
     // config-path roots; the main loop gates init on it so a config-touching
     // init task never fires before the reload watcher is subscribed.
     let (reload_ready_tx, reload_ready_rx) = std::sync::mpsc::channel();
+    let reload_shutdown_flag = shutdown.requested_flag();
     let th = std::thread::spawn(move || {
         let baselines = std::sync::Mutex::new(baselines);
         let backend = crate::watcher::WatchBackend::Auto;
@@ -884,6 +934,7 @@ fn execute_watch_command(
                         // §7) — the watcher cannot run without a config.
                         fatal_reload(
                             &reload_coordinator,
+                            &reload_shutdown,
                             &format!("config unreadable after change: {err}"),
                         );
                         return;
@@ -943,6 +994,7 @@ fn execute_watch_command(
                                         {
                                             fatal_reload(
                                                 &reload_coordinator,
+                                                &reload_shutdown,
                                                 &format!("control socket rebind failed: {err}"),
                                             );
                                             return;
@@ -963,6 +1015,7 @@ fn execute_watch_command(
                                     Err(err) => {
                                         fatal_reload(
                                             &reload_coordinator,
+                                            &reload_shutdown,
                                             &format!("reload prepare failed: {err}"),
                                         );
                                         return;
@@ -971,10 +1024,14 @@ fn execute_watch_command(
                                 if let Err(err) = reload_coordinator.commit(&transaction) {
                                     fatal_reload(
                                         &reload_coordinator,
+                                        &reload_shutdown,
                                         &format!("reload commit failed: {err}"),
                                     );
                                     return;
                                 }
+                                // TASK-0101: only the successful commit
+                                // replaces the future watcher close hook.
+                                reload_shutdown.update_hooks(transaction.candidate.session_hooks());
                                 // AC10: truncate-on-change fires only after a
                                 // committed valid semantic reload, preserving
                                 // the deterministic notice order (truncate
@@ -999,6 +1056,9 @@ fn execute_watch_command(
                                 // boundary; its file is removed by the server
                                 // drop, and the new socket is already live.
                                 reload_coordinator.retire_socket();
+                                reload_shutdown.set_cleanup_paths(
+                                    reload_coordinator.socket_paths_to_cleanup(),
+                                );
                                 // The commit (shared config swap + worker
                                 // revision + backend root swap) completed;
                                 // only now is the reload observable (contract
@@ -1011,12 +1071,13 @@ fn execute_watch_command(
                                 // is live and observable.
                                 reload_coordinator.lifecycle().reloaded(&revision);
                             }
-                            Err(err) => fatal_reload(&reload_coordinator, &err),
+                            Err(err) => fatal_reload(&reload_coordinator, &reload_shutdown, &err),
                         }
                     }
                     crate::reload::ReloadDecision::Fatal(error) => {
                         fatal_reload(
                             &reload_coordinator,
+                            &reload_shutdown,
                             &format!(
                                 "invalid config ({}): {}",
                                 match error.gate {
@@ -1035,6 +1096,7 @@ fn execute_watch_command(
             backend,
             false,
             None,
+            Some(reload_shutdown_flag),
         )
     });
 
@@ -1055,35 +1117,74 @@ fn execute_watch_command(
             non_block,
         );
     }
-    if non_block {
-        // Task children lead their own process groups (cmd::spawn_configured),
-        // so SIGINT/SIGTERM to funzzy's foreground group no longer reaches
-        // them. Catch both and route through the shared ownership path before
-        // exit so no descendant is orphaned (TASK-0030).
-        let _shutdown = install_shutdown_signal_handler();
-        execute(
-            WatchNonBlockCommand::with_events(
-                watches,
-                verbose,
-                fail_fast,
-                run_on_init,
-                args.control_socket.map(std::path::PathBuf::from),
-                event_stream,
-            )
-            .with_reload(coordinator.clone())
-            .with_reload_ready(reload_ready_rx),
-        )
-    } else {
-        execute(WatchCommand::with_events(
+    // Both wait and restart watch modes share one signal notification and
+    // shutdown coordinator. The self-pipe thread requests only; this normal
+    // composition-root flow executes configured close work (TASK-0101).
+    let _signal_exit = install_shutdown_signal_handler(Some(std::sync::Arc::clone(&shutdown)));
+    let watch_result = if non_block {
+        WatchNonBlockCommand::with_events(
             watches,
             verbose,
             fail_fast,
             run_on_init,
+            args.control_socket.map(std::path::PathBuf::from),
             event_stream,
-        ))
+        )
+        .with_reload(coordinator.clone())
+        .with_reload_ready(reload_ready_rx)
+        .with_shutdown(std::sync::Arc::clone(&shutdown))
+        .execute()
+    } else {
+        WatchCommand::with_events(watches, verbose, fail_fast, run_on_init, event_stream)
+            .with_shutdown(std::sync::Arc::clone(&shutdown))
+            .execute()
+    };
+
+    if let Err(err) = watch_result {
+        shutdown.request(crate::shutdown::ShutdownReason::Operational {
+            detail: err.to_string(),
+            exit_code: 1,
+        });
+    } else if !shutdown.is_requested() {
+        shutdown.request(crate::shutdown::ShutdownReason::Normal);
     }
 
     let _ = th.join().expect("Failed to join config watcher thread");
+    shutdown.set_cleanup_paths(coordinator.socket_paths_to_cleanup());
+    let completion = shutdown.finish();
+    report_shutdown_completion(&completion);
+    if completion.reason.exit_code() != 0 {
+        process::exit(completion.reason.exit_code());
+    }
+}
+
+fn report_shutdown_completion(completion: &crate::shutdown::ShutdownCompletion) {
+    use crate::shutdown::CloseHookOutcome;
+    let reason = completion.reason.label();
+    let message = match &completion.hook {
+        CloseHookOutcome::Failed(error) => {
+            Some(format!("close hook failed during {reason}: {error}"))
+        }
+        CloseHookOutcome::TimedOut => Some(format!("close hook timed out during {reason}")),
+        CloseHookOutcome::Cancelled => Some(format!("close hook cancelled during {reason}")),
+        _ => None,
+    };
+    if let Some(message) = message {
+        eprintln!("Funzzy warning: {message}");
+        logging::log_line(&format!("Funzzy warning: {message}"));
+    }
+    diagnostics::debug(&diagnostics::Record {
+        source: Some("close_hook"),
+        decision: Some(match &completion.hook {
+            CloseHookOutcome::Passed => "passed",
+            CloseHookOutcome::Failed(_) => "failed",
+            CloseHookOutcome::TimedOut => "timeout",
+            CloseHookOutcome::Cancelled => "cancelled",
+            CloseHookOutcome::NotConfigured | CloseHookOutcome::SkippedBeforeReady => "skipped",
+        }),
+        note: Some(format!("reason={reason}")),
+        ..Default::default()
+    });
 }
 
 /// One deterministic startup record (TASK-0023): config path, workspace
@@ -1133,7 +1234,9 @@ fn emit_startup_record(
 /// signal is an eligible delivery target, and library threads created before
 /// installation keep empty masks, which made the old design die to the
 /// default action without cleanup on loaded Linux systems.
-fn install_shutdown_signal_handler() -> std::sync::Arc<std::sync::atomic::AtomicI32> {
+fn install_shutdown_signal_handler(
+    shutdown: Option<std::sync::Arc<crate::shutdown::ShutdownCoordinator>>,
+) -> std::sync::Arc<std::sync::atomic::AtomicI32> {
     use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet};
     use nix::unistd;
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -1153,6 +1256,7 @@ fn install_shutdown_signal_handler() -> std::sync::Arc<std::sync::atomic::Atomic
 
     let exit_code = Arc::new(AtomicI32::new(0));
     let signal_exit_code = Arc::clone(&exit_code);
+    let watcher_shutdown = shutdown;
 
     // A disposition-based handler is required: the previous block+sigwait
     // design silently depended on every thread keeping SIGINT/SIGTERM
@@ -1192,10 +1296,24 @@ fn install_shutdown_signal_handler() -> std::sync::Arc<std::sync::atomic::Atomic
                     } else {
                         143
                     };
-                    signal_exit_code.store(code, Ordering::SeqCst);
-                    let (signal, grace) = crate::process_owner::shutdown_policy();
-                    let _ = crate::process_owner::shutdown_all(signal, grace, false);
-                    std::process::exit(code);
+                    let _ = signal_exit_code.compare_exchange(
+                        0,
+                        code,
+                        Ordering::SeqCst,
+                        Ordering::SeqCst,
+                    );
+                    if let Some(shutdown) = &watcher_shutdown {
+                        shutdown.request(crate::shutdown::ShutdownReason::Signal {
+                            name: if code == 130 { "SIGINT" } else { "SIGTERM" },
+                            exit_code: code,
+                        });
+                    } else {
+                        // Finite local run: no watcher close hook. Reap the
+                        // owned child groups; main command flow observes the
+                        // stored code and exits after execute returns.
+                        let (signal, grace) = crate::process_owner::shutdown_policy();
+                        let _ = crate::process_owner::shutdown_all(signal, grace, false);
+                    }
                 }
                 Err(nix::errno::Errno::EINTR) => continue,
                 Err(_) => return,

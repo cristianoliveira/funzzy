@@ -94,8 +94,11 @@ pub struct Watches {
     backend: crate::watcher::WatchBackend,
     /// Whether workspace `.gitignore` rules are respected (TASK-0036).
     respect_gitignore: bool,
-    /// Run-level terminal hooks (TASK-0040): success/failure commands.
-    hooks: crate::config::RunHooks,
+    /// Generation terminal hooks (TASK-0040): success/failure commands.
+    hooks: crate::config::GenerationHooks,
+    /// Watcher-session terminal hook (TASK-0101): close command. Kept out of
+    /// generation executors and consumed only by the shutdown coordinator.
+    session_hooks: crate::config::SessionHooks,
     /// The immutable runtime config revision this watch plan was built from
     /// (TASK-0089). Captured before any plan is created; a batch routes
     /// under exactly one revision. None for legacy constructions that never
@@ -136,7 +139,8 @@ impl Watches {
             backend: crate::watcher::WatchBackend::Auto,
             respect_gitignore: false,
             gitignore: None,
-            hooks: crate::config::RunHooks::default(),
+            hooks: crate::config::GenerationHooks::default(),
+            session_hooks: crate::config::SessionHooks::default(),
             revision: None,
         }
     }
@@ -198,14 +202,25 @@ impl Watches {
     }
 
     /// Overrides run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
         self
     }
 
-    /// The configured run-level terminal hooks.
-    pub fn hooks(&self) -> crate::config::RunHooks {
+    /// The configured generation terminal hooks.
+    pub fn hooks(&self) -> crate::config::GenerationHooks {
         self.hooks.clone()
+    }
+
+    /// Overrides the watcher-session close hook (TASK-0101).
+    pub fn with_session_hooks(mut self, hooks: crate::config::SessionHooks) -> Self {
+        self.session_hooks = hooks;
+        self
+    }
+
+    /// The configured watcher-session close hook.
+    pub fn session_hooks(&self) -> crate::config::SessionHooks {
+        self.session_hooks.clone()
     }
 
     /// Binds the immutable runtime config revision this watch plan was
@@ -246,6 +261,7 @@ impl Watches {
             respect_gitignore: self.respect_gitignore,
             gitignore: self.gitignore.clone(),
             hooks: self.hooks.clone(),
+            session_hooks: self.session_hooks.clone(),
             revision: self.revision.clone(),
         })
     }

@@ -51,7 +51,7 @@ This is the normative inventory the template comments must cover and the TASK-00
 | `on` | no | object | Shared settings merged into every job (§6). |
 | `jobs` | **yes** | ordered array of objects, ≥ 1 | Declared workflow units. Mapping form, empty list, and duplicate `name`s are errors. Mixed `jobs:` + `tasks:` is an error, never a silent merge. |
 
-### 3.2 `on:` properties (11)
+### 3.2 `on:` properties (12)
 
 | Property | Required | Default | Type / allowed values | Purpose |
 |---|---|---|---|---|
@@ -65,6 +65,7 @@ This is the normative inventory the template comments must cover and the TASK-00
 | `respect_gitignore` | no | `false` | boolean | Respect workspace `.gitignore` rules. |
 | `success` | no | none | string (command) | Hook run after a successful generation. |
 | `failure` | no | none | string (command) | Hook run after a failed generation. |
+| `close` | no | none | non-empty string (finite command) | Hook run once after a ready watcher quiesces and before process exit; no trigger templates or generation identity (RUN-HOOKS-CONTRACT). |
 | `output` | no | `inherit` | enum `inherit` \| `quiet` \| `capture` \| `show-on-failure` | On-level default output policy. |
 
 ### 3.3 `jobs[]` properties (10)

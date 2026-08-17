@@ -53,7 +53,7 @@ impl RunCommand {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::RunHooks) -> Self {
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.workflow = self.workflow.with_hooks(hooks);
         self
     }

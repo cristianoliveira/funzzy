@@ -134,6 +134,10 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
+- **Hooks**: `on.success`/`on.failure` run after terminal generations;
+  `on.close` runs one finite cleanup command only when a ready watcher shuts
+  down gracefully, after active jobs/services are reaped. Finite commands do
+  not run it (RUN-HOOKS-CONTRACT).
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
   are rewritten deterministically with `fzz migrate`.
 

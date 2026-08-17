@@ -149,6 +149,16 @@ const ON_SPECS: &[OptionSpec] = &[
         kind: SpecKind::String,
     },
     OptionSpec {
+        name: "close",
+        owner: Owner::On,
+        required: false,
+        default: None,
+        help: "Finite hook command run once when a ready watcher closes.",
+        values: None,
+        example: &["close: echo closed > .fzz-closed"],
+        kind: SpecKind::String,
+    },
+    OptionSpec {
         name: "output",
         owner: Owner::On,
         required: false,
@@ -348,6 +358,7 @@ mod tests {
             "respect_gitignore",
             "success",
             "failure",
+            "close",
             "output",
         ];
         let actual: Vec<&str> = property_names(Owner::On);

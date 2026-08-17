@@ -28,6 +28,7 @@ pub mod process_owner;
 pub mod reload;
 pub mod reload_coordinator;
 pub mod rules;
+pub mod shutdown;
 pub mod snapshot;
 pub mod stdout;
 pub mod template;

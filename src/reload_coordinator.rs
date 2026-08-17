@@ -220,6 +220,7 @@ impl ReloadCoordinator {
             candidate.backend(),
             candidate.respects_gitignore(),
             candidate.hooks(),
+            candidate.session_hooks(),
             candidate_socket.clone(),
         )
         .services();
@@ -247,6 +248,7 @@ impl ReloadCoordinator {
             shared.backend(),
             shared.respects_gitignore(),
             shared.hooks(),
+            shared.session_hooks(),
             None,
         );
         runtime.services()
@@ -411,7 +413,7 @@ impl ReloadCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RunHooks;
+    use crate::config::GenerationHooks;
     use crate::config_revision::{ConfigRevision, RuntimeConfig};
     use crate::rules::Rules;
     use crate::watcher::WatchBackend;
@@ -792,7 +794,8 @@ mod tests {
             debounce: Duration::from_millis(1000),
             backend: WatchBackend::Native,
             gitignore: false,
-            hooks: RunHooks::default(),
+            hooks: GenerationHooks::default(),
+            session_hooks: crate::config::SessionHooks::default(),
         };
         let runtime =
             crate::reload::validate_candidate(content, std::env::current_dir().unwrap(), &defaults)
@@ -805,6 +808,7 @@ mod tests {
             runtime.backend,
             runtime.respect_gitignore,
             runtime.hooks.clone(),
+            runtime.session_hooks.clone(),
             runtime.control_socket.clone(),
         );
         assert_eq!(runtime.plan().task_names(), vec!["build"]);
