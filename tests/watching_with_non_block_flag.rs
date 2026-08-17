@@ -57,20 +57,10 @@ fn test_it_cancel_current_running_task_when_something_change() {
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
-            wait_until!(
-                {
-                    output_log
-                        .read_to_string(&mut output)
-                        .expect("failed to read from file");
-
-                    // See it in `examples/longtask.sh`
-                    // and also in `src/stdout.rs`
-                    output.match_indices(CLEAR_SCREEN).count() == 2
-                },
-                "Failed to find 2 clear screen signs: {}",
-                output
-            );
-
+            // Waiting for the second clear screen alone races the log writer:
+            // the screen is printed before the restarted run's banner and
+            // first tick flush. Wait until the whole log settles to the
+            // expected content instead.
             let expected = "Funzzy: Running on init commands.
 
 Funzzy: bash examples/longtask.sh long 2 
@@ -90,6 +80,18 @@ Funzzy: bash examples/longtask.sh long 1
 Started task long 1
 Long task running... 0
 ";
+
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    setup::strip_ansi_codes(&output) == expected
+                },
+                "Failed to settle on the expected full output: {}",
+                output
+            );
 
             assert_eq!(
                 setup::strip_ansi_codes(&output),
@@ -154,20 +156,9 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
 
                     write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
-                    wait_until!(
-                        {
-                            output_log
-                                .read_to_string(&mut output)
-                                .expect("failed to read from file");
-
-                            // See it in `examples/longtask.sh`
-                            // and also in `src/stdout.rs`
-                            output.match_indices(CLEAR_SCREEN).count() == 2
-                        },
-                        "Failed to find 2 clear screen signs: {}",
-                        output
-                    );
-
+                    // Same as the flag test above: wait for the whole
+                    // log to settle to the expected content, not just the
+                    // second clear screen.
                     let expected = "Funzzy: Running on init commands.
 
 Funzzy: bash examples/longtask.sh long 2 
@@ -187,6 +178,18 @@ Funzzy: bash examples/longtask.sh long 1
 Started task long 1
 Long task running... 0
 ";
+
+                    wait_until!(
+                        {
+                            output_log
+                                .read_to_string(&mut output)
+                                .expect("failed to read from file");
+
+                            setup::strip_ansi_codes(&output) == expected
+                        },
+                        "Failed to settle on the expected full output: {}",
+                        output
+                    );
 
                     assert_eq!(
                         setup::strip_ansi_codes(&output),
