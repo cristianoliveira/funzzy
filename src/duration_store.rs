@@ -575,6 +575,10 @@ mod tests {
             workspace_hash(root, STATE_SCHEMA_VERSION),
             workspace_hash(root, STATE_SCHEMA_VERSION)
         );
+        assert_eq!(
+            workspace_hash(root, STATE_SCHEMA_VERSION),
+            "0ecc9a0107343ff94073beedad44ccbb344a098e0da3741b5567f5de0cead6b7"
+        );
         assert_ne!(
             workspace_hash(root, STATE_SCHEMA_VERSION),
             workspace_hash(Path::new("/work/other"), STATE_SCHEMA_VERSION)

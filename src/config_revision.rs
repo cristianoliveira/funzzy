@@ -356,6 +356,25 @@ mod tests {
     }
 
     #[test]
+    fn semantic_hash_has_stable_sha256_fixture() {
+        let config = RuntimeConfig::capture(
+            PathBuf::from("/workspace"),
+            rules("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"),
+            2,
+            Duration::from_millis(1000),
+            WatchBackend::Native,
+            false,
+            GenerationHooks::default(),
+            SessionHooks::default(),
+            None,
+        );
+        assert_eq!(
+            semantic_hash(&config),
+            "6e48785ccf1cb8df5b95818898955fd23f6e33709637e81292b1cef9af24dc65"
+        );
+    }
+
+    #[test]
     fn identical_configs_hash_equal() {
         let a = capture(rules(
             "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",

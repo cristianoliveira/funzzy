@@ -1054,6 +1054,10 @@ mod tests {
         let second = plan.execution_signature(4, false);
         assert_eq!(first, second);
         assert_eq!(first.to_string().len(), 64, "sha256 lowercase hex");
+        assert_eq!(
+            first.to_string(),
+            "26bc5e11aa85e0d317a877e6a2dbb2e1f0e200316e445f9d2cff17735ce561bb"
+        );
     }
 
     #[test]
