@@ -1,7 +1,7 @@
 ---
 id: TASK-0098
 title: Promote configuration migration to an explicit command
-status: doing
+status: done
 depends_on: [TASK-0096]
 priority: high
 tags: [rust, cli, config, migration, jobs, tdd]
