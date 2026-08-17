@@ -13,10 +13,9 @@
 //! path/rule, repeat count, and related generation — never claiming that a
 //! child command caused the filesystem event.
 
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// One typed diagnostic record. Every field is optional; the renderer emits
@@ -367,7 +366,7 @@ struct Sink {
     detector: Mutex<LoopDetector>,
 }
 
-static STATE: Lazy<Mutex<Option<Sink>>> = Lazy::new(|| Mutex::new(None));
+static STATE: LazyLock<Mutex<Option<Sink>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Enables or disables diagnostics for the process. Called once from the
 /// composition root with the verbose flag.

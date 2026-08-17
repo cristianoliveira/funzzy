@@ -1,15 +1,14 @@
-use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 struct Logger {
     file: File,
 }
 
-static LOGGER: Lazy<Mutex<Option<Logger>>> = Lazy::new(|| Mutex::new(None));
+static LOGGER: LazyLock<Mutex<Option<Logger>>> = LazyLock::new(|| Mutex::new(None));
 
 pub fn init(path: PathBuf) -> io::Result<()> {
     let file = OpenOptions::new()
