@@ -1,8 +1,8 @@
-extern crate yaml_rust;
+extern crate yaml_rust2;
 
 use crate::errors::{FzzError, Result};
 
-use self::yaml_rust::Yaml;
+use self::yaml_rust2::Yaml;
 use std::collections::BTreeMap;
 
 pub fn extract_list(yaml: &Yaml, prop: &str) -> Result<Vec<String>> {
@@ -251,7 +251,7 @@ pub fn yaml_to_string(yaml: &Yaml, identation: u8) -> String {
 
 #[cfg(test)]
 mod tests {
-    use self::yaml_rust::YamlLoader;
+    use self::yaml_rust2::YamlLoader;
     use super::*;
     fn clean_yaml_str(yaml_str: &str) -> String {
         yaml_str
@@ -333,7 +333,7 @@ mod characterization_tests {
     //! multi-document input, and scan-error surface — so a parser swap
     //! surfaces every difference instead of hiding it.
     use super::*;
-    use yaml_rust::YamlLoader;
+    use yaml_rust2::YamlLoader;
 
     fn parse_one(src: &str) -> Yaml {
         let docs = YamlLoader::load_from_str(src).expect("valid yaml under test");
@@ -363,8 +363,10 @@ mod characterization_tests {
 
     #[test]
     fn literal_block_scalar_preserves_lines_and_trailing_newline() {
+        // TASK-0112: yaml-rust2 applies YAML 1.2 clip chomping, keeping the
+        // single trailing newline (yaml-rust 0.4 dropped it).
         let doc = parse_one("run: |\n  echo one\n  echo two");
-        assert_eq!(doc["run"].as_str(), Some("echo one\necho two"));
+        assert_eq!(doc["run"].as_str(), Some("echo one\necho two\n"));
 
         let doc = parse_one("run: |\n  echo one\n");
         assert_eq!(doc["run"].as_str(), Some("echo one\n"));
@@ -372,8 +374,9 @@ mod characterization_tests {
 
     #[test]
     fn folded_block_scalar_joins_lines_with_spaces() {
+        // Trailing newline kept under clip chomping (TASK-0112 delta).
         let doc = parse_one("run: >\n  echo one\n  two");
-        assert_eq!(doc["run"].as_str(), Some("echo one two"));
+        assert_eq!(doc["run"].as_str(), Some("echo one two\n"));
     }
 
     #[test]
@@ -403,17 +406,34 @@ mod characterization_tests {
     }
 
     #[test]
-    fn duplicate_keys_last_value_wins() {
-        let doc = parse_one("name: a\nname: b");
-        assert_eq!(doc["name"].as_str(), Some("b"));
+    fn duplicate_keys_are_rejected_not_last_wins() {
+        // TASK-0112 delta: yaml-rust 0.4 silently kept the last duplicate
+        // key; yaml-rust2 rejects duplicates as a scan error (YAML 1.2).
+        let err = YamlLoader::load_from_str("name: a\nname: b").unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("duplicated key in mapping") && text.contains("line 2"),
+            "duplicate key error names construct and position, got: {text}"
+        );
     }
 
     #[test]
-    fn only_lowercase_true_false_are_booleans() {
-        let doc = parse_one("a: true\nb: True\nc: on");
+    fn boolean_and_null_case_variants_follow_yaml_12_core_schema() {
+        // TASK-0112 delta: `True`/`TRUE`/`False` now parse as booleans
+        // (yaml-rust treated them as strings); `Null`/`NULL` now parse as
+        // strings while lowercase `null` stays null.
+        let doc = parse_one("a: true\nb: True\nc: TRUE\nd: False\ne: on\nf: yes");
         assert!(matches!(doc["a"], Yaml::Boolean(true)));
-        assert_eq!(doc["b"].as_str(), Some("True"));
-        assert_eq!(doc["c"].as_str(), Some("on"));
+        assert!(matches!(doc["b"], Yaml::Boolean(true)));
+        assert!(matches!(doc["c"], Yaml::Boolean(true)));
+        assert!(matches!(doc["d"], Yaml::Boolean(false)));
+        assert_eq!(doc["e"].as_str(), Some("on"));
+        assert_eq!(doc["f"].as_str(), Some("yes"));
+
+        let doc = parse_one("a: null\nb: Null\nc: NULL");
+        assert_eq!(doc["a"], Yaml::Null);
+        assert_eq!(doc["b"].as_str(), Some("Null"));
+        assert_eq!(doc["c"].as_str(), Some("NULL"));
     }
 
     #[test]
@@ -427,11 +447,16 @@ mod characterization_tests {
     }
 
     #[test]
-    fn tab_after_key_is_a_scalar_string_quirk() {
-        // Compatibility quirk: `a:` followed by a tab-indented scalar is
-        // accepted and keeps the tab inside the string value.
-        let docs = YamlLoader::load_from_str("a:\n\t- b").expect("yaml-rust accepts this");
-        assert_eq!(docs[0]["a"].as_str(), Some("\t- b"));
+    fn tab_indentation_is_rejected() {
+        // TASK-0112 delta: yaml-rust 0.4 accepted a tab-indented scalar as
+        // a string containing the tab; yaml-rust2 rejects tabs used for
+        // block indentation per YAML 1.2.
+        let err = YamlLoader::load_from_str("a:\n\t- b").unwrap_err();
+        let text = err.to_string();
+        assert!(
+            text.contains("tabs disallowed"),
+            "tab indentation error, got: {text}"
+        );
     }
 
     #[test]

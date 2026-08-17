@@ -9,7 +9,7 @@
 use crate::cli::Command;
 use crate::errors::FzzError;
 use crate::stdout;
-use yaml_rust::{Yaml, YamlLoader};
+use yaml_rust2::{Yaml, YamlLoader};
 
 /// Migrates an accepted legacy config to the preferred V2 `jobs:` format
 /// (TASK-0075/0076): a root task list is wrapped into an ordered `jobs:`

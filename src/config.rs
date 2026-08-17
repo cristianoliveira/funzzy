@@ -6,15 +6,15 @@
 //! knowledge. Legacy list, grouped `on`/`tasks`, and nested group formats are
 //! all accepted here exactly as documented.
 
-extern crate yaml_rust;
+extern crate yaml_rust2;
 
 use crate::cli;
 use crate::errors;
 use crate::rules::Rules;
 use crate::yaml;
 
-use self::yaml_rust::Yaml;
-use self::yaml_rust::YamlLoader;
+use self::yaml_rust2::Yaml;
+use self::yaml_rust2::YamlLoader;
 use std::fs::File;
 use std::io::prelude::*;
 use std::time::Duration;
@@ -766,9 +766,9 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
 
 #[cfg(test)]
 mod tests {
-    extern crate yaml_rust;
+    extern crate yaml_rust2;
 
-    use self::yaml_rust::YamlLoader;
+    use self::yaml_rust2::YamlLoader;
     use super::concurrency_from_yaml;
     use super::control_socket_from_yaml;
     use super::from_argv;
@@ -844,7 +844,7 @@ tasks:
         - name: my test
           run: 'cargo tests'
           change: 'bla/**'
-          change: 'foo/**'
+          ignore: 'foo/**'
         ";
 
         let content = YamlLoader::load_from_str(file_content).unwrap();
@@ -923,7 +923,7 @@ tasks:
                 "|           run: 'cargo tests'",
                 "|>          change: **/*",
                 "|         ",
-                "Reason: while scanning an anchor or alias, did not find expected alphabetic or numeric character at line 8 column 19",
+                "Reason: while parsing node, found unknown anchor at byte 165 line 8 column 19",
                 "Hint: Check for wrong types, any missing quotes for glob pattern or incorrect identation",
             ]
             .join("\n")

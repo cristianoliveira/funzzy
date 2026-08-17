@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use yaml_rust::ScanError;
+use yaml_rust2::ScanError;
 
 use crate::stdout;
 
