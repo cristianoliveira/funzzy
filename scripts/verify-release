@@ -182,16 +182,14 @@ channel_compat() {
     fail "minimal V1 config rejected by published binary"
   fi
 
-  # Removed V1 flags: must at least fail closed. Targeted replacement hints
-  # (docs/MIGRATION.md mapping) are informational until shipped.
+  # Removed V1 flags: rejected with a targeted V2 replacement hint
+  # (TASK-0064 criterion 4).
   local out rc
   out="$("$fzz" --non-block 2>&1)" && rc=0 || rc=$?
-  if [ "$rc" -ne 0 ] && grep -q "unexpected argument" <<<"$out"; then
-    note "--non-block rejected"
-    grep -qi "on-busy" <<<"$out" && note "targets V2 hint" \
-      || info "no targeted V2 hint for --non-block (generic clap error; see docs/MIGRATION.md)"
+  if [ "$rc" -eq 2 ] && grep -q "on-busy restart" <<<"$out"; then
+    note "--non-block rejected (exit 2) with targeted V2 hint"
   else
-    fail "--non-block not rejected: rc=$rc"
+    fail "--non-block rejection wrong: rc=$rc out: $(head -1 <<<"$out")"
   fi
 
   # Migrate path: grouped tasks form renames to jobs atomically.

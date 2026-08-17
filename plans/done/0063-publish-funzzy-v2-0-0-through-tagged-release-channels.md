@@ -54,3 +54,11 @@ the release yet. Everything needed is in place for a one-shot manual run:
 
 TASK-0064 (post-publication verification) is unblocked by this closure but
 cannot start until the channels actually carry v2.0.0.
+
+## Addendum (09-04-26, later session)
+
+master advanced past packet candidate b20f122 with pre-publication polish
+that the release verification (TASK-0064 criterion 4) requires: removed-V1
+flag targeted hints (hidden deprecated args + post-parse rejection). For the
+manual run, tag the CURRENT master HEAD after pushing (packet SHA b20f122 is
+superseded by this later commit); all other packet steps unchanged.

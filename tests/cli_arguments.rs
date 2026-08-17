@@ -349,11 +349,24 @@ fn watch_rejects_invalid_on_debounce_config() {
 #[test]
 fn target_flag_is_rejected() {
     // V2 removed --target/-t in favor of `watch TARGET` and `list`.
+    // The rejection names the V2 replacements (TASK-0064 criterion 4).
     fzz()
         .args(["-c", FILTER_EXAMPLE, "--target=foo"])
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("--target"));
+        .stderr(predicate::str::contains("--target"))
+        .stderr(predicate::str::contains("watch"));
+}
+
+#[test]
+fn non_block_flag_is_rejected_with_hint() {
+    // V2 removed --non-block; rejection names --on-busy restart.
+    fzz()
+        .args(["-c", FILTER_EXAMPLE, "--non-block"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--non-block"))
+        .stderr(predicate::str::contains("--on-busy restart"));
 }
 
 #[test]

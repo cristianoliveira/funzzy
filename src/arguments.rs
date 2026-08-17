@@ -107,6 +107,23 @@ impl Arguments {
     {
         let matches = command().try_get_matches_from(argv)?;
 
+        // Removed V1 flags are accepted structurally (hidden deprecated
+        // args) and rejected here with a targeted replacement hint, so a
+        // V1 habit gets the exact V2 spelling instead of a generic
+        // unexpected-argument error (TASK-0064 criterion 4).
+        if matches.get_flag("v1_non_block") {
+            return Err(removed_flag_error(
+                "--non-block / -n",
+                "fzz --on-busy restart (or --restart), or `on-busy: restart` in .watch.yaml",
+            ));
+        }
+        if matches.contains_id("v1_target") {
+            return Err(removed_flag_error(
+                "--target / -t",
+                "fzz watch TARGET or fzz run TARGET (`fzz list` shows available targets)",
+            ));
+        }
+
         let config = matches
             .get_one::<String>("config")
             .cloned()
@@ -303,6 +320,19 @@ impl Arguments {
     }
 }
 
+/// Targeted rejection for removed V1 flags: same exit code and stream as a
+/// clap usage error (stderr, exit 2), but the message names the V2
+/// replacement (TASK-0064 criterion 4).
+fn removed_flag_error(flag: &str, replacement: &str) -> clap::Error {
+    use clap::error::ErrorKind;
+    let message = format!(
+        "the flag {flag} was removed in v2.\n\
+         \x20 Use: {replacement}\n\
+         \x20 See `fzz help` and docs/MIGRATION.md for the full flag mapping."
+    );
+    clap::Error::raw(ErrorKind::UnknownArgument, message)
+}
+
 pub fn command() -> Command {
     Command::new("funzzy")
         .about("Funzzy the watcher.\n\nAlias:\n  fzz -> funzzy")
@@ -344,6 +374,29 @@ pub fn command() -> Command {
                 .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Convenience alias for --on-busy restart."),
+        )
+        .arg(
+            // Removed V1 flag, kept hidden so the rejection can hint the
+            // exact V2 replacement (see try_parse_from).
+            Arg::new("v1_non_block")
+                .long("non-block")
+                .short('n')
+                .global(true)
+                .hide(true)
+                .action(ArgAction::SetTrue)
+                .help("Removed in v2: replaced by --on-busy restart."),
+        )
+        .arg(
+            // Removed V1 flag, kept hidden so the rejection can hint the
+            // exact V2 replacements (see try_parse_from).
+            Arg::new("v1_target")
+                .long("target")
+                .short('t')
+                .global(true)
+                .hide(true)
+                .num_args(1)
+                .value_name("TARGET")
+                .help("Removed in v2: replaced by watch/run TARGET."),
         )
         .arg(
             Arg::new("fail_fast")
@@ -1735,9 +1788,42 @@ mod tests {
 
     #[test]
     fn non_block_flag_is_removed() {
-        // V2 removed --non-block in favor of --on-busy restart.
-        assert!(parse(&["--non-block"]).is_err());
-        assert!(parse(&["-n"]).is_err());
+        // V2 removed --non-block in favor of --on-busy restart. The error
+        // must NAME the replacement (TASK-0064 criterion 4), not a generic
+        // unexpected-argument message.
+        for args in [
+            ["--non-block"].as_slice(),
+            ["-n"].as_slice(),
+            ["watch", "-n"].as_slice(),
+            ["--on-busy", "wait", "-n"].as_slice(),
+        ] {
+            let err = parse(args).expect_err("removed flag must fail");
+            let text = err.to_string();
+            assert!(
+                text.contains("--on-busy restart"),
+                "hint missing for {args:?}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn target_flag_is_removed_with_hint() {
+        // V2 removed --target/-t in favor of `watch TARGET` / `run TARGET`;
+        // the error names both replacements (TASK-0064 criterion 4).
+        for args in [
+            ["--target", "foo"].as_slice(),
+            ["--target=foo"].as_slice(),
+            ["-t", "foo"].as_slice(),
+            ["-tfoo"].as_slice(),
+            ["watch", "--target", "foo"].as_slice(),
+        ] {
+            let err = parse(args).expect_err("removed flag must fail");
+            let text = err.to_string();
+            assert!(
+                text.contains("watch") && text.contains("run"),
+                "hint missing for {args:?}: {text}"
+            );
+        }
     }
 
     #[test]

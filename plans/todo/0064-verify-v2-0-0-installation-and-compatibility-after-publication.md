@@ -35,5 +35,14 @@ Verification runs against downloaded/published artifacts in fresh isolated envir
 
 - `scripts/verify-release` harness landed (`make verify-release`): per-channel verification — crates (isolated CARGO_HOME install, both binaries, init/check/list/run, watcher 130/143 signal contract), github (draft detection, 4 archives + sha256 verification, native binary run), nix (stable package version), compat (V1 config load, removed-flag rejection + hint gap surfaced, migrate atomicity), control (capabilities text facts: watcher/schema versions, status, clean TERM).
 - `--fzz-bin PATH` rehearsal mode: compat+control channels rehearsed green against local v2.0.0 build; github/crates channels proven to fail honestly while v2.0.0 is unpublished (draft detection verified live).
-- Known gap surfaced for triage post-publish: removed V1 flags get generic clap errors, no targeted V2 replacement hint (criterion 4 partially unmet by product today — MIGRATION.md carries the mapping instead).
+- Removed-V1-flag hint gap CLOSED in-repo (pre-publication): `--non-block`/`-n` and `--target`/`-t` are hidden deprecated args rejected post-parse with targeted V2 replacement text (exit 2, stderr; see removed_flag_error in src/arguments.rs). Unit + black-box tests pin the hint; verify-release compat channel now requires it.
 - Run once publication lands: `make verify-release` (default 2.0.0). Every criterion maps to a channel check.
+
+## Hint gap closed (09-04-26, pre-publication)
+
+criterion 4's "targeted V2 replacement hints" now a product behavior:
+removed V1 flags (\u200b--non-block/-n, --target/-t) accepted as hidden
+deprecated args, rejected with exact V2 replacement text + MIGRATION.md
+pointer (stderr, exit 2 — same as any clap usage error). TDD: unit
+(arguments.rs) + black-box (cli_arguments.rs) + verify-release compat
+channel all assert the hint. Full gate gen=69 PASS.
