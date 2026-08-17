@@ -10,7 +10,7 @@ use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::control::{ControlState, ExecutionState};
 use crate::executor::Event;
 use crate::output::{FailureEvidence, OutputRegistry};
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 

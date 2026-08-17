@@ -18,7 +18,7 @@ use crate::stdout;
 pub const SERVICE_MAX_RESTARTS: usize = 3;
 /// Backoff between service restarts (TASK-0035).
 pub const SERVICE_RESTART_BACKOFF_MS: u64 = 500;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::io;
 use std::process::ExitStatus;

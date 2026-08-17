@@ -5,7 +5,7 @@ use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
 use crate::workers::CancelResult;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;

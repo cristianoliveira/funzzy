@@ -6,7 +6,7 @@
 //! within one watcher instance; restart changes the instance and IDs from
 //! different instances are never compared.
 
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Event batch identity: the maximal set of filesystem events coalesced by

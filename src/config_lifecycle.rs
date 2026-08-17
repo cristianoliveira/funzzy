@@ -14,7 +14,7 @@
 //! on every transition so subscriptions observe reloads without polling.
 
 use crate::config_revision::ConfigRevision;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 

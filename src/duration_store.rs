@@ -9,7 +9,7 @@
 
 use crate::duration_history::{DurationHistory, ProfileSnapshot};
 use crate::plan::hex;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};

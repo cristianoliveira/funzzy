@@ -9,7 +9,7 @@
 //! Contract: `docs/RUN-DURATION-ESTIMATES-CONTRACT.md` §1–§3, §8.
 
 use crate::plan::ExecutionSignature;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 
 /// Success samples retained per signature, oldest-first eviction (§2).

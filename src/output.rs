@@ -9,7 +9,7 @@
 //! boundary, documented in the retrieval command's help).
 
 use crate::cmd::{CaptureBuffer, CaptureData};
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::Mutex;
 

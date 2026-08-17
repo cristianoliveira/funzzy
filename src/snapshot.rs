@@ -11,7 +11,7 @@ use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::control::{ControlInstance, ControlState, ExecutionState};
 use crate::duration_history::RunEstimate;
 use crate::executor::TaskSnapshot;
-use serde_derive::Serialize;
+use serde::Serialize;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
