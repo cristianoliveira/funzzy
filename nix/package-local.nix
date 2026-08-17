@@ -2,7 +2,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "funzzy";
-  version = "23b2591";
+  version = "9961199";
 
   ## build with local source
   src = ../.;
