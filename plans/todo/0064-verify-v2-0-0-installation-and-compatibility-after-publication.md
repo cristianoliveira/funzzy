@@ -37,6 +37,7 @@ Verification runs against downloaded/published artifacts in fresh isolated envir
 - `--fzz-bin PATH` rehearsal mode: compat+control channels rehearsed green against local v2.0.0 build; github/crates channels proven to fail honestly while v2.0.0 is unpublished (draft detection verified live).
 - Removed-V1-flag hint gap CLOSED in-repo (pre-publication): `--non-block`/`-n` and `--target`/`-t` are hidden deprecated args rejected post-parse with targeted V2 replacement text (exit 2, stderr; see removed_flag_error in src/arguments.rs). Unit + black-box tests pin the hint; verify-release compat channel now requires it.
 - Run once publication lands: `make verify-release` (default 2.0.0). Every criterion maps to a channel check.
+- criterion 7 closed pre-publication: README install surface modernized — stale "unreleased on develop" banner replaced (v1 stays on the v1 branch + MIGRATION.md pointer); linux-install.sh rewritten for the v2 artifact contract (funzzy-vV-<target>.tar.gz names from on-release-bin.yml, x86_64/aarch64 detection, sha256 verification before install, PREFIX/BASE/FORCE_ARCH seams) with scripts/linux-install-test (4/4: happy path, tampered-checksum refusal, both arch mappings, fully offline via file:// fixtures). Old script 404s on release day (wrong archive names) — publication-blocking bug fixed in time.
 
 ## Hint gap closed (09-04-26, pre-publication)
 

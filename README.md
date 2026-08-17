@@ -13,7 +13,7 @@ fzz         # watch, run, repeat
 One YAML workflow works for developers and coding agents. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
 
 > [!WARNING]
-> V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
+> V2 (2.0.0) is the current line. v1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1); see [docs/MIGRATION.md](docs/MIGRATION.md) for the flag and config mapping.
 
 
 For a workflow as simple as:
@@ -111,9 +111,12 @@ brew install cristianoliveira/tap/funzzy
 curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
 ```
 
-You can specify the versions:
+The installer detects the architecture (x86_64/aarch64), verifies the
+published sha256 checksum, and installs both `funzzy` and `fzz` into
+`/usr/local/bin`. You can pin a release:
+
 ```bash
-curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | bash - 1.0.0
+curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | bash - 2.0.0
 ```
 
 ### Nix

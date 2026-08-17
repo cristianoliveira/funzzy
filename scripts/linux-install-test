@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Tests for linux-install.sh (TASK-0064 pre-publication): the installer must
+# match the v2 release artifact contract (funzzy-v<V>-<target>.tar.gz with
+# .sha256, targets x86_64-linux / aarch64-linux) and verify checksums.
+# Deterministic: runs entirely against local file:// fixtures.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLER="$ROOT/linux-install.sh"
+
+pass=0; failc=0
+ok() { echo "ok: $*"; pass=$((pass + 1)); }
+bad() { echo "FAIL: $*" >&2; failc=$((failc + 1)); }
+
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+mkdir -p "$SCRATCH/bin" "$SCRATCH/release" "$SCRATCH/fakehome"
+
+# A release fixture mirroring the GitHub layout: <tag>/<archive>.
+TARGET="x86_64-linux"
+VER="9.9.9"
+TAG="v${VER}"
+ARCHIVE="funzzy-v${VER}-${TARGET}.tar.gz"
+mkdir -p "$SCRATCH/release/$TAG" "$SCRATCH/pkg"
+printf '#!/bin/sh\necho funzzy 9.9.9\n' > "$SCRATCH/pkg/funzzy"
+printf '#!/bin/sh\necho funzzy 9.9.9\n' > "$SCRATCH/pkg/fzz"
+tar czf "$SCRATCH/release/$TAG/$ARCHIVE" -C "$SCRATCH" pkg
+( cd "$SCRATCH/release/$TAG" && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256" )
+# Same payload under the aarch64 name so arch mapping is testable end-to-end.
+AARCHIVE="funzzy-v${VER}-aarch64-linux.tar.gz"
+cp "$SCRATCH/release/$TAG/$ARCHIVE" "$SCRATCH/release/$TAG/$AARCHIVE"
+( cd "$SCRATCH/release/$TAG" && shasum -a 256 "$AARCHIVE" > "$AARCHIVE.sha256" )
+
+BASE="file://$SCRATCH/release"
+BIN="$SCRATCH/bin"
+
+# 1. Happy path: installs both binaries from the fixture.
+if env FORCE_ARCH=x86_64 PREFIX="$BIN" BASE="$BASE" VERSION="$VER" sh "$INSTALLER" >/dev/null 2>&1 \
+   && [ -x "$BIN/funzzy" ] && [ -x "$BIN/fzz" ]; then
+  ok "installs funzzy + fzz from v2-name archive with checksum"
+else
+  bad "happy path install failed"
+fi
+
+# 2. Tampered checksum is refused and nothing is installed.
+rm -rf "$BIN"; mkdir -p "$BIN"
+echo "deadbeef  $ARCHIVE" > "$SCRATCH/release/$TAG/$ARCHIVE.sha256"
+if env FORCE_ARCH=x86_64 PREFIX="$BIN" BASE="$BASE" VERSION="$VER" sh "$INSTALLER" >/dev/null 2>&1 \
+   || [ -e "$BIN/funzzy" ]; then
+  bad "tampered checksum not rejected"
+else
+  ok "tampered checksum rejected, nothing installed"
+fi
+
+# 3. Arch mapping (unit check of the mapping table via FORCE_ARCH).
+( cd "$SCRATCH/release/$TAG" && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256" )
+for pair in "x86_64:x86_64-linux" "aarch64:aarch64-linux"; do
+  uname_m="${pair%%:*}"; want="${pair##*:}"
+  rm -rf "$BIN"; mkdir -p "$BIN"
+  got="$(FORCE_ARCH="$uname_m" BASE="$BASE" VERSION="$VER" PREFIX="$BIN" \
+    sh "$INSTALLER" 2>/dev/null | grep -o "funzzy-v${VER}-[a-z0-9_-]*\.tar\.gz" | head -1)"
+  if [ "$got" = "funzzy-v${VER}-${want}.tar.gz" ]; then
+    ok "arch $uname_m -> $want"
+  else
+    bad "arch $uname_m mapping: got '${got:-none}' want '$want'"
+  fi
+done
+
+echo "linux-install-test: $pass passed, $failc failed"
+[ "$failc" -eq 0 ]
