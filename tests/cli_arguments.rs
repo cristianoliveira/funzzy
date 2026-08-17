@@ -929,11 +929,24 @@ fn funzzy_and_fzz_expose_identical_command_trees() {
 #[test]
 fn completions_generate_for_each_supported_shell() {
     for shell in ["bash", "zsh", "fish", "elvish", "powershell"] {
-        fzz()
+        let output = fzz()
             .args(["completions", shell])
-            .assert()
-            .code(0)
-            .stdout(predicate::str::is_empty().not());
+            .output()
+            .expect("generate completion");
+        assert!(output.status.success(), "{shell} completion succeeds");
+        let script = String::from_utf8_lossy(&output.stdout);
+        assert!(!script.is_empty(), "{shell} completion is non-empty");
+        assert!(
+            script.contains("migrate"),
+            "{shell} includes migrate command"
+        );
+        assert!(
+            !script.contains("--migrate"),
+            "{shell} excludes removed init flag"
+        );
+        for profile in ["comprehensive", "minimal", "parallel", "agent"] {
+            assert!(script.contains(profile), "{shell} includes {profile}");
+        }
     }
     // Unknown shell is a usage error naming the alternatives.
     fzz().args(["completions", "tcsh"]).assert().code(2);
@@ -954,6 +967,8 @@ fn v2_release_evidence_removed_flags_are_rejected_and_exit_codes_stable() {
         "run",
         "explain",
         "check",
+        "init",
+        "migrate",
         "config",
         "control",
         "completions",
