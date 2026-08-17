@@ -122,21 +122,29 @@ jobs:
             ./pkg/fzz --version || echo "Binary test failed (may be cross-compiled)"
           fi
           
-          # Create archive
+          # Create archive + checksum (TASK-0063: every published archive
+          # ships a verifiable sha256 alongside it).
           tar czf "funzzy-${RELEASE_TAG}-${TARGET}.tar.gz" pkg
+          shasum -a 256 "funzzy-${RELEASE_TAG}-${TARGET}.tar.gz" \
+            | tee "funzzy-${RELEASE_TAG}-${TARGET}.tar.gz.sha256"
           echo "ARTIFACT=funzzy-${RELEASE_TAG}-${TARGET}.tar.gz" >> $GITHUB_ENV
+          echo "ARTIFACT_SHA=funzzy-${RELEASE_TAG}-${TARGET}.tar.gz.sha256" >> $GITHUB_ENV
 
       - name: Upload artifact to workflow
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT }}
-          path: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT_SHA }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          files: ${{ env.ARTIFACT }}
+          files: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT_SHA }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
