@@ -11,14 +11,14 @@ Every current README/docs/examples page classified with owner, audience, source 
 |---|---|---|---|---|---|
 | `README.md` | **rewrite** (bounded orientation) | users | current CLI + config | partial — teaches removed `--non-block` nowhere but lacks batching/parallel/control docs (added in TASK-0028/0029/0031) | TASK-0066 |
 | `docs/USAGE.md` | **rewrite → getting-started + daily-workflows guide** | users | current CLI + config | **no** — teaches removed `--non-block` (lines 289–296, 346–348), `--target` implicitly, V1.6 version claims | TASK-0066 |
-| `docs/CLI-V2-CONTRACT.md` | **keep** (normative) | contributors | Clap definitions in `src/arguments.rs` | yes (updated through TASK-0070) | TASK-0069 drift gate |
-| `docs/AGENT-FEEDBACK-CONTRACT.md` | **keep** (normative) | contributors/agents | `src/control.rs`, `src/snapshot.rs` | yes | TASK-0069 drift gate |
-| `docs/PARALLEL-EXECUTION-CONTRACT.md` | **keep** (normative) | contributors | `src/executor.rs`, `src/plan.rs` | yes | TASK-0069 drift gate |
-| `docs/RUN-DURATION-ESTIMATES-CONTRACT.md` | **keep** (normative) | contributors | `src/duration_*.rs` | yes | TASK-0069 drift gate |
-| `docs/SEQUENTIAL-OVERRIDE-CONTRACT.md` | **keep** (normative) | contributors/agents | implementation | yes | TASK-0069 drift gate |
-| `docs/WATCH-DISCOVERY-CONTRACT.md` | **keep** (normative) | contributors | `src/watches.rs`, `src/watcher.rs`, `src/watch_loop.rs` | yes (defined by TASK-0085) | TASK-0086/0087 drift gate |
-| `docs/CONFIG-RELOAD-CONTRACT.md` | **keep** (normative) | contributors | `src/app.rs`, `src/config.rs`, `src/process_owner.rs` | yes (defined by TASK-0088) | TASK-0089..0092 drift gate |
-| `docs/INIT-TEMPLATE-CONTRACT.md` | **keep** (normative) | contributors/agents | `src/config.rs`, `src/cli/init.rs`, `src/cli/config.rs` | yes (defined by TASK-0093) | TASK-0094/0095 drift gate |
+| `docs/CLI-V2-CONTRACT.md` | **keep** (normative) | contributors | Clap definitions in `src/arguments.rs` | yes (updated through TASK-0070) | review |
+| `docs/AGENT-FEEDBACK-CONTRACT.md` | **keep** (normative) | contributors/agents | `src/control.rs`, `src/snapshot.rs` | yes | review |
+| `docs/PARALLEL-EXECUTION-CONTRACT.md` | **keep** (normative) | contributors | `src/executor.rs`, `src/plan.rs` | yes | review |
+| `docs/RUN-DURATION-ESTIMATES-CONTRACT.md` | **keep** (normative) | contributors | `src/duration_*.rs` | yes | review |
+| `docs/SEQUENTIAL-OVERRIDE-CONTRACT.md` | **keep** (normative) | contributors/agents | implementation | yes | review |
+| `docs/WATCH-DISCOVERY-CONTRACT.md` | **keep** (normative) | contributors | `src/watches.rs`, `src/watcher.rs`, `src/watch_loop.rs` | yes (defined by TASK-0085) | review |
+| `docs/CONFIG-RELOAD-CONTRACT.md` | **keep** (normative) | contributors | `src/app.rs`, `src/config.rs`, `src/process_owner.rs` | yes (defined by TASK-0088) | review |
+| `docs/INIT-TEMPLATE-CONTRACT.md` | **keep** (normative) | contributors/agents | `src/config.rs`, `src/cli/init.rs`, `src/cli/config.rs` | yes (defined by TASK-0093) | review |
 | `docs/DURATION-ESTIMATES-GUIDE.md` | **keep** (user guide) | users/agents | contract + control surface | yes | TASK-0067 polish |
 | `docs/FLAG_NON_BLOCK.md` | **archive/delete** | users | removed V1 flag `--non-block` → `--on-busy restart` | **no** — teaches removed vocabulary | TASK-0068 |
 | `docs/FLAG_TARGET.md` | **archive/delete** | users | removed V1 flag `--target` → `watch TARGET`/`list` | **no** — teaches removed vocabulary | TASK-0068 |
@@ -67,7 +67,7 @@ Rules:
 
 - **README is bounded**: install, quick start, and links. No duplicate full manual.
 - **Normative contracts stay separate and labeled**: `docs/*-CONTRACT.md` are contributor/agent reference evidence, clearly not user tutorials.
-- **Generated over handwritten**: command help, config schema/examples, protocol tables come from Clap/parser/capabilities; handwritten duplication is minimized (TASK-0069 enforces no drift).
+- **Generated over handwritten**: command help, config schema/examples, protocol tables come from Clap/parser/capabilities; handwritten duplication is minimized.
 - **Versioning**: docs on `develop` describe unreleased V2 behavior; tagged releases get stable URLs; `on.debounce`/jobs/etc. land only when their implementation lands.
 - **Terminology**: one glossary (jobs→tasks/commands boundary lands in TASK-0075); examples use either `control` or `ctl` consistently within a page.
 - **Do not expose planning/TASK language** as primary user docs.
@@ -92,6 +92,6 @@ TASK-0065 (this audit)
   ├── TASK-0066 rewrite onboarding/config ← config schema + check (TASK-0033/0058)
   ├── TASK-0067 advanced operations ← parallel output (0028) + estimates (0055) + agent config (0057/0058)
   └── TASK-0068 cleanup/migration/examples ← migration proof (TASK-0078)
-        └── TASK-0069 drift CI
-              └── TASK-0020 final CLI publication gate
+        └── TASK-0020 final CLI publication gate
+              (TASK-0069 drift CI later removed by TASK-0109/0110)
 ```

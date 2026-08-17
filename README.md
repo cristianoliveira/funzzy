@@ -197,8 +197,8 @@ pick a starter with `fzz init --template minimal|parallel|agent`. Rewrite a
 legacy task-list config with `fzz migrate` (emits the preferred `jobs:`
 form, atomically and idempotently). The installed binary is the config
 reference: `fzz config schema` prints the JSON Schema and
-`fzz config example minimal` prints a runnable example — docs never drift
-from the parser.
+`fzz config example minimal` prints a runnable example straight from
+the parser.
 
 ### Options
 

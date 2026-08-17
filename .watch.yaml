@@ -27,11 +27,10 @@ tasks:
     ignore:
       - "**/*.md"
 
-  - name: unit and drift checks @quick @agent-final
+  - name: unit tests @quick @agent-final
     parallel: quick-check
     run:
       - direnv exec . cargo test
-      - direnv exec . make docs-drift
     run_on_init: true
     change:
       - "src/**"
@@ -40,7 +39,6 @@ tasks:
       - "Cargo.lock"
       - "examples/**"
       - "docs/**"
-      - "scripts/docs-drift-check"
 
   # Full integration is intentionally manual. It takes about eight minutes
   # and spawns real watchers, so running it on every edit slows feedback and

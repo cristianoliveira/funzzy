@@ -222,40 +222,6 @@ fn migrated_config_with_cwd_env_and_init_runs_identically() {
 }
 
 #[test]
-fn usage_guide_yaml_blocks_parse_through_the_production_parser() {
-    // TASK-0066: every copyable YAML block in docs/USAGE.md must parse with
-    // the same production parser — docs never drift from the parser.
-    let usage = std::fs::read_to_string("docs/USAGE.md").expect("usage guide");
-    let advanced = std::fs::read_to_string("docs/ADVANCED-GUIDE.md").expect("advanced guide");
-    let hooks = std::fs::read_to_string("docs/RUN-HOOKS-CONTRACT.md").expect("hooks contract");
-    let all = format!("{usage}\n{advanced}\n{hooks}");
-    let mut in_block = false;
-    let mut current = String::new();
-    let mut parsed = 0;
-    for line in all.lines() {
-        if line.trim_start().starts_with("```yaml") {
-            in_block = true;
-            current.clear();
-            continue;
-        }
-        if in_block && line.trim_start().starts_with("```") {
-            in_block = false;
-            let rules = funzzy::config::from_yaml(&current)
-                .unwrap_or_else(|err| panic!("usage yaml block must parse: {err:?}\n{current}"));
-            funzzy::rules::validate_rules(&rules)
-                .unwrap_or_else(|err| panic!("usage yaml block must validate: {err}\n{current}"));
-            parsed += 1;
-            continue;
-        }
-        if in_block {
-            current.push_str(line);
-            current.push('\n');
-        }
-    }
-    assert!(parsed >= 2, "expected multiple yaml blocks, got {parsed}");
-}
-
-#[test]
 fn every_example_passes_fzz_check() {
     // TASK-0068: every valid example fixture must pass `fzz check`; docs and
     // examples can never drift from the parser. Intentionally-invalid

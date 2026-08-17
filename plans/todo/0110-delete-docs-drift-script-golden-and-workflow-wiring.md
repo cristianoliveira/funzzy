@@ -1,7 +1,7 @@
 ---
 id: TASK-0110
 title: Delete docs drift script golden and workflow wiring
-status: todo
+status: doing
 depends_on: [TASK-0109]
 priority: high
 tags: [docs, cleanup, ci, makefile, github-actions]

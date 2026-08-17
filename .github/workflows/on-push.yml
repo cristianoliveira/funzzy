@@ -29,6 +29,3 @@ jobs:
 
       - name: Run unit tests
         run: make tests
-
-      - name: Docs/CLI/schema/example drift check
-        run: make docs-drift

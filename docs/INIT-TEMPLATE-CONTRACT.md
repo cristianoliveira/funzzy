@@ -1,6 +1,6 @@
 # Funzzy Init Template Contract
 
-> Status: **normative** — defined by TASK-0093. Drives TASK-0094 (canonical option catalog + renderer) and TASK-0095 (black-box proof and drift gate).
+> Status: **normative** — defined by TASK-0093. Drives TASK-0094 (canonical option catalog + renderer) and TASK-0095 (black-box proof).
 > Template surface (`--template`, profiles, create-only): **normative** — TASK-0096 (implemented by TASK-0097).
 > Source: current parser (`src/config.rs`), `src/cli/init.rs`, `src/cli/config.rs`, AGENT-CONFIG-CONTRACT (TASK-0057), JOBS-CONFIG-CONTRACT (TASK-0075), GITIGNORE-CONTRACT, PARALLEL-EXECUTION-CONTRACT, SERVICE-TASKS-CONTRACT, OUTPUT-POLICY-CONTRACT, RUN-HOOKS-CONTRACT.
 
@@ -150,7 +150,7 @@ fzz config example minimal    tiny machine-copyable alternative starter
 
 - **Deterministic bytes**: the template is a compile-time constant. No terminal width, environment variable, repository content, user/host, timestamp, or network access influences it. Identical bytes on every run, every machine.
 - **Stable ordering**: fixed section order — header (purpose + next commands) → `on:` block → `jobs:` block (reference comments first, active starter last) → no trailing content.
-- **Size budget**: hard ceiling **200 lines / 8 KiB**; the design target is ≈120 lines. The exact bytes are frozen by the golden snapshot in TASK-0095; the TASK-0069 drift gate fails when the installed binary's output diverges from the snapshot. Raising the ceiling requires a design review that updates this contract.
+- **Size budget**: hard ceiling **200 lines / 8 KiB**; the design target is ≈120 lines. Determinism of the exact bytes is proven by the black-box proof (two init runs compared). The former golden-snapshot drift gate was removed (TASK-0110); raising the ceiling requires a design review that updates this contract.
 - **No `--minimal` flag**: `fzz config example minimal` already provides a concise machine-copyable alternative; a new `fzz init --minimal` flag is out of scope unless separately evidenced. (`fzz init --template minimal` — TASK-0096 — is the supported selector; it selects a profile, it does not add a bespoke flag.)
 
 ## 9. Known drift exposed by the inventory

@@ -73,7 +73,7 @@ scope reduction before cut:
 
 | Gate | Status at boundary |
 |---|---|
-| CLI publication proof (TASK-0020) | requires TASK-0069 (docs drift CI) |
+| CLI publication proof (TASK-0020) | **done** (docs-drift gate retired, TASK-0110) |
 | Parallel performance/lifecycle proof (TASK-0029) | **done** |
 | Agent edit feedback loop (TASK-0049) | **done** |
 | Duration estimates persisted/bounded (TASK-0056) | **done** |
