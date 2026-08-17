@@ -72,6 +72,7 @@ Learn more:
 - [Advanced control and agent workflows](docs/ADVANCED-GUIDE.md)
 - [V1 to V2 migration](docs/MIGRATION.md)
 - [Configuration schema and agent discovery](docs/AGENT-CONFIG-CONTRACT.md)
+- [Dependency inventory and update policy](docs/DEPENDENCY-POLICY.md)
 - [Pi watcher extension](pi-watcher/README.md)
 - [Examples](examples/README.md)
 
