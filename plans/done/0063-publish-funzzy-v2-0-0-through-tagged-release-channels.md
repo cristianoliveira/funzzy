@@ -62,3 +62,83 @@ that the release verification (TASK-0064 criterion 4) requires: removed-V1
 flag targeted hints (hidden deprecated args + post-parse rejection). For the
 manual run, tag the CURRENT master HEAD after pushing (packet SHA b20f122 is
 superseded by this later commit); all other packet steps unchanged.
+
+## Release notes (final draft — embedded 09-04-26 so the manual run needs no .tmp file)
+
+Paste-ready body for the GitHub release and crates.io notes:
+
+# Funzzy v2.0.0 — Release notes (DRAFT for approval)
+
+Candidate: `b20f12236c986fc3a3c936c040b3c71e1e6d7324`
+
+---
+
+## Funzzy 2.0 — the agent-native file watcher
+
+A ground-up rebuild of the CLI and execution model, designed for both humans
+and coding agents. Same binaries (`funzzy` / `fzz`), same `.watch.yaml`
+project contract — now with a real subcommand CLI, bounded parallel
+execution, and a machine-readable control protocol.
+
+### Breaking changes from 1.x
+
+- **New CLI**: real subcommands (`watch`, `run`, `list`, `check`, `init`,
+  `config`, `migrate`, `explain`, `control`/`ctl`) with conventional global
+  flags. Removed V1 flags: `--non-block` (→ `on-busy: wait|restart` policy),
+  `--target` (→ `watch TARGET` / `list`). Run `fzz migrate` to upgrade
+  configs; `fzz explain` shows exactly which jobs match a path.
+- **MSRV 1.97** (from 1.74): required by the modern dependency line
+  (Clap 4, notify 8, yaml-rust2).
+- Config: `jobs:` is the preferred vocabulary; legacy root-list and grouped
+  `tasks:` forms remain accepted and migrate byte-preservingly.
+- Parser upgraded to YAML 1.2 semantics (yaml-rust2): duplicate keys are now
+  rejected instead of silently last-wins; block scalars keep their trailing
+  newline; tab-indented blocks are rejected.
+
+### Highlights
+
+- **Bounded parallel execution**: independent jobs run concurrently with
+  configurable limits, per-job working directory and environment, output
+  attribution, and `parallel:` groups for ordering. Sequential override for
+  diagnosis.
+- **Control socket (agents)**: JSON-RPC over a Unix socket — status,
+  targets, run/await, cancellation, paged output retention per generation,
+  freshness snapshots, lifecycle subscriptions, and TOON/JSON output
+  (`fzz control ...`). Powers the `pi-watcher` Pi extension.
+- **Config hot reload**: valid changes swap watch roots and policy without
+  process exit; invalid changes fail closed.
+- **Reliability**: process-group ownership with graceful shutdown, close and
+  success/failure hooks, gitignore-aware matching with explainable
+  precedence, polling fallback, watching for files that don't exist yet.
+- **Duration estimates**: historical run times produce deterministic
+  estimates per target.
+- **`fzz init`**: comprehensive commented starter generated from the option
+  catalog — runnable immediately, documents every supported field.
+- **Docs**: rewritten onboarding, configuration, daily and advanced guides;
+  agent contracts for config discovery, feedback, and output evidence.
+
+### Install
+
+Prebuilt archives with sha256 checksums are attached to this release
+(Linux/Darwin, x86_64/aarch64, both binaries). Nix: the stable package moves
+to this tag shortly after publication. `cargo install funzzy --version 2.0.0`.
+
+### Upgrading from 1.x
+
+`fzz migrate` rewrites accepted legacy configs to the `jobs:` form
+(atomically, byte-preserving comments/quoting/order; idempotent). See
+`docs/MIGRATION.md` for the full flag/config mapping.
+
+---
+
+## Missing channel found: Homebrew tap (09-04-26)
+
+README promises `brew install funzzy` and `brew install cristianoliveira/tap/funzzy`. The tap formula
+(cristianoliveira/homebrew-tap, `funzzy.rb`) still points at v1.5.0 with the OLD artifact naming
+(`funzzy-v1.5.0-x86_64-apple-darwin.tar.gz` — v2 produces `funzzy-v2.0.0-x86_64-darwin.tar.gz`).
+Post-publish step (needs published sha256s, cannot be pre-computed):
+
+1. Update `funzzy.rb`: version v2.0.0; arm64 + intel darwin URLs using v2 names (`funzzy-v2.0.0-aarch64-darwin.tar.gz` / `funzzy-v2.0.0-x86_64-darwin.tar.gz`) with `on_arm`/`on_intel` blocks; both sha256s from the release assets. `bin.install` for `funzzy` and `fzz` already correct.
+2. Then verify criterion: `brew install cristianoliveira/tap/funzzy && fzz --version == 2.0.0`.
+
+Add to the release record alongside tag/crate/Nix evidence.
