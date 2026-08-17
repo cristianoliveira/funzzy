@@ -844,17 +844,7 @@ Alias:
 
 {usage-heading} {usage}
 
-Commands:
-  init                Create or migrate a '.watch.yaml' file.
-  watch [TARGET]      Watch for file changes and run configured tasks.
-  list                List configured tasks.
-  run TARGET          Run configured tasks once locally, without watcher IPC.
-  explain PATH        Show which tasks a path matches or is ignored by.
-  exec                Run an ad-hoc command over stdin-supplied paths.
-  control             Interact with a running watcher over its control socket.
-
 {all-args}
-
 Environment configs:
   FUNZZY_NON_BLOCK        Same as `--on-busy restart`
   FUNZZY_BAIL             Same as `--fail-fast`
@@ -1816,6 +1806,40 @@ mod config_command_tests {
         assert!(parse(&["config", "schema", "--section", "bogus"]).is_err());
         assert!(parse(&["config", "example", "bogus"]).is_err());
         assert!(parse(&["config", "example"]).is_err());
+    }
+
+    // -------------------------------------------------------------------
+    // Help rendering
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn help_text_renders_commands_section_once_and_complete() {
+        let help = super::Arguments::help_text();
+        assert_eq!(
+            help.matches("Commands:").count(),
+            1,
+            "commands section must be rendered by clap only, not duplicated:\n{help}"
+        );
+        // The single clap-generated section must list every subcommand,
+        // including the ones the stale hand-written list used to miss.
+        for expected in [
+            "init",
+            "watch",
+            "list",
+            "run",
+            "check",
+            "completions",
+            "config",
+            "explain",
+            "exec",
+            "control",
+            "ctl",
+        ] {
+            assert!(
+                help.contains(expected),
+                "help must mention {expected}:\n{help}"
+            );
+        }
     }
 }
 
