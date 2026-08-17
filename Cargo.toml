@@ -42,7 +42,7 @@ toon = { version = "0.1.2", default-features = false }
 ignore = "0.4.33"
 notify = "4.0.0"
 yaml-rust = "0.4.5"
-glob="^0.3"
+glob = "0.3"
 notify-debouncer-mini = "0.3.0"
 nix = "0.26.2"
 clap = "4.6"
@@ -50,8 +50,9 @@ clap_complete = "4.6"
 sha2 = "0.11"
 
 [dev-dependencies]
+# Exact pin keeps CLI assertion behavior reviewable across dependency refreshes.
 assert_cmd = "=2.2.2"
-predicates = "3.1.0"
+predicates = "3.1"
 pretty_assertions = "1.4.1"
 
 [[bin]]
