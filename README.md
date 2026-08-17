@@ -15,18 +15,6 @@ One YAML workflow works for developers, coding agents, and CI. Use `fzz run TARG
 > [!WARNING]
 > V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
-## Capabilities
-
-- **Watch or run once:** use the same workflow locally, in CI, or in an editor feedback loop.
-- **Precise matching:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
-- **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
-- **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
-- **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
-- **Workflow automation:** run generation-level `on.success` and `on.failure` hooks without changing the workflow result.
-- **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
-- **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
-- **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
-- **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
 
 For ad-hoc work over paths from stdin:
 
@@ -62,6 +50,19 @@ jobs:
 ```
 
 Declaration order is semantic. Only consecutive jobs with same `parallel` name overlap; ordinary jobs create serial barriers. Legacy root task lists and grouped `tasks:` configs remain accepted and can be rewritten with `fzz init --migrate`.
+
+## Capabilities
+
+- **Watch or run once:** use the same workflow locally, in CI, or in an editor feedback loop.
+- **Precise matching:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
+- **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
+- **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
+- **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
+- **Workflow automation:** run generation-level `on.success` and `on.failure` hooks without changing the workflow result.
+- **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
+- **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
+- **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
+- **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
 
 Learn more:
 
