@@ -1,7 +1,7 @@
 ---
 id: TASK-0113
 title: Fix Linux reload rescheduling via watch-root reconcile flood
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: []
@@ -34,3 +34,7 @@ A path equal to an ACTIVE WATCH ROOT is a backend self-event, never a newly crea
 
 - New unit tests: `watch_root_bookkeeping_event_never_rescans_its_subtree` (red first), `new_directory_under_a_root_still_rescans_after_the_fix`; 3 existing reconcile tests updated for the new parameter (same scenarios).
 - Linux container (rust:1.97-slim): manual busy-generation scenario now completes (slow-verdict survives reload); config_reload_lifecycle 14/14 PASS; config_reload_matrix 6/7 — remaining failure (`ignore_rule_added_on_reload_stops_routing_ignored_path`) is a SEPARATE pre-existing Linux gap tracked as TASK-0114.
+
+## Outcome
+
+Fix landed in 45e984f. Diagnosed in a Linux container via kernel inotify tracing: the spurious post-reload batches are notify-internal bookkeeping Any-events on the WATCHED ROOT itself (kernel emits nothing); reconcile_new_directories walked the root subtree and re-routed pre-existing files under the new revision, superseding busy generations. Root self-events no longer rescan. Superseded in part by TASK-0114 (root/directory paths now dropped from batches entirely).
