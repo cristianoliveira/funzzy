@@ -1,7 +1,7 @@
 ---
 id: TASK-0096
 title: Define init config and migration command responsibilities
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: [design, cli, init, config, migration, v2]
