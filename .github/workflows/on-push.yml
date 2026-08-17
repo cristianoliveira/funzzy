@@ -29,3 +29,27 @@ jobs:
 
       - name: Run unit tests
         run: make tests
+
+  # MSRV verification (TASK-0108): dependencies must keep compiling on the
+  # exact minimum declared toolchain. The guard step forces the job pin and
+  # Cargo.toml to move together, so raising the MSRV is always a visible
+  # change reviewed with the dependency update that motivated it.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Rust toolchain (declared MSRV)
+        uses: dtolnay/rust-toolchain@1.97.0
+
+      - name: MSRV declaration matches this job
+        run: |
+          declared="$(grep -m1 '^rust-version' Cargo.toml | sed 's/rust-version = "\(.*\)"/\1/')"
+          if [ "$declared" != "1.97" ]; then
+            echo "Cargo.toml rust-version is '$declared' but the msrv job pins 1.97.0."
+            echo "Update this job pin in the same change that raises the MSRV."
+            exit 1
+          fi
+
+      - name: Check on MSRV
+        run: cargo check --locked --all-targets

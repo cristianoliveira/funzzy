@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "description": "Funzzy dependency update grouping (TASK-0108): updates arrive as reviewable, single-purpose PRs — never one opaque batch.",
+  "rangeStrategy": "bump",
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "Watcher/process-adjacent crates (notify, nix, signal-hook, libc, …) are behavior-sensitive: every major is its own PR, minors grouped per crate line.",
+      "matchManagers": ["cargo"],
+      "separateMajorMinor": true,
+      "major": {
+        "groupName": null
+      }
+    },
+    {
+      "description": "Cargo lockfile maintenance only (no version bumps) monthly.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "groupName": "cargo lock maintenance",
+      "schedule": ["monthly"]
+    },
+    {
+      "description": "Nix inputs move together, separate from all code dependencies.",
+      "matchManagers": ["nix"],
+      "groupName": "nix inputs",
+      "schedule": ["monthly"]
+    }
+  ]
+}

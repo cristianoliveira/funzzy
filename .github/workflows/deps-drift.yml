@@ -1,0 +1,72 @@
+# Scheduled dependency drift + advisory reporting (TASK-0108).
+#
+# Informational channel only: never part of pull-request CI, so routine
+# checks stay deterministic and offline. Each ecosystem is its own job
+# (grouped output, bounded logs). Failures here surface drift/vulnerabilities
+# for manual triage — nothing auto-merges from this workflow.
+name: Dependency Drift Report
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust advisories + duplicates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Advisory scan (fails on unacknowledged vulnerabilities)
+        run: cargo audit
+
+      - name: Duplicate versions report (informational)
+        run: cargo tree --duplicates || echo "no duplicate versions"
+
+  node:
+    name: pi-watcher npm drift
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pi-watcher
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install (reproducibility probe)
+        run: npm ci
+
+      - name: Security audit (fails on high/critical)
+        run: npm audit --audit-level=high
+
+      - name: Outdated report (informational, bounded)
+        run: npm outdated || true
+
+  nix:
+    name: Nix input freshness
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: root
+            dir: .
+          - name: pi-watcher
+            dir: pi-watcher
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Current pinned inputs (drift is reviewed manually)
+        run: nix flake metadata "${{ matrix.dir }}" 2>/dev/null | grep -E "github:|ref:" | head -20
