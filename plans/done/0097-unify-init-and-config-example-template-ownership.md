@@ -1,7 +1,7 @@
 ---
 id: TASK-0097
 title: Unify init and config example template ownership
-status: doing
+status: done
 depends_on: [TASK-0096]
 priority: high
 tags: [rust, cli, init, config, templates, tdd]
