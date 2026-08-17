@@ -4,7 +4,8 @@ Owns command implementations selected by `src/main.rs`.
 
 ## Modules
 
-- `init.rs`: create default config and migrate legacy root task lists.
+- `init.rs`: create-only default config from the shared template profiles (`templates.rs`).
+- `migrate.rs`: explicit `fzz migrate` rewrite of accepted legacy config (pure transform + atomic CLI adapter).
 - `watch.rs`: blocking watch loop; execute matched commands serially.
 - `watch_non_block.rs`: cancellable watch loop; wire `Worker`, `ControlState`, and optional control server.
 - `mod.rs`: `Command` contract and command exports.

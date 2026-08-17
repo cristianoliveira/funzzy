@@ -238,7 +238,7 @@ fn legacy_config_is_accepted_and_discovery_points_to_migration() {
     let migrate = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)
         .env("FUNZZY_COLORED", "false")
-        .args(["init", "--migrate"])
+        .args(["migrate"])
         .output()
         .unwrap();
     assert!(migrate.status.success());

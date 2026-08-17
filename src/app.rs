@@ -113,11 +113,20 @@ pub fn run() {
                 stdout::failure("config command failed", err.to_string());
             }
         }
-        Action::Init { template: _ } if args.migrate => {
-            execute(InitCommand::migrate(cli::watch::DEFAULT_FILENAME))
-        }
         Action::Init { template } => {
             execute(InitCommand::new(cli::watch::DEFAULT_FILENAME, template))
+        }
+        Action::Migrate => {
+            let config_path = args
+                .config
+                .clone()
+                .unwrap_or_else(|| cli::watch::DEFAULT_FILENAME.to_string());
+            if let Err(err) = MigrateCommand::new(&config_path).execute() {
+                stdout::failure_to_stderr(
+                    &format!("Failed to migrate {config_path}"),
+                    err.to_string(),
+                );
+            }
         }
         Action::Control {
             action,

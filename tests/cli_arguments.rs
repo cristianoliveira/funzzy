@@ -11,8 +11,9 @@
 //! - `-v`/`--verbose` is the verbose watch flag.
 //! - `fzz watch [TARGET]` selects tasks by name/@tag substring; `fzz list` lists them.
 //! - The `watch` keyword is inert: `watch '<command>'` == `'<command>'`.
-//! - `--migrate` only acts together with `init`; alone it falls through to
-//!   the config branch.
+//! - `--migrate` is not a flag anymore: migration is the explicit `fzz
+//!   migrate` subcommand (TASK-0098); `init --migrate` and bare `--migrate`
+//!   are rejected with exit 2.
 //! - Parse errors are rendered by Clap to stderr with exit 2.
 
 use assert_cmd::cargo;

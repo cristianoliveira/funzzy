@@ -69,6 +69,24 @@ pub fn failure(text: &str, err: String) -> ! {
     std::process::exit(1)
 }
 
+/// Operational/config failure for commands whose contract requires stderr.
+/// Kept separate from legacy `failure` so TASK-0098 can correct migration's
+/// channel without silently changing every existing CLI surface.
+pub fn failure_to_stderr(text: &str, err: String) -> ! {
+    let header = if is_colored() {
+        format!("{}Error{}: {}", RED, RESET, text)
+    } else {
+        format!("Error: {}", text)
+    };
+
+    eprintln!("{}", header);
+    logging::log_line(&header);
+
+    eprintln!("{}", err);
+    logging::log_line(&err);
+    std::process::exit(1)
+}
+
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
 pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {

@@ -46,12 +46,14 @@ pub enum Action {
     Run { target: String },
     /// `fzz explain PATH`: print which tasks a path matches or is ignored by.
     Explain { path: String },
-    /// `fzz init [--template PROFILE] [--migrate]`: create a starter config
-    /// (or migrate legacy config until TASK-0098 replaces `--migrate`).
+    /// `fzz init [--template PROFILE]`: create a starter config file.
     Init {
         /// Which template profile to create; comprehensive is the default.
         template: Profile,
     },
+    /// `fzz migrate`: rewrite accepted legacy config into preferred `jobs:`
+    /// form in place (honors global `-c/--config`).
+    Migrate,
     /// `fzz control status|list|run TARGET`: talk to a running watcher.
     Control {
         action: ControlAction,
@@ -74,7 +76,6 @@ pub struct Arguments {
     /// NDJSON run-event stream destination (TASK-0039); None = no stream.
     pub events_file: Option<String>,
     pub control_socket: Option<String>,
-    pub migrate: bool,
     pub on_busy: OnBusy,
     pub no_run_on_init: bool,
     pub fail_fast: bool,
@@ -114,23 +115,20 @@ impl Arguments {
         let events_file = matches.get_one::<String>("events_file").cloned();
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
-        let (action, migrate) = match matches.subcommand() {
-            None => (Action::Watch { target: None }, false),
+        let action = match matches.subcommand() {
+            None => Action::Watch { target: None },
             Some(("watch", sub)) => {
                 let target = sub.get_one::<String>("target").cloned();
-                (Action::Watch { target }, false)
+                Action::Watch { target }
             }
-            Some(("list", _)) => (Action::List, false),
-            Some(("check", _)) => (Action::Check, false),
-            Some(("completions", sub)) => (
-                Action::Completions {
-                    shell: sub
-                        .get_one::<String>("shell")
-                        .cloned()
-                        .expect("shell is required by clap"),
-                },
-                false,
-            ),
+            Some(("list", _)) => Action::List,
+            Some(("check", _)) => Action::Check,
+            Some(("completions", sub)) => Action::Completions {
+                shell: sub
+                    .get_one::<String>("shell")
+                    .cloned()
+                    .expect("shell is required by clap"),
+            },
             Some(("config", sub)) => {
                 let action = match sub.subcommand() {
                     Some(("schema", schema_sub)) => {
@@ -159,29 +157,30 @@ impl Arguments {
                     }
                     _ => unreachable!("clap rejects unknown config subcommand"),
                 };
-                (action, false)
+                action
             }
             Some(("run", sub)) => {
                 let target = sub
                     .get_one::<String>("target")
                     .cloned()
                     .expect("target is required by clap");
-                (Action::Run { target }, false)
+                Action::Run { target }
             }
             Some(("explain", sub)) => {
                 let path = sub
                     .get_one::<String>("path")
                     .cloned()
                     .expect("path is required by clap");
-                (Action::Explain { path }, false)
+                Action::Explain { path }
             }
             Some(("init", sub)) => {
                 let template = sub
                     .get_one::<String>("template")
                     .and_then(|raw| Profile::parse(raw))
                     .unwrap_or(Profile::Comprehensive);
-                (Action::Init { template }, sub.get_flag("migrate"))
+                Action::Init { template }
             }
+            Some(("migrate", _)) => Action::Migrate,
             Some(("control", sub)) => {
                 let socket = sub.get_one::<String>("socket").cloned();
                 let format = match sub
@@ -252,21 +251,18 @@ impl Arguments {
                     },
                     _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
                 };
-                (
-                    Action::Control {
-                        action,
-                        socket,
-                        format,
-                    },
-                    false,
-                )
+                Action::Control {
+                    action,
+                    socket,
+                    format,
+                }
             }
             Some(("exec", sub)) => {
                 let command: Vec<String> = sub
                     .get_many::<String>("command")
                     .map(|values| values.cloned().collect())
                     .unwrap_or_default();
-                (Action::Exec { command }, false)
+                Action::Exec { command }
             }
             Some((other, _)) => {
                 unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
@@ -280,7 +276,6 @@ impl Arguments {
             log_file,
             events_file,
             control_socket,
-            migrate,
             on_busy: if matches.get_flag("restart") {
                 OnBusy::Restart
             } else {
@@ -420,12 +415,14 @@ pub fn command() -> Command {
                             crate::cli::templates::Profile::NAMES,
                         ))
                         .help("Starter template: comprehensive (default), minimal, parallel, or agent; bytes match `fzz config example PROFILE`."),
-                )
-                .arg(
-                    Arg::new("migrate")
-                        .long("migrate")
-                        .action(ArgAction::SetTrue)
-                        .help("Migrate legacy root task list to current format."),
+                ),
+        )
+        .subcommand(
+            Command::new("migrate")
+                .about("Rewrite an accepted legacy config into the preferred 'jobs:' form in place.")
+                .version(env!("CARGO_PKG_VERSION"))
+                .long_about(
+                    "Rewrite an existing accepted legacy configuration (root task list or grouped 'tasks:') into the preferred ordered 'jobs:' form, preserving declaration order, comments, quoting, and commands. The selected file is replaced atomically after the complete migrated candidate validates through the production parser. Already-preferred input is a byte-identical no-op. Honors the global -c/--config flag (default '.watch.yaml'). Exit 0 on success and no-op; 1 on missing, malformed, or unsupported input (original bytes unchanged).",
                 ),
         )
         .subcommand(
@@ -971,16 +968,30 @@ mod tests {
     }
 
     #[test]
-    fn init_with_migrate_flag_sets_migrate() {
-        let args = parse(&["init", "--migrate"]).expect("parse");
-        assert!(matches!(args.action, Action::Init { .. }));
-        assert!(args.migrate);
+    fn init_with_migrate_flag_is_rejected() {
+        // TASK-0098: migration is the explicit `fzz migrate` subcommand;
+        // `init --migrate` is removed, not deprecated.
+        assert!(parse(&["init", "--migrate"]).is_err());
     }
 
     #[test]
     fn migrate_without_init_is_unknown() {
-        // `--migrate` is scoped to `init`; without it, it is not a valid flag.
+        // `--migrate` is not a global flag; only the subcommand exists.
         assert!(parse(&["--migrate"]).is_err());
+    }
+
+    /// TASK-0098: `fzz migrate` is a top-level subcommand honoring the
+    /// global `-c/--config` selection exactly like `check`/`list`.
+    #[test]
+    fn migrate_subcommand_selects_migrate() {
+        assert_eq!(parse_action(&["migrate"]), Action::Migrate);
+
+        let args = parse(&["migrate", "-c", "custom.yml"]).expect("parse");
+        assert_eq!(args.action, Action::Migrate);
+        assert_eq!(args.config.as_deref(), Some("custom.yml"));
+
+        let args = parse(&["migrate", "--config", "other.yml"]).expect("parse");
+        assert_eq!(args.config.as_deref(), Some("other.yml"));
     }
 
     /// TASK-0097: `--template` selects one typed profile; the default stays

@@ -97,7 +97,7 @@ fn migration_is_idempotent_and_second_run_is_a_noop() {
     let first = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)
         .env("FUNZZY_COLORED", "false")
-        .args(["init", "--migrate"])
+        .args(["migrate"])
         .output()
         .unwrap();
     assert!(first.status.success());
@@ -119,7 +119,7 @@ fn migration_is_idempotent_and_second_run_is_a_noop() {
     let second = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)
         .env("FUNZZY_COLORED", "false")
-        .args(["init", "--migrate"])
+        .args(["migrate"])
         .output()
         .unwrap();
     assert!(second.status.success());
@@ -143,7 +143,7 @@ fn migration_preserves_parallel_semantics_and_sequential_override() {
     let migrate = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)
         .env("FUNZZY_COLORED", "false")
-        .args(["init", "--migrate"])
+        .args(["migrate"])
         .output()
         .unwrap();
     assert!(migrate.status.success());
@@ -200,7 +200,7 @@ fn migrated_config_with_cwd_env_and_init_runs_identically() {
     let migrate = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)
         .env("FUNZZY_COLORED", "false")
-        .args(["init", "--migrate"])
+        .args(["migrate"])
         .output()
         .unwrap();
     assert!(migrate.status.success());
