@@ -50,7 +50,7 @@ jobs:
     change: "src/**"
 ```
 
-Declaration order is semantic. Only consecutive jobs with same `parallel` name overlap; ordinary jobs create serial barriers. Legacy root task lists and grouped `tasks:` configs remain accepted and can be rewritten with `fzz init --migrate`.
+Declaration order is semantic. Only consecutive jobs with same `parallel` name overlap; ordinary jobs create serial barriers. Legacy root task lists and grouped `tasks:` configs remain accepted and can be rewritten with `fzz migrate`.
 
 ## Capabilities
 
@@ -190,10 +190,13 @@ metadata drives `fzz config schema`). Uncomment any documented example to
 activate it; `fzz init && fzz` is the zero-dependency trial.
 
 Both binary names work — `funzzy` and its short alias `fzz`; examples use
-`fzz`. Migrate a legacy task-list config with `fzz init --migrate` (emits the
-preferred `jobs:` form). The installed binary is the config reference:
-`fzz config schema` prints the JSON Schema and `fzz config example minimal`
-prints a runnable example — docs never drift from the parser.
+`fzz`. `fzz init` is create-only (it refuses an existing `.watch.yaml`);
+pick a starter with `fzz init --template minimal|parallel|agent`. Rewrite a
+legacy task-list config with `fzz migrate` (emits the preferred `jobs:`
+form, atomically and idempotently). The installed binary is the config
+reference: `fzz config schema` prints the JSON Schema and
+`fzz config example minimal` prints a runnable example — docs never drift
+from the parser.
 
 ### Options
 
@@ -331,8 +334,8 @@ fzz run TARGET | fzz watch           # execute
 All `config` commands are non-interactive and side-effect-free: they never
 read a project config, start a watcher, open a socket, or run tasks. The
 schema is the single source of truth for structure; `fzz check` adds semantic
-validation. Legacy root-list configs remain accepted and are migrated with
-`fzz init --migrate`.
+validation. Legacy root-list configs remain accepted and are rewritten with
+`fzz migrate`.
 
 ## Parallel execution
 

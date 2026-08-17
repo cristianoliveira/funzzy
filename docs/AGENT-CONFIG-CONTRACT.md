@@ -3,6 +3,7 @@
 > Status: **normative** — defined by TASK-0057. Drives TASK-0058 (schema +
 > examples through `fzz`), coordinates with TASK-0033 (`fzz check`) and
 > TASK-0048 (structured output), and the jobs vocabulary from TASK-0075.
+> Profile set and init parity: **normative** — TASK-0096 (drives TASK-0097).
 > Source: current parser (`src/config.rs`), JOBS-CONFIG-CONTRACT,
 > GITIGNORE-CONTRACT, RELEASE-BOUNDARY.
 
@@ -32,7 +33,7 @@ never opens a socket), and exit-code stable (0 success, 1 invalid/operational,
 
 ```sh
 fzz config schema [--section on|job|matching|execution|parallel|control]
-fzz config example minimal|parallel|agent
+fzz config example comprehensive|minimal|parallel|agent
 ```
 
 - Both commands accept `--format toon|json|human` consistent with TASK-0048;
@@ -40,6 +41,9 @@ fzz config example minimal|parallel|agent
 - Unknown `--section`/PROFILE prints the valid alternatives and exits 2
   (usage) — no socket contact needed.
 - Config-free operation: both commands work with no `.watch.yaml` present.
+- `comprehensive` (TASK-0096) prints the same bytes `fzz init` writes by
+  default (INIT-TEMPLATE-CONTRACT); `config example PROFILE` and
+  `fzz init --template PROFILE` are byte-identical for every profile.
 
 ## 4. Supported sections and profiles
 
@@ -54,9 +58,15 @@ fzz config example minimal|parallel|agent
 
 | Profile | Purpose |
 |---|---|
+| `comprehensive` | the full commented starter `fzz init` writes by default — small active setup + every supported option documented in comments (INIT-TEMPLATE-CONTRACT) |
 | `minimal` | one job, one change pattern — the smallest runnable config |
 | `parallel` | two jobs in one group with `on.concurrency` — demonstrates barriers |
 | `agent` | control socket + a verify-style job — the agent loop starting point |
+
+`fzz config example` stays stdout-only and side-effect-free: it never gains
+file-writing flags, and piping (`> .watch.yaml`) remains the copy mechanism
+for agents. Creating a file in the working directory is `fzz init`'s
+responsibility alone (CLI-V2-CONTRACT §3a).
 
 ## 5. JSON Schema as canonical output
 
@@ -70,7 +80,7 @@ fzz config example minimal|parallel|agent
   valid JSON Schema.
 - **Recommended shape**: grouped `jobs:` config (TASK-0075). The legacy root
   task list remains **accepted compatibility input** — documented, never
-  emitted by `fzz init`/`example`.
+  emitted by `fzz init`/`example`, and rewritten only by `fzz migrate`.
 
 ## 6. Output bounds and determinism
 

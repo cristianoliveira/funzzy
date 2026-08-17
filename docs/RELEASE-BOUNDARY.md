@@ -131,6 +131,7 @@ New in 2.0.0:
 - Config reload: valid hot reload keeps the process alive and preserves PID, instance token, and monotonic revisions; a formatting-only save is a no-op; an invalid config exits nonzero with a terminal gate/reason (`configInvalid` to subscribers); a deleted config is fatal; managed services reconcile at the commit boundary (CONFIG-RELOAD-CONTRACT).
 - Duration estimates (XDG history, execution-signature keyed).
 - Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
+- Configuration commands: `fzz init` is create-only with `--template comprehensive|minimal|parallel|agent` (default `comprehensive`); `fzz migrate` is the explicit, atomic, idempotent legacy rewrite (`fzz init --migrate` is removed) — CLI-V2-CONTRACT §3a (TASK-0096).
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
 - Managed long-running service tasks (`service: true`), run-level
   success/failure hooks (`on.success`/`on.failure`), task-aware output

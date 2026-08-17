@@ -53,7 +53,7 @@ Error text must show the ordered-list example and state why order matters (barri
 
 ## 4. Compatibility decision
 
-- V2 **emits only `jobs:`** as preferred live syntax (`fzz init` and migration output).
+- V2 **emits only `jobs:`** as preferred live syntax (`fzz init` templates and `fzz migrate` output).
 - The existing root list (`- name: ...`) and grouped `on:`/`tasks:` forms remain **accepted** through an explicit compatibility window: they parse and execute exactly as today, but are never presented as preferred syntax in generated output or examples.
 - Migration is deterministic: existing forms map 1:1 to the ordered `jobs:` list preserving declaration order, so topology, barriers, and signatures are identical after migration.
 - `tasks:` at root inside the grouped form stays accepted; root `jobs:` wins when both are present (see §5 — actually rejected as mixed, §5).
@@ -89,7 +89,7 @@ User-facing diagnostics keep the runtime word "task" for executions and add "job
 
 - Config errors: "job 'X' ..." naming the configured unit.
 - Runtime failures: "task 'X' ..." naming the execution.
-- Migration output (`fzz init --migrate`) prints the deterministic `jobs:` rewrite and reports any legacy form converted.
+- `fzz migrate` (TASK-0096/0098) prints the deterministic `jobs:` rewrite outcome and reports any legacy form converted; migration is the only rewriter of legacy files (`fzz init --migrate` no longer exists).
 
 ## 9. Out of scope
 

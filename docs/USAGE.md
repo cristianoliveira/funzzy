@@ -11,16 +11,24 @@ The shortest accurate path from installation to a running workflow.
 ### 1.1 Create a config
 
 ```bash
-fzz init            # writes a runnable .watch.yaml in the current directory
+fzz init                       # writes the comprehensive commented starter
+fzz init --template minimal   # or: minimal | parallel | agent
 ```
 
-Or start from a validated example — the installed binary is the config
-reference, so schema and examples can never drift from the parser:
+`fzz init` is **create-only**: it refuses an existing `.watch.yaml`
+(exit 1, bytes untouched) and never overwrites or migrates. To copy a
+starter into a custom path, pipe the side-effect-free export:
 
 ```bash
-fzz config example minimal      # prints a runnable .watch.yaml
+fzz config example minimal      # prints runnable .watch.yaml bytes (byte-identical to init --template minimal)
 fzz config schema               # prints the JSON Schema for the jobs: format
 fzz config schema --section on  # one bounded section + hint for the full schema
+```
+
+To rewrite a legacy config in place, use the explicit transform:
+
+```bash
+fzz migrate                     # .watch.yaml (or -c PATH): legacy -> jobs:, atomic, idempotent
 ```
 
 The preferred V2 shape is an ordered `jobs:` list:
@@ -82,7 +90,8 @@ This is the whole loop: config → check → run → watch.
 | Explain a path | `fzz explain PATH` | no | none |
 | Ad-hoc over stdin | `fzz exec -- PROGRAM ARG...` | no | runs PROGRAM per stdin path |
 | Control running watcher | `fzz control status\|list\|run\|emit\|await\|cancel\|output\|capabilities` | no | talks to the socket |
-| Init / migrate | `fzz init [--migrate]` | no | writes `.watch.yaml` |
+| Init a starter config | `fzz init [--template P]` | no | writes `.watch.yaml` (create-only, refuses existing) |
+| Migrate a legacy config | `fzz migrate [-c PATH]` | no | atomic in-place rewrite (idempotent) |
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
@@ -126,12 +135,14 @@ jobs:
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
-  migrate deterministically with `fzz init --migrate`.
+  are rewritten deterministically with `fzz migrate`.
 
 ## 4. Recovery actions
 
 | Symptom | Action |
-| --- | --- |
+|---|---|
+| `fzz init` refused: `.watch.yaml` exists | deliberate create-only refusal; edit the file or `fzz config example P` to compare |
+| Legacy config needs the new shape | `fzz migrate [-c PATH]` (atomic, idempotent; `jobs:` is a no-op) |
 | Config rejected | `fzz check` names the exact path; fix, re-check |
 | Target not found / ambiguous | `fzz list` shows valid targets |
 | Race-like parallel failure | rerun `fzz run TARGET --sequential`; parallel fail + sequential pass is `parallel-sensitive` evidence, not a proven race |

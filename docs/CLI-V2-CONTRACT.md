@@ -1,6 +1,7 @@
 # Funzzy V2 CLI Contract
 
 > Status: **draft** — defined by TASK-0014. Drives TASK-0015 through TASK-0024.
+> Configuration-command responsibilities: **normative** — defined by TASK-0096. Drives TASK-0097, TASK-0098, TASK-0099.
 > Source research: `.tmp/reports/13-04-26/cli-interface-review.md`, `.tmp/reports/13-04-26/similar-cli-inspiration.md`.
 
 This is a V2 redesign. During the active refactor we do **not** add deprecated parser paths. Each removed V1 invocation is listed under [Migration](#migration).
@@ -14,7 +15,8 @@ This is a V2 redesign. During the active refactor we do **not** add deprecated p
 | `fzz run TARGET [options]` | Run selected configured workflow once locally | no |
 | `fzz list [options]` | Print configured tasks (name, tags, change patterns) | no |
 | `fzz explain PATH` | Print tasks a path would match / ignore (no execution) | no |
-| `fzz init [--migrate]` | Create or migrate `.watch.yaml` | no |
+| `fzz init [--template PROFILE]` | Create `.watch.yaml` starter (create-only) | no |
+| `fzz migrate` | Rewrite legacy config to preferred `jobs:` form in place | no |
 | `fzz exec [options] -- PROGRAM [ARG...]` | Ad-hoc watch over stdin-supplied paths | **yes** |
 | `fzz control status` | Print running watcher state over Unix socket | no |
 | `fzz control list` | Print remote targets from running watcher | no |
@@ -50,12 +52,79 @@ Global options valid on `fzz`, `fzz watch`, `fzz run`, `fzz exec`:
 
 Scoped options:
 
-- `init` owns `--migrate`.
+- `init` owns `--template <comprehensive|minimal|parallel|agent>` (default `comprehensive`).
+- `migrate` accepts the global `-c, --config <FILE>` to select the file it rewrites.
+- `config` owns `--section`, PROFILE positional, and `--format`.
 - `control` owns `--socket <PATH>`, `--wait`, `--timeout <DUR>`.
 - `exec` owns the trailing `-- PROGRAM [ARG...]`.
 - `watch` owns the optional positional `TARGET`.
 
-Irrelevant option/subcommand combinations (e.g., `init --wait`, `list --on-busy restart`) **fail explicitly** with a usage error.
+Irrelevant option/subcommand combinations (e.g., `init --wait`, `list --on-busy restart`, `init --migrate`) **fail explicitly** with a usage error. `--migrate` is not a V2 flag: migration is the explicit `fzz migrate` subcommand (§3a).
+
+## 3a. Configuration command responsibilities
+
+> Normative — TASK-0096. One responsibility per command name; command names
+> predict side effects. Drives TASK-0097 (template ownership) and
+> TASK-0098 (`fzz migrate`).
+
+| Command | Responsibility | Reads project config? | Writes filesystem? | stdout payload |
+| --- | --- | --- | --- | --- |
+| `fzz init [--template P]` | **create** a starter config | no | `.watch.yaml` (create-only; refuses existing) | one-line success notice |
+| `fzz config schema [--section S]` | **describe** the installed config contract | no | none | JSON Schema / bounded section |
+| `fzz config example PROFILE` | **export** profile artifact bytes | no | none | deterministic YAML bytes |
+| `fzz migrate [-c FILE]` | **transform** legacy config → preferred `jobs:` | source file only | atomic in-place rewrite | one-line outcome |
+| `fzz check [-c FILE]` | **validate** the selected config | yes | none | validation diagnostics |
+
+### `fzz init` — create-only
+
+- Writes `.watch.yaml` in the current working directory. It never reads,
+  merges, overwrites, or validates an existing config.
+- **Deterministic refusal**: if the destination exists, fail (exit 1) with a
+  stable message; the existing file's bytes are untouched. There is no
+  `--force`/overwrite path — overwrite is deliberately not a responsibility.
+- `--template comprehensive|minimal|parallel|agent` (default `comprehensive`):
+  selects one of the shared profile artifacts (INIT-TEMPLATE-CONTRACT owns
+  `comprehensive`; AGENT-CONFIG-CONTRACT owns `minimal`/`parallel`/`agent`).
+  Default `comprehensive` keeps `fzz init && fzz` generic and runnable.
+- Invalid profile is a usage error (exit 2) naming the valid values.
+- Emitted bytes are deterministic: identical on every run and machine.
+
+### `fzz config schema|example` — side-effect-free
+
+- Stdout-only, single document, no filesystem writes, no watcher, no socket.
+- `config example PROFILE` accepts the same four profiles as `init` and
+  prints **byte-identical** artifact bytes (`fzz init --template P` writes
+  exactly what `fzz config example P` prints).
+- `config example` never gains file-writing flags (`-o`, `--write`, …):
+  piping remains the agent surface (`fzz config example minimal > .watch.yaml`).
+
+### `fzz migrate` — explicit transform
+
+- Migrates the file selected by global `-c, --config` (default `.watch.yaml`).
+- Accepted inputs: legacy root task list (wrapped under `jobs:`, order and
+  comments preserved), grouped `on:`/`tasks:` (root key renamed to `jobs:`),
+  and already-preferred `jobs:` (byte-identical no-op, exit 0).
+- Errors (exit 1, original bytes unchanged): missing file, malformed YAML,
+  multiple documents, unsupported root shape, empty task list.
+- Write is **atomic** (same-directory temp file + rename); failure at any
+  point leaves the original untouched. A successful migration's output must
+  pass `fzz check` (proved in TASK-0099).
+- One-line outcome on stdout; diagnostics on stderr; deterministic output.
+- `fzz init --migrate` is **removed** from the V2 contract — V2 is an
+  intentional breaking boundary, no deprecated alias is carried.
+
+### Why the generator overlap is intentional
+
+`init` and `config example` emit the same per-profile artifacts by design:
+  same bytes, different **destination** (file vs stdout) and different **user
+  intent** ("set up this directory" vs "show me the bytes to copy/pipe").
+  Drift is impossible because one option catalog (TASK-0094) owns the bytes.
+
+### `fzz check` — no conflict
+
+`check` validates the **existing selected** config; it never creates,
+  describes, exports, or transforms. The four commands above never validate —
+  `check` is the single validation entry point.
 
 ## 4. Flag conventions
 
@@ -133,10 +202,14 @@ Both binary aliases must expose the identical tree and behavior.
 - child non-zero → reported failure.
 - explicit shell (`... exec -- sh -c '...'`) works.
 
-### init
-- `fzz init` creates `.watch.yaml`.
-- `fzz init --migrate` wraps legacy list, content/comments preserved.
-- `fzz init --wait` → exit 2 (irrelevant).
+### init / migrate
+- `fzz init` creates `.watch.yaml` (comprehensive template).
+- `fzz init --template minimal|parallel|agent` writes that profile's bytes; invalid profile → exit 2 with valid values.
+- `fzz init` with existing `.watch.yaml` → exit 1, bytes untouched.
+- `fzz init --wait` / `fzz init --migrate` → exit 2 (irrelevant/unknown flag).
+- `fzz migrate` wraps legacy list (comments preserved), renames `tasks:` → `jobs:`, no-ops on `jobs:`.
+- `fzz migrate` on missing/malformed/unsupported file → exit 1, original unchanged.
+- `fzz migrate -c custom.yml` migrates that file.
 
 ### list / explain
 - `fzz list` prints stable task identity + triggers.
@@ -169,7 +242,8 @@ Both binary aliases must expose the identical tree and behavior.
 | `fzz --target @x` | `fzz watch @x` | first-class target |
 | `fzz '<command>'` | `fzz exec -- <command...>` | argv boundary |
 | `fzz watch '<command>'` | `fzz exec -- <command...>` | unambiguous ad-hoc |
-| `fzz --migrate` (without init) | `fzz init --migrate` | scoped flag |
+| `fzz --migrate` (without init) | `fzz migrate` | explicit subcommand |
+| `fzz init --migrate` | `fzz migrate` | one responsibility per command |
 | `--config=` silent fallback | rejected, exit 2 | no silent default |
 
 ## 12. Out of scope for V2

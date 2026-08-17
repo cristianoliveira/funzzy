@@ -11,6 +11,7 @@ migration reference.
 | --- | --- | --- | --- |
 | `fzz` (zero args) | `fzz` | unchanged (configured watch) | none |
 | `fzz <command>` (ad-hoc) | `fzz exec -- PROGRAM ARG...` | argv is preserved end-to-end, never joined/re-parsed | none |
+| `fzz --migrate` | `fzz migrate` | explicit subcommand; honors `-c/--config`; atomic rewrite, already-`jobs:` is a byte-identical no-op (exit 0) | none |
 | `fzz --non-block` / `-n` | `fzz --on-busy restart` / `--restart` | explicit policy; implies restart with control socket | none |
 | `fzz --target <t>` / `-t` | `fzz watch <t>` / `fzz run <t>` | watch-with-no-match is an error; run rejects paths | 1 for no-match/ambiguous |
 | `fzz -v` | `fzz -v, --verbose` | unchanged (verbose watch) | none |
@@ -23,11 +24,24 @@ migration reference.
 
 | V1 shape | V2 shape | Behavior |
 | --- | --- | --- |
-| root task list (`- name: ...`) | ordered `jobs:` list | accepted compatibility input; migrate with `fzz init --migrate`; declaration order/barriers preserved |
-| grouped `on:`/`tasks:` | grouped `on:`/`jobs:` | accepted; preferred root is `jobs:` |
+| root task list (`- name: ...`) | ordered `jobs:` list | accepted compatibility input; rewrite with `fzz migrate`; declaration order/barriers preserved |
+| grouped `on:`/`tasks:` | grouped `on:`/`jobs:` | accepted; preferred root is `jobs:`; `fzz migrate` renames the root key |
 | `tasks:` + `jobs:` mixed | — | **error** (no silent merge) |
 | `--non-block` in examples/scripts | `--on-busy restart` | see flag migration |
 | `--target` in examples/scripts | `watch TARGET`/`run TARGET` | see flag migration |
+
+## `fzz migrate` behavior (TASK-0096/0098)
+
+- One responsibility: **transform** an existing config in place. Never creates
+  from scratch (`fzz init`), never validates (`fzz check`), never watches.
+- Honors global `-c, --config <FILE>` (default `.watch.yaml`).
+- Inputs: legacy root list → wrapped under `jobs:` (order and comments
+  preserved); grouped `tasks:` → root key renamed; already `jobs:` →
+  byte-identical no-op, exit 0.
+- Errors (exit 1, original bytes unchanged): missing file, malformed YAML,
+  multiple documents, unsupported root, empty list.
+- Write is atomic (same-directory temp + rename); a failed migration never
+  leaves a half-written file. Successful output passes `fzz check`.
 
 ## Diagnostics vocabulary
 
@@ -40,7 +54,8 @@ migration reference.
 
 - `fzz check` — validate config without a watcher.
 - `fzz explain PATH` — matching/ignore + filtered execution topology.
-- `fzz config schema|example` — agent-discoverable schema + runnable examples.
+- `fzz config schema|example` — agent-discoverable schema + runnable examples (`example comprehensive|minimal|parallel|agent`).
+- `fzz migrate` — explicit, atomic, idempotent legacy-config rewrite.
 - `fzz control|ctl ...` — status/list/run/emit/await/cancel/output/capabilities.
 - `--events FILE` — NDJSON run event stream.
 - `--format toon|json|human` — structured control output.

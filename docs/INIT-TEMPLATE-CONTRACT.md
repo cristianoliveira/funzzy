@@ -1,6 +1,7 @@
 # Funzzy Init Template Contract
 
 > Status: **normative** — defined by TASK-0093. Drives TASK-0094 (canonical option catalog + renderer) and TASK-0095 (black-box proof and drift gate).
+> Template surface (`--template`, profiles, create-only): **normative** — TASK-0096 (implemented by TASK-0097).
 > Source: current parser (`src/config.rs`), `src/cli/init.rs`, `src/cli/config.rs`, AGENT-CONFIG-CONTRACT (TASK-0057), JOBS-CONFIG-CONTRACT (TASK-0075), GITIGNORE-CONTRACT, PARALLEL-EXECUTION-CONTRACT, SERVICE-TASKS-CONTRACT, OUTPUT-POLICY-CONTRACT, RUN-HOOKS-CONTRACT.
 
 ## 1. Purpose
@@ -8,6 +9,22 @@
 `fzz init` today writes a small runnable `.watch.yaml` that omits most supported settings, forcing users to search the docs and letting parser/schema knowledge and generated configuration drift apart. The redesigned template follows the TypeScript `tsconfig.json` pattern: **a small active setup plus commented discoverable options**. One generated file is both an immediately runnable starter and a bounded, deterministic index of every supported configuration field.
 
 Success: a user can run `fzz init && fzz` immediately, and the same file acts as a complete commented configuration reference.
+
+## 1a. Command surface (TASK-0096)
+
+- `fzz init [--template comprehensive|minimal|parallel|agent]`; default
+  `comprehensive`, so `fzz init && fzz` stays generic and runnable.
+- **Create-only**: writes `.watch.yaml` in the working directory; an existing
+  destination is a deterministic refusal (exit 1, bytes untouched). No
+  overwrite, no merge, no validation, no `--force`.
+- `comprehensive` is this contract's template (§3–§7). `minimal`, `parallel`,
+  and `agent` are the shared profile artifacts owned by the option catalog
+  and also printable via `fzz config example PROFILE`; for every profile,
+  `fzz init --template P` writes exactly the bytes `fzz config example P`
+  prints.
+- Invalid profile is a usage error (exit 2) naming the valid values.
+- Migration is not an init responsibility: use `fzz migrate`
+  (CLI-V2-CONTRACT §3a).
 
 ## 2. Scope of the generated file
 
@@ -78,7 +95,7 @@ Available inside `run` (shell string and argv form); unknown variables are repor
 
 ### 3.5 Excluded supported inputs (documented, never generated)
 
-Legacy root list and grouped `on:`/`tasks:` forms remain accepted by the parser (compatibility window, JOBS-CONFIG-CONTRACT §4) but are never emitted by `fzz init`, `fzz init --migrate` output, or `fzz config example`.
+Legacy root list and grouped `on:`/`tasks:` forms remain accepted by the parser (compatibility window, JOBS-CONFIG-CONTRACT §4) but are never emitted by `fzz init` templates or `fzz config example`; legacy files are rewritten only by `fzz migrate`.
 
 ## 4. Active starter contract
 
@@ -133,7 +150,7 @@ fzz config example minimal    tiny machine-copyable alternative starter
 - **Deterministic bytes**: the template is a compile-time constant. No terminal width, environment variable, repository content, user/host, timestamp, or network access influences it. Identical bytes on every run, every machine.
 - **Stable ordering**: fixed section order — header (purpose + next commands) → `on:` block → `jobs:` block (reference comments first, active starter last) → no trailing content.
 - **Size budget**: hard ceiling **200 lines / 8 KiB**; the design target is ≈120 lines. The exact bytes are frozen by the golden snapshot in TASK-0095; the TASK-0069 drift gate fails when the installed binary's output diverges from the snapshot. Raising the ceiling requires a design review that updates this contract.
-- **No `--minimal` flag**: `fzz config example minimal` already provides a concise machine-copyable alternative; a new `fzz init --minimal` flag is out of scope unless separately evidenced.
+- **No `--minimal` flag**: `fzz config example minimal` already provides a concise machine-copyable alternative; a new `fzz init --minimal` flag is out of scope unless separately evidenced. (`fzz init --template minimal` — TASK-0096 — is the supported selector; it selects a profile, it does not add a bespoke flag.)
 
 ## 9. Known drift exposed by the inventory
 
@@ -152,7 +169,8 @@ One canonical option catalog (TASK-0094) owns property identity, default, type/e
 
 ## 11. Out of scope
 
-- Legacy migration prose inside the generated file (migration lives in `fzz init --migrate` and JOBS-CONFIG-CONTRACT).
+- Legacy migration prose inside the generated file (migration lives in `fzz migrate` and JOBS-CONFIG-CONTRACT).
 - Project/toolchain-specific starter commands.
 - A `fzz init --minimal` flag.
+- Overwrite/merge behavior of any kind (create-only is the contract).
 - Replacing `fzz config schema` as the authoritative discovery surface.
