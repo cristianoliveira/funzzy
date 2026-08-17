@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# Release verification harness (TASK-0064).
+#
+# Verifies the PUBLISHED release end-to-end in isolated environments —
+# never the local target/ or candidate checkout. Runs per-channel checks so
+# a partial publication can be triaged channel by channel:
+#
+#   scripts/verify-release [CHANNEL...]    # default: all
+#     CHANNEL ∈ crates github nix compat control
+#   scripts/verify-release --version X     # default 2.0.0
+#   scripts/verify-release --fzz-bin PATH [compat control]   # rehearsal:
+#     skip crates.io install and exercise the binary-dependent channels
+#     against an already-built binary (pre-publication dry rehearsal).
+#
+# Exit 0 only when every requested channel passes. Each check prints
+# ok:/FAIL: with enough detail to file a precise roll-forward item.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="2.0.0"
+FZZ_BIN=""
+CHANNELS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version) VERSION="$2"; shift 2 ;;
+    --fzz-bin) FZZ_BIN="$2"; shift 2 ;;
+    *) CHANNELS+=("$1"); shift ;;
+  esac
+done
+if [ "${#CHANNELS[@]}" -eq 0 ]; then
+  CHANNELS=(crates github nix compat control)
+fi
+
+REPO_SLUG="cristianoliveira/funzzy"
+errors=0
+note() { echo "ok: $*"; }
+fail() { echo "FAIL: $*" >&2; errors=$((errors + 1)); }
+info() { echo "     $*"; }
+
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/funzzy-verify-$VERSION.XXXXXX")"
+trap 'rm -rf "$SCRATCH"' EXIT
+
+# Isolated cargo target for crates.io installs (user cargo untouched).
+export CARGO_HOME="$SCRATCH/cargo-home"
+mkdir -p "$CARGO_HOME"
+
+# Rehearsal mode: use a provided binary instead of installing from crates.io.
+if [ -n "$FZZ_BIN" ]; then
+  mkdir -p "$SCRATCH/crates/bin"
+  cp "$(cd "$(dirname "$FZZ_BIN")" && pwd)/$(basename "$FZZ_BIN")" \
+     "$SCRATCH/crates/bin/"
+  src_dir="$(dirname "$(cd "$(dirname "$FZZ_BIN")" && pwd)/$(basename "$FZZ_BIN")")"
+  [ -f "$src_dir/funzzy" ] && cp "$src_dir/funzzy" "$SCRATCH/crates/bin/" || true
+  for ch in "${CHANNELS[@]}"; do
+    [ "$ch" = "crates" ] && { echo "(rehearsal: crates channel skipped — using --fzz-bin)"; }
+  done
+fi
+
+# ---------------------------------------------------------------------------
+channel_crates() {
+  echo "== crates.io: fresh install, both binaries, core flows =="
+  if cargo install --root "$SCRATCH/crates" --version "$VERSION" --locked funzzy \
+      >"$SCRATCH/crates-install.log" 2>&1; then
+    note "cargo install funzzy@$VERSION"
+  else
+    fail "cargo install funzzy@$VERSION (log: $SCRATCH/crates-install.log)"
+    return
+  fi
+  local funzzy="$SCRATCH/crates/bin/funzzy" fzz="$SCRATCH/crates/bin/fzz"
+
+  for bin in "$funzzy" "$fzz"; do
+    if [ "$("$bin" --version)" = "funzzy $VERSION" ]; then
+      note "$bin --version == $VERSION"
+    else
+      fail "$bin --version: got '$("$bin" --version 2>&1 || true)'"
+    fi
+  done
+
+  local proj="$SCRATCH/crates-project"; mkdir -p "$proj"; cd "$proj"
+  "$fzz" init >/dev/null 2>&1 && note "fzz init creates config" \
+    || fail "fzz init"
+  "$fzz" check >/dev/null 2>&1 && note "fzz check accepts generated config" \
+    || fail "fzz check on generated config"
+  "$fzz" list >/dev/null 2>&1 && note "fzz list" || fail "fzz list"
+  "$fzz" run "hello world" >/dev/null 2>&1 && note "fzz run executes once (no watcher)" \
+    || fail "fzz run 'hello world'"
+
+  # Watcher starts and stops gracefully on SIGTERM.
+  # Product contract (tests/close_hook_lifecycle.rs): INT->130, TERM->143.
+  ("$fzz" >"$SCRATCH/watch.log" 2>&1) &
+  local watcher=$!
+  sleep 2
+  if kill -0 "$watcher" 2>/dev/null; then
+    kill -TERM "$watcher" 2>/dev/null || true
+    local rc=0; wait "$watcher" 2>/dev/null || rc=$?
+    if [ "$rc" -eq 143 ]; then note "watch starts; SIGTERM exits 143 per contract"
+    else fail "watcher SIGTERM exit code $rc (expected 143)"
+    fi
+  else
+    fail "watcher exited within 2s of start (log: $SCRATCH/watch.log)"
+  fi
+  cd "$ROOT"
+}
+
+# ---------------------------------------------------------------------------
+channel_github() {
+  echo "== GitHub release: archives, checksums, native binaries =="
+  local rel_meta
+  if ! rel_meta="$(gh release view "v$VERSION" --json isDraft,tagName,assets 2>/dev/null)"; then
+    fail "gh release view v$VERSION (no such release?)"
+    return
+  fi
+  if [ "$(python3 -c 'import json,sys;print(json.load(sys.stdin)["isDraft"])' <<<"$rel_meta")" = "True" ]; then
+    fail "release v$VERSION is still a DRAFT — publication incomplete"
+    return
+  fi
+  note "release v$VERSION exists and is published"
+
+  local assets
+  assets="$(python3 -c 'import json,sys;print("\n".join(a["name"] for a in json.load(sys.stdin)["assets"]))' <<<"$rel_meta")"
+  local targets="x86_64-linux aarch64-linux x86_64-darwin aarch64-darwin" t missing=0
+  for t in $targets; do
+    local base="funzzy-v$VERSION-$t.tar.gz"
+    grep -qx "$base" <<<"$assets" || { fail "missing archive $base"; missing=1; }
+    grep -qx "$base.sha256" <<<"$assets" || { fail "missing checksum $base.sha256"; missing=1; }
+  done
+  [ "$missing" -eq 0 ] && note "all 4 archives + 4 sha256 assets present"
+
+  local dl="$SCRATCH/github"; mkdir -p "$dl"; cd "$dl"
+  gh release download "v$VERSION" --repo "$REPO_SLUG" --pattern "*$VERSION*" >/dev/null 2>&1 \
+    || { fail "gh release download"; cd "$ROOT"; return; }
+  shasum -a 256 -c ./*.sha256 >/dev/null 2>&1 && note "all checksums verify" \
+    || fail "sha256 -c mismatch"
+  ls -1 ./*.tar.gz | while read -r a; do
+    tar tzf "$a" | grep -q "pkg/fzz" && : || echo "     WARN: $a has no pkg/fzz entry"
+  done
+
+  # Native binaries run on this platform.
+  local native="funzzy-v$VERSION-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]').tar.gz"
+  if [ -f "$native" ]; then
+    mkdir -p native && tar xzf "$native" -C native
+    for bin in fzz funzzy; do
+      if [ "$(./native/pkg/$bin --version)" = "funzzy $VERSION" ]; then
+        note "native $bin reports $VERSION"
+      else
+        fail "native $bin version: '$(./native/pkg/$bin --version 2>&1 || true)'"
+      fi
+    done
+  else
+    info "no native archive for this platform ($native) — cross-only check skipped"
+  fi
+  cd "$ROOT"
+}
+
+# ---------------------------------------------------------------------------
+channel_nix() {
+  echo "== Nix stable channel =="
+  local out
+  if out="$(nix run "github:$REPO_SLUG#default" -- --version 2>"$SCRATCH/nix.log")"; then
+    if [ "$out" = "funzzy $VERSION" ]; then
+      note "stable Nix package reports $VERSION"
+    else
+      fail "stable Nix reports '$out' (expected $VERSION) — bump nix/package.nix to v$VERSION"
+    fi
+  else
+    fail "nix run github:$REPO_SLUG#default (log: $SCRATCH/nix.log)"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+channel_compat() {
+  echo "== V1 compatibility surface =="
+  local fzz="$SCRATCH/crates/bin/fzz"
+  [ -x "$fzz" ] || { fail "crates channel must run before compat"; return; }
+
+  # Minimal V1 root-list config loads through the published binary.
+  local v1="$SCRATCH/v1"; mkdir -p "$v1"; cd "$v1"
+  printf -- "- name: legacy\n  run: 'true'\n  change: '**/*.tmp'\n" > .watch.yaml
+  if "$fzz" check >/dev/null 2>&1; then
+    note "minimal V1 root-list config loads"
+  else
+    fail "minimal V1 config rejected by published binary"
+  fi
+
+  # Removed V1 flags: must at least fail closed. Targeted replacement hints
+  # (docs/MIGRATION.md mapping) are informational until shipped.
+  local out rc
+  out="$("$fzz" --non-block 2>&1)" && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ] && grep -q "unexpected argument" <<<"$out"; then
+    note "--non-block rejected"
+    grep -qi "on-busy" <<<"$out" && note "targets V2 hint" \
+      || info "no targeted V2 hint for --non-block (generic clap error; see docs/MIGRATION.md)"
+  else
+    fail "--non-block not rejected: rc=$rc"
+  fi
+
+  # Migrate path: grouped tasks form renames to jobs atomically.
+  printf -- "on:\n  change: '**/*.tmp'\ntasks:\n  - name: legacy\n    run: 'true'\n" > .watch.yaml
+  "$fzz" migrate >/dev/null 2>&1 && grep -q "^jobs:" .watch.yaml \
+    && note "fzz migrate rewrites grouped V1 form to jobs:" \
+    || fail "fzz migrate"
+  cd "$ROOT"
+}
+
+# ---------------------------------------------------------------------------
+channel_control() {
+  echo "== Control protocol (published binary) =="
+  local fzz="$SCRATCH/crates/bin/fzz"
+  [ -x "$fzz" ] || { fail "crates channel must run before control"; return; }
+
+  local ctl="$SCRATCH/ctl"; mkdir -p "$ctl"; cd "$ctl"
+  printf -- "on:\n  socket: funzzy-verify.sock\njobs:\n  - name: noop\n    run: 'true'\n    change: '**/*.tmp'\n" > .watch.yaml
+  ("$fzz" >"$SCRATCH/ctl-watch.log" 2>&1) &
+  local watcher=$!
+  trap 'kill -TERM $watcher 2>/dev/null || true' RETURN
+  for _ in 1 2 3 4 5; do [ -S funzzy-verify.sock ] && break; sleep 1; done
+
+  local caps
+  if caps="$("$fzz" ctl capabilities 2>/dev/null)"; then
+    note "ctl capabilities responds"
+    # Human-readable protocol facts: parse the stable lines.
+    grep -q "^watcher version: $VERSION" <<<"$caps" \
+      && note "capabilities watcher version == $VERSION" \
+      || fail "capabilities watcher version (got: $(grep '^watcher version' <<<"$caps" || echo none))"
+    grep -q "^schema version:" <<<"$caps" \
+      && note "capabilities schema version present" \
+      || fail "capabilities schema version missing"
+    info "capabilities: $(head -c 160 <<<"$caps")…"
+  else
+    fail "ctl capabilities (log: $SCRATCH/ctl-watch.log)"
+  fi
+  "$fzz" ctl status >/dev/null 2>&1 && note "ctl status" || fail "ctl status"
+
+  kill -TERM "$watcher" 2>/dev/null || true
+  local rc=0; wait "$watcher" 2>/dev/null || rc=$?
+  [ "$rc" -eq 143 ] && note "watcher exits 143 after control session (contract)" \
+    || fail "watcher exit $rc after control session (expected 143)"
+  trap - RETURN
+  cd "$ROOT"
+}
+
+for ch in "${CHANNELS[@]}"; do
+  case "$ch" in
+    crates)   channel_crates ;;
+    github)   channel_github ;;
+    nix)      channel_nix ;;
+    compat)   channel_compat ;;
+    control)  channel_control ;;
+    *) fail "unknown channel '$ch'" ;;
+  esac
+done
+
+if [ "$errors" -gt 0 ]; then
+  echo "verify-release: FAILED ($errors issue(s)) for v$VERSION" >&2
+  exit 1
+fi
+echo "verify-release: OK — v$VERSION verified on: ${CHANNELS[*]}"

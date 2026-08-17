@@ -30,3 +30,10 @@ Verification runs against downloaded/published artifacts in fresh isolated envir
 
 ## Notes
 
+
+## Prep complete (09-04-26, pre-publication)
+
+- `scripts/verify-release` harness landed (`make verify-release`): per-channel verification — crates (isolated CARGO_HOME install, both binaries, init/check/list/run, watcher 130/143 signal contract), github (draft detection, 4 archives + sha256 verification, native binary run), nix (stable package version), compat (V1 config load, removed-flag rejection + hint gap surfaced, migrate atomicity), control (capabilities text facts: watcher/schema versions, status, clean TERM).
+- `--fzz-bin PATH` rehearsal mode: compat+control channels rehearsed green against local v2.0.0 build; github/crates channels proven to fail honestly while v2.0.0 is unpublished (draft detection verified live).
+- Known gap surfaced for triage post-publish: removed V1 flags get generic clap errors, no targeted V2 replacement hint (criterion 4 partially unmet by product today — MIGRATION.md carries the mapping instead).
+- Run once publication lands: `make verify-release` (default 2.0.0). Every criterion maps to a channel check.

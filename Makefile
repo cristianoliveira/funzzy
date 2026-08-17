@@ -103,4 +103,8 @@ version-check: ## Verify release version identity across packages (TASK-0061)
 
 .PHONY: version-check-test
 version-check-test: ## Test the version consistency check (TASK-0061)
-	  @./scripts/version-check-test
+	@./scripts/version-check-test
+
+.PHONY: verify-release
+verify-release: ## Verify the published release end-to-end (TASK-0064)
+	@./scripts/verify-release
