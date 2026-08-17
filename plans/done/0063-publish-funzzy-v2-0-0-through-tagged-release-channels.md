@@ -142,3 +142,12 @@ Post-publish step (needs published sha256s, cannot be pre-computed):
 2. Then verify criterion: `brew install cristianoliveira/tap/funzzy && fzz --version == 2.0.0`.
 
 Add to the release record alongside tag/crate/Nix evidence.
+
+## Final readiness (09-04-26, remote-verified)
+
+master fully pushed through `0fdd3ed` (includes installer fix `ced38c5`, V1 hints `28c0bb0`, verify harness). Remote CI on `0fdd3ed`: CI Checks (build/lint/unit + first run of new MSRV job) ✓, nix build ✓, integration tests ✓. The manual run is now exactly:
+
+1. delete stale LOCAL v2.0.0 tag; `git tag -a v2.0.0 0fdd3ed` (annotated, notes from the embedded draft); `git push origin v2.0.0`
+2. artifacts + sha256 build automatically (on-release-bin); publish the existing draft release with the embedded notes
+3. crates.io publishes from the exact tag (on-release identity gate)
+4. tap + stable Nix per the packet steps above; then `make verify-release`
