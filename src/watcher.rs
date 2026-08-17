@@ -1,4 +1,3 @@
-extern crate notify;
 extern crate notify_debouncer_mini;
 use notify_debouncer_mini::notify::ErrorKind;
 
@@ -154,7 +153,7 @@ pub fn events(
 /// used by Auto to decide the backend before consuming `on_ready`.
 fn native_available(watch_path_list: &[String]) -> Result<(), String> {
     let (tx, _rx) = channel();
-    let mut debouncer = new_debouncer(Duration::from_millis(1000), None, tx)
+    let mut debouncer = new_debouncer(Duration::from_millis(1000), tx)
         .map_err(|err| format!("native backend init failed: {:?}", err))?;
     let watcher = debouncer.watcher();
     for path in watch_path_list {
@@ -178,7 +177,7 @@ fn run_native(
     shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
-    let mut debouncer = new_debouncer(debounce, None, tx)
+    let mut debouncer = new_debouncer(debounce, tx)
         .map_err(|err| format!("unable to create native watcher: {:?}", err))?;
     let watcher = debouncer.watcher();
     let batch_sequence = AtomicSequence::new();
@@ -408,7 +407,7 @@ fn apply_root_swap(
 fn normalize_batch(
     debounced: Result<
         Vec<notify_debouncer_mini::DebouncedEvent>,
-        Vec<notify_debouncer_mini::notify::Error>,
+        notify_debouncer_mini::notify::Error,
     >,
 ) -> (Vec<FileEvent>, bool) {
     let Ok(file_change_event) = debounced else {
@@ -517,7 +516,9 @@ mod tests {
 
     #[test]
     fn malformed_window_yields_empty_batch() {
-        let (normalized, malformed) = normalize_batch(Err(vec![]));
+        let (normalized, malformed) = normalize_batch(Err(
+            notify_debouncer_mini::notify::Error::generic("test error"),
+        ));
         assert!(malformed);
         assert!(normalized.is_empty());
     }

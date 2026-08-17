@@ -773,7 +773,6 @@ impl Watches {
 #[cfg(test)]
 mod tests {
     extern crate glob;
-    extern crate notify;
     extern crate yaml_rust;
 
     use super::*;
