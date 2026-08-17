@@ -1,7 +1,7 @@
 ---
 id: TASK-0102
 title: Prove watcher close hook lifecycle
-status: doing
+status: done
 depends_on: [TASK-0101]
 priority: high
 tags: [integration-tests, watcher, hooks, signals, process, config-reload, reliability]
