@@ -1,7 +1,7 @@
 ---
 id: TASK-0112
 title: Replace unmaintained yaml-rust parser with maintained implementation
-status: todo
+status: done
 depends_on: [TASK-0103]
 priority: high
 tags: [rust, yaml, security, config, migration, tdd]
