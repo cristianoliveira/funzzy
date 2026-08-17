@@ -444,17 +444,21 @@ fn normalize_batch(
 /// directory: rescanning it would re-route every pre-existing descendant
 /// under the new revision and supersede busy generations (TASK-0113).
 /// Events on any other existing directory keep the §4 rescan.
+/// Directory events are discovery signals, never routable changes
+/// (TASK-0114): a directory path itself matches change globs like `src/**`
+/// while escaping ignore globs like `src/ignored/**`, so on Linux — where
+/// notify repeatedly delivers directory-path events, including rescan
+/// chatter with no real write — ignored paths still triggered jobs after a
+/// reload. Reconciling therefore walks directories to synthesize their
+/// files (contract §4) and then DROPS every directory path from the batch:
+/// batches carry files only. The poll backend already emits file paths
+/// only, so both backends route identically.
 fn reconcile_new_directories(mut events: Vec<FileEvent>, watch_roots: &[String]) -> Vec<FileEvent> {
     let mut known: std::collections::HashSet<String> =
         events.iter().map(|event| event.path.clone()).collect();
     let mut synthesized: Vec<FileEvent> = Vec::new();
+    let mut directories: std::collections::HashSet<String> = std::collections::HashSet::new();
     for event in &events {
-        if event.continuous {
-            continue;
-        }
-        if watch_roots.iter().any(|root| root == &event.path) {
-            continue;
-        }
         let path = Path::new(&event.path);
         let is_dir = std::fs::metadata(path)
             .map(|meta| meta.is_dir())
@@ -462,9 +466,26 @@ fn reconcile_new_directories(mut events: Vec<FileEvent>, watch_roots: &[String])
         if !is_dir {
             continue;
         }
+        directories.insert(event.path.clone());
+        // Continuous events never rescan (a touched long-lived directory
+        // must not flood the batch with its whole subtree).
+        if event.continuous {
+            continue;
+        }
+        // A path equal to an active watch root is a backend self-event
+        // (Linux inotify bookkeeping, e.g. around reloads): no rescan, its
+        // pre-existing descendants must never re-route (TASK-0113).
+        if watch_roots.iter().any(|root| root == &event.path) {
+            continue;
+        }
         let mut descendants: Vec<PathBuf> = Vec::new();
         walk_descendants(path, &mut descendants);
         for descendant in descendants {
+            // Files only: nested directories are discovery signals too —
+            // their files are part of this same recursive walk.
+            if !descendant.is_file() {
+                continue;
+            }
             let Some(descendant_path) = descendant.to_str() else {
                 continue;
             };
@@ -476,6 +497,9 @@ fn reconcile_new_directories(mut events: Vec<FileEvent>, watch_roots: &[String])
             }
         }
     }
+    // Files only: drop every directory path (root self-events, discovered
+    // directories, and continuous directory noise alike).
+    events.retain(|event| !directories.contains(&event.path));
     events.append(&mut synthesized);
     events.sort_by(|a, b| a.path.cmp(&b.path));
     events.dedup_by(|a, b| a.path == b.path);
@@ -881,13 +905,10 @@ mod reconcile_tests {
     }
 
     #[test]
-    fn watch_root_bookkeeping_event_never_rescans_its_subtree() {
-        // TASK-0113: on Linux, notify delivers bookkeeping Any-events on the
-        // watched ROOT DIRECTORY itself (e.g. around config reloads). The
-        // root is definitionally not a newly created directory — walking it
-        // would synthesize every pre-existing descendant into the batch and
-        // re-route them under the new revision, superseding busy
-        // generations. The self-event must pass through WITHOUT a rescan.
+    fn watch_root_bookkeeping_event_is_dropped_entirely() {
+        // TASK-0113/0114: the watched root's self-events (Linux inotify
+        // bookkeeping, e.g. around reloads) are discovery noise: no rescan
+        // and no routing. The root path never appears in a batch.
         let dir = scratch("root-self");
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/pre-existing.rs"), "x").unwrap();
@@ -897,38 +918,61 @@ mod reconcile_tests {
             path: root.clone(),
             continuous: false,
         }];
-        let reconciled = reconcile_new_directories(events, &[root.clone()]);
-        assert_eq!(
-            reconciled,
-            vec![FileEvent {
-                path: root,
-                continuous: false,
-            }],
-            "watch-root self-event must not synthesize descendants: {reconciled:?}"
+        let reconciled = reconcile_new_directories(events, &[root]);
+        assert!(
+            reconciled.is_empty(),
+            "watch-root self-event must not route or rescan: {reconciled:?}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn new_directory_under_a_root_still_rescans_after_the_fix() {
-        // The contract §4 race stays covered after TASK-0113: a genuinely
-        // new directory (a path OTHER than the watched roots) still walks
-        // its subtree so files written before its watch registered route.
-        let dir = scratch("new-child");
-        std::fs::create_dir_all(dir.join("src/new")).unwrap();
-        std::fs::write(dir.join("src/new/lib.rs"), "x").unwrap();
-        let root = dir.join("src").display().to_string();
+    fn directory_events_are_dropped_but_their_files_route() {
+        // TASK-0114: on Linux a directory path itself matches change globs
+        // like src/** while escaping ignore globs like src/ignored/**, so
+        // ignored paths still triggered jobs. Directories are discovery
+        // signals only — the batch carries files, never the directory.
+        let dir = scratch("dir-drop");
+        std::fs::create_dir_all(dir.join("tree/ignored")).unwrap();
+        std::fs::write(dir.join("tree/ignored/x.rs"), "x").unwrap();
 
         let events = vec![FileEvent {
-            path: dir.join("src/new").display().to_string(),
+            path: dir.join("tree").display().to_string(),
             continuous: false,
         }];
-        let reconciled = reconcile_new_directories(events, &[root]);
+        let reconciled = reconcile_new_directories(events, &[]);
         assert!(
             reconciled
                 .iter()
-                .any(|e| e.path.ends_with("src/new/lib.rs")),
-            "newly created directory must still synthesize its files: {reconciled:?}"
+                .any(|e| e.path.ends_with("tree/ignored/x.rs")),
+            "files inside the directory still synthesize and route: {reconciled:?}"
+        );
+        assert!(
+            !reconciled
+                .iter()
+                .any(|e| e.path.ends_with("tree") || e.path.ends_with("tree/ignored")),
+            "directory paths never route: {reconciled:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn continuous_directory_events_are_pure_noise_and_dropped() {
+        // A continuous (modify) event on a long-lived directory is mtime
+        // noise (Linux re-delivers these in rescan chatter); files under it
+        // carry real changes. Never routable.
+        let dir = scratch("dir-cont");
+        std::fs::create_dir_all(dir.join("old")).unwrap();
+        std::fs::write(dir.join("old/pre-existing.rs"), "x").unwrap();
+
+        let events = vec![FileEvent {
+            path: dir.join("old").display().to_string(),
+            continuous: true,
+        }];
+        let reconciled = reconcile_new_directories(events, &[]);
+        assert!(
+            reconciled.is_empty(),
+            "continuous directory event must not route or rescan: {reconciled:?}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -995,7 +1039,8 @@ mod reconcile_tests {
     fn reconcile_skips_continuous_dir_events_and_missing_paths() {
         // A continuous (modify) event on a long-lived directory must not
         // rescan its whole subtree, and removed paths must pass through
-        // untouched.
+        // untouched. Since TASK-0114 the continuous directory event itself
+        // is dropped (files-only batches); the missing path passes through.
         let dir = scratch("skip-continuous");
         std::fs::create_dir_all(dir.join("old")).unwrap();
         std::fs::write(dir.join("old/pre-existing.rs"), "x").unwrap();
@@ -1010,12 +1055,14 @@ mod reconcile_tests {
                 continuous: false,
             },
         ];
-        let reconciled = reconcile_new_directories(events.clone(), &[]);
-        let mut expected = events;
-        expected.sort_by(|a, b| a.path.cmp(&b.path));
+        let reconciled = reconcile_new_directories(events, &[]);
         assert_eq!(
-            reconciled, expected,
-            "continuous and nonexistent paths must not synthesize anything"
+            reconciled,
+            vec![FileEvent {
+                path: dir.join("gone").display().to_string(),
+                continuous: false,
+            }],
+            "continuous directory drops, nonexistent path passes through: {reconciled:?}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

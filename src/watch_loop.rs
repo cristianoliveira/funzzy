@@ -95,6 +95,49 @@ pub trait RunStrategy {
 /// swaps the effective configuration under the lock at the commit boundary,
 /// and each batch routes under exactly one committed revision. `swap_rx`
 /// carries live root swaps to the backend; None for legacy/blocking callers.
+/// Content-change gate (TASK-0114): notify backends can re-deliver a path
+/// in later debounce windows even though nothing wrote it again (observed
+/// on Linux whenever two watcher instances cover one tree, e.g. the jobs
+/// watcher plus the config-reload watcher). Routing follows actual
+/// modification, in the same spirit as the reload watcher's config
+/// baselines: a path routes only when its mtime changed since it last
+/// routed (first sighting routes; a deletion routes once). Chatter without
+/// a real write can never schedule work on any backend or platform.
+struct ModificationGate {
+    last_seen: std::collections::HashMap<String, Option<std::time::SystemTime>>,
+}
+
+impl ModificationGate {
+    fn new() -> Self {
+        ModificationGate {
+            last_seen: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Returns the paths that EXIST and whose observed mtime differs from
+    /// the previous call, in input order. Deletions never schedule work
+    /// (nothing to run); an absent path updates the baseline so a later
+    /// recreation routes exactly once.
+    fn changed(&mut self, paths: Vec<String>) -> Vec<String> {
+        let mut routed = Vec::new();
+        for path in paths {
+            let current = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .ok();
+            let previous = self.last_seen.insert(path.clone(), current);
+            match (previous, current) {
+                // First sighting of an existing path, or a real modification.
+                (_, Some(mtime)) if previous != Some(Some(mtime)) => routed.push(path),
+                // Creation after a known deletion.
+                (Some(None), Some(_)) => routed.push(path),
+                // Same mtime (chatter re-delivery) or absent path: quiet.
+                _ => {}
+            }
+        }
+        routed
+    }
+}
+
 pub fn watch_loop(
     watches: &std::sync::Arc<std::sync::Mutex<Watches>>,
     run_on_init: bool,
@@ -114,6 +157,7 @@ pub fn watch_loop(
         .as_ref()
         .map(|coordinator| coordinator.requested_flag());
     let ready_shutdown = shutdown;
+    let gate = std::cell::RefCell::new(ModificationGate::new());
 
     watcher::events(
         list_of_watched_paths,
@@ -159,6 +203,14 @@ pub fn watch_loop(
                 return;
             }
             strategy.on_batch(&batch);
+            // Content-change gate (TASK-0114): only paths actually modified
+            // since their last routed batch may schedule work; notify's
+            // chatter re-delivery is filtered before matching.
+            let changed_paths = gate.borrow_mut().changed(batch.changed.clone());
+            if changed_paths.is_empty() {
+                return;
+            }
+            let batch = Batch::normalized(batch.id, changed_paths);
             // Lock once per batch: the whole routing decision (match/ignore,
             // plan, trigger, frozen revision) reads one committed revision
             // (contract §4). The revision rides the schedule so the generated
@@ -1383,5 +1435,103 @@ mod tests {
             .emit_path("src/generated/out.rs")
             .expect("ignored path");
         assert_eq!(outcome.run_id, None);
+    }
+}
+
+#[cfg(test)]
+mod modification_gate_tests {
+    use super::ModificationGate;
+    use std::path::PathBuf;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fzz-gate-{}-{label}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A re-delivered event for an untouched file never routes twice
+    /// (TASK-0114): the exact Linux chatter shape — same path, no write.
+    #[test]
+    fn redelivered_untouched_path_is_filtered() {
+        let dir = scratch("chatter");
+        let file = dir.join("a.rs");
+        std::fs::write(&file, "one").unwrap();
+
+        let mut gate = ModificationGate::new();
+        let first = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(first.len(), 1, "first sighting routes");
+        let second = gate.changed(vec![file.display().to_string()]);
+        assert!(second.is_empty(), "re-delivery without a write is chatter");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A real rewrite routes again: mtime moved.
+    #[test]
+    fn rewritten_path_routes_again() {
+        let dir = scratch("rewrite");
+        let file = dir.join("a.rs");
+        std::fs::write(&file, "one").unwrap();
+        let mut gate = ModificationGate::new();
+        gate.changed(vec![file.display().to_string()]);
+
+        // Ensure the rewrite produces a distinct mtime (filesystems with
+        // coarse timestamps): poll until it differs, bounded.
+        let first_mtime = std::fs::metadata(&file).unwrap().modified().unwrap();
+        loop {
+            std::fs::write(&file, "two - longer content").unwrap();
+            if std::fs::metadata(&file).unwrap().modified().unwrap() != first_mtime {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let second = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(second.len(), 1, "a real rewrite routes");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Deletions never schedule; recreation afterwards routes once.
+    #[test]
+    fn deletion_is_quiet_but_recreation_routes() {
+        let dir = scratch("delete");
+        let file = dir.join("gone.rs");
+        std::fs::write(&file, "x").unwrap();
+        let mut gate = ModificationGate::new();
+        gate.changed(vec![file.display().to_string()]);
+
+        std::fs::remove_file(&file).unwrap();
+        let deletion = gate.changed(vec![file.display().to_string()]);
+        assert!(deletion.is_empty(), "deletion never schedules work");
+        let still_gone = gate.changed(vec![file.display().to_string()]);
+        assert!(still_gone.is_empty(), "absent path stays quiet");
+
+        std::fs::write(&file, "recreated").unwrap();
+        let recreated = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(recreated.len(), 1, "recreation routes once");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fresh file that appeared between batches routes on first sighting.
+    #[test]
+    fn new_file_routes_on_first_sighting() {
+        let dir = scratch("create");
+        let file = dir.join("new.rs");
+        std::fs::write(&file, "x").unwrap();
+        let mut gate = ModificationGate::new();
+        let routed = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(routed.len(), 1);
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
