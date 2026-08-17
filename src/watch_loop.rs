@@ -114,6 +114,36 @@ impl ModificationGate {
         }
     }
 
+    /// Baselines every existing file under the roots (TASK-0114): a
+    /// pre-existing file may never route as a "first sighting" — the §4
+    /// directory walk synthesizes pre-existing siblings on Linux (a file
+    /// create bumps the parent dir, whose walk re-lists them), and startup
+    /// replays are noise on every backend. Entries are only filled, never
+    /// overwritten, so a re-seed (root swap) cannot mask in-flight writes:
+    /// a real modification still moves mtime past any baseline.
+    fn seed(&mut self, roots: &[String]) {
+        for root in roots {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let mtime = std::fs::metadata(&path)
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                match path.to_str() {
+                    Some(path) => {
+                        self.last_seen.entry(path.to_owned()).or_insert(mtime);
+                    }
+                    None => continue,
+                }
+                if path.is_dir() {
+                    self.seed(&[path.display().to_string()]);
+                }
+            }
+        }
+    }
+
     /// Returns the paths that EXIST and whose observed mtime differs from
     /// the previous call, in input order. Deletions never schedule work
     /// (nothing to run); an absent path updates the baseline so a later
@@ -158,6 +188,8 @@ pub fn watch_loop(
         .map(|coordinator| coordinator.requested_flag());
     let ready_shutdown = shutdown;
     let gate = std::cell::RefCell::new(ModificationGate::new());
+    gate.borrow_mut().seed(&list_of_watched_paths);
+    let gated_revision = std::cell::RefCell::new(initial.revision().cloned());
 
     watcher::events(
         list_of_watched_paths,
@@ -217,6 +249,15 @@ pub fn watch_loop(
             // run freezes exactly the routed revision (TASK-0091, AC7).
             let watches_guard = watches.lock().unwrap();
             let revision = watches_guard.revision().cloned();
+            // A revision change may swap watch roots: baseline any NEW
+            // root's pre-existing files so a swap never replays them
+            // (same rule as startup; fill-only, never overwrite).
+            if revision != *gated_revision.borrow() {
+                if let Some(roots) = watches_guard.paths_to_watch() {
+                    gate.borrow_mut().seed(&roots);
+                }
+                *gated_revision.borrow_mut() = revision.clone();
+            }
             match watches_guard.watch_plan_batch(&batch.changed) {
                 Some((plan, trigger)) => {
                     stdout::clear_screen();
@@ -1531,6 +1572,93 @@ mod modification_gate_tests {
         let mut gate = ModificationGate::new();
         let routed = gate.changed(vec![file.display().to_string()]);
         assert_eq!(routed.len(), 1);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod modification_gate_seed_tests {
+    use super::ModificationGate;
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "fzz-seed-{}-{label}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Pre-existing files are baselined at seed: synthesizing them later
+    /// (Linux §4 parent-dir walk) can never route them (TASK-0114).
+    #[test]
+    fn pre_existing_files_never_route_after_seeding() {
+        let dir = scratch("baseline");
+        std::fs::create_dir_all(dir.join("workdir/backend")).unwrap();
+        std::fs::write(dir.join("workdir/backend/test.rs"), "old").unwrap();
+
+        let mut gate = ModificationGate::new();
+        gate.seed(&[dir.join("workdir").display().to_string()]);
+
+        let routed = gate.changed(vec![dir
+            .join("workdir/backend/test.rs")
+            .display()
+            .to_string()]);
+        assert!(
+            routed.is_empty(),
+            "baselined pre-existing file must not route on synthesis: {routed:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Files created AFTER seeding still route on first sighting.
+    #[test]
+    fn post_seed_creation_routes() {
+        let dir = scratch("create-after-seed");
+        std::fs::create_dir_all(dir.join("workdir")).unwrap();
+        let mut gate = ModificationGate::new();
+        gate.seed(&[dir.join("workdir").display().to_string()]);
+
+        let file = dir.join("workdir/trigger.txt");
+        std::fs::write(&file, "new").unwrap();
+        let routed = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(routed.len(), 1, "post-seed creation routes");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A re-seed never overwrites a live baseline (fill-only): a rewrite
+    /// tracked between seeds still routes afterwards.
+    #[test]
+    fn reseed_never_masks_inflight_writes() {
+        let dir = scratch("reseed");
+        let file = dir.join("a.txt");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&file, "one").unwrap();
+
+        let mut gate = ModificationGate::new();
+        let roots = [dir.display().to_string()];
+        gate.seed(&roots);
+        gate.changed(vec![file.display().to_string()]); // now tracked
+
+        // Rewrite bumps mtime past the baseline…
+        std::fs::write(&file, "two-with-more-content").unwrap();
+        // …then a root swap triggers a re-seed before the event routes.
+        gate.seed(&roots);
+
+        let routed = gate.changed(vec![file.display().to_string()]);
+        assert_eq!(
+            routed.len(),
+            1,
+            "fill-only re-seed keeps the older baseline"
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
