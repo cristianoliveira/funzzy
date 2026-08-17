@@ -30,3 +30,12 @@ This task contains irreversible remote writes. Require explicit human approval o
 
 ## Notes
 
+
+## Approval packet (prepared 09-04-26, user chose HOLD — nothing executed)
+
+- Candidate SHA: `b20f12236c986fc3a3c936c040b3c71e1e6d7324` (master HEAD; supersedes TASK-0084-era `84d526b` per task notes).
+- Pre-flight ALL GREEN: gh auth (cristianoliveira, repo scope); CRATES_TOKEN secret present; crates.io funzzy@2.0.0 untaken (max 1.5.0); remote tag v2.0.0 absent; `version-check --candidate` OK; `cargo publish --dry-run` clean; multi-arch workflow verified — checksum step was missing and landed as `b20f122` (sha256 files beside every archive).
+- Approved-pending: delete stale LOCAL-ONLY v2.0.0 tag (never pushed; points at superseded 84d526b), re-tag annotated at candidate, push once.
+- Release notes draft: `.tmp/reports/09-04-26/0063-release-notes-draft.md`.
+- Execution order on approval: push master -> tag+push -> (auto) 4-arch artifacts w/ checksums -> GitHub release draft -> publish (triggers on-release crates.io from exact tag after identity gate) -> stable Nix bump to v2.0.0 + reproducible build -> record URLs/checksums -> TASK-0064.
+- Failure policy: stop remaining channels on partial failure, record resume point, no republish of completed channels; no force-push/tag-rewrite/release-overwrite/yank without separate incident decision.
