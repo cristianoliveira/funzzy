@@ -1,7 +1,7 @@
 ---
 id: TASK-0111
 title: Prove docs drift apparatus is gone without changing runtime behavior
-status: todo
+status: done
 depends_on: [TASK-0110, TASK-0061]
 priority: high
 tags: [tests, docs, cleanup, ci, regression]
