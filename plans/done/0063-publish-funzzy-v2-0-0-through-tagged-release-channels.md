@@ -1,7 +1,7 @@
 ---
 id: TASK-0063
 title: Publish Funzzy v2.0.0 through tagged release channels
-status: doing
+status: done
 depends_on: [TASK-0062, TASK-0084]
 priority: high
 tags: [release, github, crates-io, nix, supply-chain]
@@ -39,3 +39,18 @@ This task contains irreversible remote writes. Require explicit human approval o
 - Release notes draft: `.tmp/reports/09-04-26/0063-release-notes-draft.md`.
 - Execution order on approval: push master -> tag+push -> (auto) 4-arch artifacts w/ checksums -> GitHub release draft -> publish (triggers on-release crates.io from exact tag after identity gate) -> stable Nix bump to v2.0.0 + reproducible build -> record URLs/checksums -> TASK-0064.
 - Failure policy: stop remaining channels on partial failure, record resume point, no republish of completed channels; no force-push/tag-rewrite/release-overwrite/yank without separate incident decision.
+
+## Closure (09-04-26)
+
+Ownership of the irreversible remote writes transferred to Cristian ("I'll do
+it myself"). Publication was NOT executed from this session and, as of this
+timestamp, no channel (remote tag / GitHub release / crates.io 2.0.0) carried
+the release yet. Everything needed is in place for a one-shot manual run:
+
+- Approved candidate: `b20f122` (checksums fix included; pre-flight table + execution order + failure policy in the packet above).
+- Release notes draft: `.tmp/reports/09-04-26/0063-release-notes-draft.md`.
+- Reminder for the manual run: delete the stale LOCAL `v2.0.0` tag first
+  (points at superseded `84d526b`); push master before tagging.
+
+TASK-0064 (post-publication verification) is unblocked by this closure but
+cannot start until the channels actually carry v2.0.0.
