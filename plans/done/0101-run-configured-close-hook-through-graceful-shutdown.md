@@ -1,7 +1,7 @@
 ---
 id: TASK-0101
 title: Run configured close hook through graceful shutdown
-status: doing
+status: done
 depends_on: [TASK-0100]
 priority: high
 tags: [rust, watcher, config, hooks, signals, process, tdd]
