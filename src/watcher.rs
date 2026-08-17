@@ -253,7 +253,7 @@ fn run_native(
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(debounced_evts) => {
                 let (events, malformed) = normalize_batch(debounced_evts);
-                let events = reconcile_new_directories(events);
+                let events = reconcile_new_directories(events, &current_roots);
                 if events.is_empty() {
                     // Malformed or empty windows never schedule; still surface
                     // the observation when diagnostics are enabled.
@@ -439,12 +439,20 @@ fn normalize_batch(
 /// creation observable exactly like the poll backend (§7 equivalence).
 /// Continuous (modify) events never rescan, so a touched long-lived
 /// directory does not flood the batch with its whole subtree.
-fn reconcile_new_directories(mut events: Vec<FileEvent>) -> Vec<FileEvent> {
+/// A path equal to an active watch root is a backend self-event
+/// (Linux inotify bookkeeping, e.g. around reloads), never a newly created
+/// directory: rescanning it would re-route every pre-existing descendant
+/// under the new revision and supersede busy generations (TASK-0113).
+/// Events on any other existing directory keep the §4 rescan.
+fn reconcile_new_directories(mut events: Vec<FileEvent>, watch_roots: &[String]) -> Vec<FileEvent> {
     let mut known: std::collections::HashSet<String> =
         events.iter().map(|event| event.path.clone()).collect();
     let mut synthesized: Vec<FileEvent> = Vec::new();
     for event in &events {
         if event.continuous {
+            continue;
+        }
+        if watch_roots.iter().any(|root| root == &event.path) {
             continue;
         }
         let path = Path::new(&event.path);
@@ -873,6 +881,59 @@ mod reconcile_tests {
     }
 
     #[test]
+    fn watch_root_bookkeeping_event_never_rescans_its_subtree() {
+        // TASK-0113: on Linux, notify delivers bookkeeping Any-events on the
+        // watched ROOT DIRECTORY itself (e.g. around config reloads). The
+        // root is definitionally not a newly created directory — walking it
+        // would synthesize every pre-existing descendant into the batch and
+        // re-route them under the new revision, superseding busy
+        // generations. The self-event must pass through WITHOUT a rescan.
+        let dir = scratch("root-self");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/pre-existing.rs"), "x").unwrap();
+        let root = dir.join("src").display().to_string();
+
+        let events = vec![FileEvent {
+            path: root.clone(),
+            continuous: false,
+        }];
+        let reconciled = reconcile_new_directories(events, &[root.clone()]);
+        assert_eq!(
+            reconciled,
+            vec![FileEvent {
+                path: root,
+                continuous: false,
+            }],
+            "watch-root self-event must not synthesize descendants: {reconciled:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_directory_under_a_root_still_rescans_after_the_fix() {
+        // The contract §4 race stays covered after TASK-0113: a genuinely
+        // new directory (a path OTHER than the watched roots) still walks
+        // its subtree so files written before its watch registered route.
+        let dir = scratch("new-child");
+        std::fs::create_dir_all(dir.join("src/new")).unwrap();
+        std::fs::write(dir.join("src/new/lib.rs"), "x").unwrap();
+        let root = dir.join("src").display().to_string();
+
+        let events = vec![FileEvent {
+            path: dir.join("src/new").display().to_string(),
+            continuous: false,
+        }];
+        let reconciled = reconcile_new_directories(events, &[root]);
+        assert!(
+            reconciled
+                .iter()
+                .any(|e| e.path.ends_with("src/new/lib.rs")),
+            "newly created directory must still synthesize its files: {reconciled:?}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn files_created_inside_new_directory_are_synthesized_into_the_batch() {
         // Contract §4: a directory tree + file created in one operation
         // routes on the canonical final file path. inotify registers the
@@ -887,7 +948,7 @@ mod reconcile_tests {
             path: dir.join("src").display().to_string(),
             continuous: false,
         }];
-        let reconciled = reconcile_new_directories(events);
+        let reconciled = reconcile_new_directories(events, &[]);
         assert!(
             reconciled
                 .iter()
@@ -914,7 +975,7 @@ mod reconcile_tests {
                 continuous: false,
             },
         ];
-        let reconciled = reconcile_new_directories(events);
+        let reconciled = reconcile_new_directories(events, &[]);
         let a_count = reconciled
             .iter()
             .filter(|e| e.path.ends_with("tree/a.rs"))
@@ -949,7 +1010,7 @@ mod reconcile_tests {
                 continuous: false,
             },
         ];
-        let reconciled = reconcile_new_directories(events.clone());
+        let reconciled = reconcile_new_directories(events.clone(), &[]);
         let mut expected = events;
         expected.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(
