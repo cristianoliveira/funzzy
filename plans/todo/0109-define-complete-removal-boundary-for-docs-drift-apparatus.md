@@ -1,5 +1,5 @@
 ---
-id: TASK-0096
+id: TASK-0109
 title: Define complete removal boundary for docs drift apparatus
 status: todo
 depends_on: [TASK-0069, TASK-0095]
@@ -32,3 +32,4 @@ Scope selected explicitly: remove docs-drift only. Keep `scripts/version-check`,
 ## Notes
 
 This task intentionally chooses deletion over making docs-drift deterministic.
+Renumbered from duplicate TASK-0096/0097/0098 (collided with init/config stream from f1e08e2) to restore unique IDs; deps updated in kind.

@@ -1,8 +1,8 @@
 ---
-id: TASK-0098
+id: TASK-0111
 title: Prove docs drift apparatus is gone without changing runtime behavior
 status: todo
-depends_on: [TASK-0097, TASK-0061]
+depends_on: [TASK-0110, TASK-0061]
 priority: high
 tags: [tests, docs, cleanup, ci, regression]
 ---
@@ -30,3 +30,4 @@ Verification is a one-time removal audit plus existing normal project gates, not
 - [ ] External watcher final gate passes from unchanged worktree fingerprint.
 
 ## Notes
+Renumbered from duplicate TASK-0096/0097/0098 (collided with init/config stream from f1e08e2) to restore unique IDs; deps updated in kind.
