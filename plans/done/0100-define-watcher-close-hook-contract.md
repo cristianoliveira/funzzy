@@ -1,7 +1,7 @@
 ---
 id: TASK-0100
 title: Define watcher close hook contract
-status: doing
+status: done
 depends_on: [TASK-0040]
 priority: high
 tags: [design, cli, config, hooks, shutdown, issue-234, determinism]
