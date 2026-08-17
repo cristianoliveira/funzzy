@@ -337,7 +337,17 @@ read a project config, start a watcher, open a socket, or run tasks. The
 schema is the single source of truth for structure; `fzz check` adds semantic
 validation. Legacy root-list configs remain accepted and are rewritten with
 `fzz migrate`. Generation hooks use `on.success`/`on.failure`; watcher cleanup
-uses `on.close` once after scheduling stops and owned work is reaped.
+uses `on.close` once after scheduling stops and owned work is reaped:
+
+```yaml
+on:
+  success: ./scripts/notify-success   # once per passing generation
+  failure: ./scripts/notify-failure   # once per failing generation
+  close: ./scripts/cleanup            # once per graceful ready-watcher close
+```
+
+See [run and watcher hook lifecycle](docs/RUN-HOOKS-CONTRACT.md) for signal,
+timeout, reload, and exit-code semantics.
 
 ## Parallel execution
 

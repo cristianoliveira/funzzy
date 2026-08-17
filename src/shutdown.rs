@@ -102,6 +102,7 @@ pub struct ShutdownCoordinator {
     state: Mutex<State>,
     completed: Condvar,
     requested: Arc<AtomicBool>,
+    reaped: AtomicBool,
     accelerate: AtomicBool,
 }
 
@@ -140,6 +141,7 @@ impl ShutdownCoordinator {
             }),
             completed: Condvar::new(),
             requested: Arc::new(AtomicBool::new(false)),
+            reaped: AtomicBool::new(false),
             accelerate: AtomicBool::new(false),
         }
     }
@@ -173,21 +175,41 @@ impl ShutdownCoordinator {
     /// Later requests never change them; a repeated signal asks an in-flight
     /// hook to stop promptly.
     pub fn request(&self, reason: ShutdownReason) -> bool {
-        let mut state = self.state.lock().expect("shutdown mutex poisoned");
-        if matches!(state.phase, Phase::Running) {
-            let hook = if state.ready {
-                state.committed_hooks.close.clone()
+        let first = {
+            let mut state = self.state.lock().expect("shutdown mutex poisoned");
+            if matches!(state.phase, Phase::Running) {
+                let hook = if state.ready {
+                    state.committed_hooks.close.clone()
+                } else {
+                    None
+                };
+                state.phase = Phase::Requested(Requested { reason, hook });
+                self.requested.store(true, Ordering::SeqCst);
+                true
             } else {
-                None
-            };
-            state.phase = Phase::Requested(Requested { reason, hook });
-            self.requested.store(true, Ordering::SeqCst);
-            true
-        } else {
-            if matches!(reason, ShutdownReason::Signal { .. }) {
-                self.accelerate.store(true, Ordering::SeqCst);
+                if matches!(reason, ShutdownReason::Signal { .. }) {
+                    self.accelerate.store(true, Ordering::SeqCst);
+                }
+                false
             }
-            false
+        };
+        if first {
+            // Blocking run-on-init work cannot return to composition-root
+            // cleanup until its owned process group is stopped. The shared
+            // coordinator therefore performs this idempotent quiesce step on
+            // first request; `finish` observes it and never reaps twice.
+            self.reap_once();
+        }
+        first
+    }
+
+    fn reap_once(&self) {
+        if self
+            .reaped
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            self.reaper.reap(self.verbose);
         }
     }
 
@@ -238,7 +260,7 @@ impl ShutdownCoordinator {
             }
         };
 
-        self.reaper.reap(self.verbose);
+        self.reap_once();
         for path in cleanup_paths {
             let _ = std::fs::remove_file(path);
         }
