@@ -1,7 +1,7 @@
 ---
 id: TASK-0105
 title: Upgrade Rust filesystem and process dependencies
-status: doing
+status: done
 depends_on: [TASK-0104]
 priority: high
 tags: [rust, cargo, notify, nix, watcher, signals, integration-tests]
