@@ -1,7 +1,7 @@
 ---
 id: TASK-0084
 title: Refresh the v2.0.0 candidate after output AXI hardening
-status: doing
+status: done
 depends_on: [TASK-0083, TASK-0087, TASK-0092, TASK-0095, TASK-0062]
 priority: high
 tags: [release, v2, candidate, axi, pi-watcher, verification]

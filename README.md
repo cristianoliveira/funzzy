@@ -10,21 +10,22 @@ fzz check   # validate it
 fzz         # watch, run, repeat
 ```
 
-One YAML workflow works for developers, coding agents, and CI. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
+One YAML workflow works for developers and coding agents. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
 
 > [!WARNING]
 > V2 is unreleased on `develop`. See [V1](https://github.com/cristianoliveira/funzzy/tree/v1) when using v1.5.0.
 
 
-For ad-hoc work over paths from stdin:
+For a workflow as simple as:
 
 ```bash
 find . -name '*.ts' | fzz exec -- npx eslint {{relative_filepath}}
 ```
 
-For a configured workflow, create `.watch.yaml`:
+Or for more complex workflows like:
 
 ```yaml
+# .watch.yml
 on:
   change: ["src/**", "tests/**"]
   ignore: ["target/**", "**/*.log"]
