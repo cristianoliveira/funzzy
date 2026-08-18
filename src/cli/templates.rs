@@ -171,6 +171,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn profiles_emit_only_canonical_v2_policy_placements() {
+        let parallel = Profile::Parallel.render();
+        assert!(parallel.contains("execution:\n  concurrency: 2"));
+        assert!(!parallel.contains("on:\n  change: \"src/**\"\n  concurrency:"));
+
+        let agent = Profile::Agent.render();
+        assert!(agent.contains("on:\n  change: \"**/*\"\n  socket:"));
+        assert!(agent.contains("execution:\n  concurrency: 2"));
+        for profile in Profile::NAMES.map(|name| Profile::parse(name).unwrap()) {
+            let yaml = profile.render();
+            assert!(
+                !yaml.contains("version:"),
+                "{} must not carry a config version",
+                profile.name()
+            );
+            assert!(
+                !yaml.contains("inherits on.output"),
+                "{} teaches an old output owner",
+                profile.name()
+            );
+        }
+    }
+
     /// Rendering is deterministic: identical bytes on every call.
     #[test]
     fn rendering_is_deterministic() {
