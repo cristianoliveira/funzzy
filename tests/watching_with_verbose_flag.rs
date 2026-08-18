@@ -89,9 +89,19 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
                 output
             );
 
-            // The matched decision names the task and effective rule.
-            assert!(
-                output.contains("decision=matched"),
+            // The matched decision names the task and effective rule. It is
+            // written only after the debounce window closes and matching
+            // runs, so wait for it instead of asserting a snapshot that can
+            // land between the event record and the decision record (CI
+            // flake on loaded runners, run 32071055555).
+            wait_until!(
+                {
+                    output_log
+                        .read_to_string(&mut output)
+                        .expect("failed to read from file");
+
+                    output.contains("decision=matched")
+                },
                 "matched decision must be recorded: {}",
                 output
             );
