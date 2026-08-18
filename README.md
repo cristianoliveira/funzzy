@@ -343,12 +343,10 @@ fzz run TARGET | fzz watch           # execute
 All `config` commands are non-interactive and side-effect-free: they never
 read a project config, start a watcher, open a socket, or run tasks. The
 schema is the single source of truth for structure; `fzz check` adds semantic
-validation. Legacy root-list configs remain accepted and are rewritten with
-`fzz migrate`. Generation hooks use `on.success`/`on.failure`; watcher cleanup
-uses `on.close` once after scheduling stops and owned work is reaped:
+validation. Legacy root-list configs remain accepted and are rewritten with `fzz migrate`. Generation hooks use `hooks.success`/`hooks.failure`; watcher cleanup uses `hooks.close` once after scheduling stops and owned work is reaped:
 
 ```yaml
-on:
+hooks:
   success: ./scripts/notify-success   # once per passing generation
   failure: ./scripts/notify-failure   # once per failing generation
   close: ./scripts/cleanup            # once per graceful ready-watcher close
@@ -367,8 +365,9 @@ running exactly as before — no migration needed.
 ```yaml
 on:
   change: "src/**"
+execution:
   concurrency: 4      # optional global cap on active tasks
-tasks:
+jobs:
   - name: lint
     parallel: checks  # group membership is explicit
     run: cargo clippy
@@ -388,7 +387,7 @@ Key rules:
 task (no `parallel`) runs alone between groups.
 - **Filtering**: target selection keeps the original topology. If only one
   group member matches, it runs alone — barriers stay valid.
-- **`on.concurrency`**: global cap on simultaneously active tasks. Defaults
+- **`execution.concurrency`**: global cap on simultaneously active tasks. Defaults
 to available parallelism, resolved once at plan time. `1` is valid and means
 tasks run one at a time inside the barrier. Without `parallel` groups,
 concurrency is never inferred.
