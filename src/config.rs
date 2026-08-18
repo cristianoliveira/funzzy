@@ -139,10 +139,74 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
 struct CommonRules {
     change: Vec<String>,
     ignore: Vec<String>,
-    /// On-level default output policy (`on.output`), applied to jobs without
-    /// their own `output:` (TASK-0095: the schema/catalog-documented default
-    /// must actually be consumed by the parser).
+    /// Execution-level default output policy, applied to jobs without their
+    /// own `output:`.
     output_policy: OutputPolicy,
+}
+
+fn validate_section(
+    root: &Yaml,
+    name: &str,
+    owner: crate::option_catalog::Owner,
+) -> errors::Result<()> {
+    let section = &root[name];
+    if section == &Yaml::BadValue {
+        return Ok(());
+    }
+    let Yaml::Hash(properties) = section else {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Property '{name}' must be an object"),
+            None,
+            None,
+        ));
+    };
+    let allowed = crate::option_catalog::property_names(owner);
+    for (key, _) in properties {
+        if let Yaml::String(key) = key {
+            if !allowed.contains(&key.as_str()) {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!(
+                        "Invalid property '{name}.{key}'. Only {} are allowed.",
+                        allowed.join(", ")
+                    ),
+                    None,
+                    None,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_v2_sections(root: &Yaml) -> errors::Result<()> {
+    for (name, owner) in [
+        ("on", crate::option_catalog::Owner::On),
+        ("execution", crate::option_catalog::Owner::Execution),
+        ("hooks", crate::option_catalog::Owner::Hooks),
+    ] {
+        validate_section(root, name, owner)?;
+    }
+    Ok(())
+}
+
+fn output_policy_from_root(root: &Yaml) -> errors::Result<OutputPolicy> {
+    let execution = &root["execution"];
+    if execution == &Yaml::BadValue {
+        return Ok(OutputPolicy::Inherit);
+    }
+    match &execution["output"] {
+        Yaml::BadValue => Ok(OutputPolicy::Inherit),
+        Yaml::String(raw) => match raw.as_str() {
+            "inherit" => Ok(OutputPolicy::Inherit),
+            "quiet" => Ok(OutputPolicy::Quiet),
+            "capture" => Ok(OutputPolicy::Capture),
+            "show-on-failure" => Ok(OutputPolicy::ShowOnFailure),
+            _ => Err(errors::FzzError::InvalidConfigError(
+                format!("Property 'execution.output' has invalid value '{raw}': expected inherit, quiet, capture, or show-on-failure"), None, None,
+            )),
+        },
+        _ => Err(errors::FzzError::InvalidConfigError("Property 'execution.output' must be a string".to_owned(), None, None)),
+    }
 }
 
 /// Parse the grouped root format: `{ on: {...}, jobs: [...] }` (preferred V2,
@@ -207,8 +271,12 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
         ));
     }
 
-    // Extract common rules from the 'on' section (optional)
-    let common_rules = extract_common_rules(&yaml["on"])?;
+    validate_v2_sections(yaml)?;
+
+    // Extract common rules from the 'on' section (optional). Execution policy
+    // has its own V2 owner and is inherited by jobs that omit `output`.
+    let mut common_rules = extract_common_rules(&yaml["on"])?;
+    common_rules.output_policy = output_policy_from_root(yaml)?;
 
     // Parse each task and merge with common rules; duplicate names are a
     // config bug (TASK-0075/0076), never a silent merge or reorder.
@@ -251,57 +319,10 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
             let change = yaml::extract_list(yaml, "change").unwrap_or_default();
             let ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
 
-            // `on.output` is the default output policy for jobs that do not
-            // declare their own; an invalid value is a config bug, rejected
-            // loudly (TASK-0095, catalog parity).
-            let output_policy = match yaml::extract_optional_string(yaml, "output")? {
-                None => OutputPolicy::Inherit,
-                Some(raw) => match raw.as_str() {
-                    "inherit" => OutputPolicy::Inherit,
-                    "quiet" => OutputPolicy::Quiet,
-                    "capture" => OutputPolicy::Capture,
-                    "show-on-failure" => OutputPolicy::ShowOnFailure,
-                    other => {
-                        return Err(errors::FzzError::InvalidConfigError(
-                            format!(
-                                "Invalid output policy '{}' in 'on' section: expected inherit, quiet, capture, or show-on-failure",
-                                other
-                            ),
-                            None,
-                            None,
-                        ))
-                    }
-                },
-            };
-
-            // Allowlist comes from the canonical option catalog (TASK-0094,
-            // INIT-TEMPLATE-CONTRACT §10) so the parser, schema, and init
-            // template can never drift apart.
-            let allowed = crate::option_catalog::property_names(crate::option_catalog::Owner::On);
-
-            // Validate that only allowed properties are present
-            if let Yaml::Hash(ref hash) = yaml {
-                for (key, _) in hash {
-                    if let Yaml::String(ref key_str) = key {
-                        if !allowed.contains(&key_str.as_str()) {
-                            return Err(errors::FzzError::InvalidConfigError(
-                                format!(
-                                    "Invalid property '{}' in 'on' section. Only {} are allowed.",
-                                    key_str,
-                                    allowed.join(", ")
-                                ),
-                                None,
-                                Some("Example:\non:\n  change: [\"src/**\"]\n  ignore: [\"**/*.log\"]\n  socket: .tmp/funzzy/control.sock\n  concurrency: 2\n  debounce: 500ms".to_owned()),
-                            ));
-                        }
-                    }
-                }
-            }
-
             Ok(CommonRules {
                 change: ensure_glob_only(change, "on.change")?,
                 ignore: ensure_glob_only(ignore, "on.ignore")?,
-                output_policy,
+                output_policy: OutputPolicy::Inherit,
             })
         }
         _ => Err(errors::FzzError::InvalidConfigError(
@@ -575,34 +596,28 @@ pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String
     control_socket_from_yaml(&content)
 }
 
-/// Reads optional global `on.concurrency` cap. Missing yields `Ok(None)`
+/// Reads optional global `execution.concurrency` cap. Missing yields `Ok(None)`
 /// (caller decides default); zero, negative, and non-integer values fail.
 pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-
-    if on == &Yaml::BadValue {
+    let execution = &root["execution"];
+    if execution == &Yaml::BadValue {
         return Ok(None);
     }
-
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
+    if !matches!(execution, Yaml::Hash(_)) {
+        return Err("Property 'execution' must be an object".to_owned());
     }
-
-    if on["concurrency"] == Yaml::BadValue {
-        return Ok(None);
-    }
-
-    match &on["concurrency"] {
+    match &execution["concurrency"] {
+        Yaml::BadValue => Ok(None),
         Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
         Yaml::Integer(_) => Err(
-            "Property 'on.concurrency' must be a positive integer (got zero or negative)"
+            "Property 'execution.concurrency' must be a positive integer (got zero or negative)"
                 .to_owned(),
         ),
-        _ => Err("Property 'on.concurrency' must be a positive integer".to_owned()),
+        _ => Err("Property 'execution.concurrency' must be a positive integer".to_owned()),
     }
 }
 
@@ -2169,18 +2184,18 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-    if on == &Yaml::BadValue {
+    let hooks = &root["hooks"];
+    if hooks == &Yaml::BadValue {
         return Ok(GenerationHooks::default());
     }
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
+    if !matches!(hooks, Yaml::Hash(_)) {
+        return Err("Property 'hooks' must be an object".to_owned());
     }
     let read_hook = |key: &str| -> Result<Option<String>, String> {
-        match &on[key] {
+        match &hooks[key] {
             Yaml::BadValue => Ok(None),
             Yaml::String(value) => Ok(Some(value.clone())),
-            _ => Err(format!("Property 'on.{}' must be a command string", key)),
+            _ => Err(format!("Property 'hooks.{}' must be a command string", key)),
         }
     };
     Ok(GenerationHooks {
@@ -2204,20 +2219,20 @@ pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-    if on == &Yaml::BadValue {
+    let hooks = &root["hooks"];
+    if hooks == &Yaml::BadValue {
         return Ok(SessionHooks::default());
     }
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
+    if !matches!(hooks, Yaml::Hash(_)) {
+        return Err("Property 'hooks' must be an object".to_owned());
     }
-    let close = match &on["close"] {
+    let close = match &hooks["close"] {
         Yaml::BadValue => None,
         Yaml::String(value) if value.trim().is_empty() => {
-            return Err("Property 'on.close' must be a non-empty command string".to_owned())
+            return Err("Property 'hooks.close' must be a non-empty command string".to_owned())
         }
         Yaml::String(value) => Some(value.clone()),
-        _ => return Err("Property 'on.close' must be a command string".to_owned()),
+        _ => return Err("Property 'hooks.close' must be a command string".to_owned()),
     };
     if let Some(command) = &close {
         for template in [
@@ -2229,7 +2244,7 @@ pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
         ] {
             if command.contains(template) {
                 return Err(format!(
-                    "Property 'on.close' cannot use {template}: close has no trigger path"
+                    "Property 'hooks.close' cannot use {template}: close has no trigger path"
                 ));
             }
         }
@@ -2300,27 +2315,10 @@ pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
     let root = documents
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-    let raw = if on != &Yaml::BadValue {
-        match &on["output"] {
-            Yaml::BadValue => None,
-            Yaml::String(value) => Some(value.clone()),
-            _ => return Err("Property 'on.output' must be a string".to_owned()),
-        }
-    } else {
-        None
-    };
-    match raw.as_deref() {
-        None => Ok(OutputPolicy::Inherit),
-        Some("inherit") => Ok(OutputPolicy::Inherit),
-        Some("quiet") => Ok(OutputPolicy::Quiet),
-        Some("capture") => Ok(OutputPolicy::Capture),
-        Some("show-on-failure") => Ok(OutputPolicy::ShowOnFailure),
-        Some(other) => Err(format!(
-            "invalid output policy '{}': expected inherit, quiet, capture, or show-on-failure",
-            other
-        )),
-    }
+    output_policy_from_root(root).map_err(|error| match error {
+        errors::FzzError::InvalidConfigError(message, _, _) => message,
+        other => other.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -2347,6 +2345,66 @@ mod service_tests {
     fn service_rejects_non_boolean() {
         assert!(from_yaml(
             "on:\n  change: '**/*'\njobs:\n  - name: a\n    service: yes\n    run: echo a\n"
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod v2_section_tests {
+    use super::*;
+
+    const CANONICAL: &str = "on:\n  change: 'src/**'\n  socket: .tmp/fzz.sock\n  debounce: 500ms\nexecution:\n  concurrency: 2\n  output: show-on-failure\nhooks:\n  success: echo ok\n  failure: echo failed\n  close: echo closed\njobs:\n  - name: test\n    run: cargo test\n";
+
+    #[test]
+    fn parses_canonical_v2_sections_into_existing_runtime_policies() {
+        let rules = from_yaml(CANONICAL).expect("canonical V2 config parses");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].output(), OutputPolicy::ShowOnFailure);
+        assert_eq!(concurrency_from_yaml(CANONICAL), Ok(Some(2)));
+        assert_eq!(
+            control_socket_from_yaml(CANONICAL),
+            Ok(Some(".tmp/fzz.sock".to_owned()))
+        );
+        assert_eq!(
+            generation_hooks_from_yaml(CANONICAL)
+                .unwrap()
+                .success
+                .as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(CANONICAL).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
+    fn rejects_old_grouped_v2_placements_instead_of_aliasing_them() {
+        for yaml in [
+            "on:\n  concurrency: 2\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  output: quiet\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n",
+        ] {
+            assert!(from_yaml(yaml).is_err(), "old placement must fail: {yaml}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
+        let unknown =
+            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
+                .expect_err("unknown execution property must fail");
+        assert!(format!("{unknown:?}").contains("execution.parallelism"));
+
+        assert_eq!(
+            concurrency_from_yaml(
+                "execution:\n  concurrency: many\njobs:\n  - name: test\n    run: cargo test\n"
+            ),
+            Err("Property 'execution.concurrency' must be a positive integer".to_owned())
+        );
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  success: [echo, ok]\njobs:\n  - name: test\n    run: cargo test\n"
         )
         .is_err());
     }

@@ -1,7 +1,7 @@
 ---
 id: TASK-0117
 title: Implement the V2 configuration parser and schema
-status: todo
+status: doing
 depends_on: [TASK-0116]
 priority: high
 tags: [rust, config, schema, validation, tdd]

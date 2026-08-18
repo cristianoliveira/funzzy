@@ -10,7 +10,15 @@ use crate::option_catalog::{self, OptionSpec, Owner, SpecKind};
 use serde_json::{json, Value};
 
 /// Schema sections (AGENT-CONFIG-CONTRACT §4).
-pub const SECTIONS: [&str; 6] = ["on", "job", "matching", "execution", "parallel", "control"];
+pub const SECTIONS: [&str; 7] = [
+    "on",
+    "execution",
+    "hooks",
+    "job",
+    "matching",
+    "parallel",
+    "control",
+];
 
 /// Example profiles (AGENT-CONFIG-CONTRACT §4). The full profile set —
 /// including `comprehensive` — is owned by `cli::templates::Profile`
@@ -21,13 +29,16 @@ pub const PROFILES: [&str; 4] = ["comprehensive", "minimal", "parallel", "agent"
 fn full_schema() -> Value {
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "funzzy://config/schema/v1",
-        "title": "Funzzy .watch.yaml (preferred jobs: format)",
-        "description": "Agent-discoverable configuration schema (AGENT-CONFIG-CONTRACT). Semantic checks are delegated to `fzz check`.",
+        "$id": "funzzy://config/schema/v2",
+        "title": "Funzzy .watch.yaml V2",
+        "description": "Agent-discoverable V2 configuration schema. Semantic checks are delegated to `fzz check`.",
         "type": "object",
+        "additionalProperties": false,
         "required": ["jobs"],
         "properties": {
             "on": { "$ref": "#/$defs/on" },
+            "execution": { "$ref": "#/$defs/execution" },
+            "hooks": { "$ref": "#/$defs/hooks" },
             "jobs": {
                 "type": "array",
                 "minItems": 1,
@@ -40,6 +51,7 @@ fn full_schema() -> Value {
             "job": section_job(),
             "matching": section_matching(),
             "execution": section_execution(),
+            "hooks": section_hooks(),
             "parallel": section_parallel(),
             "control": section_control(),
         }
@@ -87,6 +99,8 @@ fn section_properties(owner: Owner) -> Value {
     let mut props = serde_json::Map::new();
     for spec in match owner {
         Owner::On => option_catalog::on_specs(),
+        Owner::Execution => option_catalog::execution_specs(),
+        Owner::Hooks => option_catalog::hook_specs(),
         Owner::Job => option_catalog::job_specs(),
         Owner::Root => option_catalog::root_specs(),
     } {
@@ -130,15 +144,21 @@ fn section_matching() -> Value {
 
 fn section_execution() -> Value {
     json!({
+        "type": "object",
         "title": "execution",
-        "description": "Execution policy (CLI + config).",
-        "properties": {
-            "on_busy": { "type": "string", "enum": ["wait", "restart"], "default": "wait" },
-            "fail_fast": { "type": "boolean", "default": false },
-            "sequential": { "type": "boolean", "default": false, "description": "Effective concurrency one for this run (SEQUENTIAL-OVERRIDE-CONTRACT)." },
-            "log_file": { "type": "string", "description": "Mirror all output to a log file." },
-            "events_file": { "type": "string", "description": "Append NDJSON run events (RUN-EVENTS-CONTRACT)." }
-        }
+        "description": "Configuration execution policy.",
+        "properties": section_properties(Owner::Execution),
+        "additionalProperties": false
+    })
+}
+
+fn section_hooks() -> Value {
+    json!({
+        "type": "object",
+        "title": "hooks",
+        "description": "Generation and watcher-session lifecycle hooks.",
+        "properties": section_properties(Owner::Hooks),
+        "additionalProperties": false
     })
 }
 
@@ -182,7 +202,7 @@ fn schema_command(section: Option<&str>, format: OutputFormat) -> Result<(), Fzz
             let body = full["$defs"][name].clone();
             let mut doc = json!({
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "$id": format!("funzzy://config/schema/v1/sections/{name}"),
+                "$id": format!("funzzy://config/schema/v2/sections/{name}"),
                 "type": "object",
                 "properties": {
                     name: body,
@@ -256,7 +276,14 @@ mod tests {
         for section in SECTIONS {
             assert!(a["$defs"][section].is_object(), "missing section {section}");
         }
+        assert_eq!(a["$id"], "funzzy://config/schema/v2");
         assert_eq!(a["properties"]["jobs"]["type"], "array");
+        assert_eq!(a["properties"]["execution"]["$ref"], "#/$defs/execution");
+        assert_eq!(a["properties"]["hooks"]["$ref"], "#/$defs/hooks");
+        assert_eq!(
+            a["$defs"]["execution"]["properties"]["concurrency"]["minimum"],
+            1
+        );
         assert!(a["required"].as_array().unwrap().contains(&"jobs".into()));
     }
 
@@ -291,7 +318,7 @@ fn schema_document(section: &str) -> Value {
     let body = full["$defs"][section].clone();
     let mut doc = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": format!("funzzy://config/schema/v1/sections/{section}"),
+        "$id": format!("funzzy://config/schema/v2/sections/{section}"),
         "type": "object",
         "properties": { section: body },
         "description": "Section of the Funzzy .watch.yaml schema.",

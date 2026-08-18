@@ -26,6 +26,8 @@ fn comment_for(spec: &OptionSpec, indent: &str) -> String {
 fn find_in(owner: option_catalog::Owner, name: &str) -> Option<&'static OptionSpec> {
     match owner {
         option_catalog::Owner::On => option_catalog::on_specs(),
+        option_catalog::Owner::Execution => option_catalog::execution_specs(),
+        option_catalog::Owner::Hooks => option_catalog::hook_specs(),
         option_catalog::Owner::Job => option_catalog::job_specs(),
         option_catalog::Owner::Root => option_catalog::root_specs(),
     }
@@ -268,6 +270,7 @@ mod renderer_tests {
                         lines.join("\n")
                     )
                 }
+                Owner::Execution | Owner::Hooks => continue,
                 Owner::Job => {
                     let lines: Vec<String> =
                         spec.example.iter().map(|l| format!("    {l}")).collect();

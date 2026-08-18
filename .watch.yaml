@@ -7,12 +7,14 @@
 
 on:
   socket: .tmp/funzzy/control.sock
-  concurrency: 2
   ignore:
     - "src/**/*log*"
     # Watchers can emit either the directory event or events for files inside it.
     - "**/.pi"
     - "**/.pi/**"
+
+execution:
+  concurrency: 2
 
 tasks:
   # These two contiguous tasks overlap. Formatting is cheap while the test

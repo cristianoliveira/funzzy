@@ -13,6 +13,8 @@
 pub enum Owner {
     Root,
     On,
+    Execution,
+    Hooks,
     Job,
 }
 
@@ -79,16 +81,6 @@ const ON_SPECS: &[OptionSpec] = &[
         kind: SpecKind::String,
     },
     OptionSpec {
-        name: "concurrency",
-        owner: Owner::On,
-        required: false,
-        default: Some("machine parallelism"),
-        help: "Global cap on simultaneously active tasks.",
-        values: None,
-        example: &["concurrency: 2"],
-        kind: SpecKind::Int,
-    },
-    OptionSpec {
         name: "debounce",
         owner: Owner::On,
         required: false,
@@ -128,9 +120,35 @@ const ON_SPECS: &[OptionSpec] = &[
         example: &["respect_gitignore: true"],
         kind: SpecKind::Bool,
     },
+];
+
+const EXECUTION_SPECS: &[OptionSpec] = &[
+    OptionSpec {
+        name: "concurrency",
+        owner: Owner::Execution,
+        required: false,
+        default: Some("machine parallelism"),
+        help: "Global cap on simultaneously active tasks.",
+        values: None,
+        example: &["concurrency: 2"],
+        kind: SpecKind::Int,
+    },
+    OptionSpec {
+        name: "output",
+        owner: Owner::Execution,
+        required: false,
+        default: Some("inherit"),
+        help: "Default output policy for every job.",
+        values: Some("inherit | quiet | capture | show-on-failure"),
+        example: &["output: quiet"],
+        kind: SpecKind::Enum(OUTPUT_VALUES),
+    },
+];
+
+const HOOK_SPECS: &[OptionSpec] = &[
     OptionSpec {
         name: "success",
-        owner: Owner::On,
+        owner: Owner::Hooks,
         required: false,
         default: None,
         help: "Hook command run after a successful generation.",
@@ -140,7 +158,7 @@ const ON_SPECS: &[OptionSpec] = &[
     },
     OptionSpec {
         name: "failure",
-        owner: Owner::On,
+        owner: Owner::Hooks,
         required: false,
         default: None,
         help: "Hook command run after a failed generation.",
@@ -150,23 +168,13 @@ const ON_SPECS: &[OptionSpec] = &[
     },
     OptionSpec {
         name: "close",
-        owner: Owner::On,
+        owner: Owner::Hooks,
         required: false,
         default: None,
         help: "Finite hook command run once when a ready watcher closes.",
         values: None,
         example: &["close: echo closed > .fzz-closed"],
         kind: SpecKind::String,
-    },
-    OptionSpec {
-        name: "output",
-        owner: Owner::On,
-        required: false,
-        default: Some("inherit"),
-        help: "Default output policy for every job.",
-        values: Some("inherit | quiet | capture | show-on-failure"),
-        example: &["output: quiet"],
-        kind: SpecKind::Enum(OUTPUT_VALUES),
     },
 ];
 
@@ -286,6 +294,8 @@ const ROOT_SPECS: &[OptionSpec] = &[
         example: &["on:"],
         kind: SpecKind::StringMap,
     },
+    OptionSpec { name: "execution", owner: Owner::Root, required: false, default: None, help: "Scheduling and output policy.", values: None, example: &["execution:"], kind: SpecKind::StringMap },
+    OptionSpec { name: "hooks", owner: Owner::Root, required: false, default: None, help: "Generation and watcher lifecycle reactions.", values: None, example: &["hooks:"], kind: SpecKind::StringMap },
     OptionSpec {
         name: "jobs",
         owner: Owner::Root,
@@ -300,6 +310,14 @@ const ROOT_SPECS: &[OptionSpec] = &[
 
 pub fn on_specs() -> &'static [OptionSpec] {
     ON_SPECS
+}
+
+pub fn execution_specs() -> &'static [OptionSpec] {
+    EXECUTION_SPECS
+}
+
+pub fn hook_specs() -> &'static [OptionSpec] {
+    HOOK_SPECS
 }
 
 pub fn job_specs() -> &'static [OptionSpec] {
@@ -319,6 +337,8 @@ pub fn all_specs() -> &'static [OptionSpec] {
 pub fn property_names(owner: Owner) -> Vec<&'static str> {
     match owner {
         Owner::On => ON_SPECS.iter().map(|s| s.name).collect(),
+        Owner::Execution => EXECUTION_SPECS.iter().map(|s| s.name).collect(),
+        Owner::Hooks => HOOK_SPECS.iter().map(|s| s.name).collect(),
         Owner::Job => JOB_SPECS.iter().map(|s| s.name).collect(),
         Owner::Root => ROOT_SPECS.iter().map(|s| s.name).collect(),
     }
@@ -327,6 +347,8 @@ pub fn property_names(owner: Owner) -> Vec<&'static str> {
 pub fn find(name: &str) -> Option<&'static OptionSpec> {
     ON_SPECS
         .iter()
+        .chain(EXECUTION_SPECS)
+        .chain(HOOK_SPECS)
         .chain(JOB_SPECS)
         .chain(ROOT_SPECS)
         .find(|s| s.name == name)
