@@ -364,6 +364,20 @@ mod catalog_parity_tests {
     }
 
     #[test]
+    fn execution_and_hooks_sections_match_catalog_exactly() {
+        for (section, owner) in [("execution", Owner::Execution), ("hooks", Owner::Hooks)] {
+            let mut expected: Vec<String> = option_catalog::property_names(owner)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+            expected.sort();
+            let mut actual = prop_names(section);
+            actual.sort();
+            assert_eq!(actual, expected, "{section}");
+        }
+    }
+
+    #[test]
     fn job_section_matches_catalog_exactly() {
         let mut expected: Vec<String> = option_catalog::property_names(Owner::Job)
             .into_iter()
