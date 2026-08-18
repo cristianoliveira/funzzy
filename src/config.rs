@@ -160,7 +160,13 @@ fn validate_section(
             None,
         ));
     };
-    let allowed = crate::option_catalog::property_names(owner);
+    let mut allowed = crate::option_catalog::property_names(owner);
+    // Grouped `tasks:` is the still-supported legacy configuration form.
+    // Its historical policy locations remain readable only on that boundary;
+    // preferred `jobs:` configs must use execution/hooks.
+    if owner == crate::option_catalog::Owner::On && root["tasks"] != Yaml::BadValue {
+        allowed.extend(["concurrency", "output", "success", "failure", "close"]);
+    }
     for (key, _) in properties {
         if let Yaml::String(key) = key {
             if !allowed.contains(&key.as_str()) {
@@ -213,10 +219,15 @@ fn validate_v2_sections(root: &Yaml) -> errors::Result<()> {
 
 fn output_policy_from_root(root: &Yaml) -> errors::Result<OutputPolicy> {
     let execution = &root["execution"];
-    if execution == &Yaml::BadValue {
+    let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+        &root["on"]
+    } else {
+        execution
+    };
+    if policy == &Yaml::BadValue {
         return Ok(OutputPolicy::Inherit);
     }
-    match &execution["output"] {
+    match &policy["output"] {
         Yaml::BadValue => Ok(OutputPolicy::Inherit),
         Yaml::String(raw) => match raw.as_str() {
             "inherit" => Ok(OutputPolicy::Inherit),
@@ -626,13 +637,18 @@ pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
     let execution = &root["execution"];
-    if execution == &Yaml::BadValue {
+    let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+        &root["on"]
+    } else {
+        execution
+    };
+    if policy == &Yaml::BadValue {
         return Ok(None);
     }
-    if !matches!(execution, Yaml::Hash(_)) {
+    if !matches!(policy, Yaml::Hash(_)) {
         return Err("Property 'execution' must be an object".to_owned());
     }
-    match &execution["concurrency"] {
+    match &policy["concurrency"] {
         Yaml::BadValue => Ok(None),
         Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
         Yaml::Integer(_) => Err(
@@ -2416,8 +2432,9 @@ mod v2_section_tests {
 
     #[test]
     fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
-                let unknown = from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
-            .expect_err("unknown execution property must fail");
+        let unknown =
+            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
+                .expect_err("unknown execution property must fail");
         assert!(format!("{unknown:?}").contains("execution.parallelism"));
         let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
             .expect_err("unknown root property must fail");

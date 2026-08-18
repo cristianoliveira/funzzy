@@ -401,7 +401,7 @@ fn jobs_parallel_group_keeps_barriers_and_execution_semantics() {
     let directory = fixture("jobs-parallel");
     write_config(
         &directory,
-        "on:\n  change: '**/*'\n  concurrency: 2\njobs:\n  - name: a @quick\n    parallel: checks\n    run: 'touch a.ready; i=0; while [ $i -lt 100 ]; do test -f b.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n  - name: b @quick\n    parallel: checks\n    run: 'touch b.ready; i=0; while [ $i -lt 100 ]; do test -f a.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n",
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: a @quick\n    parallel: checks\n    run: 'touch a.ready; i=0; while [ $i -lt 100 ]; do test -f b.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n  - name: b @quick\n    parallel: checks\n    run: 'touch b.ready; i=0; while [ $i -lt 100 ]; do test -f a.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n",
     );
 
     fzz(&directory)
@@ -479,7 +479,7 @@ fn success_and_failure_hooks_run_once_per_generation() {
     let directory = fixture("hooks");
     write_config(
         &directory,
-        "on:\n  change: '**/*'\n  success: 'echo ok > hook-success.txt'\n  failure: 'echo bad > hook-failure.txt'\njobs:\n  - name: good @quick\n    run: 'true'\n  - name: bad @quick\n    run: 'exit 1'\n",
+        "on:\n  change: '**/*'\nhooks:\n  success: 'echo ok > hook-success.txt'\n  failure: 'echo bad > hook-failure.txt'\njobs:\n  - name: good @quick\n    run: 'true'\n  - name: bad @quick\n    run: 'exit 1'\n",
     );
 
     // Failing run: only the failure hook fires; exit stays 1.
