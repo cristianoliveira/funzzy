@@ -32,16 +32,24 @@ migration reference.
 
 ## `fzz migrate` behavior (TASK-0096/0098)
 
-- One responsibility: **transform** an existing config in place. Never creates
-  from scratch (`fzz init`), never validates (`fzz check`), never watches.
+- One responsibility: **transform V1 task vocabulary** in an existing config in place. Never creates from scratch (`fzz init`) or watches. It validates the complete candidate before its atomic replacement; use `fzz check` for explicit validation.
 - Honors global `-c, --config <FILE>` (default `.watch.yaml`).
-- Inputs: legacy root list → wrapped under `jobs:` (order and comments
-  preserved); grouped `tasks:` → root key renamed; already `jobs:` →
-  byte-identical no-op, exit 0.
+- Inputs: legacy root list → wrapped under `jobs:` (order and comments preserved); grouped `tasks:` → root key renamed; already `jobs:` → byte-identical no-op, exit 0. It does **not** format YAML or relocate `on` fields into `execution` or `hooks`.
 - Errors (exit 1, original bytes unchanged): missing file, malformed YAML,
   multiple documents, unsupported root, empty list.
 - Write is atomic (same-directory temp + rename); a failed migration never
   leaves a half-written file. Successful output passes `fzz check`.
+
+## Safe migration flow
+
+1. Commit or back up the configuration.
+2. Run `fzz migrate` (pass `-c FILE` when it is not `.watch.yaml`).
+3. Inspect the ordered `jobs:` rewrite.
+4. Move preferred V2 policy fields manually: `on.concurrency`/`on.output` → `execution`, and `on.success`/`on.failure`/`on.close` → `hooks`.
+5. Run `fzz check`, then `fzz list`, `fzz run TARGET`, or `fzz watch`.
+
+The manual section edit is deliberately separate from migration. `fzz migrate`
+only wraps a V1 root task list or renames root `tasks:` to `jobs:`.
 
 ## Diagnostics vocabulary
 
@@ -59,4 +67,4 @@ migration reference.
 - `fzz control|ctl ...` — status/list/run/emit/await/cancel/output/capabilities.
 - `--events FILE` — NDJSON run event stream.
 - `--format toon|json|human` — structured control output.
-- `on.debounce`, `on.watch_backend`, `on.respect_gitignore`, `on.concurrency`.
+- `on.debounce`, `on.watch_backend`, `on.respect_gitignore`; `execution.concurrency`; lifecycle `hooks`.

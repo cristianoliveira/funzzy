@@ -1,7 +1,7 @@
 ---
 id: TASK-0120
 title: Rewrite configuration and migration documentation for V2
-status: todo
+status: doing
 depends_on: [TASK-0116, TASK-0118, TASK-0119]
 priority: high
 tags: [docs, config, migration, init, examples, v2]

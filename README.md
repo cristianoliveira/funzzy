@@ -30,8 +30,12 @@ on:
   change: ["src/**", "tests/**"]
   ignore: ["target/**", "**/*.log"]
   debounce: 500ms
-  concurrency: 2
   socket: .tmp/funzzy/control.sock
+
+execution:
+  concurrency: 2
+
+hooks:
   success: "notify-send 'checks passed'"
   failure: "notify-send 'checks failed'"
 
@@ -59,12 +63,12 @@ Declaration order is semantic. Only consecutive jobs with same `parallel` name o
 - **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
 - **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
 - **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
-- **Workflow automation:** run generation-level `on.success` and `on.failure` hooks without changing the workflow result.
+- **Workflow automation:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result.
 - **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
 - **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
 - **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
 - **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
-- **Lifecycle hooks:** `on.success`/`on.failure` observe generation outcomes; `on.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
+- **Lifecycle hooks:** `hooks.success`/`hooks.failure` observe generation outcomes; `hooks.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
 
 Learn more:
 
