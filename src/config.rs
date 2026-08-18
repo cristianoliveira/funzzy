@@ -1271,7 +1271,7 @@ tasks:
         let result = from_yaml(file_content);
         assert!(result.is_err());
         let err = result.err().unwrap().to_string();
-        assert!(err.contains("Invalid property 'invalid_prop' in 'on' section"));
+        assert!(err.contains("Invalid property 'on.invalid_prop'"));
     }
 
     #[test]
@@ -1358,6 +1358,7 @@ tasks:
         let file_content = "
         on:
           change: 'src/**'
+        execution:
           concurrency: 2
         tasks:
           - name: lint
@@ -1488,9 +1489,9 @@ tasks:
     }
 
     #[test]
-    fn it_accepts_concurrency_from_on_section() {
+    fn it_accepts_concurrency_from_execution_section() {
         let file_content = "
-on:\n  concurrency: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make lint\n";
+on:\n  change: 'src/**'\nexecution:\n  concurrency: 4\ntasks:\n  - name: lint\n    run: make lint\n";
         assert_eq!(concurrency_from_yaml(file_content).unwrap(), Some(4));
     }
 
@@ -1499,7 +1500,7 @@ on:\n  concurrency: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make
         let file_content = "\non:\n  jobs: 4\ntasks:\n  - name: lint\n    run: make lint\n";
         let error = from_yaml(file_content).expect_err("on.jobs is not a supported alias");
         assert!(
-            error.to_string().contains("Invalid property 'jobs'"),
+            error.to_string().contains("Invalid property 'on.jobs'"),
             "unexpected: {}",
             error
         );
@@ -1517,8 +1518,8 @@ on:\n  concurrency: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make
 
     #[test]
     fn it_rejects_zero_and_negative_concurrency() {
-        let zero = "\non:\n  concurrency: 0\ntasks:\n  - name: a\n    run: echo a\n";
-        let negative = "\non:\n  concurrency: -2\ntasks:\n  - name: a\n    run: echo a\n";
+        let zero = "\nexecution:\n  concurrency: 0\ntasks:\n  - name: a\n    run: echo a\n";
+        let negative = "\nexecution:\n  concurrency: -2\ntasks:\n  - name: a\n    run: echo a\n";
 
         let zero_err = concurrency_from_yaml(zero).expect_err("zero concurrency must fail");
         assert!(
@@ -1537,17 +1538,18 @@ on:\n  concurrency: 4\n  change: 'src/**'\ntasks:\n  - name: lint\n    run: make
 
     #[test]
     fn it_rejects_non_integer_concurrency() {
-        let file_content = "\non:\n  concurrency: many\ntasks:\n  - name: a\n    run: echo a\n";
+        let file_content =
+            "\nexecution:\n  concurrency: many\ntasks:\n  - name: a\n    run: echo a\n";
         let err = concurrency_from_yaml(file_content).expect_err("string concurrency must fail");
         assert!(err.contains("positive integer"), "unexpected: {}", err);
     }
 
     #[test]
-    fn it_rejects_concurrency_outside_object_on() {
-        let file_content = "\non: 3\ntasks:\n  - name: a\n    run: echo a\n";
-        let err = concurrency_from_yaml(file_content).expect_err("scalar on must fail");
+    fn it_rejects_concurrency_outside_execution_object() {
+        let file_content = "\nexecution: 3\ntasks:\n  - name: a\n    run: echo a\n";
+        let err = concurrency_from_yaml(file_content).expect_err("scalar execution must fail");
         assert!(
-            err.contains("'on' must be an object"),
+            err.contains("'execution' must be an object"),
             "unexpected: {}",
             err
         );
@@ -2110,7 +2112,7 @@ mod hooks_tests {
 
     #[test]
     fn hooks_default_to_none() {
-        let hooks = generation_hooks_from_yaml("on:\n  change: '**/*'\n").unwrap();
+        let hooks = generation_hooks_from_yaml("hooks: {}\n").unwrap();
         assert_eq!(hooks.success, None);
         assert_eq!(hooks.failure, None);
     }
@@ -2118,7 +2120,7 @@ mod hooks_tests {
     #[test]
     fn hooks_parse_success_and_failure_commands() {
         let hooks = generation_hooks_from_yaml(
-            "on:\n  change: '**/*'\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
+            "hooks:\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
         )
         .unwrap();
         assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
@@ -2127,18 +2129,18 @@ mod hooks_tests {
 
     #[test]
     fn hooks_reject_non_string_values() {
-        assert!(generation_hooks_from_yaml("on:\n  success: [a, b]\n").is_err());
-        assert!(generation_hooks_from_yaml("on:\n  failure: 1\n").is_err());
+        assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
+        assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
     }
 
     #[test]
     fn session_hook_defaults_to_none_and_parses_close_command() {
         assert_eq!(
-            session_hooks_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            session_hooks_from_yaml("hooks: {}\n").unwrap(),
             SessionHooks::default()
         );
         assert_eq!(
-            session_hooks_from_yaml("on:\n  close: './scripts/cleanup'\n")
+            session_hooks_from_yaml("hooks:\n  close: './scripts/cleanup'\n")
                 .unwrap()
                 .close
                 .as_deref(),
@@ -2149,10 +2151,10 @@ mod hooks_tests {
     #[test]
     fn session_hook_rejects_non_string_empty_and_trigger_templates() {
         for yaml in [
-            "on:\n  close: [a, b]\n",
-            "on:\n  close: ''\n",
-            "on:\n  close: 'echo {{filepath}}'\n",
-            "on:\n  close: 'echo {{paths}}'\n",
+            "hooks:\n  close: [a, b]\n",
+            "hooks:\n  close: ''\n",
+            "hooks:\n  close: 'echo {{filepath}}'\n",
+            "hooks:\n  close: 'echo {{paths}}'\n",
         ] {
             assert!(
                 session_hooks_from_yaml(yaml).is_err(),
@@ -2285,15 +2287,15 @@ mod output_policy_tests {
             ("capture", OutputPolicy::Capture),
             ("show-on-failure", OutputPolicy::ShowOnFailure),
         ] {
-            let yaml = format!("on:\n  change: '**/*'\n  output: {raw}\n");
+            let yaml = format!("execution:\n  output: {raw}\n");
             assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
         }
     }
 
     #[test]
     fn output_policy_rejects_unknown_values() {
-        assert!(output_policy_from_yaml("on:\n  output: loud\n").is_err());
-        assert!(output_policy_from_yaml("on:\n  output: 1\n").is_err());
+        assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
+        assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
     }
 }
 
@@ -2447,7 +2449,7 @@ mod catalog_allowlist_tests {
             from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
                 .expect_err("unknown on property must fail");
         let message = format!("{:?}", err);
-        assert!(message.contains("Invalid property 'bogus' in 'on' section"));
+        assert!(message.contains("Invalid property 'on.bogus'"));
         for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
             assert!(
                 message.contains(name),

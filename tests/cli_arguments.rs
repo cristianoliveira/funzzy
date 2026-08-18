@@ -712,7 +712,7 @@ fn check_reports_valid_config_and_counts() {
         let config = dir.join("valid.yml");
         std::fs::write(
             &config,
-            "on:\n  change: '**/*'\n  concurrency: 2\njobs:\n  - name: lint\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n",
+            "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: lint\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n",
         )
         .expect("write config");
 
@@ -791,7 +791,7 @@ fn explain_shows_filtered_execution_topology() {
         let config = dir.join("topology.yml");
         std::fs::write(
             &config,
-            "on:\n  concurrency: 2\njobs:\n  - name: lint @quick\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test @quick\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n  - name: docs\n    run: mdbook build\n    change: 'docs/**'\n",
+            "execution:\n  concurrency: 2\njobs:\n  - name: lint @quick\n    parallel: checks\n    run: cargo clippy\n    change: 'src/**'\n  - name: test @quick\n    parallel: checks\n    run: cargo test\n    change: 'src/**'\n  - name: docs\n    run: mdbook build\n    change: 'docs/**'\n",
         )
         .expect("write config");
 

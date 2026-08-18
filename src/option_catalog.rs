@@ -369,22 +369,24 @@ mod tests {
     /// drift; any extra entry is a pseudo-field masquerading as config.
     #[test]
     fn on_inventory_matches_contract_section_3_2() {
-        let expected = [
-            "change",
-            "ignore",
-            "socket",
-            "concurrency",
-            "debounce",
-            "watch_backend",
-            "poll_interval",
-            "respect_gitignore",
-            "success",
-            "failure",
-            "close",
-            "output",
-        ];
         let actual: Vec<&str> = property_names(Owner::On);
-        assert_eq!(actual, expected);
+        assert_eq!(
+            actual,
+            [
+                "change",
+                "ignore",
+                "socket",
+                "debounce",
+                "watch_backend",
+                "poll_interval",
+                "respect_gitignore"
+            ]
+        );
+        assert_eq!(property_names(Owner::Execution), ["concurrency", "output"]);
+        assert_eq!(
+            property_names(Owner::Hooks),
+            ["success", "failure", "close"]
+        );
     }
 
     #[test]

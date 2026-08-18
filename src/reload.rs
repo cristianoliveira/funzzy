@@ -233,7 +233,7 @@ mod tests {
         // TASK-0092: the candidate's OWN concurrency/debounce/backend/hooks
         // participate in the frozen runtime — a policy change is semantic.
         let runtime = base_runtime(
-            "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\n  close: 'echo closed'\n  watch_backend: poll\n  poll_interval: 100ms\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+            "on:\n  debounce: 250ms\n  watch_backend: poll\n  poll_interval: 100ms\nexecution:\n  concurrency: 8\nhooks:\n  success: 'echo done'\n  close: 'echo closed'\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
         );
         assert_eq!(runtime.concurrency, 8);
         assert_eq!(runtime.debounce, Duration::from_millis(250));
@@ -266,7 +266,7 @@ mod tests {
         // `concurrency: 0` parses as YAML but fails the value gate; it must
         // be a Semantic fatal, never silently ignored.
         let err = validate_candidate(
-            "on:\n  concurrency: 0\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+            "execution:\n  concurrency: 0\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
             std::env::current_dir().unwrap(),
             &defaults(),
         )
@@ -345,7 +345,7 @@ mod tests {
         };
         assert_eq!(r1.number, 1);
 
-        let changed = "on:\n  concurrency: 8\n  debounce: 250ms\n  success: 'echo done'\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
+        let changed = "on:\n  debounce: 250ms\nexecution:\n  concurrency: 8\nhooks:\n  success: 'echo done'\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";
         let ReloadDecision::Commit(r2) = decide(&mut tracker, changed, root.clone(), &defaults())
         else {
             panic!("policy change must commit");

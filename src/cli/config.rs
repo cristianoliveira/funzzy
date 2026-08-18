@@ -356,9 +356,11 @@ mod catalog_parity_tests {
         let mut actual = prop_names("on");
         actual.sort();
         assert_eq!(actual, expected);
-        assert!(actual.contains(&"success".to_string()));
-        assert!(actual.contains(&"failure".to_string()));
-        assert!(actual.contains(&"output".to_string()));
+        let execution = prop_names("execution");
+        let hooks = prop_names("hooks");
+        assert!(execution.contains(&"output".to_string()));
+        assert!(hooks.contains(&"success".to_string()));
+        assert!(hooks.contains(&"failure".to_string()));
     }
 
     #[test]

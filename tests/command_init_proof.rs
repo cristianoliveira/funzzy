@@ -179,11 +179,11 @@ fn documented_values_parse_and_invalid_alternatives_fail() {
 
     let valid = [
         // All on-section enum/default examples from the template.
-        "on:\n  change: '**/*'\n  watch_backend: poll\n  poll_interval: 200ms\n  debounce: 500ms\n  respect_gitignore: true\n  output: quiet\n  success: echo ok > .fzz-success\n  failure: echo failed > .fzz-failed\njobs:\n  - name: a\n    run: echo a\n",
+        "on:\n  change: '**/*'\n  watch_backend: poll\n  poll_interval: 200ms\n  debounce: 500ms\n  respect_gitignore: true\nexecution:\n  output: quiet\nhooks:\n  success: echo ok > .fzz-success\n  failure: echo failed > .fzz-failed\njobs:\n  - name: a\n    run: echo a\n",
         // Job-side examples.
         "jobs:\n  - name: a\n    run: [\"echo\", \"{{filepath}}\"]\n    change: [\"**/*.rs\", \"**/*.md\"]\n    ignore: [\"**/*.log\"]\n    parallel: checks\n    cwd: scripts\n    env:\n      FOO: bar\n    service: true\n    output: show-on-failure\n",
         // Required defaults accept the documented scalar forms.
-        "on:\n  change: '**/*'\n  concurrency: 2\njobs:\n  - name: a\n    run: echo a\n    run_on_init: true\n",
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: a\n    run: echo a\n    run_on_init: true\n",
     ];
     for (i, config) in valid.iter().enumerate() {
         let out = check_ok(&dir, config);
@@ -197,7 +197,7 @@ fn documented_values_parse_and_invalid_alternatives_fail() {
     let invalid = [
         // On-level and job-level values validated at parse time (fzz check).
         (
-            "on:\n  change: '**/*'\n  output: loud\njobs:\n  - name: a\n    run: echo a\n",
+            "execution:\n  output: loud\njobs:\n  - name: a\n    run: echo a\n",
             "loud",
         ),
         (
@@ -280,6 +280,8 @@ fn template_comments_cover_catalog_without_unsupported_properties() {
 
     let known: Vec<&str> = option_catalog::property_names(Owner::On)
         .into_iter()
+        .chain(option_catalog::property_names(Owner::Execution))
+        .chain(option_catalog::property_names(Owner::Hooks))
         .chain(option_catalog::property_names(Owner::Job))
         .chain(option_catalog::property_names(Owner::Root))
         .collect();
@@ -287,6 +289,8 @@ fn template_comments_cover_catalog_without_unsupported_properties() {
     // Every optional catalog property appears commented.
     for spec in option_catalog::on_specs()
         .iter()
+        .chain(option_catalog::execution_specs())
+        .chain(option_catalog::hook_specs())
         .chain(option_catalog::job_specs())
     {
         if !option_catalog::is_optional(spec) {

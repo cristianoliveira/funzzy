@@ -134,7 +134,7 @@ fn structural_and_semantic_errors_give_path_specific_diagnostics() {
     assert!(!structural.status.success());
     let out = String::from_utf8_lossy(&structural.stdout);
     assert!(
-        out.contains("Invalid property 'bogus_key'"),
+        out.contains("Invalid property 'on.bogus_key'"),
         "structural error names the path: {out}"
     );
 
