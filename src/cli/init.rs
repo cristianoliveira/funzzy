@@ -91,12 +91,22 @@ pub fn render_init_template() -> String {
             option_catalog::hook_specs(),
         ),
     ] {
-        out.push_str(&format!("\n{name}: {{}}\n"));
+        out.push_str(&format!("\n{name}:\n"));
         for spec in specs {
             out.push_str(&comment_for(spec, "  "));
             out.push('\n');
-            for line in spec.example {
-                out.push_str(&format!("  # {line}\n"));
+            match (owner, spec.name) {
+                (option_catalog::Owner::Execution, "concurrency") => {
+                    out.push_str("  concurrency: 2\n");
+                }
+                (option_catalog::Owner::Hooks, "success") => {
+                    out.push_str("  success: echo \"Funzzy generation succeeded\"\n");
+                }
+                _ => {
+                    for line in spec.example {
+                        out.push_str(&format!("  # {line}\n"));
+                    }
+                }
             }
         }
         debug_assert!(find_in(owner, specs[0].name).is_some());
@@ -275,6 +285,17 @@ mod renderer_tests {
 
     /// Uncommenting each documented scalar example yields parser-valid YAML
     /// (TASK-0094 criterion 6).
+    #[test]
+    fn comprehensive_template_teaches_canonical_v2_policy_owners() {
+        let yaml = render_init_template();
+        assert!(yaml.contains("execution:\n  # concurrency:"));
+        assert!(yaml.contains("  concurrency: 2"));
+        assert!(yaml.contains("hooks:\n  # success:"));
+        assert!(yaml.contains("  success: echo \"Funzzy generation succeeded\""));
+        assert!(!yaml.contains("inherits on.output"));
+        assert!(!yaml.contains("on.success runs"));
+    }
+
     #[test]
     fn catalog_examples_are_parser_valid_when_activated() {
         for spec in option_catalog::all_specs()

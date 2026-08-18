@@ -1,7 +1,7 @@
 ---
 id: TASK-0119
 title: Update configuration examples and fzz init for V2
-status: todo
+status: doing
 depends_on: [TASK-0117]
 priority: high
 tags: [rust, cli, init, examples, config, v2, tdd]

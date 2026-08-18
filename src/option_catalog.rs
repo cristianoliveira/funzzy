@@ -275,7 +275,7 @@ const JOB_SPECS: &[OptionSpec] = &[
         owner: Owner::Job,
         required: false,
         default: None,
-        help: "Job output policy override; inherits on.output when absent.",
+        help: "Job output policy override; inherits execution.output when absent.",
         values: Some("inherit | quiet | capture | show-on-failure"),
         example: &["output: show-on-failure"],
         kind: SpecKind::Enum(OUTPUT_VALUES),
