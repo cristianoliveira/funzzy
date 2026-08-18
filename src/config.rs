@@ -2166,6 +2166,19 @@ mod hooks_tests {
     }
 
     #[test]
+    fn legacy_grouped_tasks_keep_historical_on_hook_placement() {
+        let yaml = "on:\n  success: echo ok\n  close: echo closed\ntasks:\n  - name: test\n    run: cargo test\n";
+        assert_eq!(
+            generation_hooks_from_yaml(yaml).unwrap().success.as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(yaml).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
     fn hooks_reject_non_string_values() {
         assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
         assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
@@ -2225,6 +2238,11 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
     let hooks = &root["hooks"];
+    let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+        &root["on"]
+    } else {
+        hooks
+    };
     if hooks == &Yaml::BadValue {
         return Ok(GenerationHooks::default());
     }
@@ -2260,6 +2278,11 @@ pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
         .first()
         .ok_or_else(|| "Configuration file is empty".to_owned())?;
     let hooks = &root["hooks"];
+    let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+        &root["on"]
+    } else {
+        hooks
+    };
     if hooks == &Yaml::BadValue {
         return Ok(SessionHooks::default());
     }
