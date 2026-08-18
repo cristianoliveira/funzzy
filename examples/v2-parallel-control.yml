@@ -2,8 +2,10 @@
 # Every example in examples/ must pass `fzz check` (locked by tests).
 on:
   change: "**/*"
-  concurrency: 2
   socket: .tmp/funzzy/control.sock
+
+execution:
+  concurrency: 2
 
 jobs:
   - name: lint @quick

@@ -179,6 +179,28 @@ fn validate_section(
 }
 
 fn validate_v2_sections(root: &Yaml) -> errors::Result<()> {
+    let Yaml::Hash(properties) = root else {
+        return Ok(());
+    };
+    let mut root_allowed =
+        crate::option_catalog::property_names(crate::option_catalog::Owner::Root);
+    // `tasks` remains an explicit legacy grouped-form input; it is not part
+    // of the V2 schema and is never emitted as preferred configuration.
+    root_allowed.push("tasks");
+    for (key, _) in properties {
+        if let Yaml::String(key) = key {
+            if !root_allowed.contains(&key.as_str()) {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!(
+                        "Invalid property '{key}' at configuration root. Only {} are allowed.",
+                        root_allowed.join(", ")
+                    ),
+                    None,
+                    None,
+                ));
+            }
+        }
+    }
     for (name, owner) in [
         ("on", crate::option_catalog::Owner::On),
         ("execution", crate::option_catalog::Owner::Execution),
@@ -2394,10 +2416,12 @@ mod v2_section_tests {
 
     #[test]
     fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
-        let unknown =
-            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
-                .expect_err("unknown execution property must fail");
+                let unknown = from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
+            .expect_err("unknown execution property must fail");
         assert!(format!("{unknown:?}").contains("execution.parallelism"));
+        let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
+            .expect_err("unknown root property must fail");
+        assert!(format!("{root:?}").contains("at configuration root"));
 
         assert_eq!(
             concurrency_from_yaml(

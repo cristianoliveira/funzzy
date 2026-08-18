@@ -38,9 +38,9 @@ fn write_config(directory: &Path, content: &str) {
 
 /// The same workflow expressed in the legacy root-list and the preferred
 /// jobs form. Barriers and tags must survive identically.
-const LEGACY: &str = "on:\n  concurrency: 2\ntasks:\n  - name: lint @quick\n    parallel: checks\n    run: 'echo lint > lint.txt'\n    change: '**/*'\n  - name: test @quick\n    parallel: checks\n    run: 'echo test > test.txt'\n    change: '**/*'\n  - name: package @quick\n    run: 'echo package > package.txt'\n    change: '**/*'\n";
+const LEGACY: &str = "execution:\n  concurrency: 2\ntasks:\n  - name: lint @quick\n    parallel: checks\n    run: 'echo lint > lint.txt'\n    change: '**/*'\n  - name: test @quick\n    parallel: checks\n    run: 'echo test > test.txt'\n    change: '**/*'\n  - name: package @quick\n    run: 'echo package > package.txt'\n    change: '**/*'\n";
 
-const JOBS: &str = "on:\n  concurrency: 2\njobs:\n  - name: lint @quick\n    parallel: checks\n    run: 'echo lint > lint.txt'\n    change: '**/*'\n  - name: test @quick\n    parallel: checks\n    run: 'echo test > test.txt'\n    change: '**/*'\n  - name: package @quick\n    run: 'echo package > package.txt'\n    change: '**/*'\n";
+const JOBS: &str = "execution:\n  concurrency: 2\njobs:\n  - name: lint @quick\n    parallel: checks\n    run: 'echo lint > lint.txt'\n    change: '**/*'\n  - name: test @quick\n    parallel: checks\n    run: 'echo test > test.txt'\n    change: '**/*'\n  - name: package @quick\n    run: 'echo package > package.txt'\n    change: '**/*'\n";
 
 #[test]
 fn legacy_tasks_and_jobs_produce_identical_list_output() {
@@ -136,7 +136,7 @@ fn migration_preserves_parallel_semantics_and_sequential_override() {
     // Handshake-style barrier fixture: two jobs in one group pass only when
     // overlapping at concurrency 2. After migrating to jobs, the same
     // behavior must hold, and --sequential must still force failure.
-    let handshake_legacy = "on:\n  concurrency: 2\ntasks:\n  - name: a @quick\n    parallel: checks\n    run: 'touch a.ready; i=0; while [ $i -lt 100 ]; do test -f b.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n    change: '**/*'\n  - name: b @quick\n    parallel: checks\n    run: 'touch b.ready; i=0; while [ $i -lt 100 ]; do test -f a.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n    change: '**/*'\n";
+    let handshake_legacy = "execution:\n  concurrency: 2\ntasks:\n  - name: a @quick\n    parallel: checks\n    run: 'touch a.ready; i=0; while [ $i -lt 100 ]; do test -f b.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n    change: '**/*'\n  - name: b @quick\n    parallel: checks\n    run: 'touch b.ready; i=0; while [ $i -lt 100 ]; do test -f a.ready && exit 0; i=$((i + 1)); sleep 0.02; done; exit 1'\n    change: '**/*'\n";
 
     let directory = fixture("barrier-migrate");
     write_config(&directory, handshake_legacy);
