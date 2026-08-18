@@ -211,6 +211,17 @@ mod tests {
         );
     }
 
+    /// Section ownership is deliberately outside migration: V1 task vocabulary
+    /// changes, while the grouped policy text stays byte-identical.
+    #[test]
+    fn migration_does_not_reorganize_v2_policy_sections() {
+        let legacy = "on:\n  concurrency: 2\n  output: quiet\n  success: echo ok\ntasks:\n  - name: test\n    run: cargo test\n";
+        assert_eq!(
+            migrate_content(legacy).unwrap(),
+            "on:\n  concurrency: 2\n  output: quiet\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n"
+        );
+    }
+
     /// Already-preferred input is a byte-identical no-op.
     #[test]
     fn already_preferred_input_is_unchanged() {
