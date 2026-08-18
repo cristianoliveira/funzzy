@@ -12,9 +12,9 @@ confused:
 
 | Hook | Boundary | Cardinality | Correlation |
 |---|---|---|---|
-| `on.success` | one generation passes | once per passing generation | generation ID |
-| `on.failure` | one generation fails | once per failing generation | generation ID |
-| `on.close` | one ready watcher session closes | at most once per process/session | watcher instance + config revision; **no generation ID** |
+| `hooks.success` | one generation passes | once per passing generation | generation ID |
+| `hooks.failure` | one generation fails | once per failing generation | generation ID |
+| `hooks.close` | one ready watcher session closes | at most once per process/session | watcher instance + config revision; **no generation ID** |
 
 - **Generation terminal hooks** (`success`/`failure`) observe workflow
   outcomes. They may run many times in one watcher session.
@@ -30,7 +30,7 @@ confused:
 Preferred V2 form (production-parser validated):
 
 ```yaml
-on:
+hooks:
   success: ./scripts/on-success
   failure: ./scripts/on-failure
   close: ./scripts/on-close
@@ -41,25 +41,18 @@ jobs:
     change: "**/*"
 ```
 
-- `on.close` is a sibling of `on.success` and `on.failure`; `on_close` is
-  rejected as an unknown property because nested `on:` already supplies that
-  word.
-- It is accepted only where other `on` properties are legal: preferred
-  grouped `on:`/`jobs:` and legacy grouped `on:`/`tasks:`. A legacy root task
-  list has no `on` object and cannot declare it. Unsupported root/mixed shapes
-  remain errors; migration does not change hook semantics.
+- `hooks.close` is a sibling of `hooks.success` and `hooks.failure`; `on_close` is rejected as an unknown property.
+- Preferred `jobs:` configuration accepts hooks only under `hooks:`. Grouped legacy `tasks:` retains its historical `on:` hook placement as a compatibility input; a legacy root task list cannot declare hooks. Unsupported root/mixed shapes remain errors; migration does not change hook semantics.
 - Value type is one non-empty shell-command string. Lists, mappings, null,
   empty strings, and unknown sibling properties are actionable config errors.
 - The command must be finite. A service/daemon belongs in a `service: true`
   job, not a close hook.
-- Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and
-  generated init comments must agree that `close` is an optional `on` string.
+- Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and generated init comments must agree that `close` is an optional `hooks` string.
 
 ## 3. Generation terminal hooks (unchanged TASK-0040 behavior)
 
-- `on.success` runs exactly once when the generation passes (every task
-  passed, no cancellation).
-- `on.failure` runs exactly once when the generation fails (any task failed).
+- `hooks.success` runs exactly once when the generation passes (every task passed, no cancellation).
+- `hooks.failure` runs exactly once when the generation fails (any task failed).
 - A **superseded** generation (replaced by a newer run) runs neither hook: it
   was never a completed outcome, only displaced.
 - A **cancelled** generation runs neither hook: cancellation is an explicit
@@ -86,7 +79,7 @@ running
   -> publish terminal watcher lifecycle reason to existing subscribers (best effort)
   -> cancel and reap active generations, generation hooks, and services
   -> close/unlink control socket and other watcher resources
-  -> run latest committed on.close at most once (when configured)
+  -> run latest committed hooks.close at most once (when configured)
   -> report close-hook outcome
   -> exited (with frozen original reason/exit code)
 ```
@@ -105,7 +98,7 @@ Normative ordering:
 4. **Retire resources.** Existing subscribers receive the original terminal
    watcher reason best-effort, then control socket closes/unlinks. No client
    can schedule work while the close hook runs.
-5. **Run close hook.** Snapshot the latest successfully committed `on.close`
+5. **Run close hook.** Snapshot the latest successfully committed `hooks.close`
    and execute it once. Absence is a successful no-op.
 6. **Exit unchanged.** Report hook result, then exit with original frozen
    watcher reason/code.
@@ -115,7 +108,7 @@ are not observed and cannot schedule another generation.
 
 ## 5. Eligible and ineligible exits
 
-`on.close` runs once for a **ready watcher** on:
+`hooks.close` runs once for a **ready watcher** on:
 
 - graceful SIGINT (original exit code `130`);
 - graceful SIGTERM (original exit code `143`);
@@ -131,7 +124,7 @@ It cannot run on:
 - startup/config failure before readiness;
 - a second signal or duplicate shutdown request (the first close owns it).
 
-Finite/non-watcher commands never run `on.close`, even when they read a config:
+Finite/non-watcher commands never run `hooks.close`, even when they read a config:
 
 - `fzz run`, `check`, `list`, `explain`, `exec`;
 - `fzz config schema|example`, `init`, `migrate`;
@@ -141,14 +134,14 @@ A control client disconnecting or a generation ending is not watcher close.
 
 ## 6. Reload and revision semantics
 
-- Runtime configuration owns `on.close` with the rest of the immutable
+- Runtime configuration owns `hooks.close` with the rest of the immutable
   committed revision (CONFIG-RELOAD-CONTRACT).
 - At close-gate claim, snapshot the **latest successfully committed** value.
   A valid reload may add, replace, or remove it; that committed value (or
   absence) is authoritative for eventual close.
 - A malformed/unpreparable candidate never commits and never replaces the
   last valid hook. If that candidate causes fatal shutdown, the last valid
-  committed `on.close` runs.
+  committed `hooks.close` runs.
 - Formatting-only reload remains a no-op: revision and hook identity do not
   churn.
 - Hook execution uses the snapshot taken at close claim; files changed during
@@ -163,7 +156,7 @@ A control client disconnecting or a generation ending is not watcher close.
   injected.
 - `{{filepath}}`, `{{absolute_path}}`, `{{relative_filepath}}`,
   `{{relative_path}}`, and `{{paths}}` are trigger-bound and therefore invalid
-  in `on.close`. `fzz check` rejects them with an actionable “close has no
+  in `hooks.close`. `fzz check` rejects them with an actionable “close has no
   trigger path” error. Unknown templates follow existing hook/template error
   policy; they are never silently replaced with empty text.
 - Generation hooks retain their existing trigger-template support (§3).
@@ -211,7 +204,7 @@ generation; those loops stay observable. Close hook differs:
   reason**, not a fake run outcome. Socket closes before hook execution, so
   clients observe terminal/disconnected state and can never schedule work
   during cleanup.
-- Run-event NDJSON remains generation-oriented: `on.close` emits no generation
+- Run-event NDJSON remains generation-oriented: `hooks.close` emits no generation
   `hook` record. A future watcher-lifecycle event format must be separately
   versioned rather than smuggling close data into a generation schema.
 
