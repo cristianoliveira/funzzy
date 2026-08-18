@@ -6,8 +6,7 @@
 
 ## 1. Policies
 
-Each job may declare `output:` (or inherit the on-level default `on.output`,
-which applies to every job without its own policy):
+Each job may declare `output:` (or inherit `execution.output`, which applies to every job without its own policy):
 
 | Policy | Live stdout/stderr | Retained capture | Use case |
 | --- | --- | --- | --- |

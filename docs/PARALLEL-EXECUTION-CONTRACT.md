@@ -70,14 +70,14 @@ originally separate group occurrences**:
 
 ## 3. Concurrency bound
 
-- `on.concurrency` is an optional global cap on simultaneously active tasks.
+- `execution.concurrency` is an optional global cap on simultaneously active tasks.
 - Default is the injected available-parallelism provider
   (`std::thread::available_parallelism`), resolved once at plan time.
 - Accepted values: positive integers. `0`, negative, non-integer, or
   non-numeric values fail configuration validation with an actionable
   task-local error.
 - Effective concurrency for one group occurrence is
-  `min(on.concurrency, selected members in occurrence)`.
+  `min(execution.concurrency, selected members in occurrence)`.
 - `concurrency: 1` is valid and means tasks run sequentially inside barrier.
 - CLI override is **deferred** unless the V2 CLI contract explicitly adds it.
 - Concurrency is a bounded resource policy (worker pool / semaphore), never
