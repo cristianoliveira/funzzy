@@ -32,7 +32,7 @@ never opens a socket), and exit-code stable (0 success, 1 invalid/operational,
 ## 3. Command grammar
 
 ```sh
-fzz config schema [--section on|job|matching|execution|parallel|control]
+fzz config schema [--section on|execution|hooks|job|matching|parallel|control]
 fzz config example comprehensive|minimal|parallel|agent
 ```
 
@@ -49,18 +49,19 @@ fzz config example comprehensive|minimal|parallel|agent
 
 | Section | Covers |
 |---|---|
-| `on` | `change`, `ignore`, `socket`, `concurrency`, `debounce`, `watch_backend`, `poll_interval`, `respect_gitignore`, `success`, `failure`, `close`, `output` |
-| `job` | `name`, `run` (shell/argv), `cwd`, `env`, `change`, `ignore`, `run_on_init`, `parallel` |
+| `on` | `change`, `ignore`, `socket`, `debounce`, `watch_backend`, `poll_interval`, `respect_gitignore` |
+| `execution` | `concurrency`, default `output` policy |
+| `hooks` | generation `success`/`failure` and watcher-session `close` commands |
+| `job` | `name`, `run` (shell/argv), `cwd`, `env`, `change`, `ignore`, `run_on_init`, `parallel`, `service`, `output` |
 | `matching` | change/ignore glob semantics, gitignore precedence (GITIGNORE-CONTRACT), `{{filepath}}`/`{{paths}}` |
-| `execution` | busy policy, fail-fast, log file, `--sequential`, NDJSON `--events` |
-| `parallel` | named contiguous groups, barriers, group occurrences, `on.concurrency` |
+| `parallel` | named contiguous groups, barriers, group occurrences, `execution.concurrency` |
 | `control` | socket config, `control`/`ctl` subcommands, protocol capabilities |
 
 | Profile | Purpose |
 |---|---|
 | `comprehensive` | the full commented starter `fzz init` writes by default — small active setup + every supported option documented in comments (INIT-TEMPLATE-CONTRACT) |
 | `minimal` | one job, one change pattern — the smallest runnable config |
-| `parallel` | two jobs in one group with `on.concurrency` — demonstrates barriers |
+| `parallel` | two jobs in one group with `execution.concurrency` — demonstrates barriers |
 | `agent` | control socket + a verify-style job — the agent loop starting point |
 
 `fzz config example` stays stdout-only and side-effect-free: it never gains
@@ -72,7 +73,7 @@ responsibility alone (CLI-V2-CONTRACT §3a).
 
 - `fzz config schema --format json` emits valid JSON Schema
   (draft 2020-12) describing the preferred grouped `jobs:` config.
-- The schema identifies: version, field type, required/default status,
+- The schema identifies its independent schema version plus field type, required/default status,
   enum/range, mutual constraints (e.g. `--wait` requires `--timeout` is CLI;
   config-side: `ignore` vs `change`), deprecation (legacy root list),
   examples, and a note that semantic checks are delegated to `fzz check`.
