@@ -409,6 +409,7 @@ pub fn command_lines(rules: Vec<Rules>) -> Vec<CommandLine> {
         .collect::<Vec<CommandLine>>()
 }
 
+// Create a glob pattern, anchored if `anchored` is true.
 fn create_pattern(pattern: &str, anchored: bool) -> Pattern {
     let compiled_pattern = if anchored {
         pattern.to_owned()
