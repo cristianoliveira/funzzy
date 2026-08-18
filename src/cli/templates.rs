@@ -84,6 +84,8 @@ jobs:
 fn parallel_yaml() -> &'static str {
     r#"on:
   change: "src/**"
+
+execution:
   concurrency: 2
 
 jobs:
@@ -109,8 +111,10 @@ fn agent_yaml() -> &'static str {
 #   fzz watch          # start the watcher + control socket
 on:
   change: "**/*"
-  concurrency: 2
   socket: .tmp/funzzy/control.sock
+
+execution:
+  concurrency: 2
 
 jobs:
   - name: verify @agent-final

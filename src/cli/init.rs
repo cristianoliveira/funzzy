@@ -79,6 +79,29 @@ pub fn render_init_template() -> String {
         }
     }
 
+    for (name, owner, specs) in [
+        (
+            "execution",
+            option_catalog::Owner::Execution,
+            option_catalog::execution_specs(),
+        ),
+        (
+            "hooks",
+            option_catalog::Owner::Hooks,
+            option_catalog::hook_specs(),
+        ),
+    ] {
+        out.push_str(&format!("\n{name}: {{}}\n"));
+        for spec in specs {
+            out.push_str(&comment_for(spec, "  "));
+            out.push('\n');
+            for line in spec.example {
+                out.push_str(&format!("  # {line}\n"));
+            }
+        }
+        debug_assert!(find_in(owner, specs[0].name).is_some());
+    }
+
     // `jobs:` block: commented reference job for job properties not already
     // shown actively (change/ignore/run_on_init appear above the active jobs).
     // Uncommenting the reference block yields a parser-valid extra job.
