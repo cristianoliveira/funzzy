@@ -110,10 +110,18 @@ on:
   change: "src/**"        # common change globs for all jobs
   ignore: "**/*.log"      # common ignore globs
   socket: .tmp/funzzy/control.sock   # enable the control surface
-  concurrency: 2          # scheduler bound (default: available parallelism)
   debounce: 500ms         # filesystem batch window (default 1s)
   watch_backend: auto     # native | poll | auto (native first, poll fallback)
   respect_gitignore: true # respect workspace .gitignore (default false)
+
+execution:
+  concurrency: 2          # scheduler bound (default: available parallelism)
+  output: show-on-failure # default job output policy
+
+hooks:
+  success: echo "checks passed"
+  failure: echo "checks failed"
+  close: echo "watcher stopped"
 
 jobs:
   - name: lint
@@ -134,10 +142,7 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
-- **Hooks**: `on.success`/`on.failure` run after terminal generations;
-  `on.close` runs one finite cleanup command only when a ready watcher shuts
-  down gracefully, after active jobs/services are reaped. Finite commands do
-  not run it (RUN-HOOKS-CONTRACT).
+- **Hooks**: `hooks.success` runs after each passing generation and `hooks.failure` after each failing generation; neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run it (RUN-HOOKS-CONTRACT).
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
   are rewritten deterministically with `fzz migrate`.
 
@@ -146,7 +151,7 @@ jobs:
 | Symptom | Action |
 |---|---|
 | `fzz init` refused: `.watch.yaml` exists | deliberate create-only refusal; edit the file or `fzz config example P` to compare |
-| Legacy config needs the new shape | `fzz migrate [-c PATH]` (atomic, idempotent; `jobs:` is a no-op) |
+| Legacy task list needs `jobs:` | back up/commit, run `fzz migrate [-c PATH]`, inspect, then `fzz check`; section ownership edits are manual |
 | Config rejected | `fzz check` names the exact path; fix, re-check |
 | Target not found / ambiguous | `fzz list` shows valid targets |
 | Race-like parallel failure | rerun `fzz run TARGET --sequential`; parallel fail + sequential pass is `parallel-sensitive` evidence, not a proven race |
