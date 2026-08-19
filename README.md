@@ -112,7 +112,7 @@ brew install cristianoliveira/tap/funzzy
 ### Linux:
 
 ```bash
-curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | sh
+curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/main/linux-install.sh | sh
 ```
 
 The installer detects the architecture (x86_64/aarch64), verifies the
@@ -120,7 +120,7 @@ published sha256 checksum, and installs both `funzzy` and `fzz` into
 `/usr/local/bin`. You can pin a release:
 
 ```bash
-curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/master/linux-install.sh | bash - 2.0.0
+curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/main/linux-install.sh | bash - 2.0.0
 ```
 
 ### Nix
@@ -218,7 +218,7 @@ fzz -c ~/watch.yaml
 ```
 
 Fail fast stops execution when any task fails. Use it when later work depends
-on every earlier task succeeding. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/master/.watch.yaml#L6)
+on every earlier task succeeding. [See its usage in our workflow](https://github.com/cristianoliveira/funzzy/blob/main/.watch.yaml#L6)
 
 ```bash
 fzz --fail-fast # or fzz -b (bail)
@@ -266,7 +266,7 @@ find . -name '*.[jt]s' | fzz exec -- npx eslint {{filepath}}
 Funzzy does not implicitly invoke a shell for `exec`; use `fzz exec -- sh -c '...'` when shell operators are required.
 
 Restart busy policy cancels and reaps active work when a newer change batch arrives.
-It is useful for long-running workflows. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/master/tests/watching_with_non_block_flag.rs#L7)
+It is useful for long-running workflows. [See more in long task test](https://github.com/cristianoliveira/funzzy/blob/main/tests/watching_with_non_block_flag.rs#L7)
 
 ```bash
 fzz --on-busy restart # or fzz --restart
@@ -376,7 +376,7 @@ jobs:
 
 This might be due to different causes, the most common issue when using VIM is because of its default backup setting
 which causes changes to multiple files on save. (See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474)).
-For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/master/examples/tasks-with-long-running-commands.yaml#L5).
+For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/main/examples/tasks-with-long-running-commands.yaml#L5).
 
 For other cases use the verbose `fzz -V | grep 'Triggered by'` to understand what is triggering a task to be executed.
 

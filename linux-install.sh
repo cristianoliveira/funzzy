@@ -6,7 +6,7 @@
 # published sha256, and installs both binaries (funzzy + fzz) into PREFIX.
 #
 # Overridable inputs (all optional; used by scripts/linux-install-test):
-#   $1 / $VERSION   release to install (default: master's Cargo.toml version)
+#   $1 / $VERSION   release to install (default: main's Cargo.toml version)
 #   $BASE           archive base URL
 #   $PREFIX         install directory (default /usr/local/bin)
 #   $FORCE_ARCH     pretend `uname -m` returned this (test seam)
@@ -16,7 +16,7 @@ PREFIX="${PREFIX:-/usr/local/bin}"
 BASE="${BASE:-https://github.com/cristianoliveira/funzzy/releases/download}"
 VERSION="${1:-${VERSION:-}}"
 if [ -z "$VERSION" ]; then
-  VERSION="$(curl -fsSL https://raw.githubusercontent.com/cristianoliveira/funzzy/master/Cargo.toml \
+  VERSION="$(curl -fsSL https://raw.githubusercontent.com/cristianoliveira/funzzy/main/Cargo.toml \
     | grep -m1 '^version' | awk -F\" '{print $2}')"
 fi
 VERSION="v${VERSION#v}"

@@ -65,5 +65,22 @@ for pair in "x86_64:x86_64-linux" "aarch64:aarch64-linux"; do
   fi
 done
 
+# 4. Default version lookup follows the repository's main branch.
+mkdir -p "$SCRATCH/fakebin"
+cat > "$SCRATCH/fakebin/curl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$CURL_CALLS"
+printf 'version = "9.9.9"\n'
+EOF
+chmod +x "$SCRATCH/fakebin/curl"
+CURL_CALLS="$SCRATCH/curl-calls"
+PATH="$SCRATCH/fakebin:$PATH" CURL_CALLS="$CURL_CALLS" FORCE_ARCH=unsupported VERSION= \
+  sh "$INSTALLER" >/dev/null 2>&1 || true
+if grep -q 'raw.githubusercontent.com/cristianoliveira/funzzy/main/Cargo.toml' "$CURL_CALLS"; then
+  ok "default version lookup uses main"
+else
+  bad "default version lookup does not use main"
+fi
+
 echo "linux-install-test: $pass passed, $failc failed"
 [ "$failc" -eq 0 ]
