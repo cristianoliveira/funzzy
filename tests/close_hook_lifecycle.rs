@@ -152,7 +152,7 @@ mod lifecycle {
         setup::serialized(|| {
             for (name, expected) in [("INT", 130), ("TERM", 143)] {
                 let root = scratch(&format!("signal-{name}"));
-                let config = format!("on:\n  close: \"echo close >> close.log\"\n{IDLE}");
+                let config = format!("hooks:\n  close: \"echo close >> close.log\"\n{IDLE}");
                 let child = spawn(&root, &config, &[]);
                 let mut cleanup = Cleanup::new(root.clone(), child);
                 wait_ready(&root);
@@ -173,8 +173,9 @@ mod lifecycle {
     fn close_runs_after_active_finite_job_and_service_are_reaped() {
         setup::serialized(|| {
             let root = scratch("ordering");
-            let config = r#"on:
+            let config = r#"execution:
   concurrency: 2
+hooks:
   close: "if kill -0 $(cat finite.pid) 2>/dev/null || kill -0 $(cat service.pid) 2>/dev/null; then echo alive; else echo reaped; fi > order.txt"
 jobs:
   - name: finite
@@ -231,7 +232,7 @@ jobs:
                 ),
             ] {
                 let root = scratch(label);
-                let config = format!("on:\n  close: \"{close}\"\n{IDLE}");
+                let config = format!("hooks:\n  close: \"{close}\"\n{IDLE}");
                 let child = spawn(&root, &config, &env);
                 let mut cleanup = Cleanup::new(root.clone(), child);
                 wait_ready(&root);
@@ -252,7 +253,7 @@ jobs:
         setup::serialized(|| {
             let root = scratch("timeout-child");
             let config =
-                format!("on:\n  close: \"sleep 30 & echo $! > hook-child.pid; wait\"\n{IDLE}");
+                format!("hooks:\n  close: \"sleep 30 & echo $! > hook-child.pid; wait\"\n{IDLE}");
             let child = spawn(&root, &config, &[("FUNZZY_CANCEL_GRACE_MS", "500")]);
             let mut cleanup = Cleanup::new(root.clone(), child);
             wait_ready(&root);
@@ -276,7 +277,7 @@ jobs:
         setup::serialized(|| {
             let root = scratch("second-signal");
             let config = format!(
-                "on:\n  close: \"echo close >> close.log; trap '' TERM INT; sleep 30\"\n{IDLE}"
+                "hooks:\n  close: \"echo close >> close.log; trap '' TERM INT; sleep 30\"\n{IDLE}"
             );
             let child = spawn(&root, &config, &[("FUNZZY_CANCEL_GRACE_MS", "1000")]);
             let mut cleanup = Cleanup::new(root.clone(), child);
@@ -304,13 +305,13 @@ jobs:
         setup::serialized(|| {
             // Valid commit replaces future hook.
             let root = scratch("reload-valid");
-            let initial = format!("on:\n  close: \"echo old > old.txt\"\n{IDLE}");
+            let initial = format!("hooks:\n  close: \"echo old > old.txt\"\n{IDLE}");
             let child = spawn(&root, &initial, &[]);
             let mut cleanup = Cleanup::new(root.clone(), child);
             wait_ready(&root);
             fs::write(
                 root.join(".watch.yaml"),
-                format!("on:\n  close: \"echo new > new.txt\"\n{IDLE}"),
+                format!("hooks:\n  close: \"echo new > new.txt\"\n{IDLE}"),
             )
             .unwrap();
             wait_until(Duration::from_secs(20), "valid reload commit", || {
@@ -330,7 +331,7 @@ jobs:
             // Invalid candidate never replaces last committed hook; fatal
             // config exit stays nonzero and hook runs once.
             let root = scratch("reload-invalid");
-            let stable = format!("on:\n  close: \"echo stable >> stable.log\"\n{IDLE}");
+            let stable = format!("hooks:\n  close: \"echo stable >> stable.log\"\n{IDLE}");
             let child = spawn(&root, &stable, &[]);
             let mut cleanup = Cleanup::new(root.clone(), child);
             wait_ready(&root);
@@ -362,7 +363,7 @@ jobs:
             cleanup.finish();
 
             let root = scratch("finite");
-            let config = "on:\n  close: \"echo forbidden > close.txt\"\njobs:\n  - name: once\n    run: echo once\n    change: '**/*'\n";
+            let config = "hooks:\n  close: \"echo forbidden > close.txt\"\njobs:\n  - name: once\n    run: echo once\n    change: '**/*'\n";
             fs::write(root.join(".watch.yaml"), config).unwrap();
             for args in [vec!["run", "once"], vec!["check"]] {
                 let status = Command::new(env!("CARGO_BIN_EXE_fzz"))
@@ -382,7 +383,7 @@ jobs:
     fn close_written_file_cannot_schedule_another_generation() {
         setup::serialized(|| {
             let root = scratch("no-feedback");
-            let config = "on:\n  close: \"echo close > close-trigger.txt\"\njobs:\n  - name: feedback\n    run: \"echo generation >> generations.log\"\n    change: '**/*.txt'\n";
+            let config = "hooks:\n  close: \"echo close > close-trigger.txt\"\njobs:\n  - name: feedback\n    run: \"echo generation >> generations.log\"\n    change: '**/*.txt'\n";
             let child = spawn(&root, config, &[]);
             let mut cleanup = Cleanup::new(root.clone(), child);
             wait_ready(&root);
@@ -408,7 +409,10 @@ jobs:
                 .unwrap();
             assert!(schema.status.success());
             let json: Value = serde_json::from_slice(&schema.stdout).unwrap();
-            assert_eq!(json["$defs"]["on"]["properties"]["close"]["type"], "string");
+            assert_eq!(
+                json["$defs"]["hooks"]["properties"]["close"]["type"],
+                "string"
+            );
 
             let init = Command::new(env!("CARGO_BIN_EXE_fzz"))
                 .current_dir(&root)
@@ -420,9 +424,9 @@ jobs:
             assert!(generated.contains("# close:"));
 
             for invalid in [
-                "on:\n  close: [a, b]\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
-                "on:\n  close: ''\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
-                "on:\n  close: 'echo {{filepath}}'\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
+                "hooks:\n  close: [a, b]\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
+                "hooks:\n  close: ''\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
+                "hooks:\n  close: 'echo {{filepath}}'\njobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n",
             ] {
                 fs::write(root.join(".watch.yaml"), invalid).unwrap();
                 let status = Command::new(env!("CARGO_BIN_EXE_fzz"))

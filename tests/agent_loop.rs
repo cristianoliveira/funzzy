@@ -99,6 +99,7 @@ fn wait_until<F: FnMut() -> bool>(mut condition: F) {
 const LOOP_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 2
 jobs:
   - name: check
@@ -112,6 +113,7 @@ jobs:
 const FAIL_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 2
 jobs:
   - name: check
@@ -349,6 +351,7 @@ fn config_restart_returns_explicit_instance_change() {
 const BOUNDED_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 2
 jobs:
   - name: check
@@ -740,6 +743,7 @@ fn invalid_option_combinations_rejected_before_any_retrieval() {
 const PARALLEL_FAIL_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 4
 jobs:
   - name: slow pass

@@ -56,7 +56,7 @@ install: tests ## Install funzzy on your machine
 
 .PHONY: nix-gen-patch
 nix-gen-patch: ## Generate a patch for the nix derivation
-	@git diff origin/master -r -u > nix/gitdiff.patch
+	@git diff origin/main -r -u > nix/gitdiff.patch
 
 .PHONY: nix-flake-check
 nix-flake-check: ## Check the nix flake
