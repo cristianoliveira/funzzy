@@ -17,6 +17,7 @@ use std::time::Duration;
 struct TestProcess {
     child: Child,
     directory: std::path::PathBuf,
+    child_log: std::path::PathBuf,
 }
 
 impl Drop for TestProcess {
@@ -24,6 +25,7 @@ impl Drop for TestProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_dir_all(&self.directory);
+        let _ = std::fs::remove_file(&self.child_log);
     }
 }
 
@@ -39,8 +41,14 @@ fn setup_directory(test_name: &str, config: &str) -> std::path::PathBuf {
     std::fs::canonicalize(&directory).expect("canonicalize fixture root")
 }
 
+fn child_log_path(directory: &std::path::Path) -> std::path::PathBuf {
+    let fixture_name = directory.file_name().unwrap().to_string_lossy();
+    directory.with_file_name(format!("{fixture_name}.child.err"))
+}
+
 fn start_watcher(directory: &std::path::Path) -> TestProcess {
-    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child_log_path = child_log_path(directory);
+    let child_log = std::fs::File::create(&child_log_path).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
         // Verbose: typed diagnostics (batches, matches, scheduling) land in
         // child.err so CI failures can be diagnosed from the logs alone.
@@ -55,6 +63,7 @@ fn start_watcher(directory: &std::path::Path) -> TestProcess {
     TestProcess {
         child,
         directory: directory.to_path_buf(),
+        child_log: child_log_path,
     }
 }
 
@@ -101,7 +110,7 @@ fn wait_until_or_dump(
         std::thread::sleep(Duration::from_millis(100));
     }
     eprintln!("--- watcher child.err (verbose) ---");
-    match std::fs::read_to_string(directory.join("child.err")) {
+    match std::fs::read_to_string(child_log_path(directory)) {
         Ok(log) => eprintln!("{log}"),
         Err(e) => eprintln!("<unreadable: {e}>",),
     }
@@ -387,6 +396,7 @@ fn burst_in_one_window_is_one_generation_then_next_window_is_next() {
 const PARALLEL_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 4
 jobs:
   - name: a
@@ -516,6 +526,7 @@ fn control_output_and_await_stay_exact_for_created_generation() {
 const BUSY_CONFIG: &str = r#"
 on:
   socket: sock
+execution:
   concurrency: 2
 jobs:
   - name: long

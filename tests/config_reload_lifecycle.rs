@@ -463,12 +463,12 @@ fn reload_adds_missing_future_root_and_observes_later_create() {
 /// committed hooks run at the run boundary.
 #[test]
 fn policy_surface_change_preserves_process_and_applies_hooks() {
-    let config = "on:\n  socket: sock\n  concurrency: 1\n  debounce: 500ms\njobs:\n  - name: build\n    run: 'echo build > build-verdict.txt'\n    change: 'src/**'\n";
+    let config = "on:\n  socket: sock\n  debounce: 500ms\nexecution:\n  concurrency: 1\njobs:\n  - name: build\n    run: 'echo build > build-verdict.txt'\n    change: 'src/**'\n";
     let directory = setup_directory("policy", config);
     let mut watcher = start_watcher(&directory);
     wait_until_socket(&directory);
 
-    let changed = "on:\n  socket: sock\n  concurrency: 4\n  debounce: 300ms\n  success: 'echo hooked > hook-verdict.txt'\njobs:\n  - name: build\n    run: 'echo build > build-verdict.txt'\n    change: 'src/**'\n";
+    let changed = "on:\n  socket: sock\n  debounce: 300ms\nexecution:\n  concurrency: 4\nhooks:\n  success: 'echo hooked > hook-verdict.txt'\njobs:\n  - name: build\n    run: 'echo build > build-verdict.txt'\n    change: 'src/**'\n";
     std::fs::write(directory.join(".watch.yaml"), changed).unwrap();
     wait_for_log(&directory, "hot-reloading to revision 2");
     assert!(
