@@ -114,16 +114,27 @@ impl ModificationGate {
         }
     }
 
-    /// Baselines every existing file under the initial roots (TASK-0114): a
-    /// pre-existing file may never route as a "first sighting" — the §4
-    /// directory walk synthesizes pre-existing siblings on Linux (a file
-    /// create bumps the parent dir, whose walk re-lists them). Entries are
-    /// fill-only, so callers can seed disjoint roots without masking an
+    /// Baselines every existing file at the configured baseline paths
+    /// (TASK-0114): a pre-existing file may never route as a "first sighting"
+    /// — the §4 directory walk synthesizes pre-existing siblings on Linux (a
+    /// file create bumps the parent dir, whose walk re-lists them). Entries
+    /// are fill-only, so callers can seed disjoint paths without masking an
     /// already-tracked write. Live reloads deliberately do NOT re-seed: a
-    /// file created under a newly added root must route on first sighting.
-    fn seed(&mut self, roots: &[String]) {
-        for root in roots {
-            let Ok(entries) = std::fs::read_dir(root) else {
+    /// file created under a newly added path must route on first sighting.
+    fn seed(&mut self, paths: &[String]) {
+        for path in paths {
+            let path = std::path::Path::new(path);
+            if path.is_file() {
+                let mtime = std::fs::metadata(path)
+                    .and_then(|meta| meta.modified())
+                    .ok();
+                if let Some(path) = path.to_str() {
+                    self.last_seen.entry(path.to_owned()).or_insert(mtime);
+                }
+                continue;
+            }
+
+            let Ok(entries) = std::fs::read_dir(path) else {
                 continue;
             };
             for entry in entries.flatten() {
@@ -188,7 +199,12 @@ pub fn watch_loop(
         .map(|coordinator| coordinator.requested_flag());
     let ready_shutdown = shutdown;
     let gate = std::cell::RefCell::new(ModificationGate::new());
-    gate.borrow_mut().seed(&list_of_watched_paths);
+    let baseline_paths = initial
+        .baseline_paths()
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    gate.borrow_mut().seed(&baseline_paths);
 
     watcher::events(
         list_of_watched_paths,
@@ -1603,6 +1619,33 @@ mod modification_gate_seed_tests {
         assert!(
             routed.is_empty(),
             "baselined pre-existing file must not route on synthesis: {routed:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Exact-file patterns baseline only that file, never unrelated siblings.
+    #[test]
+    fn exact_file_seed_does_not_expand_to_its_parent() {
+        let dir = scratch("exact-file");
+        let manifest = dir.join("Cargo.toml");
+        let unrelated = dir.join("target/debug/deps/stale.rcgu.o");
+        std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "[package]").unwrap();
+        std::fs::write(&unrelated, "object").unwrap();
+
+        let mut gate = ModificationGate::new();
+        gate.seed(&[manifest.display().to_string()]);
+
+        assert!(
+            gate.changed(vec![manifest.display().to_string()])
+                .is_empty(),
+            "the exact configured file is baselined"
+        );
+        assert_eq!(
+            gate.changed(vec![unrelated.display().to_string()]),
+            vec![unrelated.display().to_string()],
+            "an exact file baseline never traverses unrelated siblings"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

@@ -668,6 +668,43 @@ impl Watches {
         minimal
     }
 
+    /// Existing paths that need an initial modification baseline.
+    ///
+    /// Unlike backend subscription roots, baseline paths preserve exact files
+    /// and never fall back from a missing literal prefix to an existing
+    /// ancestor. This keeps startup work inside configured pattern scope: an
+    /// exact `Cargo.toml` pattern baselines that file without walking every
+    /// build artifact under the workspace root.
+    pub(crate) fn baseline_paths(&self) -> Vec<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        for rule in &self.rules {
+            for pattern in rule.watch_patterns() {
+                let absolute = if pattern.starts_with('/') {
+                    PathBuf::from(pattern)
+                } else {
+                    self.root.join(pattern)
+                };
+                let prefix = Self::literal_prefix(&absolute);
+                if prefix.exists() && !candidates.contains(&prefix) {
+                    candidates.push(prefix);
+                }
+            }
+        }
+
+        let mut minimal: Vec<PathBuf> = candidates
+            .iter()
+            .filter(|candidate| {
+                !candidates
+                    .iter()
+                    .any(|other| other != *candidate && candidate.starts_with(other))
+            })
+            .cloned()
+            .collect();
+        minimal.sort();
+        minimal.dedup();
+        minimal
+    }
+
     /// One pattern's subscription root: its literal prefix (segments until a
     /// glob metacharacter), resolved to the nearest existing ancestor. An
     /// exact-file pattern watches its parent directory. A missing absolute
@@ -1469,6 +1506,62 @@ mod tests {
             roots,
             vec![scratch.join("crates/tests")],
             "an exact file pattern watches its parent directory"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn baseline_paths_keep_exact_files_without_scanning_their_parent() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-baseline-{}-{}",
+            std::process::id(),
+            "exact-file"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).unwrap();
+        std::fs::create_dir_all(scratch.join("target/debug/deps")).unwrap();
+        std::fs::write(scratch.join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(scratch.join("target/debug/deps/stale.rcgu.o"), "object").unwrap();
+
+        let rules = vec![Rules::new(
+            "build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["Cargo.toml".to_owned(), "src/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        assert_eq!(
+            watches.baseline_paths(),
+            vec![scratch.join("Cargo.toml"), scratch.join("src")],
+            "baseline scope follows pattern prefixes instead of broad backend roots"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn baseline_paths_skip_missing_literal_prefixes() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-baseline-{}-{}",
+            std::process::id(),
+            "missing-prefix"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).unwrap();
+
+        let rules = vec![Rules::new(
+            "future".to_owned(),
+            vec!["echo future".to_owned()],
+            vec!["future/deep/src/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        assert!(
+            watches.baseline_paths().is_empty(),
+            "missing future prefixes have no pre-existing files to baseline"
         );
         std::fs::remove_dir_all(&scratch).unwrap();
     }

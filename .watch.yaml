@@ -60,8 +60,14 @@ tasks:
     run:
       - direnv exec . make nix-flake-check
       - direnv exec . make nix-build-nightly
+    # Keep baseline roots narrow. A workspace-wide `**/*.nix` pattern forces
+    # startup discovery through large build directories such as `target/`.
     change:
-      - "**/*.nix"
+      - "default.nix"
+      - "flake.nix"
+      - "shell.nix"
+      - "nix/**/*.nix"
+      - "pi-watcher/flake.nix"
       - "flake.lock"
     ignore:
       - "**/*.txt"
