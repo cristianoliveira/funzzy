@@ -1,10 +1,5 @@
 # Funzzy Run and Watcher Hooks Contract
 
-> Status: **normative** — generation hooks defined by TASK-0040; watcher
-> close-hook lifecycle defined by TASK-0100 (GitHub issue #234). Drives
-> TASK-0101 (implementation) and TASK-0102 (black-box lifecycle proof).
-> Generic hooks only: no platform-specific desktop/browser integrations.
-
 ## 1. Scope and ubiquitous language
 
 Funzzy has two different terminal boundaries. Their hooks must not be

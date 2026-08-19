@@ -317,14 +317,6 @@ the native backend. Tradeoffs: polling adds a small per-interval scan cost and
 change latency up to the interval; prefer native for large trees. Forced
 native fails with an actionable error instead of silently changing semantics.
 
-**Future files are covered without restart.** Funzzy watches the nearest
-existing ancestor of every configured pattern, so files and directories
-created after startup enter normal matching automatically: no restart, no
-"touch to arm it". A pattern like `future/**` with no `future/` directory
-at startup still triggers when `future/deep/file.rs` is created later. Both
-backends promise the same matched-path outcome (raw event order is not
-contractual). See `docs/WATCH-DISCOVERY-CONTRACT.md` for the full contract.
-
 ## Agents and configuration discovery
 
 Agents (and humans) discover the current configuration surface from the
@@ -343,7 +335,7 @@ fzz run TARGET | fzz watch           # execute
 All `config` commands are non-interactive and side-effect-free: they never
 read a project config, start a watcher, open a socket, or run tasks. The
 schema is the single source of truth for structure; `fzz check` adds semantic
-validation. Legacy root-list configs remain accepted and are rewritten with `fzz migrate`. Generation hooks use `hooks.success`/`hooks.failure`; watcher cleanup uses `hooks.close` once after scheduling stops and owned work is reaped:
+validation. Legacy root-list configs remain accepted and are rewritten with `fzz migrate`.
 
 ```yaml
 hooks:
@@ -377,39 +369,6 @@ jobs:
   - name: package
     run: cargo build   # serial: runs alone, after the group
 ```
-
-Key rules:
-
-- **Contiguous groups**: only consecutive tasks with the same group name
-  share one barrier. `A@x, B, C@x` runs `A -> B -> C` as two *separate*
-  `x` occurrences; the reused name never reconnects across a serial task.
-- **Barriers**: commands inside one task stay strictly sequential; a serial
-task (no `parallel`) runs alone between groups.
-- **Filtering**: target selection keeps the original topology. If only one
-  group member matches, it runs alone — barriers stay valid.
-- **`execution.concurrency`**: global cap on simultaneously active tasks. Defaults
-to available parallelism, resolved once at plan time. `1` is valid and means
-tasks run one at a time inside the barrier. Without `parallel` groups,
-concurrency is never inferred.
-- **Failures**: by default a failed task does not stop siblings or later
-stages; the run fails with combined results. `--fail-fast` cancels active
-siblings and skips queued/later work on the first failure.
-- **Restart** (`--restart`): a new event cancels and reaps all active tasks
-across every group, then starts the newest generation.
-- **Output**: live lines from group tasks carry a `[task]` prefix so
-interleaved output keeps identity; the final summary lists every task with
-its group. Ordering inside a group is intentionally unspecified.
-- **Diagnosing races**: rerun the same target with `--sequential`
-(`fzz run TARGET --sequential` or `fzz ctl run TARGET --sequential --wait`)
-to compare against effective concurrency one. Parallel fail + sequential pass
-is `parallel-sensitive` evidence, not proof of a race root cause.
-
-**Cost guidance**: parallelism helps when independent tasks dominate a batch
-— latency approaches the slowest task rather than the sum. It does **not**
-make every workload faster: CPU-bound tasks on few cores, or tasks competing
-for one resource (a database, a port, a lock file), can slow down. Start with
-`concurrency: 2` and measure; raise only when independent work is proven.
-Each concurrent task is a separate child process with its own process group.
 
 ## Troubleshooting
 

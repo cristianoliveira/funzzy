@@ -1,12 +1,5 @@
 # Funzzy Agent-Discoverable Configuration Contract
 
-> Status: **normative** — defined by TASK-0057. Drives TASK-0058 (schema +
-> examples through `fzz`), coordinates with TASK-0033 (`fzz check`) and
-> TASK-0048 (structured output), and the jobs vocabulary from TASK-0075.
-> Profile set and init parity: **normative** — TASK-0096 (drives TASK-0097).
-> Source: current parser (`src/config.rs`), JOBS-CONFIG-CONTRACT,
-> GITIGNORE-CONTRACT, RELEASE-BOUNDARY.
-
 ## 1. Purpose
 
 Agents must discover the current `.watch.yaml` shape — fields, constraints,

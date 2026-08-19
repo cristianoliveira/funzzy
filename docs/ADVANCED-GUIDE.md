@@ -1,10 +1,5 @@
 # Funzzy advanced: parallel execution, control socket, and agent workflows
 
-> Task-oriented recipes. Exact compatibility semantics live in the normative
-> contracts: PARALLEL-EXECUTION-CONTRACT, AGENT-FEEDBACK-CONTRACT,
-> SEQUENTIAL-OVERRIDE-CONTRACT, RUN-DURATION-ESTIMATES-CONTRACT,
-> RUN-EVENTS-CONTRACT, GITIGNORE-CONTRACT.
-
 ## 1. Parallel execution
 
 ### Named contiguous groups and barriers
