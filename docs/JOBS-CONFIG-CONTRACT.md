@@ -20,6 +20,7 @@ The preferred V2 configuration uses an ordered root `jobs:` list:
 ```yaml
 on:
   change: "src/**"
+execution:
   concurrency: 2
 jobs:
   - name: lint
@@ -74,7 +75,7 @@ No silent merge, no partial acceptance: a config is either valid V2 jobs, valid 
 ## 6. Invariants
 
 - Parallel group names and barrier occurrences remain based on declaration order; renaming `tasks:` to `jobs:` cannot imply a dependency DAG or automatic independence.
-- `on.concurrency` remains the scheduler bound; root `jobs:` does **not** introduce an `on.jobs` alias or ambiguity.
+- `execution.concurrency` remains the scheduler bound; root `jobs:` does **not** introduce an `on.jobs` alias or ambiguity.
 - `{{filepath}}`/`{{paths}}` templates, `run` (shell and argv), cwd/env, init, and busy policies are unchanged.
 
 ## 7. Protocol and signature effects
@@ -95,4 +96,4 @@ User-facing diagnostics keep the runtime word "task" for executions and add "job
 
 - GitHub Actions `needs:`/`steps:`/matrix model — explicitly not adopted.
 - Any runtime/protocol rename of "task" — deferred to a separate protocol revision if ever needed.
-- Changing `on.concurrency`, matching, barriers, or execution semantics.
+- Changing `execution.concurrency`, matching, barriers, or execution semantics.

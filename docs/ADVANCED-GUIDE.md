@@ -15,6 +15,7 @@ job between them starts a new barrier — a reused group name never reconnects:
 ```yaml
 on:
   change: "src/**"
+execution:
   concurrency: 2
 jobs:
   - name: lint
@@ -28,7 +29,7 @@ jobs:
 ```
 
 - Commands inside one job stay strictly sequential.
-- `on.concurrency` caps simultaneously active tasks (default: available
+- `execution.concurrency` caps simultaneously active tasks (default: available
   parallelism; `1` is valid and means one at a time inside the barrier).
 - Ordering inside a group is intentionally unspecified; the summary lists
   every task with its group, keyed by identity, never by completion order.
