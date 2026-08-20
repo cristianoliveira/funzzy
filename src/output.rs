@@ -32,6 +32,9 @@ pub const OUTPUT_MAX_GENERATIONS: usize = 128;
 /// Default retrieval tail when the CLI omits `--tail`/`--full`.
 pub const DEFAULT_RETRIEVAL_TAIL: usize = 40;
 
+/// Default failure-evidence tail exposed by status, await, and snapshots.
+pub const DEFAULT_FAILURE_EVIDENCE_LINES: usize = 40;
+
 /// One retained task's per-stream captures.
 #[derive(Clone, Debug)]
 pub struct TaskOutput {

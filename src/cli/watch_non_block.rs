@@ -1,12 +1,12 @@
 use crate::awaiting::AwaitCoordinator;
 use crate::cli::Command;
-use crate::control::{ControlInstance, ControlState};
 use crate::duration_recorder::DurationRecorder;
 use crate::duration_store::{state_file_path, DurationStore, STATE_SCHEMA_VERSION};
 use crate::errors::FzzError;
 use crate::output::OutputRegistry;
 use crate::snapshot::SnapshotBroker;
 use crate::watch_loop::{watch_loop, NonBlockStrategy};
+use crate::watcher_state::{WatcherInstance, WatcherState};
 use crate::watches::Watches;
 use crate::workers;
 use std::path::PathBuf;
@@ -96,10 +96,10 @@ impl WatchNonBlockCommand {
 
 impl Command for WatchNonBlockCommand {
     fn execute(&self) -> Result<(), FzzError> {
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         let outputs = Arc::new(OutputRegistry::new());
-        let instance = Arc::new(ControlInstance::new());
+        let instance = Arc::new(WatcherInstance::new());
         // Duration recorder (TASK-0054): control-run targets record terminal
         // wall durations against their execution signature; fs/init/emit runs
         // carry no signature and are ignored by the recorder. The same

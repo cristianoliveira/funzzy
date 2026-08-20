@@ -5,11 +5,12 @@
 ```text
 main.rs
   -> config.rs / rules.rs / template.rs / yaml.rs
+  -> app.rs -> reload_session.rs -> reload.rs / reload_coordinator.rs
   -> watch_loop.rs (blocking | non-block strategies)
   -> watches.rs <- watcher.rs
   -> cli/watch.rs | cli/watch_non_block.rs
-  -> cmd.rs | workers.rs
-  -> control.rs
+  -> cmd.rs | workers.rs -> watcher_state.rs
+  -> control.rs / awaiting.rs / snapshot.rs
 ```
 
 `main.rs` is composition root: parse CLI, choose config or stdin input, select target, choose blocking/non-block execution, and wire reload/logging behavior. Keep concrete wiring here; move reusable policy to owning module.
@@ -18,7 +19,7 @@ main.rs
 
 ### Workflow tasks — `rules.rs`, `config.rs`, `template.rs`, `yaml.rs`
 
-`rules.rs` owns the user-facing task model (`Rules`): matching semantics, glob validation, and task-level presentation. `config.rs` owns YAML parsing, legacy list and grouped `on`/`tasks` compatibility, nested groups, merging, and file loading. `template.rs` is pure command template expansion with no YAML or stdout side effects — unknown variables are returned to callers, who decide how to present them. `yaml.rs` holds low-level YAML extraction helpers.
+`rules.rs` owns the user-facing task model (`Rules` and `OutputPolicy`): matching semantics, glob validation, and task-level presentation. `config.rs` owns YAML parsing, legacy list and grouped `on`/`tasks` compatibility, nested groups, merging, and file loading. `template.rs` is pure command template expansion with no YAML or stdout side effects — unknown variables are returned to callers, who decide how to present them. `yaml.rs` holds low-level YAML extraction helpers.
 
 - Keep YAML shape handling in parser functions (`config.rs`) and task invariants on `Rules`.
 - The task model does not retain raw YAML; verbose render (`config::rule_as_yaml`) is reconstructed from model fields.
@@ -44,14 +45,22 @@ main.rs
 - Treat generation as external run identity; never reuse or decrement it.
 - Keep process errors visible as failures, not silent skips.
 
-### Control API — `control.rs`
+### Observable state and control API — `watcher_state.rs`, `awaiting.rs`, `snapshot.rs`, `control.rs`
 
-Projects `WorkerEvent` into `ControlState` and exposes JSON-RPC 2.0 over permission-restricted Unix socket.
+`watcher_state.rs` projects executor events into one coherent latest-generation `WatcherState`. `awaiting.rs` owns exact-generation waits and freshness, `snapshot.rs` owns correlated subscription snapshots, and `control.rs` exposes those capabilities as JSON-RPC 2.0 over permission-restricted Unix socket.
 
-- Keep transport validation separate from state transition logic.
+- Keep transport validation in `control.rs`; state transitions must remain in `watcher_state.rs`.
 - Notifications have no response; requests preserve caller ID.
 - `run` returns scheduled generation so clients can await exact work.
 - Wire-format changes require matching Pi watcher contract changes and integration tests.
+
+### Live configuration reload — `reload_session.rs`, `reload.rs`, `reload_coordinator.rs`
+
+`reload_session.rs` owns config-file event filtering and long-running reload lifecycle. `reload.rs` validates and classifies candidate revisions. `reload_coordinator.rs` owns prepare/commit/retire transaction and socket/root handoff.
+
+- `app.rs` wires, starts, and joins reload session; do not move event loop back into composition root.
+- Preserve prepare → commit → retire and bind-new-before-retire-old ordering.
+- Pure path/event selection belongs in `reload_session.rs`; candidate policy belongs in `reload.rs`.
 
 ### Cross-cutting adapters
 

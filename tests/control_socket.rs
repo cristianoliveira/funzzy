@@ -1,7 +1,8 @@
 #[cfg(unix)]
 mod unix {
-    use funzzy::control::{ControlServer, ControlState, ControlTarget};
+    use funzzy::control::{ControlServer, ControlTarget};
     use funzzy::executor::Event as WorkerEvent;
+    use funzzy::watcher_state::WatcherState;
     use serde_json::Value;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
@@ -38,7 +39,7 @@ mod unix {
     #[test]
     fn it_reports_the_latest_execution_status() {
         let path = socket_path("status");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
 
         state.lock().unwrap().apply(WorkerEvent::Started {
@@ -74,7 +75,7 @@ mod unix {
     #[test]
     fn it_reports_failures_without_requiring_the_full_log() {
         let path = socket_path("failure");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
 
         state.lock().unwrap().apply(WorkerEvent::Started {
@@ -106,7 +107,7 @@ mod unix {
     #[test]
     fn it_schedules_a_named_target() {
         let path = socket_path("run");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let requested = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&requested);
         let _server =
@@ -138,7 +139,7 @@ mod unix {
     #[test]
     fn it_lists_available_targets() {
         let path = socket_path("targets");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let targets = vec![ControlTarget {
             name: "final checks @agent-final".to_owned(),
             commands: vec!["cargo test".to_owned()],
@@ -165,7 +166,7 @@ mod unix {
     #[test]
     fn it_cancels_an_exact_generation_through_the_socket() {
         let path = socket_path("cancel");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let cancelled = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&cancelled);
         let _server = ControlServer::start_with_cancel(
@@ -222,7 +223,7 @@ mod unix {
     #[test]
     fn it_reports_escalated_cancel_as_rpc_error_32021() {
         let path = socket_path("cancel-escalated");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start_with_cancel(
             &path,
             state,
@@ -261,7 +262,7 @@ mod unix {
     #[test]
     fn it_reports_a_noop_cancel_when_nothing_matched() {
         let path = socket_path("cancel-noop");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start_with_cancel(
             &path,
             state,
@@ -294,7 +295,7 @@ mod unix {
     #[test]
     fn it_answers_capabilities_with_the_negotiated_profile() {
         let path = socket_path("capabilities");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, state).unwrap();
 
         let response = call(
@@ -375,7 +376,7 @@ mod unix {
     #[test]
     fn it_keeps_a_stable_instance_identity_across_requests() {
         let path = socket_path("capabilities-stable");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, state).unwrap();
 
         let first = call(
@@ -401,7 +402,7 @@ mod unix {
     fn it_generates_a_fresh_instance_identity_per_server() {
         let first_path = socket_path("capabilities-restart-a");
         let first =
-            ControlServer::start(&first_path, Arc::new(Mutex::new(ControlState::default())))
+            ControlServer::start(&first_path, Arc::new(Mutex::new(WatcherState::default())))
                 .unwrap();
         let first_token = call(
             &first_path,
@@ -413,7 +414,7 @@ mod unix {
         // A restart is a new instance: same socket path, fresh identity.
         let second_path = socket_path("capabilities-restart-b");
         let _second =
-            ControlServer::start(&second_path, Arc::new(Mutex::new(ControlState::default())))
+            ControlServer::start(&second_path, Arc::new(Mutex::new(WatcherState::default())))
                 .unwrap();
         let second_token = call(
             &second_path,
@@ -427,7 +428,7 @@ mod unix {
     #[test]
     fn it_returns_standard_json_rpc_errors() {
         let path = socket_path("errors");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, state).unwrap();
 
         let parse_error = raw_call(&path, "{");
@@ -463,7 +464,7 @@ mod unix {
     #[test]
     fn it_handles_json_rpc_batches() {
         let path = socket_path("batch");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let targets = vec![ControlTarget {
             name: "checks".to_owned(),
             commands: vec!["cargo test".to_owned()],
@@ -497,7 +498,7 @@ mod unix {
             std::env::temp_dir().join(format!("funzzy-control-{}-nested", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
         let path = directory.join("control.sock");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
 
         let server = ControlServer::start(&path, state).unwrap();
 
@@ -509,7 +510,7 @@ mod unix {
     #[test]
     fn it_removes_the_socket_when_the_server_stops() {
         let path = socket_path("cleanup");
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let server = ControlServer::start(&path, state).unwrap();
         assert!(path.exists());
 

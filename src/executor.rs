@@ -359,7 +359,7 @@ struct ActiveTask {
     command_index: usize,
     command_total: usize,
     /// Per-job output policy (TASK-0041).
-    output: crate::config::OutputPolicy,
+    output: crate::rules::OutputPolicy,
     /// Managed long-running service (TASK-0035).
     service: bool,
     /// Unexpected-exit restart attempts remaining for a service (TASK-0035).
@@ -701,7 +701,7 @@ impl Executor {
                 // reveal even when no control surface is wired.
                 if task.capture.is_none()
                     && (self.outputs.is_some()
-                        || task.output != crate::config::OutputPolicy::Inherit)
+                        || task.output != crate::rules::OutputPolicy::Inherit)
                 {
                     task.capture = Some(Arc::new(CaptureHandle::new()));
                 }
@@ -716,7 +716,7 @@ impl Executor {
                     task.group_occurrence.is_some().then(|| task.name.clone()),
                     // TASK-0041: quiet/capture/show-on-failure suppress live
                     // output; inherit streams it.
-                    !matches!(task.output, crate::config::OutputPolicy::Inherit),
+                    !matches!(task.output, crate::rules::OutputPolicy::Inherit),
                 ) {
                     Ok(child) => {
                         task.child = Some(child);
@@ -857,7 +857,7 @@ impl Executor {
     /// with task attribution exactly once, so failures are diagnosable while
     /// passing jobs stay quiet.
     fn reveal_on_failure(&self, task: &ActiveTask, failures: &[String]) {
-        if task.output != crate::config::OutputPolicy::ShowOnFailure || failures.is_empty() {
+        if task.output != crate::rules::OutputPolicy::ShowOnFailure || failures.is_empty() {
             return;
         }
         if let Some(capture) = &task.capture {
@@ -1004,7 +1004,7 @@ impl Executor {
                         .group_occurrence
                         .is_some()
                         .then(|| service.name.clone()),
-                    !matches!(service.output, crate::config::OutputPolicy::Inherit),
+                    !matches!(service.output, crate::rules::OutputPolicy::Inherit),
                 ) {
                     Ok(child) => {
                         service.child = Some(child);
@@ -1400,7 +1400,7 @@ mod tests {
                 group_occurrence: None,
                 rule,
                 context: crate::plan::TaskContext::default(),
-                output: crate::config::OutputPolicy::Inherit,
+                output: crate::rules::OutputPolicy::Inherit,
                 service: false,
             })],
         };

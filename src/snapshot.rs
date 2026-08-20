@@ -1,16 +1,17 @@
 //! Correlated snapshot and subscription broker (TASK-0050, contract §7).
 //!
 //! The snapshot reuses the same injected event source as atomic await: it
-//! reads `ControlState` (latest generation) plus the `AwaitCoordinator`
+//! reads `WatcherState` (latest generation) plus the `AwaitCoordinator`
 //! (pending-work and freshness facts) under the established lock order. The
 //! broker owns subscribers and the bounded per-subscriber notification
 //! channel; it never builds a second state tracker.
 
 use crate::awaiting::{classify, AwaitCoordinator};
 use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
-use crate::control::{ControlInstance, ControlState, ExecutionState};
 use crate::duration_history::RunEstimate;
 use crate::executor::TaskSnapshot;
+use crate::output::DEFAULT_FAILURE_EVIDENCE_LINES;
+use crate::watcher_state::{WatcherExecutionState, WatcherInstance, WatcherState};
 use serde::Serialize;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -31,10 +32,10 @@ pub type EstimateLookup = Arc<dyn Fn(u64) -> Option<RunEstimate> + Send + Sync>;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorrelatedSnapshot {
-    pub instance: ControlInstance,
+    pub instance: WatcherInstance,
     pub generation: u64,
     pub batch_id: String,
-    pub state: ExecutionState,
+    pub state: WatcherExecutionState,
     pub trigger: Option<String>,
     pub commands: Vec<String>,
     pub tasks: Vec<TaskSnapshot>,
@@ -98,8 +99,8 @@ struct BrokerInner {
 /// and the control server's `subscribe` registers subscribers and returns the
 /// immediate snapshot.
 pub struct SnapshotBroker {
-    instance: ControlInstance,
-    state: Arc<Mutex<ControlState>>,
+    instance: WatcherInstance,
+    state: Arc<Mutex<WatcherState>>,
     coordinator: Arc<AwaitCoordinator>,
     /// Optional retained-output registry (TASK-0045): lets snapshots attach
     /// exact failure evidence with an outputRef. None keeps the legacy shape.
@@ -118,8 +119,8 @@ pub struct SnapshotBroker {
 
 impl SnapshotBroker {
     pub fn new(
-        instance: ControlInstance,
-        state: Arc<Mutex<ControlState>>,
+        instance: WatcherInstance,
+        state: Arc<Mutex<WatcherState>>,
         coordinator: Arc<AwaitCoordinator>,
     ) -> Self {
         Self::with_estimates(instance, state, coordinator, None, 1)
@@ -129,8 +130,8 @@ impl SnapshotBroker {
     /// snapshot for the current generation (TASK-0055). The lookup is wired
     /// from the duration recorder at the composition root.
     pub fn with_estimates(
-        instance: ControlInstance,
-        state: Arc<Mutex<ControlState>>,
+        instance: WatcherInstance,
+        state: Arc<Mutex<WatcherState>>,
         coordinator: Arc<AwaitCoordinator>,
         estimates: Option<EstimateLookup>,
         configured_concurrency: usize,
@@ -149,8 +150,8 @@ impl SnapshotBroker {
     /// outputRef (TASK-0082) when the latest generation failed and retained
     /// output exists.
     pub fn with_outputs(
-        instance: ControlInstance,
-        state: Arc<Mutex<ControlState>>,
+        instance: WatcherInstance,
+        state: Arc<Mutex<WatcherState>>,
         coordinator: Arc<AwaitCoordinator>,
         outputs: Option<Arc<crate::output::OutputRegistry>>,
         estimates: Option<EstimateLookup>,
@@ -183,7 +184,7 @@ impl SnapshotBroker {
 
     /// The instance identity the snapshot carries; shared with the control
     /// server so `capabilities` and snapshots report one token.
-    pub fn instance(&self) -> &ControlInstance {
+    pub fn instance(&self) -> &WatcherInstance {
         &self.instance
     }
 
@@ -198,7 +199,7 @@ impl SnapshotBroker {
             .and_then(|lookup| lookup(state.generation()));
         // Exact failure evidence (TASK-0082): only when the latest generation
         // failed and retained output exists; empty capture never emits a ref.
-        let failure_evidence = if state.state() == &ExecutionState::Failed {
+        let failure_evidence = if state.state() == &WatcherExecutionState::Failed {
             let failed_tasks: Vec<String> = state
                 .tasks()
                 .iter()
@@ -208,7 +209,7 @@ impl SnapshotBroker {
             self.outputs.as_ref().and_then(|outputs| {
                 outputs.failure_evidence(
                     state.generation(),
-                    crate::control::MAX_EVIDENCE_LINES,
+                    DEFAULT_FAILURE_EVIDENCE_LINES,
                     &self.instance.token,
                     &failed_tasks,
                 )
@@ -293,13 +294,13 @@ mod tests {
 
     fn broker() -> (
         Arc<SnapshotBroker>,
-        Arc<Mutex<ControlState>>,
+        Arc<Mutex<WatcherState>>,
         Arc<AwaitCoordinator>,
     ) {
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         let broker = Arc::new(SnapshotBroker::new(
-            ControlInstance {
+            WatcherInstance {
                 token: "fz-test".to_owned(),
                 started_at_epoch_ms: 1,
             },
@@ -332,7 +333,7 @@ mod tests {
         let (_rx, snapshot) = broker.subscribe();
         assert_eq!(snapshot.instance.token, "fz-test");
         assert_eq!(snapshot.generation, 0);
-        assert_eq!(snapshot.state, ExecutionState::Idle);
+        assert_eq!(snapshot.state, WatcherExecutionState::Idle);
         assert!(snapshot.tasks.is_empty());
         assert_eq!(snapshot.batch_id, "");
     }
@@ -348,7 +349,7 @@ mod tests {
         broker.publish();
         let notified = rx.recv_timeout(Duration::from_millis(200)).unwrap();
         assert_eq!(notified.generation, 1);
-        assert_eq!(notified.state, ExecutionState::Running);
+        assert_eq!(notified.state, WatcherExecutionState::Running);
         assert_eq!(notified.batch_id, "b-3");
         assert_eq!(notified.paths, vec!["src/main.rs".to_owned()]);
         assert_ne!(notified, initial);
@@ -401,7 +402,7 @@ mod tests {
     #[test]
     fn snapshot_carries_frozen_estimate_only_when_lookup_provided() {
         use crate::duration_history::{EstimateConfidence, EstimateSource, RunEstimate};
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         state.lock().unwrap().apply(started(7));
         coordinator.observe(&started(7));
@@ -424,7 +425,7 @@ mod tests {
 
         // Without a lookup the snapshot has no estimate key at all.
         let plain = SnapshotBroker::new(
-            ControlInstance {
+            WatcherInstance {
                 token: "fz-test".to_owned(),
                 started_at_epoch_ms: 1,
             },
@@ -441,7 +442,7 @@ mod tests {
         // With a lookup, the snapshot carries the estimate for the current
         // generation, camelCase.
         let with_estimates = SnapshotBroker::with_estimates(
-            ControlInstance {
+            WatcherInstance {
                 token: "fz-test".to_owned(),
                 started_at_epoch_ms: 1,
             },
@@ -521,7 +522,7 @@ mod tests {
 
     #[test]
     fn snapshot_shape_matches_the_golden_fixture() {
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         state.lock().unwrap().apply(started(4));
         coordinator.observe(&started(4));
@@ -548,7 +549,7 @@ mod tests {
         });
 
         let broker = SnapshotBroker::with_estimates(
-            ControlInstance {
+            WatcherInstance {
                 token: "fz-7f3a".to_owned(),
                 started_at_epoch_ms: 1_710_000_000_000,
             },
@@ -584,7 +585,7 @@ mod tests {
 
     #[test]
     fn snapshot_reports_sequential_override_effective_concurrency() {
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         let mut started = started(5);
         if let Event::Started {
@@ -601,7 +602,7 @@ mod tests {
         coordinator.observe(&started_event);
 
         let broker = SnapshotBroker::with_estimates(
-            ControlInstance {
+            WatcherInstance {
                 token: "fz-test".to_owned(),
                 started_at_epoch_ms: 1,
             },

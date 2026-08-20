@@ -9,8 +9,8 @@
 use crate::awaiting::AwaitCoordinator;
 use crate::config_revision::ConfigRevision;
 use crate::control::{
-    ControlInstance, ControlRunError, ControlServer, ControlState, ControlTarget, EmitOutcome,
-    ScheduledRun, TargetEstimateProvider,
+    ControlRunError, ControlServer, ControlTarget, EmitOutcome, ScheduledRun,
+    TargetEstimateProvider,
 };
 use crate::diagnostics;
 use crate::duration_recorder::DurationRecorder;
@@ -22,6 +22,7 @@ use crate::plan::RunPlan;
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
 use crate::watcher::{self, FileEvent};
+use crate::watcher_state::{WatcherInstance, WatcherState};
 use crate::watches::Watches;
 use crate::workers;
 use crate::workflow::WorkflowRunner;
@@ -472,10 +473,10 @@ pub struct NonBlockStrategy {
     /// private copy would go stale on reload.
     shared: Arc<std::sync::Mutex<Watches>>,
     control_socket: Option<PathBuf>,
-    control_state: Arc<Mutex<ControlState>>,
+    control_state: Arc<Mutex<WatcherState>>,
     coordinator: Option<Arc<AwaitCoordinator>>,
     outputs: Option<Arc<OutputRegistry>>,
-    instance: Arc<ControlInstance>,
+    instance: Arc<WatcherInstance>,
     broker: Option<Arc<SnapshotBroker>>,
     control_server: Mutex<Option<ControlServer>>,
     /// Old server parked during a socket-path handoff (AC8); dropped on
@@ -499,7 +500,7 @@ impl NonBlockStrategy {
         worker: Arc<workers::Worker>,
         watches: Watches,
         control_socket: Option<PathBuf>,
-        control_state: Arc<Mutex<ControlState>>,
+        control_state: Arc<Mutex<WatcherState>>,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
     ) -> Arc<Self> {
@@ -510,7 +511,7 @@ impl NonBlockStrategy {
             control_state,
             coordinator,
             outputs,
-            Arc::new(ControlInstance::new()),
+            Arc::new(WatcherInstance::new()),
             None,
             None,
             None,
@@ -525,10 +526,10 @@ impl NonBlockStrategy {
         worker: Arc<workers::Worker>,
         watches: Watches,
         control_socket: Option<PathBuf>,
-        control_state: Arc<Mutex<ControlState>>,
+        control_state: Arc<Mutex<WatcherState>>,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Option<Arc<SnapshotBroker>>,
         recorder: Option<Arc<DurationRecorder>>,
     ) -> Arc<Self> {
@@ -555,10 +556,10 @@ impl NonBlockStrategy {
         worker: Arc<workers::Worker>,
         shared: Arc<std::sync::Mutex<Watches>>,
         control_socket: Option<PathBuf>,
-        control_state: Arc<Mutex<ControlState>>,
+        control_state: Arc<Mutex<WatcherState>>,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Option<Arc<SnapshotBroker>>,
         recorder: Option<Arc<DurationRecorder>>,
         lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
@@ -966,9 +967,10 @@ mod tests {
     use super::InitAction;
     use super::NonBlockStrategy;
     use super::RunStrategy;
-    use crate::control::{ControlRunError, ControlServer, ControlState};
+    use crate::control::{ControlRunError, ControlServer};
     use crate::plan::RunPlan;
     use crate::rules::Rules;
+    use crate::watcher_state::WatcherState;
     use crate::watches::Watches;
     use crate::workers;
     use std::sync::{Arc, Mutex};
@@ -1024,11 +1026,11 @@ mod tests {
         let path = unique_socket("conflict");
 
         // A live instance already owns the socket.
-        let holder_state = Arc::new(Mutex::new(ControlState::default()));
+        let holder_state = Arc::new(Mutex::new(WatcherState::default()));
         let _holder = ControlServer::start(&path, holder_state).unwrap();
 
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(
             worker,
             Watches::new(vec![]),
@@ -1051,7 +1053,7 @@ mod tests {
         let path = unique_socket("free");
 
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(
             worker,
             Watches::new(vec![]),
@@ -1073,7 +1075,7 @@ mod tests {
     fn it_runs_a_control_target_through_the_worker_contract() {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let scheduled = strategy
@@ -1087,7 +1089,7 @@ mod tests {
     fn it_rejects_unknown_control_targets() {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let err = strategy
@@ -1111,7 +1113,7 @@ mod tests {
     fn it_emits_a_path_through_the_worker_contract() {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let outcome = strategy
@@ -1126,7 +1128,7 @@ mod tests {
     fn it_emits_an_absolute_path_identically_to_a_relative_one() {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let relative = strategy.emit_path("src/main.rs").expect("relative");
@@ -1143,7 +1145,7 @@ mod tests {
     fn it_reports_unmatched_emit_without_scheduling() {
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let outcome = strategy
@@ -1158,7 +1160,7 @@ mod tests {
     fn it_reports_ignored_emit_without_scheduling() {
         let watches = Watches::new(vec![rule_with_ignore("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let outcome = strategy
@@ -1176,7 +1178,7 @@ mod tests {
 
         let watches = Watches::new(vec![rule("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(AwaitCoordinator::new());
         let strategy = NonBlockStrategy::new_arc(
             worker,
@@ -1196,7 +1198,7 @@ mod tests {
         let result = coordinator.await_generation(
             crate::awaiting::AwaitMode::Exact(1),
             std::time::Duration::from_millis(10),
-            &Arc::new(Mutex::new(ControlState::default())),
+            &Arc::new(Mutex::new(WatcherState::default())),
             None,
             None,
             "fz-test",
@@ -1229,7 +1231,7 @@ mod tests {
             2,
             |_| {},
         ));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc_with_shared(
             worker,
             Arc::clone(&shared),
@@ -1237,7 +1239,7 @@ mod tests {
             control_state,
             None,
             None,
-            Arc::new(crate::control::ControlInstance::new()),
+            Arc::new(crate::watcher_state::WatcherInstance::new()),
             None,
             None,
             None,
@@ -1311,7 +1313,7 @@ mod tests {
             2,
             |_| {},
         ));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc_with_shared(
             worker,
             Arc::clone(&shared),
@@ -1319,7 +1321,7 @@ mod tests {
             control_state,
             None,
             None,
-            Arc::new(crate::control::ControlInstance::new()),
+            Arc::new(crate::watcher_state::WatcherInstance::new()),
             None,
             None,
             None,
@@ -1400,10 +1402,10 @@ mod tests {
             2,
             |_| {},
         ));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(crate::awaiting::AwaitCoordinator::new());
         let broker = Arc::new(crate::snapshot::SnapshotBroker::new(
-            crate::control::ControlInstance {
+            crate::watcher_state::WatcherInstance {
                 token: "fz-test".to_owned(),
                 started_at_epoch_ms: 1,
             },
@@ -1420,7 +1422,7 @@ mod tests {
             control_state,
             Some(coordinator),
             Some(Arc::new(crate::output::OutputRegistry::new())),
-            Arc::new(crate::control::ControlInstance::new()),
+            Arc::new(crate::watcher_state::WatcherInstance::new()),
             Some(broker),
             Some(recorder),
             Some(Arc::new(crate::config_lifecycle::ConfigLifecycle::new())),
@@ -1475,7 +1477,7 @@ mod tests {
     fn it_does_not_schedule_when_only_ignored_rules_exist() {
         let watches = Watches::new(vec![rule_with_ignore("my tests")]);
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
-        let control_state = Arc::new(Mutex::new(ControlState::default()));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let strategy = NonBlockStrategy::new_arc(worker, watches, None, control_state, None, None);
 
         let outcome = strategy

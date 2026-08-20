@@ -1,9 +1,10 @@
 use crate::awaiting::{AwaitCoordinator, AwaitMode, AwaitResult};
 use crate::duration_history::RunEstimate;
-use crate::executor::{CancelDisposition, Event, TaskSnapshot};
-use crate::output::{OutputRegistry, OUTPUT_RETENTION_BYTES};
+use crate::executor::CancelDisposition;
+use crate::output::{OutputRegistry, DEFAULT_FAILURE_EVIDENCE_LINES, OUTPUT_RETENTION_BYTES};
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
+use crate::watcher_state::{WatcherExecutionState, WatcherInstance, WatcherState};
 use crate::workers::CancelResult;
 use serde::Serialize;
 use std::fs;
@@ -16,16 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ExecutionState {
-    Idle,
-    Running,
-    Passed,
-    Failed,
-    Cancelled,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlTarget {
@@ -33,231 +24,11 @@ pub struct ControlTarget {
     pub commands: Vec<String>,
 }
 
-/// Computes the current duration estimate for one target at request time
-/// (TASK-0055, contract §6): the estimate is derived when `targets` is
-/// served, never frozen when the watcher starts. None when the target has no
-/// history or the estimate surface is inactive. Wired at the composition root
-/// from watches + recorder; the control server stays decoupled from both.
+/// Computes current duration estimate for one target at request time.
 pub type TargetEstimateProvider = Arc<dyn Fn(&ControlTarget) -> Option<RunEstimate> + Send + Sync>;
 
-/// One Funzzy process identity (contract §1): the token changes on restart,
-/// so pi-watcher can detect instance changes instead of assuming continuity.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ControlInstance {
-    pub token: String,
-    pub started_at_epoch_ms: u64,
-}
-impl ControlInstance {
-    pub fn new() -> Self {
-        let started_at_epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        let token = format!("fz-{:016x}{:08x}", nanos, std::process::id());
-        Self {
-            token,
-            started_at_epoch_ms,
-        }
-    }
-}
-
-/// Largest accepted control response; the extension fails closed beyond it.
+/// Largest accepted control response; extension fails closed beyond it.
 pub const MAX_RESPONSE_BYTES: u64 = 65_536;
-/// Default failure-evidence tail the server emits.
-pub const MAX_EVIDENCE_LINES: usize = 40;
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ControlState {
-    generation: u64,
-    state: ExecutionState,
-    trigger: Option<String>,
-    commands: Vec<String>,
-    duration_ms: Option<u64>,
-    failures: Vec<String>,
-    /// Additive correlation fields (contract §1, TASK-0043): legacy fields
-    /// above stay verbatim for old clients; these are new keys only.
-    /// One state read can never mix generations: all fields are set from the
-    /// same event under the same lock.
-    batch: Option<u64>,
-    changed: Vec<String>,
-    predecessor: Option<u64>,
-    superseded_by: Option<u64>,
-    /// Per-task terminal outcomes of the latest generation (TASK-0050). Not
-    /// serialized into the legacy `status` result; read by the correlated
-    /// snapshot builder.
-    #[serde(skip)]
-    tasks: Vec<TaskSnapshot>,
-    /// Per-generation effective concurrency (TASK-0073): Some(1) for a
-    /// sequential override generation; None = configured bound. Additive
-    /// field on the legacy status result and the correlated snapshot.
-    effective_concurrency: Option<usize>,
-    /// Override source label (TASK-0073): "control" for an exact control
-    /// generation override; None for configured/native runs.
-    concurrency_source: Option<&'static str>,
-    /// Immutable config revision this generation was frozen under
-    /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4); retained through the
-    /// terminal state of the same generation. Additive field.
-    revision: Option<u64>,
-    /// Non-secret semantic hash of the frozen config revision.
-    revision_hash: Option<String>,
-}
-
-impl Default for ControlState {
-    fn default() -> Self {
-        Self {
-            generation: 0,
-            state: ExecutionState::Idle,
-            trigger: None,
-            commands: vec![],
-            duration_ms: None,
-            failures: vec![],
-            batch: None,
-            changed: vec![],
-            predecessor: None,
-            superseded_by: None,
-            tasks: vec![],
-            effective_concurrency: None,
-            concurrency_source: None,
-            revision: None,
-            revision_hash: None,
-        }
-    }
-}
-
-impl ControlState {
-    /// The latest started generation identity.
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// The latest execution state.
-    pub fn state(&self) -> &ExecutionState {
-        &self.state
-    }
-
-    /// The superseded-by relation of the latest generation, when replaced.
-    pub fn superseded_by(&self) -> Option<u64> {
-        self.superseded_by
-    }
-
-    /// Per-task terminal outcomes of the latest generation.
-    pub fn tasks(&self) -> &[TaskSnapshot] {
-        &self.tasks
-    }
-
-    pub fn trigger(&self) -> Option<&str> {
-        self.trigger.as_deref()
-    }
-
-    pub fn commands(&self) -> &[String] {
-        &self.commands
-    }
-
-    pub fn duration_ms(&self) -> Option<u64> {
-        self.duration_ms
-    }
-
-    pub fn failures(&self) -> &[String] {
-        &self.failures
-    }
-
-    /// The immutable config revision the latest generation was frozen under
-    /// (TASK-0089); None for legacy runs.
-    pub fn revision(&self) -> Option<u64> {
-        self.revision
-    }
-
-    /// The non-secret semantic hash of the frozen config revision.
-    pub fn revision_hash(&self) -> Option<&str> {
-        self.revision_hash.as_deref()
-    }
-
-    pub fn batch(&self) -> Option<u64> {
-        self.batch
-    }
-
-    pub fn changed(&self) -> &[String] {
-        &self.changed
-    }
-
-    /// Per-generation effective concurrency (TASK-0073): None means the
-    /// configured bound applied.
-    pub fn effective_concurrency(&self) -> Option<usize> {
-        self.effective_concurrency
-    }
-
-    /// Override source label (TASK-0073): "control" for an exact control
-    /// generation override; None for configured/native runs.
-    pub fn concurrency_source(&self) -> Option<&'static str> {
-        self.concurrency_source
-    }
-
-    pub fn apply(&mut self, event: Event) {
-        match event {
-            Event::Started {
-                run_id,
-                trigger,
-                batch,
-                predecessor,
-                changed,
-                commands,
-                effective_concurrency,
-                concurrency_source,
-                revision,
-                revision_hash,
-                ..
-            } => {
-                self.generation = run_id;
-                self.state = ExecutionState::Running;
-                self.trigger = Some(trigger);
-                self.batch = batch;
-                self.changed = changed;
-                self.predecessor = predecessor;
-                self.superseded_by = None;
-                self.commands = commands;
-                self.duration_ms = None;
-                self.failures.clear();
-                self.tasks.clear();
-                self.effective_concurrency = effective_concurrency;
-                self.concurrency_source = concurrency_source;
-                self.revision = revision;
-                self.revision_hash = revision_hash;
-            }
-            Event::Finished {
-                superseded_by,
-                elapsed,
-                failures,
-                ..
-            } => {
-                self.state = if failures.is_empty() {
-                    ExecutionState::Passed
-                } else {
-                    ExecutionState::Failed
-                };
-                self.duration_ms = Some(elapsed.as_millis() as u64);
-                self.failures = failures;
-                self.superseded_by = superseded_by;
-            }
-            Event::Cancelled { superseded_by, .. } => {
-                self.state = ExecutionState::Cancelled;
-                self.duration_ms = None;
-                self.superseded_by = superseded_by;
-            }
-            Event::Tick { .. } => {}
-            Event::TaskTerminal { run_id, task } => {
-                if run_id == self.generation {
-                    self.tasks.push(task);
-                }
-            }
-        }
-    }
-}
 
 /// Result of routing one synthetic path change through the shared
 /// event-to-run policy (contract §5): matched task names plus the scheduled
@@ -395,7 +166,7 @@ pub struct ControlServer {
 
 impl ControlServer {
     #[allow(dead_code)]
-    pub fn start(path: &Path, state: Arc<Mutex<ControlState>>) -> io::Result<Self> {
+    pub fn start(path: &Path, state: Arc<Mutex<WatcherState>>) -> io::Result<Self> {
         Self::start_internal(
             path,
             state,
@@ -406,7 +177,7 @@ impl ControlServer {
             None,
             None,
             None,
-            Arc::new(ControlInstance::new()),
+            Arc::new(WatcherInstance::new()),
             None,
             None,
             None,
@@ -415,7 +186,7 @@ impl ControlServer {
 
     pub fn start_with_runner<F>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
     ) -> io::Result<Self>
@@ -432,7 +203,7 @@ impl ControlServer {
             None,
             None,
             None,
-            Arc::new(ControlInstance::new()),
+            Arc::new(WatcherInstance::new()),
             None,
             None,
             None,
@@ -445,7 +216,7 @@ impl ControlServer {
     /// unmatched/ignored outcome.
     pub fn start_with_emit<F, E>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
         emit_path: E,
@@ -463,7 +234,7 @@ impl ControlServer {
     /// blocks the watcher's scheduling.
     pub fn start_with_coordinator<F, E>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
         emit_path: E,
@@ -484,7 +255,7 @@ impl ControlServer {
             coordinator,
             outputs,
             None,
-            Arc::new(ControlInstance::new()),
+            Arc::new(WatcherInstance::new()),
             None,
             None,
             None,
@@ -497,7 +268,7 @@ impl ControlServer {
     #[allow(clippy::too_many_arguments)]
     pub fn start_with_cancel<F, E, C>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
         emit_path: E,
@@ -520,7 +291,7 @@ impl ControlServer {
             coordinator,
             outputs,
             Some(Arc::new(cancel_generation)),
-            Arc::new(ControlInstance::new()),
+            Arc::new(WatcherInstance::new()),
             None,
             None,
             None,
@@ -534,14 +305,14 @@ impl ControlServer {
     #[allow(clippy::too_many_arguments)]
     pub fn start_with_broker<F, E, C>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
         emit_path: E,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
         cancel_generation: C,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Arc<SnapshotBroker>,
     ) -> io::Result<Self>
     where
@@ -573,14 +344,14 @@ impl ControlServer {
     #[allow(clippy::too_many_arguments)]
     pub fn start_with_broker_and_estimates<F, E, C>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         run_target: F,
         emit_path: E,
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
         cancel_generation: C,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Arc<SnapshotBroker>,
         estimates: TargetEstimateProvider,
     ) -> io::Result<Self>
@@ -612,7 +383,7 @@ impl ControlServer {
     #[allow(clippy::too_many_arguments)]
     pub fn start_with_lifecycle<F, E, C>(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         targets_provider: TargetsProvider,
         run_target: F,
@@ -620,7 +391,7 @@ impl ControlServer {
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
         cancel_generation: C,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Arc<SnapshotBroker>,
         estimates: TargetEstimateProvider,
         lifecycle: Arc<crate::config_lifecycle::ConfigLifecycle>,
@@ -650,7 +421,7 @@ impl ControlServer {
     #[allow(clippy::too_many_arguments)]
     fn start_internal(
         path: &Path,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
         targets: Vec<ControlTarget>,
         targets_provider: Option<TargetsProvider>,
         run_target: Option<RunTarget>,
@@ -658,7 +429,7 @@ impl ControlServer {
         coordinator: Option<Arc<AwaitCoordinator>>,
         outputs: Option<Arc<OutputRegistry>>,
         cancel_generation: Option<CancelTarget>,
-        instance: Arc<ControlInstance>,
+        instance: Arc<WatcherInstance>,
         broker: Option<Arc<SnapshotBroker>>,
         estimates: Option<TargetEstimateProvider>,
         lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
@@ -798,7 +569,7 @@ fn prepare_socket_path(path: &Path) -> io::Result<()> {
 
 fn handle_client(
     mut stream: UnixStream,
-    state: &Arc<Mutex<ControlState>>,
+    state: &Arc<Mutex<WatcherState>>,
     targets: &[ControlTarget],
     targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
@@ -806,7 +577,7 @@ fn handle_client(
     coordinator: Option<&Arc<AwaitCoordinator>>,
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
     lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
@@ -957,10 +728,10 @@ fn handle_subscribe(
 fn handle_await(
     stream: &mut UnixStream,
     request: serde_json::Value,
-    state: &Arc<Mutex<ControlState>>,
+    state: &Arc<Mutex<WatcherState>>,
     coordinator: Option<&Arc<AwaitCoordinator>>,
     outputs: Option<&OutputRegistry>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
     lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
 ) {
     let id = request_id(&request);
@@ -1067,14 +838,14 @@ fn write_response_ref(stream: &UnixStream, response: serde_json::Value) -> io::R
 
 fn process_payload(
     request: serde_json::Value,
-    state: &Arc<Mutex<ControlState>>,
+    state: &Arc<Mutex<WatcherState>>,
     targets: &[ControlTarget],
     targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
     lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
@@ -1132,14 +903,14 @@ fn process_payload(
 
 fn process_request(
     request: serde_json::Value,
-    state: &Arc<Mutex<ControlState>>,
+    state: &Arc<Mutex<WatcherState>>,
     targets: &[ControlTarget],
     targets_provider: Option<&TargetsProvider>,
     run_target: Option<&RunTarget>,
     emit_path: Option<&EmitPath>,
     outputs: Option<&OutputRegistry>,
     cancel_generation: Option<&CancelTarget>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
     broker: Option<&Arc<SnapshotBroker>>,
     estimates: Option<&TargetEstimateProvider>,
     lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
@@ -1228,7 +999,7 @@ fn request_id(request: &serde_json::Value) -> serde_json::Value {
 /// method is advertised only when a lifecycle source is wired (TASK-0091,
 /// AC3).
 fn capabilities_result(
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
     subscription: bool,
     duration_estimates: bool,
     config_lifecycle: bool,
@@ -1253,7 +1024,7 @@ fn capabilities_result(
     let mut limits = serde_json::json!({
         "outputRetentionBytes": OUTPUT_RETENTION_BYTES as u64,
         "maxResponseBytes": MAX_RESPONSE_BYTES,
-        "maxEvidenceLines": MAX_EVIDENCE_LINES,
+        "maxEvidenceLines": DEFAULT_FAILURE_EVIDENCE_LINES,
         // Contract §4: paging and envelope facts so advanced clients negotiate
         // before requesting, instead of discovering a > transport response.
         "outputSchemaVersion": 2,
@@ -1353,9 +1124,9 @@ fn targets_result(
 /// `status` result: the legacy snapshot plus additive failure evidence when
 /// the latest generation failed and retained output exists (contract §6).
 fn status_result(
-    state: &Arc<Mutex<ControlState>>,
+    state: &Arc<Mutex<WatcherState>>,
     outputs: Option<&OutputRegistry>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let snapshot = state.lock().unwrap().clone();
     let mut value = serde_json::to_value(snapshot.clone()).map_err(|_| {
@@ -1365,7 +1136,7 @@ fn status_result(
             Some(serde_json::json!("status serialization failed")),
         )
     })?;
-    if snapshot.state() == &ExecutionState::Failed {
+    if snapshot.state() == &WatcherExecutionState::Failed {
         let failed_tasks: Vec<String> = snapshot
             .tasks()
             .iter()
@@ -1377,7 +1148,7 @@ fn status_result(
             outputs.and_then(|outputs| {
                 outputs.failure_evidence(
                     snapshot.generation(),
-                    MAX_EVIDENCE_LINES,
+                    DEFAULT_FAILURE_EVIDENCE_LINES,
                     &instance.token,
                     &failed_tasks,
                 )
@@ -1400,7 +1171,7 @@ fn status_result(
 fn output_retrieval(
     request: &serde_json::Value,
     outputs: Option<&OutputRegistry>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let Some(outputs) = outputs else {
         return Err((
@@ -1660,7 +1431,7 @@ fn run_requested_target(
 fn cancel_requested_generation(
     request: &serde_json::Value,
     cancel_generation: Option<&CancelTarget>,
-    instance: &ControlInstance,
+    instance: &WatcherInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
     let params = request.get("params").and_then(serde_json::Value::as_object);
     let Some(generation) = params
@@ -1802,107 +1573,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn started_sets_all_correlation_fields_coherently() {
-        let mut state = ControlState::default();
-        state.apply(started(42, Some(7), Some(41)));
-
-        assert_eq!(state.generation, 42);
-        assert_eq!(state.state, ExecutionState::Running);
-        assert_eq!(state.trigger.as_deref(), Some("src/main.rs"));
-        assert_eq!(state.batch, Some(7));
-        assert_eq!(state.changed, vec!["src/main.rs".to_owned()]);
-        assert_eq!(state.predecessor, Some(41));
-        assert_eq!(state.superseded_by, None);
-        assert_eq!(state.duration_ms, None);
-        assert!(state.failures.is_empty());
-        // TASK-0089: the generation retains its frozen config revision
-        // through the running state.
-        assert_eq!(state.revision, Some(3));
-        assert_eq!(state.revision_hash.as_deref(), Some("abc123"));
-    }
-
-    #[test]
-    fn finished_records_terminal_state_and_superseded_relation() {
-        let mut state = ControlState::default();
-        state.apply(started(42, None, None));
-        state.apply(Event::Finished {
-            run_id: 42,
-            superseded_by: Some(43),
-            elapsed: Duration::from_millis(9),
-            failures: vec!["boom".to_owned()],
-        });
-
-        assert_eq!(state.state, ExecutionState::Failed);
-        assert_eq!(state.duration_ms, Some(9));
-        assert_eq!(state.failures, vec!["boom".to_owned()]);
-        assert_eq!(state.superseded_by, Some(43));
-        // Correlation fields still describe generation 42, never a mix.
-        assert_eq!(state.generation, 42);
-        // TASK-0089: the revision survives into the terminal state of the
-        // same generation.
-        assert_eq!(state.revision, Some(3));
-        assert_eq!(state.revision_hash.as_deref(), Some("abc123"));
-    }
-
-    #[test]
-    fn cancelled_records_generation_and_superseded_by() {
-        let mut state = ControlState::default();
-        state.apply(started(1, None, None));
-        state.apply(Event::Cancelled {
-            run_id: 1,
-            superseded_by: Some(2),
-        });
-
-        assert_eq!(state.state, ExecutionState::Cancelled);
-        assert_eq!(state.superseded_by, Some(2));
-        assert_eq!(state.duration_ms, None);
-        assert_eq!(state.generation, 1);
-    }
-
-    #[test]
-    fn replacement_transition_keeps_latest_generation_consistent() {
-        let mut state = ControlState::default();
-        state.apply(started(1, None, None));
-        state.apply(Event::Cancelled {
-            run_id: 1,
-            superseded_by: Some(2),
-        });
-        state.apply(started(2, Some(5), Some(1)));
-
-        // One state read: generation 2, its batch, and its predecessor —
-        // never a mixture of the superseded generation's fields.
-        assert_eq!(state.generation, 2);
-        assert_eq!(state.batch, Some(5));
-        assert_eq!(state.predecessor, Some(1));
-        assert_eq!(state.superseded_by, None);
-        assert_eq!(state.state, ExecutionState::Running);
-    }
-
-    #[test]
-    fn legacy_fields_serialize_verbatim_with_additive_correlation_keys() {
-        let mut state = ControlState::default();
-        state.apply(started(42, Some(7), None));
-        let json = serde_json::to_value(state.clone()).unwrap();
-        let object = json.as_object().unwrap();
-
-        // Legacy keys preserved.
-        assert_eq!(object["generation"], serde_json::json!(42));
-        assert_eq!(object["state"], serde_json::json!("running"));
-        assert_eq!(object["trigger"], serde_json::json!("src/main.rs"));
-        assert!(object.contains_key("commands"));
-        assert!(object.contains_key("durationMs"));
-        assert!(object.contains_key("failures"));
-
-        // Additive correlation keys, camelCase.
-        assert_eq!(object["batch"], serde_json::json!(7));
-        assert_eq!(object["changed"], serde_json::json!(["src/main.rs"]));
-        assert_eq!(object["predecessor"], serde_json::json!(null));
-        assert_eq!(object["supersededBy"], serde_json::json!(null));
-    }
-
-    fn instance(token: &str) -> ControlInstance {
-        ControlInstance {
+    fn instance(token: &str) -> WatcherInstance {
+        WatcherInstance {
             token: token.to_owned(),
             started_at_epoch_ms: 0,
         }
@@ -2406,7 +2078,7 @@ mod tests {
         // Contract §1/§5: terminal status on a failed generation emits an
         // exact outputRef (instance token + generation + exact task ID + safe
         // defaults), not a human string the agent would have to parse.
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         state.lock().unwrap().apply(started(7, None, None));
         state.lock().unwrap().apply(Event::Finished {
             run_id: 7,
@@ -2436,7 +2108,7 @@ mod tests {
 
     #[test]
     fn status_evidence_counts_multiple_failed_tasks_via_primary_ref() {
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         state.lock().unwrap().apply(started(7, None, None));
         state.lock().unwrap().apply(Event::Finished {
             run_id: 7,
@@ -2615,7 +2287,7 @@ mod loop_tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
 
         let mut stream = UnixStream::connect(&path).expect("connect");

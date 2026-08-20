@@ -11,6 +11,17 @@ extern crate glob;
 use self::glob::Pattern;
 use std::collections::BTreeMap;
 
+/// Per-job output policy (OUTPUT-POLICY-CONTRACT, TASK-0041). `Inherit` is
+/// the default and matches streaming behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputPolicy {
+    #[default]
+    Inherit,
+    Quiet,
+    Capture,
+    ShowOnFailure,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
     pub name: String,
@@ -36,7 +47,7 @@ pub struct Rules {
     /// rule responsible for a decision. Empty for plain task lists.
     inherited: Vec<String>,
     /// Per-job output policy (TASK-0041); Inherit is the default.
-    output: crate::config::OutputPolicy,
+    output: OutputPolicy,
     /// Managed long-running service task (TASK-0035); opt-in, default false.
     service: bool,
 }
@@ -60,7 +71,7 @@ impl Rules {
             cwd: None,
             environment: BTreeMap::new(),
             inherited: vec![],
-            output: crate::config::OutputPolicy::Inherit,
+            output: OutputPolicy::Inherit,
             service: false,
         }
     }
@@ -86,7 +97,7 @@ impl Rules {
             cwd: None,
             environment: BTreeMap::new(),
             inherited: vec![],
-            output: crate::config::OutputPolicy::Inherit,
+            output: OutputPolicy::Inherit,
             service: false,
         }
     }
@@ -126,13 +137,13 @@ impl Rules {
     /// Declares the task as a member of the named `parallel` group. Only
     /// consecutive tasks sharing the same non-empty group name run together.
     /// Sets the per-job output policy (TASK-0041).
-    pub fn with_output(mut self, output: crate::config::OutputPolicy) -> Self {
+    pub fn with_output(mut self, output: OutputPolicy) -> Self {
         self.output = output;
         self
     }
 
     /// The per-job output policy.
-    pub fn output(&self) -> crate::config::OutputPolicy {
+    pub fn output(&self) -> OutputPolicy {
         self.output
     }
 
@@ -475,10 +486,8 @@ pub fn available_targets(rules: &[Rules]) -> String {
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::Rules;
-    use crate::config;
 
     fn rule(
         name: &str,
@@ -674,38 +683,36 @@ mod tests {
 
     #[test]
     fn it_validates_the_given_glob_patterns_paths() {
-        let rules_yaml = config::from_yaml(
-            "
-        - name: this is valid
-          run: 'cargo tests'
-          change:
-            - '**/*'
-            - '**/*.go'
-          ignore:
-            - '**/*.log'
-
-        - name: this is an invalid pattern
-          run: 'echo invalid'
-          change:
-            - '**/foo_**.go'
-          ignore:
-            - '**/*.log'
-
-        - name: this is an invalid pattern 2
-          run: 'echo invalid'
-          change:
-            - '**/*.go'
-          ignore:
-            - '**/**.*'
-
-        - name: missing trigger property
-          run: 'echo invalid'
-          ignore: '**/*.go'
-        ",
-        );
-        assert!(rules_yaml.is_ok());
-
-        let rules = rules_yaml.unwrap();
+        let rules = vec![
+            rule(
+                "this is valid",
+                &["cargo tests"],
+                &["**/*", "**/*.go"],
+                &["**/*.log"],
+                false,
+            ),
+            rule(
+                "this is an invalid pattern",
+                &["echo invalid"],
+                &["**/foo_**.go"],
+                &["**/*.log"],
+                false,
+            ),
+            rule(
+                "this is an invalid pattern 2",
+                &["echo invalid"],
+                &["**/*.go"],
+                &["**/**.*"],
+                false,
+            ),
+            rule(
+                "missing trigger property",
+                &["echo invalid"],
+                &[],
+                &["**/*.go"],
+                false,
+            ),
+        ];
         let first_rule = &rules[0];
         assert!(first_rule.validate().is_ok());
 

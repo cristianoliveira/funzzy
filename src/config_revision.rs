@@ -217,12 +217,12 @@ pub fn service_signature(rule: &Rules) -> String {
 }
 
 /// Stable output-policy tag for hashing.
-fn output_policy_tag(policy: &crate::config::OutputPolicy) -> String {
+fn output_policy_tag(policy: &crate::rules::OutputPolicy) -> String {
     match policy {
-        crate::config::OutputPolicy::Inherit => "inherit",
-        crate::config::OutputPolicy::Quiet => "quiet",
-        crate::config::OutputPolicy::Capture => "capture",
-        crate::config::OutputPolicy::ShowOnFailure => "show_on_failure",
+        crate::rules::OutputPolicy::Inherit => "inherit",
+        crate::rules::OutputPolicy::Quiet => "quiet",
+        crate::rules::OutputPolicy::Capture => "capture",
+        crate::rules::OutputPolicy::ShowOnFailure => "show_on_failure",
     }
     .to_owned()
 }

@@ -10,7 +10,7 @@ extern crate yaml_rust2;
 
 use crate::cli;
 use crate::errors;
-use crate::rules::Rules;
+use crate::rules::{OutputPolicy, Rules};
 use crate::yaml;
 
 use self::yaml_rust2::Yaml;
@@ -2358,17 +2358,6 @@ mod output_policy_tests {
         assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
         assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
     }
-}
-
-/// Per-job output policy (OUTPUT-POLICY-CONTRACT, TASK-0041). `Inherit` is
-/// the default and matches today's streaming behavior.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum OutputPolicy {
-    #[default]
-    Inherit,
-    Quiet,
-    Capture,
-    ShowOnFailure,
 }
 
 /// Parses `output:` (on-level default or job-level) into an OutputPolicy;

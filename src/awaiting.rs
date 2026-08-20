@@ -7,9 +7,9 @@
 //! bounded by their own deadlines; the watcher schedules and runs unaffected.
 
 use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
-use crate::control::{ControlState, ExecutionState};
 use crate::executor::Event;
-use crate::output::{FailureEvidence, OutputRegistry};
+use crate::output::{FailureEvidence, OutputRegistry, DEFAULT_FAILURE_EVIDENCE_LINES};
+use crate::watcher_state::{WatcherExecutionState, WatcherState};
 use serde::Serialize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -69,7 +69,7 @@ pub enum AwaitMode {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AwaitResult {
-    pub snapshot: ControlState,
+    pub snapshot: WatcherState,
     pub terminal_reason: TerminalReason,
     pub latest_generation: u64,
     pub latest_batch: Option<u64>,
@@ -124,7 +124,7 @@ impl AwaitCoordinator {
     }
 
     /// Records one worker event into the observation. Called by the same
-    /// event stream that updates `ControlState`, under no lock nesting.
+    /// event stream that updates `WatcherState`, under no lock nesting.
     pub fn observe(&self, event: &Event) {
         let mut inner = self.inner.lock().unwrap();
         match event {
@@ -169,7 +169,7 @@ impl AwaitCoordinator {
                 self.changed.notify_all();
             }
             Event::Tick { .. } => {}
-            // Per-task outcomes live in `ControlState`; the coordinator only
+            // Per-task outcomes live in `WatcherState`; the coordinator only
             // tracks generation/batch/pending facts for freshness (TASK-0050).
             Event::TaskTerminal { .. } => {}
         }
@@ -223,7 +223,7 @@ impl AwaitCoordinator {
         &self,
         mode: AwaitMode,
         timeout: Duration,
-        snapshot: &Arc<Mutex<ControlState>>,
+        snapshot: &Arc<Mutex<WatcherState>>,
         mut probe: Option<&mut dyn FnMut() -> bool>,
         outputs: Option<&OutputRegistry>,
         instance_token: &str,
@@ -296,7 +296,7 @@ impl AwaitCoordinator {
     /// the awaited decision and the returned snapshot cannot mix generations.
     fn build(
         inner: MutexGuard<'_, AwaitInner>,
-        snapshot: &Arc<Mutex<ControlState>>,
+        snapshot: &Arc<Mutex<WatcherState>>,
         terminal_reason: TerminalReason,
         generation: u64,
         outputs: Option<&OutputRegistry>,
@@ -319,7 +319,7 @@ impl AwaitCoordinator {
             outputs.and_then(|outputs| {
                 outputs.failure_evidence(
                     generation,
-                    crate::control::MAX_EVIDENCE_LINES,
+                    DEFAULT_FAILURE_EVIDENCE_LINES,
                     instance_token,
                     &failed_tasks,
                 )
@@ -343,13 +343,15 @@ impl AwaitCoordinator {
 /// Freshness rule (contract §3): current only when the snapshot is the latest
 /// scheduled generation, terminal, and no pending debounce work exists.
 pub(crate) fn classify(
-    snapshot: &ControlState,
+    snapshot: &WatcherState,
     latest_generation: u64,
     pending: &PendingWork,
 ) -> Freshness {
     let terminal = matches!(
         snapshot.state(),
-        ExecutionState::Passed | ExecutionState::Failed | ExecutionState::Cancelled
+        WatcherExecutionState::Passed
+            | WatcherExecutionState::Failed
+            | WatcherExecutionState::Cancelled
     );
     let no_pending = pending.is_empty();
     if snapshot.generation() == latest_generation && terminal && no_pending {
@@ -406,7 +408,7 @@ mod tests {
     fn await_forever(
         coordinator: &AwaitCoordinator,
         mode: AwaitMode,
-        state: &Arc<Mutex<ControlState>>,
+        state: &Arc<Mutex<WatcherState>>,
     ) -> AwaitResult {
         coordinator.await_generation(
             mode,
@@ -422,7 +424,7 @@ mod tests {
     fn spawn_wait(
         coordinator: Arc<AwaitCoordinator>,
         mode: AwaitMode,
-        state: Arc<Mutex<ControlState>>,
+        state: Arc<Mutex<WatcherState>>,
     ) -> std::thread::JoinHandle<AwaitResult> {
         std::thread::spawn(move || await_forever(&coordinator, mode, &state))
     }
@@ -437,7 +439,7 @@ mod tests {
         // lifecycle transition, so a reload that happens while waiting is
         // visible in the returned observation without reconnecting.
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(7, None));
         state.lock().unwrap().apply(started(7, None));
         coordinator.observe(&finished(7, false));
@@ -470,7 +472,7 @@ mod tests {
     #[test]
     fn already_terminal_generation_returns_immediately() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(7, None));
         state.lock().unwrap().apply(started(7, None));
         coordinator.observe(&finished(7, false));
@@ -493,7 +495,7 @@ mod tests {
     #[test]
     fn future_completion_wakes_the_waiter() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(9, None));
         let exact = spawn_wait(
             Arc::clone(&coordinator),
@@ -516,7 +518,7 @@ mod tests {
     #[test]
     fn no_generation_yet_blocks_until_the_first_terminal() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let waiter = spawn_wait(
             Arc::clone(&coordinator),
             AwaitMode::After(0),
@@ -531,7 +533,7 @@ mod tests {
     #[test]
     fn superseded_generation_returns_superseded() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(5, None));
         let waiter = spawn_wait(
             Arc::clone(&coordinator),
@@ -548,7 +550,7 @@ mod tests {
     #[test]
     fn after_mode_returns_latest_terminal_after_the_reference() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(1, None));
         coordinator.observe(&cancelled(1, Some(2)));
         coordinator.observe(&started(2, None));
@@ -570,7 +572,7 @@ mod tests {
     #[test]
     fn timeout_returns_latest_snapshot_without_cancellation() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         state.lock().unwrap().apply(started(3, None));
 
         let result = coordinator.await_generation(
@@ -590,7 +592,7 @@ mod tests {
     #[test]
     fn multiple_waiters_all_wake_on_one_terminal_event() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let waiters: Vec<_> = (0..4)
             .map(|_| {
                 spawn_wait(
@@ -611,7 +613,7 @@ mod tests {
     #[test]
     fn timeout_boundary_cleans_up_the_waiter() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         let result = coordinator.await_generation(
             AwaitMode::Exact(1),
             Duration::from_millis(10),
@@ -638,7 +640,7 @@ mod tests {
     #[test]
     fn pending_work_marks_freshness_stale() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(1, Some(4)));
         state.lock().unwrap().apply(started(1, Some(4)));
         coordinator.observe(&finished(1, false));
@@ -663,7 +665,7 @@ mod tests {
     #[test]
     fn queued_discard_advances_latest_generation_for_freshness() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         // Generation 2 supersedes 1 before it ever starts.
         coordinator.observe(&started(2, None));
         coordinator.observe(&cancelled(1, Some(2)));
@@ -698,7 +700,7 @@ mod tests {
     #[test]
     fn terminal_outcome_of_failed_generation_is_reported() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(4, None));
         let waiter = spawn_wait(
             Arc::clone(&coordinator),
@@ -713,7 +715,7 @@ mod tests {
     #[test]
     fn explicit_cancel_outcome_is_cancelled_not_superseded() {
         let coordinator = Arc::new(AwaitCoordinator::new());
-        let state = Arc::new(Mutex::new(ControlState::default()));
+        let state = Arc::new(Mutex::new(WatcherState::default()));
         coordinator.observe(&started(6, None));
         coordinator.observe(&cancelled(6, None));
         let result = coordinator.await_generation(

@@ -9,7 +9,7 @@
 //! This module is pure: planning, filtering, and outcome combination have no
 //! process, stdout, control-socket, or threading side effects.
 
-use crate::rules::{CommandLine, Rules};
+use crate::rules::{CommandLine, OutputPolicy, Rules};
 use crate::template::{self, TemplateOptions};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -60,7 +60,7 @@ pub struct TaskPlan {
     /// Effective child process context. Relative cwd is resolved before spawn.
     pub context: TaskContext,
     /// Per-job output policy (TASK-0041).
-    pub output: crate::config::OutputPolicy,
+    pub output: OutputPolicy,
     /// Managed long-running service (TASK-0035); opt-in.
     pub service: bool,
 }
