@@ -21,10 +21,18 @@ fn scratch(label: &str) -> PathBuf {
 
 fn write_config(path: &Path, marker: &Path) {
     let marker = marker.display();
+    write_custom_config(
+        path,
+        &format!("if test -f '{marker}'; then exit 0; else touch '{marker}.attempt'; exit 1; fi"),
+        &format!("\"touch '{marker}'\""),
+    );
+}
+
+fn write_custom_config(path: &Path, run: &str, recovery: &str) {
     std::fs::write(
         path,
         format!(
-            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: \"if test -f '{marker}'; then exit 0; else touch '{marker}.attempt'; exit 1; fi\"\n    recovery: \"touch '{marker}'\"\n    run_on_init: true\n"
+            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: {run:?}\n    recovery: {recovery}\n    run_on_init: true\n"
         ),
     )
     .expect("write recovery config");
@@ -108,4 +116,57 @@ fn default_decline_keeps_failure_and_does_not_mutate() {
     let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"n\n");
     assert!(!status.success(), "declined recovery must fail: {output}");
     assert!(!marker.exists(), "declined recovery must not execute");
+}
+
+#[test]
+fn failed_recovery_does_not_verify_or_retry() {
+    let root = scratch("recovery-failure");
+    let config = root.join(".watch.yaml");
+    let recovered = root.join("recovered");
+    let verified = root.join("verified");
+    let run = format!(
+        "if test -f '{}'; then touch '{}'; exit 0; else exit 1; fi",
+        recovered.display(),
+        verified.display()
+    );
+    write_custom_config(&config, &run, "\"false\"");
+
+    let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"y\n");
+    assert!(!status.success(), "failed recovery must fail: {output}");
+    assert!(
+        !verified.exists(),
+        "failed recovery must not trigger verification"
+    );
+}
+
+#[test]
+fn verification_failure_remains_a_final_failure() {
+    let root = scratch("verification-failure");
+    let config = root.join(".watch.yaml");
+    write_custom_config(&config, "\"false\"", "\"true\"");
+
+    let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"y\n");
+    assert!(!status.success(), "failed verification must fail: {output}");
+}
+
+#[test]
+fn multi_command_recovery_runs_in_declared_order_before_verification() {
+    let root = scratch("multi-command");
+    let config = root.join(".watch.yaml");
+    let marker = root.join("recovered");
+    let first = root.join("first");
+    let run = format!(
+        "if test -f '{}'; then exit 0; else exit 1; fi",
+        marker.display()
+    );
+    let recovery = format!(
+        "[\"touch {}\", \"touch {}\"]",
+        first.display(),
+        marker.display()
+    );
+    write_custom_config(&config, &run, &recovery);
+
+    let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"y\n");
+    assert!(status.success(), "multi-command recovery failed: {output}");
+    assert!(first.exists() && marker.exists());
 }
