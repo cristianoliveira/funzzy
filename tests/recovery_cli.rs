@@ -18,11 +18,15 @@ fn scratch(label: &str) -> PathBuf {
 }
 
 fn config(path: &Path, marker: &Path) {
+    config_with_policy(path, marker, "prompt");
+}
+
+fn config_with_policy(path: &Path, marker: &Path, policy: &str) {
     let marker = marker.display();
     std::fs::write(
         path,
         format!(
-            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: \"test -f '{marker}'\"\n    recovery: \"touch '{marker}'\"\n    run_on_init: true\n"
+            "execution:\n  recovery_policy: {policy}\njobs:\n  - name: recover @quick\n    run: \"test -f '{marker}'\"\n    recovery: \"touch '{marker}'\"\n    run_on_init: true\n"
         ),
     )
     .expect("write recovery config");
@@ -61,6 +65,19 @@ fn prompt_mode_without_tty_declines_for_funzzy_and_fzz() {
             "headless decline should explain the safety reason"
         );
     }
+}
+
+#[test]
+fn configured_skip_never_spawns_recovery() {
+    let root = scratch("configured-skip");
+    let config_path = root.join(".watch.yaml");
+    let marker = root.join("recovered");
+    config_with_policy(&config_path, &marker, "skip");
+
+    let output = run(env!("CARGO_BIN_EXE_fzz"), &config_path, None);
+    assert!(!output.status.success());
+    assert!(!marker.exists());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("recovery_policy: skip"));
 }
 
 #[test]
