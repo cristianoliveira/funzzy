@@ -192,7 +192,7 @@ fn capabilities_advertise_subscribe_when_endpoint_is_registered() {
 
 #[test]
 fn subscribe_cli_reports_an_actionable_error_on_a_legacy_server() {
-    // A server without a broker (e.g. a bare `ControlServer::start`) does not
+    // A server without a broker (e.g. a status-only `ControlApi`) does not
     // advertise `subscribe`; the CLI should surface a compatibility message.
     let directory = setup_directory(
         "legacy",

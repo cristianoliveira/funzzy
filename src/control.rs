@@ -164,276 +164,143 @@ pub struct ControlServer {
     thread: Option<JoinHandle<()>>,
 }
 
-impl ControlServer {
-    #[allow(dead_code)]
-    pub fn start(path: &Path, state: Arc<Mutex<WatcherState>>) -> io::Result<Self> {
-        Self::start_internal(
-            path,
+pub struct ControlApi {
+    state: Arc<Mutex<WatcherState>>,
+    targets: Vec<ControlTarget>,
+    targets_provider: Option<TargetsProvider>,
+    run_target: Option<RunTarget>,
+    emit_path: Option<EmitPath>,
+    coordinator: Option<Arc<AwaitCoordinator>>,
+    outputs: Option<Arc<OutputRegistry>>,
+    cancel_generation: Option<CancelTarget>,
+    instance: Arc<WatcherInstance>,
+    broker: Option<Arc<SnapshotBroker>>,
+    estimates: Option<TargetEstimateProvider>,
+    lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
+}
+
+impl ControlApi {
+    pub fn new(state: Arc<Mutex<WatcherState>>) -> Self {
+        Self {
             state,
-            vec![],
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Arc::new(WatcherInstance::new()),
-            None,
-            None,
-            None,
-        )
+            targets: vec![],
+            targets_provider: None,
+            run_target: None,
+            emit_path: None,
+            coordinator: None,
+            outputs: None,
+            cancel_generation: None,
+            instance: Arc::new(WatcherInstance::new()),
+            broker: None,
+            estimates: None,
+            lifecycle: None,
+        }
     }
 
-    pub fn start_with_runner<F>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-    ) -> io::Result<Self>
+    pub fn with_targets(mut self, targets: Vec<ControlTarget>) -> Self {
+        self.targets = targets;
+        self
+    }
+
+    pub fn with_targets_provider(mut self, provider: TargetsProvider) -> Self {
+        self.targets_provider = Some(provider);
+        self
+    }
+
+    pub fn with_run<F>(mut self, run_target: F) -> Self
     where
         F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
     {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            None,
-            Some(Arc::new(run_target)),
-            None,
-            None,
-            None,
-            None,
-            Arc::new(WatcherInstance::new()),
-            None,
-            None,
-            None,
-        )
+        self.run_target = Some(Arc::new(run_target));
+        self
     }
 
-    /// Extends the runner surface with the `emit` method (TASK-0022): the
-    /// handler routes one synthetic path through the shared event-to-run
-    /// policy and returns matched tasks plus run identity or an explicit
-    /// unmatched/ignored outcome.
-    pub fn start_with_emit<F, E>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-        emit_path: E,
-    ) -> io::Result<Self>
+    pub fn with_emit<E>(mut self, emit_path: E) -> Self
     where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
         E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
     {
-        Self::start_with_coordinator(path, state, targets, run_target, emit_path, None, None)
+        self.emit_path = Some(Arc::new(emit_path));
+        self
     }
 
-    /// Extends the surface with the atomic `await` coordinator (TASK-0044):
-    /// the `await` method observes and waits under one lock, returns one
-    /// consistent snapshot plus terminal reason and freshness, and never
-    /// blocks the watcher's scheduling.
-    pub fn start_with_coordinator<F, E>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-        emit_path: E,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-    ) -> io::Result<Self>
-    where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
-        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
-    {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            None,
-            Some(Arc::new(run_target)),
-            Some(Arc::new(emit_path)),
-            coordinator,
-            outputs,
-            None,
-            Arc::new(WatcherInstance::new()),
-            None,
-            None,
-            None,
-        )
+    pub fn with_awaiting(mut self, coordinator: Arc<AwaitCoordinator>) -> Self {
+        self.coordinator = Some(coordinator);
+        self
     }
 
-    /// Extends the surface with exact-generation cancellation (TASK-0046):
-    /// the `cancel` method compares generation identity atomically and reports
-    /// graceful, escalated, or no-op termination.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_with_cancel<F, E, C>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-        emit_path: E,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-        cancel_generation: C,
-    ) -> io::Result<Self>
+    pub fn with_outputs(mut self, outputs: Arc<OutputRegistry>) -> Self {
+        self.outputs = Some(outputs);
+        self
+    }
+
+    pub fn with_cancel<C>(mut self, cancel_generation: C) -> Self
     where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
-        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
         C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
     {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            None,
-            Some(Arc::new(run_target)),
-            Some(Arc::new(emit_path)),
-            coordinator,
-            outputs,
-            Some(Arc::new(cancel_generation)),
-            Arc::new(WatcherInstance::new()),
-            None,
-            None,
-            None,
-        )
+        self.cancel_generation = Some(Arc::new(cancel_generation));
+        self
     }
 
-    /// Extends the surface with subscription (TASK-0050): the `subscribe`
-    /// method returns one immediate correlated snapshot, then streams
-    /// `snapshot` notifications on the same connection. The instance token is
-    /// shared between `capabilities` and snapshots so clients see one identity.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_with_broker<F, E, C>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-        emit_path: E,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-        cancel_generation: C,
-        instance: Arc<WatcherInstance>,
-        broker: Arc<SnapshotBroker>,
-    ) -> io::Result<Self>
-    where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
-        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
-        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
-    {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            None,
-            Some(Arc::new(run_target)),
-            Some(Arc::new(emit_path)),
-            coordinator,
-            outputs,
-            Some(Arc::new(cancel_generation)),
-            instance,
-            Some(broker),
-            None,
-            None,
-        )
+    pub fn with_instance(mut self, instance: Arc<WatcherInstance>) -> Self {
+        self.instance = instance;
+        self
     }
 
-    /// Extends the subscription surface with duration estimates (TASK-0055):
-    /// `targets` computes each target's current estimate at request time and
-    /// the correlated snapshot carries the run-start estimate. The provider
-    /// is wired at the composition root from watches + recorder.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_with_broker_and_estimates<F, E, C>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        run_target: F,
-        emit_path: E,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-        cancel_generation: C,
-        instance: Arc<WatcherInstance>,
-        broker: Arc<SnapshotBroker>,
-        estimates: TargetEstimateProvider,
-    ) -> io::Result<Self>
-    where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
-        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
-        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
-    {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            None,
-            Some(Arc::new(run_target)),
-            Some(Arc::new(emit_path)),
-            coordinator,
-            outputs,
-            Some(Arc::new(cancel_generation)),
-            instance,
-            Some(broker),
-            Some(estimates),
-            None,
-        )
+    pub fn with_snapshots(mut self, broker: Arc<SnapshotBroker>) -> Self {
+        self.broker = Some(broker);
+        self
     }
 
-    /// Starts the full control surface with the config lifecycle source
-    /// (TASK-0091, AC3): serves the `config` method and lets `await` carry
-    /// the live lifecycle transition in its observation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_with_lifecycle<F, E, C>(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        targets_provider: TargetsProvider,
-        run_target: F,
-        emit_path: E,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-        cancel_generation: C,
-        instance: Arc<WatcherInstance>,
-        broker: Arc<SnapshotBroker>,
-        estimates: TargetEstimateProvider,
+    pub fn with_estimates(mut self, estimates: TargetEstimateProvider) -> Self {
+        self.estimates = Some(estimates);
+        self
+    }
+
+    pub fn with_lifecycle(
+        mut self,
         lifecycle: Arc<crate::config_lifecycle::ConfigLifecycle>,
-    ) -> io::Result<Self>
-    where
-        F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
-        E: Fn(String) -> Result<EmitOutcome, String> + Send + Sync + 'static,
-        C: Fn(u64) -> Result<CancelResult, String> + Send + Sync + 'static,
-    {
-        Self::start_internal(
-            path,
-            state,
-            targets,
-            Some(targets_provider),
-            Some(Arc::new(run_target)),
-            Some(Arc::new(emit_path)),
-            coordinator,
-            outputs,
-            Some(Arc::new(cancel_generation)),
-            instance,
-            Some(broker),
-            Some(estimates),
-            Some(lifecycle),
-        )
+    ) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn start_internal(
-        path: &Path,
-        state: Arc<Mutex<WatcherState>>,
-        targets: Vec<ControlTarget>,
-        targets_provider: Option<TargetsProvider>,
-        run_target: Option<RunTarget>,
-        emit_path: Option<EmitPath>,
-        coordinator: Option<Arc<AwaitCoordinator>>,
-        outputs: Option<Arc<OutputRegistry>>,
-        cancel_generation: Option<CancelTarget>,
-        instance: Arc<WatcherInstance>,
-        broker: Option<Arc<SnapshotBroker>>,
-        estimates: Option<TargetEstimateProvider>,
-        lifecycle: Option<Arc<crate::config_lifecycle::ConfigLifecycle>>,
-    ) -> io::Result<Self> {
+    fn validate(&self) -> Result<(), &'static str> {
+        if self.broker.is_some() && self.coordinator.is_none() {
+            return Err("snapshot subscription requires await coordinator");
+        }
+        if self.emit_path.is_some() && self.run_target.is_none() {
+            return Err("emit capability requires run capability");
+        }
+        if self.cancel_generation.is_some() && self.run_target.is_none() {
+            return Err("cancel capability requires run capability");
+        }
+        if let Some(broker) = &self.broker {
+            if broker.instance().token != self.instance.token {
+                return Err("snapshot broker and control API must share watcher instance");
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ControlServer {
+    pub fn bind(path: &Path, api: ControlApi) -> io::Result<Self> {
+        api.validate()
+            .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+        let ControlApi {
+            state,
+            targets,
+            targets_provider,
+            run_target,
+            emit_path,
+            coordinator,
+            outputs,
+            cancel_generation,
+            instance,
+            broker,
+            estimates,
+            lifecycle,
+        } = api;
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
@@ -1581,6 +1448,26 @@ mod tests {
     }
 
     #[test]
+    fn control_api_rejects_snapshots_without_awaiting() {
+        let state = Arc::new(Mutex::new(WatcherState::default()));
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        let instance = Arc::new(instance("fz-test"));
+        let broker = Arc::new(SnapshotBroker::new(
+            instance.as_ref().clone(),
+            Arc::clone(&state),
+            coordinator,
+        ));
+        let api = ControlApi::new(state)
+            .with_instance(instance)
+            .with_snapshots(broker);
+
+        assert_eq!(
+            api.validate(),
+            Err("snapshot subscription requires await coordinator")
+        );
+    }
+
+    #[test]
     fn run_absent_sequential_defaults_to_false() {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
         let seen_flag = std::sync::Arc::clone(&seen);
@@ -2288,7 +2175,8 @@ mod loop_tests {
                 .as_nanos()
         ));
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
+        let api = ControlApi::new(Arc::clone(&state));
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let mut stream = UnixStream::connect(&path).expect("connect");
         stream

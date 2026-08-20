@@ -1,6 +1,6 @@
 #[cfg(unix)]
 mod unix {
-    use funzzy::control::{ControlServer, ControlTarget};
+    use funzzy::control::{ControlApi, ControlServer, ControlTarget};
     use funzzy::executor::Event as WorkerEvent;
     use funzzy::watcher_state::WatcherState;
     use serde_json::Value;
@@ -36,11 +36,18 @@ mod unix {
         )
     }
 
+    fn bind_status(
+        path: &std::path::Path,
+        state: Arc<Mutex<WatcherState>>,
+    ) -> std::io::Result<ControlServer> {
+        ControlServer::bind(path, ControlApi::new(state))
+    }
+
     #[test]
     fn it_reports_the_latest_execution_status() {
         let path = socket_path("status");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
+        let _server = bind_status(&path, Arc::clone(&state)).unwrap();
 
         state.lock().unwrap().apply(WorkerEvent::Started {
             run_id: 1,
@@ -76,7 +83,7 @@ mod unix {
     fn it_reports_failures_without_requiring_the_full_log() {
         let path = socket_path("failure");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, Arc::clone(&state)).unwrap();
+        let _server = bind_status(&path, Arc::clone(&state)).unwrap();
 
         state.lock().unwrap().apply(WorkerEvent::Started {
             run_id: 1,
@@ -110,16 +117,15 @@ mod unix {
         let state = Arc::new(Mutex::new(WatcherState::default()));
         let requested = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&requested);
-        let _server =
-            ControlServer::start_with_runner(&path, state, vec![], move |target, _sequential| {
-                captured.lock().unwrap().push(target);
-                Ok(funzzy::control::ScheduledRun {
-                    run_id: 7,
-                    revision: None,
-                    revision_hash: None,
-                })
+        let api = ControlApi::new(state).with_run(move |target, _sequential| {
+            captured.lock().unwrap().push(target);
+            Ok(funzzy::control::ScheduledRun {
+                run_id: 7,
+                revision: None,
+                revision_hash: None,
             })
-            .unwrap();
+        });
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let response = call(
             &path,
@@ -144,14 +150,16 @@ mod unix {
             name: "final checks @agent-final".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server = ControlServer::start_with_runner(&path, state, targets, |_, _sequential| {
-            Ok(funzzy::control::ScheduledRun {
-                run_id: 1,
-                revision: None,
-                revision_hash: None,
-            })
-        })
-        .unwrap();
+        let api = ControlApi::new(state)
+            .with_targets(targets)
+            .with_run(|_, _sequential| {
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 1,
+                    revision: None,
+                    revision_hash: None,
+                })
+            });
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let response = call(
             &path,
@@ -169,30 +177,24 @@ mod unix {
         let state = Arc::new(Mutex::new(WatcherState::default()));
         let cancelled = Arc::new(Mutex::new(Vec::new()));
         let captured = Arc::clone(&cancelled);
-        let _server = ControlServer::start_with_cancel(
-            &path,
-            state,
-            vec![],
-            |_target, _sequential| {
+        let api = ControlApi::new(state)
+            .with_run(|_target, _sequential| {
                 Ok(funzzy::control::ScheduledRun {
                     run_id: 1,
                     revision: None,
                     revision_hash: None,
                 })
-            },
-            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
-            None,
-            None,
-            move |generation| {
+            })
+            .with_emit(|_path| Ok(funzzy::control::EmitOutcome::unmatched()))
+            .with_cancel(move |generation| {
                 captured.lock().unwrap().push(generation);
                 Ok(funzzy::workers::CancelResult::Cancelled {
                     disposition: funzzy::executor::CancelDisposition::Graceful,
                     revision: None,
                     revision_hash: None,
                 })
-            },
-        )
-        .unwrap();
+            });
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         // Negotiate the instance token so the cancel carries the identity the
         // server expects (a mismatched token is a safe no-op).
@@ -224,29 +226,23 @@ mod unix {
     fn it_reports_escalated_cancel_as_rpc_error_32021() {
         let path = socket_path("cancel-escalated");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start_with_cancel(
-            &path,
-            state,
-            vec![],
-            |_target, _sequential| {
+        let api = ControlApi::new(state)
+            .with_run(|_target, _sequential| {
                 Ok(funzzy::control::ScheduledRun {
                     run_id: 1,
                     revision: None,
                     revision_hash: None,
                 })
-            },
-            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
-            None,
-            None,
-            |_generation| {
+            })
+            .with_emit(|_path| Ok(funzzy::control::EmitOutcome::unmatched()))
+            .with_cancel(|_generation| {
                 Ok(funzzy::workers::CancelResult::Cancelled {
                     disposition: funzzy::executor::CancelDisposition::Escalated,
                     revision: None,
                     revision_hash: None,
                 })
-            },
-        )
-        .unwrap();
+            });
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let response = call(
             &path,
@@ -263,23 +259,17 @@ mod unix {
     fn it_reports_a_noop_cancel_when_nothing_matched() {
         let path = socket_path("cancel-noop");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start_with_cancel(
-            &path,
-            state,
-            vec![],
-            |_target, _sequential| {
+        let api = ControlApi::new(state)
+            .with_run(|_target, _sequential| {
                 Ok(funzzy::control::ScheduledRun {
                     run_id: 1,
                     revision: None,
                     revision_hash: None,
                 })
-            },
-            |_path| Ok(funzzy::control::EmitOutcome::unmatched()),
-            None,
-            None,
-            |_generation| Ok(funzzy::workers::CancelResult::Noop),
-        )
-        .unwrap();
+            })
+            .with_emit(|_path| Ok(funzzy::control::EmitOutcome::unmatched()))
+            .with_cancel(|_generation| Ok(funzzy::workers::CancelResult::Noop));
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let response = call(
             &path,
@@ -296,7 +286,7 @@ mod unix {
     fn it_answers_capabilities_with_the_negotiated_profile() {
         let path = socket_path("capabilities");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, state).unwrap();
+        let _server = bind_status(&path, state).unwrap();
 
         let response = call(
             &path,
@@ -377,7 +367,7 @@ mod unix {
     fn it_keeps_a_stable_instance_identity_across_requests() {
         let path = socket_path("capabilities-stable");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, state).unwrap();
+        let _server = bind_status(&path, state).unwrap();
 
         let first = call(
             &path,
@@ -402,8 +392,7 @@ mod unix {
     fn it_generates_a_fresh_instance_identity_per_server() {
         let first_path = socket_path("capabilities-restart-a");
         let first =
-            ControlServer::start(&first_path, Arc::new(Mutex::new(WatcherState::default())))
-                .unwrap();
+            bind_status(&first_path, Arc::new(Mutex::new(WatcherState::default()))).unwrap();
         let first_token = call(
             &first_path,
             serde_json::json!({"jsonrpc": "2.0", "id": "c", "method": "capabilities"}),
@@ -414,8 +403,7 @@ mod unix {
         // A restart is a new instance: same socket path, fresh identity.
         let second_path = socket_path("capabilities-restart-b");
         let _second =
-            ControlServer::start(&second_path, Arc::new(Mutex::new(WatcherState::default())))
-                .unwrap();
+            bind_status(&second_path, Arc::new(Mutex::new(WatcherState::default()))).unwrap();
         let second_token = call(
             &second_path,
             serde_json::json!({"jsonrpc": "2.0", "id": "c", "method": "capabilities"}),
@@ -429,7 +417,7 @@ mod unix {
     fn it_returns_standard_json_rpc_errors() {
         let path = socket_path("errors");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let _server = ControlServer::start(&path, state).unwrap();
+        let _server = bind_status(&path, state).unwrap();
 
         let parse_error = raw_call(&path, "{");
         assert_eq!(parse_error["jsonrpc"], "2.0");
@@ -469,14 +457,16 @@ mod unix {
             name: "checks".to_owned(),
             commands: vec!["cargo test".to_owned()],
         }];
-        let _server = ControlServer::start_with_runner(&path, state, targets, |_, _sequential| {
-            Ok(funzzy::control::ScheduledRun {
-                run_id: 1,
-                revision: None,
-                revision_hash: None,
-            })
-        })
-        .unwrap();
+        let api = ControlApi::new(state)
+            .with_targets(targets)
+            .with_run(|_, _sequential| {
+                Ok(funzzy::control::ScheduledRun {
+                    run_id: 1,
+                    revision: None,
+                    revision_hash: None,
+                })
+            });
+        let _server = ControlServer::bind(&path, api).unwrap();
 
         let response = call(
             &path,
@@ -500,7 +490,7 @@ mod unix {
         let path = directory.join("control.sock");
         let state = Arc::new(Mutex::new(WatcherState::default()));
 
-        let server = ControlServer::start(&path, state).unwrap();
+        let server = bind_status(&path, state).unwrap();
 
         assert!(path.exists());
         drop(server);
@@ -511,7 +501,7 @@ mod unix {
     fn it_removes_the_socket_when_the_server_stops() {
         let path = socket_path("cleanup");
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let server = ControlServer::start(&path, state).unwrap();
+        let server = bind_status(&path, state).unwrap();
         assert!(path.exists());
 
         drop(server);

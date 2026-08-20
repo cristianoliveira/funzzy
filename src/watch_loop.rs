@@ -9,7 +9,7 @@
 use crate::awaiting::AwaitCoordinator;
 use crate::config_revision::ConfigRevision;
 use crate::control::{
-    ControlRunError, ControlServer, ControlTarget, EmitOutcome, ScheduledRun,
+    ControlApi, ControlRunError, ControlServer, ControlTarget, EmitOutcome, ScheduledRun,
     TargetEstimateProvider,
 };
 use crate::diagnostics;
@@ -662,86 +662,48 @@ impl NonBlockStrategy {
             });
             provider
         });
-        let start = if let (Some(broker), Some(estimates), Some(lifecycle)) =
-            (broker.clone(), estimates.clone(), self.lifecycle.clone())
-        {
-            // TASK-0091 AC3/AC6: the full surface serves the `config`
-            // lifecycle method, await observations carry the live transition,
-            // and `targets` resolves from the SHARED config at request time.
-            ControlServer::start_with_lifecycle(
-                path,
-                Arc::clone(&self.control_state),
-                targets,
-                {
-                    let shared = Arc::clone(&self.shared);
-                    let provider: crate::control::TargetsProvider = Arc::new(move || {
-                        shared
-                            .lock()
-                            .unwrap()
-                            .targets()
-                            .into_iter()
-                            .map(|rule| {
-                                let commands = rule.commands();
-                                ControlTarget {
-                                    name: rule.name,
-                                    commands,
-                                }
-                            })
-                            .collect()
-                    });
-                    provider
-                },
-                move |target, sequential| run_runner.run_target(&target, sequential),
-                move |path| emit_runner.emit_path(&path),
-                coordinator,
-                outputs,
-                move |generation| cancel_runner.cancel_generation(generation),
-                instance,
-                broker,
-                estimates,
-                lifecycle,
-            )
-        } else if let Some(broker) = broker {
-            match estimates {
-                Some(estimates) => ControlServer::start_with_broker_and_estimates(
-                    path,
-                    Arc::clone(&self.control_state),
-                    targets,
-                    move |target, sequential| run_runner.run_target(&target, sequential),
-                    move |path| emit_runner.emit_path(&path),
-                    coordinator,
-                    outputs,
-                    move |generation| cancel_runner.cancel_generation(generation),
-                    instance,
-                    broker,
-                    estimates,
-                ),
-                None => ControlServer::start_with_broker(
-                    path,
-                    Arc::clone(&self.control_state),
-                    targets,
-                    move |target, sequential| run_runner.run_target(&target, sequential),
-                    move |path| emit_runner.emit_path(&path),
-                    coordinator,
-                    outputs,
-                    move |generation| cancel_runner.cancel_generation(generation),
-                    instance,
-                    broker,
-                ),
-            }
-        } else {
-            ControlServer::start_with_cancel(
-                path,
-                Arc::clone(&self.control_state),
-                targets,
-                move |target, sequential| run_runner.run_target(&target, sequential),
-                move |path| emit_runner.emit_path(&path),
-                coordinator,
-                outputs,
-                move |generation| cancel_runner.cancel_generation(generation),
-            )
-        };
-        start.map_err(|err| err.to_string())
+        let mut api = ControlApi::new(Arc::clone(&self.control_state))
+            .with_targets(targets)
+            .with_run(move |target, sequential| run_runner.run_target(&target, sequential))
+            .with_emit(move |path| emit_runner.emit_path(&path))
+            .with_cancel(move |generation| cancel_runner.cancel_generation(generation))
+            .with_instance(instance);
+        if let Some(coordinator) = coordinator {
+            api = api.with_awaiting(coordinator);
+        }
+        if let Some(outputs) = outputs {
+            api = api.with_outputs(outputs);
+        }
+        if let Some(broker) = broker {
+            api = api.with_snapshots(broker);
+        }
+        if let Some(estimates) = estimates {
+            api = api.with_estimates(estimates);
+        }
+        if let Some(lifecycle) = self.lifecycle.clone() {
+            // TASK-0091 AC3/AC6: config lifecycle and target lookup both read
+            // live shared state after reload without rebuilding server.
+            let shared = Arc::clone(&self.shared);
+            let provider: crate::control::TargetsProvider = Arc::new(move || {
+                shared
+                    .lock()
+                    .unwrap()
+                    .targets()
+                    .into_iter()
+                    .map(|rule| {
+                        let commands = rule.commands();
+                        ControlTarget {
+                            name: rule.name,
+                            commands,
+                        }
+                    })
+                    .collect()
+            });
+            api = api
+                .with_targets_provider(provider)
+                .with_lifecycle(lifecycle);
+        }
+        ControlServer::bind(path, api).map_err(|err| err.to_string())
     }
 
     /// AC8 socket-path handoff, prepare phase: binds a NEW server at
@@ -967,7 +929,7 @@ mod tests {
     use super::InitAction;
     use super::NonBlockStrategy;
     use super::RunStrategy;
-    use crate::control::{ControlRunError, ControlServer};
+    use crate::control::{ControlApi, ControlRunError, ControlServer};
     use crate::plan::RunPlan;
     use crate::rules::Rules;
     use crate::watcher_state::WatcherState;
@@ -1027,7 +989,7 @@ mod tests {
 
         // A live instance already owns the socket.
         let holder_state = Arc::new(Mutex::new(WatcherState::default()));
-        let _holder = ControlServer::start(&path, holder_state).unwrap();
+        let _holder = ControlServer::bind(&path, ControlApi::new(holder_state)).unwrap();
 
         let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
         let control_state = Arc::new(Mutex::new(WatcherState::default()));
@@ -1404,11 +1366,12 @@ mod tests {
         ));
         let control_state = Arc::new(Mutex::new(WatcherState::default()));
         let coordinator = Arc::new(crate::awaiting::AwaitCoordinator::new());
+        let instance = Arc::new(crate::watcher_state::WatcherInstance {
+            token: "fz-test".to_owned(),
+            started_at_epoch_ms: 1,
+        });
         let broker = Arc::new(crate::snapshot::SnapshotBroker::new(
-            crate::watcher_state::WatcherInstance {
-                token: "fz-test".to_owned(),
-                started_at_epoch_ms: 1,
-            },
+            instance.as_ref().clone(),
             Arc::clone(&control_state),
             Arc::clone(&coordinator),
         ));
@@ -1422,7 +1385,7 @@ mod tests {
             control_state,
             Some(coordinator),
             Some(Arc::new(crate::output::OutputRegistry::new())),
-            Arc::new(crate::watcher_state::WatcherInstance::new()),
+            instance,
             Some(broker),
             Some(recorder),
             Some(Arc::new(crate::config_lifecycle::ConfigLifecycle::new())),

@@ -50,6 +50,7 @@ main.rs
 `watcher_state.rs` projects executor events into one coherent latest-generation `WatcherState`. `awaiting.rs` owns exact-generation waits and freshness, `snapshot.rs` owns correlated subscription snapshots, and `control.rs` exposes those capabilities as JSON-RPC 2.0 over permission-restricted Unix socket.
 
 - Keep transport validation in `control.rs`; state transitions must remain in `watcher_state.rs`.
+- Compose optional protocol capabilities through one named `ControlApi`, then call `ControlServer::bind`; do not restore positional `start_with_*` constructors.
 - Notifications have no response; requests preserve caller ID.
 - `run` returns scheduled generation so clients can await exact work.
 - Wire-format changes require matching Pi watcher contract changes and integration tests.
