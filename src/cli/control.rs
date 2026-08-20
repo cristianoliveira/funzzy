@@ -454,15 +454,11 @@ impl ControlCommand {
                 let restarted = if let Some(before) = &token_before {
                     let mut renegotiated = false;
                     for _ in 0..20 {
-                        match ControlClient::connect(path) {
-                            Ok(mut fresh) => match fresh.capabilities() {
-                                Ok(caps) => {
-                                    renegotiated = caps.token != *before;
-                                    break;
-                                }
-                                Err(_) => {}
-                            },
-                            Err(_) => {}
+                        if let Ok(mut fresh) = ControlClient::connect(path) {
+                            if let Ok(caps) = fresh.capabilities() {
+                                renegotiated = caps.token != *before;
+                                break;
+                            }
                         }
                         std::thread::sleep(Duration::from_millis(250));
                     }
@@ -780,7 +776,7 @@ pub fn render_output(output: &OutputSnapshot) -> String {
                 rendered.push_str(&format!("  {}\n", line));
             }
             if !stream.content.is_empty() && !stream.content.ends_with('\n') {
-                rendered.push_str("\n");
+                rendered.push('\n');
             }
         }
     }
@@ -942,7 +938,7 @@ mod tests {
     #[test]
     fn render_await_includes_failure_evidence_when_present() {
         use crate::control_client::FailureEvidenceSnapshot;
-        let mut observation = AwaitSnapshot {
+        let observation = AwaitSnapshot {
             terminal_reason: "failed".to_string(),
             latest_generation: 7,
             latest_batch: None,
@@ -975,7 +971,7 @@ mod tests {
                 additional_failed_tasks: 0,
             }),
         };
-        let rendered = render_await(&mut observation);
+        let rendered = render_await(&observation);
         assert!(rendered.contains("failure evidence:"));
         assert!(rendered.contains("error: boom"));
         assert!(rendered.contains("retrieve: fzz control output --generation 7"));

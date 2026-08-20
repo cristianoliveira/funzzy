@@ -308,7 +308,7 @@ impl Arguments {
             no_run_on_init: matches.get_flag("no_run_on_init"),
             fail_fast: matches.get_flag("fail_fast"),
             sequential: match matches.subcommand() {
-                Some((name, sub)) if matches!(name, "run" | "watch") => sub.get_flag("sequential"),
+                Some(("run" | "watch", sub)) => sub.get_flag("sequential"),
                 _ => false,
             },
             verbose: matches.get_flag("verbose"),

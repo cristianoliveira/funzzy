@@ -164,6 +164,7 @@ pub struct ControlServer {
     thread: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
 pub struct ControlApi {
     state: Arc<Mutex<WatcherState>>,
     targets: Vec<ControlTarget>,
@@ -287,20 +288,6 @@ impl ControlServer {
     pub fn bind(path: &Path, api: ControlApi) -> io::Result<Self> {
         api.validate()
             .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-        let ControlApi {
-            state,
-            targets,
-            targets_provider,
-            run_target,
-            emit_path,
-            coordinator,
-            outputs,
-            cancel_generation,
-            instance,
-            broker,
-            estimates,
-            lifecycle,
-        } = api;
         prepare_socket_path(path)?;
         let listener = UnixListener::bind(path)?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
@@ -329,35 +316,10 @@ impl ControlServer {
                             );
                             continue;
                         }
-                        let state = Arc::clone(&state);
-                        let targets = targets.clone();
-                        let targets_provider = targets_provider.clone();
-                        let run_target = run_target.clone();
-                        let emit_path = emit_path.clone();
-                        let coordinator = coordinator.clone();
-                        let outputs = outputs.clone();
-                        let cancel_generation = cancel_generation.clone();
-                        let instance = Arc::clone(&instance);
-                        let broker = broker.clone();
-                        let estimates = estimates.clone();
-                        let lifecycle = lifecycle.clone();
+                        let api = api.clone();
                         let clients = Arc::clone(&active_clients);
                         std::thread::spawn(move || {
-                            handle_client(
-                                stream,
-                                &state,
-                                &targets,
-                                targets_provider.as_ref(),
-                                run_target.as_ref(),
-                                emit_path.as_ref(),
-                                coordinator.as_ref(),
-                                outputs.as_deref(),
-                                cancel_generation.as_ref(),
-                                instance.as_ref(),
-                                broker.as_ref(),
-                                estimates.as_ref(),
-                                lifecycle.as_ref(),
-                            );
+                            handle_client(stream, &api);
                             clients.fetch_sub(1, Ordering::Relaxed);
                         });
                     }
@@ -434,21 +396,7 @@ fn prepare_socket_path(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
-fn handle_client(
-    mut stream: UnixStream,
-    state: &Arc<Mutex<WatcherState>>,
-    targets: &[ControlTarget],
-    targets_provider: Option<&TargetsProvider>,
-    run_target: Option<&RunTarget>,
-    emit_path: Option<&EmitPath>,
-    coordinator: Option<&Arc<AwaitCoordinator>>,
-    outputs: Option<&OutputRegistry>,
-    cancel_generation: Option<&CancelTarget>,
-    instance: &WatcherInstance,
-    broker: Option<&Arc<SnapshotBroker>>,
-    estimates: Option<&TargetEstimateProvider>,
-    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
-) {
+fn handle_client(mut stream: UnixStream, api: &ControlApi) {
     // One NDJSON connection serves multiple requests (JSON-RPC over the
     // socket): the client adapter keeps one connection and increments ids.
     // `await` may hold the connection for its whole bound; per-connection
@@ -464,6 +412,13 @@ fn handle_client(
         ));
         return;
     }
+    let state = &api.state;
+    let coordinator = api.coordinator.as_ref();
+    let outputs = api.outputs.as_deref();
+    let instance = api.instance.as_ref();
+    let broker = api.broker.as_ref();
+    let lifecycle = api.lifecycle.as_ref();
+
     loop {
         let mut request = String::new();
         match BufReader::new(&stream).read_line(&mut request) {
@@ -515,20 +470,7 @@ fn handle_client(
             continue;
         }
 
-        if let Some(response) = process_payload(
-            request,
-            state,
-            targets,
-            targets_provider,
-            run_target,
-            emit_path,
-            outputs,
-            cancel_generation,
-            instance,
-            broker,
-            estimates,
-            lifecycle,
-        ) {
+        if let Some(response) = process_payload(request, api) {
             write_response(&mut stream, response);
         }
     }
@@ -703,35 +645,9 @@ fn write_response_ref(stream: &UnixStream, response: serde_json::Value) -> io::R
     writeln!(stream, "{}", response)
 }
 
-fn process_payload(
-    request: serde_json::Value,
-    state: &Arc<Mutex<WatcherState>>,
-    targets: &[ControlTarget],
-    targets_provider: Option<&TargetsProvider>,
-    run_target: Option<&RunTarget>,
-    emit_path: Option<&EmitPath>,
-    outputs: Option<&OutputRegistry>,
-    cancel_generation: Option<&CancelTarget>,
-    instance: &WatcherInstance,
-    broker: Option<&Arc<SnapshotBroker>>,
-    estimates: Option<&TargetEstimateProvider>,
-    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
-) -> Option<serde_json::Value> {
+fn process_payload(request: serde_json::Value, api: &ControlApi) -> Option<serde_json::Value> {
     let serde_json::Value::Array(requests) = request else {
-        return process_request(
-            request,
-            state,
-            targets,
-            targets_provider,
-            run_target,
-            emit_path,
-            outputs,
-            cancel_generation,
-            instance,
-            broker,
-            estimates,
-            lifecycle,
-        );
+        return process_request(request, api);
     };
 
     if requests.is_empty() {
@@ -745,22 +661,7 @@ fn process_payload(
 
     let responses: Vec<_> = requests
         .into_iter()
-        .filter_map(|request| {
-            process_request(
-                request,
-                state,
-                targets,
-                targets_provider,
-                run_target,
-                emit_path,
-                outputs,
-                cancel_generation,
-                instance,
-                broker,
-                estimates,
-                lifecycle,
-            )
-        })
+        .filter_map(|request| process_request(request, api))
         .collect();
     if responses.is_empty() {
         return None;
@@ -768,20 +669,19 @@ fn process_payload(
     Some(serde_json::Value::Array(responses))
 }
 
-fn process_request(
-    request: serde_json::Value,
-    state: &Arc<Mutex<WatcherState>>,
-    targets: &[ControlTarget],
-    targets_provider: Option<&TargetsProvider>,
-    run_target: Option<&RunTarget>,
-    emit_path: Option<&EmitPath>,
-    outputs: Option<&OutputRegistry>,
-    cancel_generation: Option<&CancelTarget>,
-    instance: &WatcherInstance,
-    broker: Option<&Arc<SnapshotBroker>>,
-    estimates: Option<&TargetEstimateProvider>,
-    lifecycle: Option<&Arc<crate::config_lifecycle::ConfigLifecycle>>,
-) -> Option<serde_json::Value> {
+fn process_request(request: serde_json::Value, api: &ControlApi) -> Option<serde_json::Value> {
+    let state = &api.state;
+    let targets = api.targets.as_slice();
+    let targets_provider = api.targets_provider.as_ref();
+    let run_target = api.run_target.as_ref();
+    let emit_path = api.emit_path.as_ref();
+    let outputs = api.outputs.as_deref();
+    let cancel_generation = api.cancel_generation.as_ref();
+    let instance = api.instance.as_ref();
+    let broker = api.broker.as_ref();
+    let estimates = api.estimates.as_ref();
+    let lifecycle = api.lifecycle.as_ref();
+
     let id = request_id(&request);
     let Some(object) = request.as_object() else {
         return Some(rpc_error(id, -32600, "Invalid Request", None));
@@ -1881,7 +1781,7 @@ mod tests {
         });
         let second =
             output_retrieval(&next, Some(&outputs), &instance("fz-7f3a")).expect("second page");
-        assert_eq!(second["truncated"].as_bool().unwrap(), false);
+        assert!(!second["truncated"].as_bool().unwrap());
         assert!(second["nextCursor"].is_null() || second.get("nextCursor").is_none());
     }
 
@@ -2108,7 +2008,7 @@ mod tests {
     fn targets_result_never_exposes_signature_or_state_path() {
         let targets = vec![ControlTarget {
             name: "build".to_owned(),
-            commands: vec!["make build".to_owned()].to_vec(),
+            commands: ["make build".to_owned()].to_vec(),
         }];
         let provider: TargetEstimateProvider = Arc::new(|_| {
             Some(RunEstimate {

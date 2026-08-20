@@ -16,14 +16,17 @@ use crate::watcher::RootSwapPublisher;
 use crate::watches::Watches;
 use crate::workers::Worker;
 
+type SocketPrepare = Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>;
+type SocketRetire = Arc<dyn Fn() + Send + Sync>;
+
 /// One control-socket swap (TASK-0090 AC8): `prepare` binds a NEW socket at
 /// `new_path` before commit and must fail loudly (the caller takes the fatal
 /// path) when binding fails; `retire` drops the OLD socket after commit.
 /// Installed by the watch strategy, which owns the live server.
 #[derive(Clone)]
 pub struct SocketSwapper {
-    prepare: Arc<dyn Fn(&std::path::Path) -> Result<(), String> + Send + Sync>,
-    retire: Arc<dyn Fn() + Send + Sync>,
+    prepare: SocketPrepare,
+    retire: SocketRetire,
 }
 
 impl SocketSwapper {

@@ -89,7 +89,7 @@ pub fn targets_document(targets: &[TargetSnapshot]) -> Value {
 }
 
 pub fn estimate_document(estimate: &RunEstimate) -> Value {
-    serde_json::to_value(estimate).unwrap_or_else(|_| Value::Null)
+    serde_json::to_value(estimate).unwrap_or(Value::Null)
 }
 
 pub fn capabilities_document(caps: &CapabilitiesSnapshot) -> Value {

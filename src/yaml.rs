@@ -9,14 +9,14 @@ pub fn extract_list(yaml: &Yaml, prop: &str) -> Result<Vec<String>> {
     match &yaml[prop] {
         Yaml::Array(ref items) => Ok(items
             .iter()
-            .map(|i| String::from(i.as_str().unwrap_or_else(|| "_invalid_value_")))
+            .map(|i| String::from(i.as_str().unwrap_or("_invalid_value_")))
             .collect()),
         Yaml::String(ref item) => Ok(vec![String::from(item.as_str())]),
         Yaml::BadValue => Err(FzzError::InvalidConfigError(
             format!(
                 "Missing '{}' in rule\n```yaml\n{}\n```",
                 prop,
-                yaml_to_string(&yaml, 0),
+                yaml_to_string(yaml, 0),
             ),
             None,
             Some("Check for typos or wrong identation".to_string()),
@@ -30,7 +30,7 @@ Expected a list (Array) but got: {}
 ```",
                 prop,
                 get_type(unknown),
-                yaml_to_string(&yaml, 0),
+                yaml_to_string(yaml, 0),
             ),
             None,
             Some(
@@ -59,7 +59,7 @@ pub fn extract_string(yaml: &Yaml, prop: &str) -> Result<String> {
             format!(
                 "Missing '{}' in rule\n```yaml\n{}\n```",
                 prop,
-                yaml_to_string(&yaml, 0),
+                yaml_to_string(yaml, 0),
             ),
             None,
             Some("Check for typos or wrong identation".to_string()),
@@ -73,7 +73,7 @@ Expected 'String' but got: {:?}
 ```",
                 prop,
                 get_type(unknown),
-                yaml_to_string(&yaml, 0),
+                yaml_to_string(yaml, 0),
             ),
             None,
             Some(
@@ -88,7 +88,7 @@ Expected 'String' but got: {:?}
 pub fn extract_optional_string_map(yaml: &Yaml, prop: &str) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     match &yaml[prop] {
-        Yaml::BadValue => return Ok(values),
+        Yaml::BadValue => Ok(values),
         Yaml::Hash(items) => {
             for (name, value) in items {
                 let Some(name) = name.as_str() else {
@@ -141,7 +141,7 @@ pub fn extract_optional_string(yaml: &Yaml, prop: &str) -> Result<Option<String>
                     format!(
                         "Property '{}' cannot be empty\n```yaml\n{}\n```",
                         prop,
-                        yaml_to_string(&yaml, 0),
+                        yaml_to_string(yaml, 0),
                     ),
                     None,
                     Some("Provide a non-empty value".to_string()),
@@ -159,7 +159,7 @@ Expected 'String' but got: {}
 ```",
                 prop,
                 get_type(unknown),
-                yaml_to_string(&yaml, 0),
+                yaml_to_string(yaml, 0),
             ),
             None,
             Some(

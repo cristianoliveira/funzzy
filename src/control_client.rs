@@ -1179,6 +1179,7 @@ impl ControlClient {
     }
 
     /// Retrieves bounded retained output for one generation (contract §6).
+    #[allow(clippy::too_many_arguments)]
     pub fn output(
         &mut self,
         generation: u64,

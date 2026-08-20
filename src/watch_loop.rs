@@ -180,6 +180,7 @@ impl ModificationGate {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn watch_loop(
     watches: &std::sync::Arc<std::sync::Mutex<Watches>>,
     run_on_init: bool,
@@ -190,7 +191,7 @@ pub fn watch_loop(
     // Optional readiness gate: the main loop waits for this signal before
     // running init, so a config-touching init task can never fire before
     // the reload watcher has registered its roots (TASK-0090).
-    reload_ready: Option<std::sync::Arc<std::sync::mpsc::Receiver<()>>>,
+    reload_ready: Option<std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>>,
     shutdown: Option<std::sync::Arc<crate::shutdown::ShutdownCoordinator>>,
 ) -> Result<(), FzzError> {
     let initial = watches.lock().unwrap().clone();
@@ -211,7 +212,7 @@ pub fn watch_loop(
         list_of_watched_paths,
         || {
             if let Some(ready) = &reload_ready {
-                let _ = ready.recv_timeout(Duration::from_secs(30));
+                let _ = ready.lock().unwrap().recv_timeout(Duration::from_secs(30));
             }
             strategy.on_ready();
             if let Some(shutdown) = &ready_shutdown {
@@ -651,12 +652,8 @@ impl NonBlockStrategy {
             let fail_fast = self.worker.fail_fast();
             let root = self.shared.lock().unwrap().root().to_path_buf();
             let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
-                let Some(plan) = shared.lock().unwrap().target_plan(&target.name) else {
-                    return None;
-                };
-                let Ok(plan) = plan.resolve_context(&root) else {
-                    return None;
-                };
+                let plan = shared.lock().unwrap().target_plan(&target.name)?;
+                let plan = plan.resolve_context(&root).ok()?;
                 let signature = plan.execution_signature(concurrency, fail_fast);
                 recorder.estimate(&signature, None)
             });
@@ -1396,7 +1393,7 @@ mod tests {
 
         let list_targets = || -> Vec<String> {
             let mut stream =
-                std::os::unix::net::UnixStream::connect(&root.join("sock")).expect("connect");
+                std::os::unix::net::UnixStream::connect(root.join("sock")).expect("connect");
             writeln!(
                 stream,
                 r#"{{"jsonrpc":"2.0","id":1,"method":"targets","params":{{}}}}"#

@@ -96,6 +96,12 @@ pub enum RetrievalError {
     InvalidCursor { reason: String },
 }
 
+impl Default for OutputRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutputRegistry {
     pub fn new() -> Self {
         Self {
@@ -512,7 +518,7 @@ impl OutputRegistry {
             let mut lo = 0usize; // number of leading chars kept (fits)
             let mut hi = boundaries.len(); // exclusive upper bound (may not fit)
             while lo < hi {
-                let mid = (lo + hi + 1) / 2;
+                let mid = (lo + hi).div_ceil(2);
                 let keep = boundaries[mid];
                 let mut candidate = tasks.clone();
                 set_stream(&mut candidate, task_id, *is_stderr, &text[..keep], buffer);

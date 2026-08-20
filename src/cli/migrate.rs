@@ -159,7 +159,7 @@ impl Command for MigrateCommand {
                 Some(err),
             )
         })?;
-        if let Err(err) = std::fs::rename(&self.backup_name(), &self.file_name) {
+        if let Err(err) = std::fs::rename(self.backup_name(), &self.file_name) {
             let _ = std::fs::remove_file(self.backup_name());
             return Err(FzzError::IoConfigError(
                 format!("Failed to replace {}", self.file_name),

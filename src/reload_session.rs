@@ -361,54 +361,6 @@ fn changed_config_path(events: &[watcher::FileEvent], config_paths: &[String]) -
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn watch_roots_are_parent_directories_in_stable_order() {
-        let paths = vec![
-            "/workspace/z/.watch.yaml".to_owned(),
-            "/workspace/a/.watch.yml".to_owned(),
-            "/workspace/z/other.yaml".to_owned(),
-        ];
-
-        assert_eq!(
-            config_watch_roots(&paths),
-            vec!["/workspace/a".to_owned(), "/workspace/z".to_owned()]
-        );
-    }
-
-    #[test]
-    fn changed_path_selects_only_configured_file() {
-        let events = vec![
-            watcher::FileEvent {
-                path: "/workspace/src/main.rs".to_owned(),
-                continuous: false,
-            },
-            watcher::FileEvent {
-                path: "/workspace/.watch.yaml".to_owned(),
-                continuous: false,
-            },
-        ];
-
-        assert_eq!(
-            changed_config_path(&events, &["/workspace/.watch.yaml".to_owned()]),
-            "/workspace/.watch.yaml"
-        );
-    }
-
-    #[test]
-    fn changed_path_is_empty_for_unrelated_events() {
-        let events = vec![watcher::FileEvent {
-            path: "/workspace/src/main.rs".to_owned(),
-            continuous: false,
-        }];
-
-        assert!(changed_config_path(&events, &["/workspace/.watch.yaml".to_owned()]).is_empty());
-    }
-}
-
 /// Graceful fatal config shutdown (contract §5): emit the terminal error,
 /// publish the terminal `configInvalid` lifecycle transition so control
 /// subscribers observe it, reap owned children/services through process
@@ -464,7 +416,7 @@ fn build_watches_from_content(
         .unwrap_or(defaults.debounce);
     let backend = crate::config::watch_backend_from_yaml(content)
         .map_err(|err| err.to_string())?
-        .unwrap_or(defaults.backend.clone());
+        .unwrap_or(defaults.backend);
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(|err| err.to_string())?;
     let hooks =
@@ -480,4 +432,52 @@ fn build_watches_from_content(
             .with_session_hooks(session_hooks)
             .with_revision(revision),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watch_roots_are_parent_directories_in_stable_order() {
+        let paths = vec![
+            "/workspace/z/.watch.yaml".to_owned(),
+            "/workspace/a/.watch.yml".to_owned(),
+            "/workspace/z/other.yaml".to_owned(),
+        ];
+
+        assert_eq!(
+            config_watch_roots(&paths),
+            vec!["/workspace/a".to_owned(), "/workspace/z".to_owned()]
+        );
+    }
+
+    #[test]
+    fn changed_path_selects_only_configured_file() {
+        let events = vec![
+            watcher::FileEvent {
+                path: "/workspace/src/main.rs".to_owned(),
+                continuous: false,
+            },
+            watcher::FileEvent {
+                path: "/workspace/.watch.yaml".to_owned(),
+                continuous: false,
+            },
+        ];
+
+        assert_eq!(
+            changed_config_path(&events, &["/workspace/.watch.yaml".to_owned()]),
+            "/workspace/.watch.yaml"
+        );
+    }
+
+    #[test]
+    fn changed_path_is_empty_for_unrelated_events() {
+        let events = vec![watcher::FileEvent {
+            path: "/workspace/src/main.rs".to_owned(),
+            continuous: false,
+        }];
+
+        assert!(changed_config_path(&events, &["/workspace/.watch.yaml".to_owned()]).is_empty());
+    }
 }

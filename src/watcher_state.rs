@@ -26,6 +26,12 @@ pub struct WatcherInstance {
     pub started_at_epoch_ms: u64,
 }
 
+impl Default for WatcherInstance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WatcherInstance {
     pub fn new() -> Self {
         let started_at_epoch_ms = std::time::SystemTime::now()

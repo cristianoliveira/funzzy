@@ -63,6 +63,7 @@ pub enum CancelResult {
 /// so a newer run always supersedes queued work and an exact cancel is a
 /// compare-and-act on generation identity instead of a race with a separate
 /// channel.
+#[allow(clippy::large_enum_variant)]
 enum WorkerCommand {
     Run(RunRequest),
     Cancel {
@@ -905,7 +906,7 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use crate::executor::Event as WorkerEvent;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc::{channel, Receiver};
     use std::time::Instant;
 
@@ -913,7 +914,7 @@ mod tests {
         std::env::temp_dir().join(format!("funzzy-worker-{}-{}", std::process::id(), name))
     }
 
-    fn write_file_rule(path: &PathBuf) -> Rules {
+    fn write_file_rule(path: &Path) -> Rules {
         Rules::new(
             "test".to_string(),
             vec![format!("echo triggered > {}", path.display())],
@@ -1163,7 +1164,7 @@ mod tests {
         });
         drop(worker);
         assert!(
-            matches!(rx.recv_timeout(Duration::from_millis(300)), Err(_)),
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
             "a cancelled run must never emit Finished"
         );
     }

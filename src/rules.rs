@@ -330,14 +330,14 @@ impl Rules {
             self.name.clone()
         };
 
-        if self.command_lines().len() == 0 {
+        if self.command_lines().is_empty() {
             return Err(format!(
                 "job '{}' contains no command to run. Empty 'run' property.",
                 name
             ));
         }
 
-        if self.watch_patterns().len() == 0 && !self.run_on_init() {
+        if self.watch_patterns().is_empty() && !self.run_on_init() {
             return Err(format!(
                 "job '{}' must contain a `change` and/or `run_on_init` property.",
                 name
@@ -348,7 +348,7 @@ impl Rules {
             match Pattern::new(&watch_pattern) {
                 Ok(_) => (),
                 Err(err) => {
-                    return Err(vec![
+                    return Err([
                         format!(
                             "job '{}' contains an invalid `change` glob pattern '{}'.",
                             name, watch_pattern
@@ -365,7 +365,7 @@ impl Rules {
             match Pattern::new(&ignore_pattern) {
                 Ok(_) => (),
                 Err(err) => {
-                    return Err(vec![
+                    return Err([
                         format!(
                             "job '{}' contains an invalid `ignore` glob pattern '{}'.",
                             name, ignore_pattern
@@ -428,25 +428,28 @@ fn create_pattern(pattern: &str, anchored: bool) -> Pattern {
         format!("**{}", pattern)
     };
 
-    Pattern::new(&compiled_pattern).expect(
-        &vec![
-            format!("Invalid glob pattern {}", pattern),
-            vec![
-                "",
-                "Some example of valid patterns: ",
-                " foo/**/* - Matches any file of any subfolder of foo",
-                " *        - Matches any string, of any length",
-                " foo*     - Matches any string beginning with foo",
-                " *x*      - Matches any string containing an x",
-                " *.tar.gz - Matches any string ending with .tar.gz",
-                " *.[ch]   - Matches any string ending with .c or .h",
-                " foo?     - Matches foot or foo$ but not fools",
+    Pattern::new(&compiled_pattern).unwrap_or_else(|_| {
+        panic!(
+            "{}",
+            [
+                format!("Invalid glob pattern {}", pattern),
+                [
+                    "",
+                    "Some example of valid patterns: ",
+                    " foo/**/* - Matches any file of any subfolder of foo",
+                    " *        - Matches any string, of any length",
+                    " foo*     - Matches any string beginning with foo",
+                    " *x*      - Matches any string containing an x",
+                    " *.tar.gz - Matches any string ending with .tar.gz",
+                    " *.[ch]   - Matches any string ending with .c or .h",
+                    " foo?     - Matches foot or foo$ but not fools"
+                ]
+                .join("\n")
+                .to_string()
             ]
             .join("\n")
-            .to_string(),
-        ]
-        .join("\n"),
-    )
+        )
+    })
 }
 
 fn anchored_pattern(pattern: &str) -> Pattern {
@@ -455,9 +458,7 @@ fn anchored_pattern(pattern: &str) -> Pattern {
 
 pub fn validate_rules(rule: &Vec<Rules>) -> Result<(), String> {
     for rule in rule {
-        if let Err(err) = rule.validate() {
-            return Err(err);
-        }
+        rule.validate()?;
     }
 
     Ok(())
@@ -613,25 +614,25 @@ mod tests {
             false,
         );
 
-        assert_eq!(true, first.watch("tests/foo.rs"));
+        assert!(first.watch("tests/foo.rs"));
 
         // src/**/*.rs
-        assert_eq!(true, second.watch("src/foo.rsx"));
-        assert_eq!(true, second.watch("src/bar/foo.rs"));
-        assert_eq!(true, second.watch("src/bar/foo.rsx"));
-        assert_eq!(true, second.watch("src/bar/foo.rs3"));
-        assert_eq!(true, second.watch("src/bar/foo.rs&"));
-        assert_eq!(true, second.watch("src/bar/foo.abc"));
-        assert_eq!(true, second.watch("src/bar/foo.abx"));
+        assert!(second.watch("src/foo.rsx"));
+        assert!(second.watch("src/bar/foo.rs"));
+        assert!(second.watch("src/bar/foo.rsx"));
+        assert!(second.watch("src/bar/foo.rs3"));
+        assert!(second.watch("src/bar/foo.rs&"));
+        assert!(second.watch("src/bar/foo.abc"));
+        assert!(second.watch("src/bar/foo.abx"));
         // but not
-        assert_eq!(false, second.watch("src/bar/foo.ab"));
+        assert!(!second.watch("src/bar/foo.ab"));
     }
 
     #[test]
     fn it_is_not_watching_path_test() {
         let rule = rule("my tests", &["cargo tests"], &["foo/**"], &[], false);
 
-        assert_eq!(false, rule.watch("tests/foo.rs"));
+        assert!(!rule.watch("tests/foo.rs"));
     }
 
     #[test]
@@ -665,7 +666,7 @@ mod tests {
             false,
         );
 
-        assert_eq!(true, rule.ignore("tests/foo.rs"));
+        assert!(rule.ignore("tests/foo.rs"));
     }
 
     #[test]
@@ -678,12 +679,12 @@ mod tests {
             false,
         );
 
-        assert_eq!(false, rule.ignore("tests/foo.rs"));
+        assert!(!rule.ignore("tests/foo.rs"));
     }
 
     #[test]
     fn it_validates_the_given_glob_patterns_paths() {
-        let rules = vec![
+        let rules = [
             rule(
                 "this is valid",
                 &["cargo tests"],

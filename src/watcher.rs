@@ -21,11 +21,6 @@ pub struct FileEvent {
     pub continuous: bool,
 }
 
-/// Watches every path, then forwards one normalized event batch per debounce
-/// window. The batch identity is assigned from a fresh per-instance sequence,
-/// so one window maps to zero or one generation (contract §1) and the same
-/// identity correlates the diagnostics of the whole decision chain.
-
 /// One live root-set swap requested by a config reload (TASK-0090): the
 /// complete new root list after commit. The backend diffs it against the
 /// currently registered roots and applies `unwatch`/`watch` live, then
@@ -88,6 +83,7 @@ impl RootSwapPublisher {
 /// Runs the configured backend with an optional live root-swap channel
 /// (TASK-0090). `swap_rx` is consumed by the backend loop: each swap diff is
 /// applied to the live watcher without stopping it.
+#[allow(clippy::too_many_arguments)]
 pub fn events(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
@@ -192,10 +188,10 @@ fn run_native(
             });
         }
         if let Err(err) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
-            let warning = &vec![
+            let warning = &[
                 format!("unknown file/directory: '{}'", path),
-                format!("Different behaviour depending on the OS."),
-                format!("The watcher may not be triggered for this rule."),
+                "Different behaviour depending on the OS.".to_string(),
+                "The watcher may not be triggered for this rule.".to_string(),
             ]
             .join("\n");
             match err.kind {
@@ -302,7 +298,7 @@ fn run_native(
                 handler(batch_id, &events);
             }
 
-            Err(err) if matches!(err, std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // Wake-up tick for pending root swaps; not an error.
                 continue;
             }

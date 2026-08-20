@@ -66,6 +66,7 @@ pub struct TaskPlan {
 }
 
 /// One stage of a run: a serial task or a named parallel-group occurrence.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stage {
     /// A task that runs alone between barriers.

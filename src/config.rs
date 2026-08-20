@@ -87,7 +87,7 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
         }
     };
 
-    if items.len() == 0 {
+    if items.is_empty() {
         return Err(errors::FzzError::InvalidConfigError(
             "Configuration file is invalid! There are no rules to watch".to_owned(),
             None,
@@ -103,16 +103,16 @@ pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
                 match item {
                     Yaml::Hash(_) if item["tasks"] != Yaml::BadValue => {
                         // This is a group with on/tasks format
-                        match parse_hash_format(item, true) {
-                            Ok(group_rules) => rules.extend(group_rules),
-                            Err(err) => return Err(err),
+                        {
+                            let group_rules = parse_hash_format(item, true)?;
+                            rules.extend(group_rules)
                         }
                     }
                     _ => {
                         // This is a regular task
-                        match rule_from(item) {
-                            Ok(rule) => rules.push(rule),
-                            Err(err) => return Err(err),
+                        {
+                            let rule = rule_from(item)?;
+                            rules.push(rule)
                         }
                     }
                 }
@@ -316,10 +316,7 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     let mut rules = vec![];
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for task_yaml in tasks_array {
-        let rule = match rule_from_with_common(task_yaml, &common_rules) {
-            Ok(rule) => rule,
-            Err(err) => return Err(err),
-        };
+        let rule = rule_from_with_common(task_yaml, &common_rules)?;
         if !seen.insert(rule.name.clone()) {
             return Err(errors::FzzError::InvalidConfigError(
                 format!(
@@ -430,7 +427,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         }
     };
     let output = match yaml::extract_optional_string(yaml, "output")? {
-        None => common.output_policy.clone(),
+        None => common.output_policy,
         Some(raw) => match raw.as_str() {
             "inherit" => OutputPolicy::Inherit,
             "quiet" => OutputPolicy::Quiet,
@@ -555,7 +552,7 @@ pub fn extract_paths(stdinput: String) -> errors::Result<Vec<String>> {
     let mut watches = vec![];
     let mut line_number = 0;
     for pathline in stdinput.lines() {
-        line_number = line_number + 1;
+        line_number += 1;
         let path = std::path::Path::new(&pathline);
 
         match path.canonicalize() {
@@ -567,17 +564,15 @@ pub fn extract_paths(stdinput: String) -> errors::Result<Vec<String>> {
                     format!("Unknown path '{}' at line {}", path.to_str().unwrap(), line_number),
                     Some(errors::UnkownError::from(err)),
                     Some(
-                        vec![
-                        "When using stdin, make sure to provide a list of valid files or directories.",
-                        "The output of command `find` is a good example",
-                        ].join("\n"),
+                        ["When using stdin, make sure to provide a list of valid files or directories.",
+                        "The output of command `find` is a good example"].join("\n"),
                     ),
                 ));
             }
         }
     }
 
-    return Ok(watches);
+    Ok(watches)
 }
 
 /// Builds an ad-hoc `exec` rule from stdin patterns and an exact argv. The
@@ -749,7 +744,7 @@ pub fn from_file(filename: &str) -> errors::Result<Vec<Rules>> {
                 ));
             }
 
-            return from_yaml(&content);
+            from_yaml(&content)
         }
 
         Err(err) => Err(errors::FzzError::IoConfigError(
@@ -943,11 +938,11 @@ tasks:
 
         assert_eq!(
             rule_as_yaml(&rules[0]),
-            vec![
+            [
                 "name: my tests",
                 "run: cargo tests {{filepath}}",
                 "change: tests/**",
-                "run_on_init: true",
+                "run_on_init: true"
             ]
             .join("\n"),
             "Failed to format rule as string {}",
@@ -971,14 +966,12 @@ tasks:
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            vec![
-                "Failed to load configuration at line:",
+            ["Failed to load configuration at line:",
                 "|           run: 'cargo tests'",
                 "|>          change: **/*",
                 "|         ",
                 "Reason: while parsing node, found unknown anchor at byte 165 line 8 column 19",
-                "Hint: Check for wrong types, any missing quotes for glob pattern or incorrect identation",
-            ]
+                "Hint: Check for wrong types, any missing quotes for glob pattern or incorrect identation"]
             .join("\n")
         );
 
@@ -989,10 +982,8 @@ tasks:
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            vec![
-                "Configuration file is invalid! There are no rules to watch",
-                "Hint: Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch",
-            ]
+            ["Configuration file is invalid! There are no rules to watch",
+                "Hint: Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch"]
             .join("\n")
         );
 
@@ -1006,15 +997,13 @@ tasks:
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            vec![
-                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array",
+            ["Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array",
                 "Hint: Example:",
                 "on:",
                 "  change: [\"src/**\"]",
                 "jobs:",
                 "  - name: build",
-                "    run: cargo build",
-            ]
+                "    run: cargo build"]
             .join("\n")
         );
     }
@@ -2096,22 +2085,13 @@ mod gitignore_config_tests {
 
     #[test]
     fn respect_gitignore_defaults_to_false() {
-        assert_eq!(
-            respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap(),
-            false
-        );
+        assert!(!respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap());
     }
 
     #[test]
     fn respect_gitignore_parses_boolean() {
-        assert_eq!(
-            respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap(),
-            true
-        );
-        assert_eq!(
-            respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap(),
-            false
-        );
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap());
+        assert!(!respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap());
     }
 
     #[test]

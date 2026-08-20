@@ -29,7 +29,7 @@ pub struct WatchNonBlockCommand {
     /// In-process reload coordinator (TASK-0090); None for legacy callers.
     reload: Option<crate::reload_coordinator::ReloadCoordinator>,
     /// Reload-watcher readiness signal (TASK-0090); init waits for it.
-    reload_ready: Option<std::sync::Arc<std::sync::mpsc::Receiver<()>>>,
+    reload_ready: Option<std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>>,
     /// Shared watcher shutdown coordinator (TASK-0101).
     shutdown: Option<Arc<crate::shutdown::ShutdownCoordinator>>,
 }
@@ -84,7 +84,7 @@ impl WatchNonBlockCommand {
     /// Attaches the reload-watcher readiness signal; init waits for it
     /// before running (TASK-0090).
     pub fn with_reload_ready(mut self, ready: std::sync::mpsc::Receiver<()>) -> Self {
-        self.reload_ready = Some(std::sync::Arc::new(ready));
+        self.reload_ready = Some(std::sync::Arc::new(std::sync::Mutex::new(ready)));
         self
     }
 

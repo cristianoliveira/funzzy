@@ -249,7 +249,7 @@ fn nearest_rank_p90(sorted: &[u64]) -> u64 {
         return 0;
     }
     // ceil(0.9 * n) as 1-based rank; n*9/10 rounds down, so add n*9 + 9 over 10.
-    let rank = (n * 9 + 9) / 10;
+    let rank = (n * 9).div_ceil(10);
     sorted[rank - 1]
 }
 

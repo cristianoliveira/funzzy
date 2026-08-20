@@ -330,7 +330,7 @@ pub fn root_specs() -> &'static [OptionSpec] {
 
 pub fn all_specs() -> &'static [OptionSpec] {
     // on + job only: root keys are structural, not commented per-property.
-    &ON_SPECS[..]
+    ON_SPECS
 }
 
 /// All legal preferred YAML property names for an owner (parser allowlists).

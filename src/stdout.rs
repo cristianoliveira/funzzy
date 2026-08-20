@@ -89,7 +89,7 @@ pub fn failure_to_stderr(text: &str, err: String) -> ! {
 
 #[cfg(not(feature = "test-integration"))]
 /// Print the time elapsed in seconds in the format "Finished in 0.1234s"
-pub fn print_time_elapsed(elapsed: std::time::Duration) -> () {
+pub fn print_time_elapsed(elapsed: std::time::Duration) {
     let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
     print!("{}", message);
     let res = std::io::stdout().flush();
@@ -122,8 +122,8 @@ pub fn present_results(
     time_elapsed: std::time::Duration,
     outcome: Option<&crate::plan::RunOutcome>,
 ) {
-    let errors: Vec<Result<(), String>> = results.iter().cloned().filter(|r| r.is_err()).collect();
-    let completed = results.iter().cloned().filter(|r| r.is_ok()).count();
+    let errors: Vec<Result<(), String>> = results.iter().filter(|&r| r.is_err()).cloned().collect();
+    let completed = results.iter().filter(|&r| r.is_ok()).count();
     let header = "Funzzy results ----------------------------";
     println!("{}", header);
     logging::log_line(header);
@@ -194,7 +194,7 @@ pub fn present_results(
     print_time_elapsed(time_elapsed);
 }
 
-pub fn clear_screen() -> () {
+pub fn clear_screen() {
     // See https://archive.ph/d3Z3O
     print!("\n{}[2J", 27 as char);
 }

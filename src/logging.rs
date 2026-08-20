@@ -19,7 +19,7 @@ pub fn init(path: PathBuf) -> io::Result<()> {
 
     let mut logger = LOGGER
         .lock()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "logger poisoned"))?;
+        .map_err(|_| io::Error::other("logger poisoned"))?;
     *logger = Some(Logger { file });
 
     Ok(())
@@ -43,7 +43,7 @@ pub fn log_plain(message: &str) {
 pub fn truncate() -> io::Result<()> {
     let mut logger = LOGGER
         .lock()
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "logger poisoned"))?;
+        .map_err(|_| io::Error::other("logger poisoned"))?;
 
     if let Some(ref mut logger) = *logger {
         logger.file.set_len(0)?;

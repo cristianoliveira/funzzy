@@ -131,7 +131,7 @@ fn expand_command(
                     let rest = parts[1];
 
                     match tpl {
-                        "filepath" | "absolute_path" => format!("{}{}", &filepath, rest),
+                        "filepath" | "absolute_path" => format!("{}{}", filepath, rest),
                         "relative_filepath" | "relative_path" => {
                             let relative_path = &filepath.replace(&format!("{}/", current_dir), "");
                             format!("{}{}", relative_path, rest)

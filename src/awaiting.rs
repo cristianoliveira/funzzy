@@ -115,6 +115,12 @@ pub struct AwaitCoordinator {
     changed: Condvar,
 }
 
+impl Default for AwaitCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AwaitCoordinator {
     pub fn new() -> Self {
         Self {
@@ -219,6 +225,7 @@ impl AwaitCoordinator {
     /// Atomic await: evaluate under the lock, register (block on the condvar
     /// with a bounded slice), re-evaluate. `probe` optionally detects client
     /// disconnect between wake slices. Timeouts perform no cancellation.
+    #[allow(clippy::too_many_arguments)]
     pub fn await_generation(
         &self,
         mode: AwaitMode,

@@ -91,7 +91,7 @@ pub fn validate_candidate(
         .unwrap_or(defaults.debounce);
     let backend = crate::config::watch_backend_from_yaml(content)
         .map_err(semantic)?
-        .unwrap_or(defaults.backend.clone());
+        .unwrap_or(defaults.backend);
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(semantic)?;
     let hooks = crate::config::generation_hooks_from_yaml(content).map_err(semantic)?;

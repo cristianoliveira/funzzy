@@ -10,9 +10,9 @@ pub type Result<T> = std::result::Result<T, FzzError>;
 
 fn hint_formatter(hint: &str) -> String {
     if stdout::is_colored() {
-        return format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint);
+        format!("{}Hint{}: {}", stdout::BLUE, stdout::RESET, hint)
     } else {
-        return format!("Hint: {}", hint);
+        format!("Hint: {}", hint)
     }
 }
 
@@ -75,7 +75,7 @@ impl fmt::Display for FzzError {
                 let info = if let Some(e) = error {
                     format!("{}\nReason: {}", msg, e)
                 } else {
-                    format!("{}", msg)
+                    msg.to_string()
                 };
 
                 if let Some(hints) = hints {
