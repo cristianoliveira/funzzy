@@ -1769,6 +1769,58 @@ mod tests {
     }
 
     #[test]
+    fn recovery_lifecycle_emits_phases_and_one_terminal_task_event() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let event_sink = Arc::clone(&events);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(move |event| event_sink.lock().unwrap().push(event)),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests,
+        }));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(48, "test"),
+            RunPlan::from_rules(vec![recovery_rule("false", &["true"])]),
+        );
+        assert!(!completed.outcome.is_success());
+        let events = events.lock().unwrap();
+        let phases = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::RecoveryPhase { phase, .. } => Some(phase.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            phases,
+            [
+                "original_failed",
+                "approval_requested",
+                "approval_decided",
+                "recovery_started",
+                "recovery_finished",
+                "verification_started",
+                "verification_finished",
+            ]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::TaskTerminal { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn parallel_recovery_requests_follow_declaration_order() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let executor = Executor::new(
