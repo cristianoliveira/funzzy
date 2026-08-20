@@ -30,7 +30,11 @@ fn write_config(path: &Path, marker: &Path) {
     .expect("write recovery config");
 }
 
-fn run_with_answer(config: &Path, answer: &[u8]) -> (std::process::ExitStatus, String) {
+fn run_with_answer(
+    binary: &str,
+    config: &Path,
+    answer: &[u8],
+) -> (std::process::ExitStatus, String) {
     let pty = openpty(None, None).expect("open pty");
     let master = File::from(pty.master);
     let mut writer = master.try_clone().expect("clone pty master");
@@ -39,7 +43,7 @@ fn run_with_answer(config: &Path, answer: &[u8]) -> (std::process::ExitStatus, S
     assert!(nix::unistd::isatty(&slave).expect("check pty slave"));
     let child_stdin = slave.try_clone().expect("clone pty slave");
     let child_stderr = slave.try_clone().expect("clone pty slave for stderr");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+    let mut child = Command::new(binary)
         .args(["-c", config.to_str().unwrap(), "run", "@quick"])
         .stdin(Stdio::from(child_stdin))
         .stdout(Stdio::from(slave))
@@ -71,20 +75,27 @@ fn run_with_answer(config: &Path, answer: &[u8]) -> (std::process::ExitStatus, S
 
 #[test]
 fn approval_runs_exact_recovery_and_one_verification() {
-    let root = scratch("approved");
-    let config = root.join(".watch.yaml");
-    let marker = root.join("recovered");
-    write_config(&config, &marker);
+    for binary in [env!("CARGO_BIN_EXE_funzzy"), env!("CARGO_BIN_EXE_fzz")] {
+        let label = if binary.ends_with("fzz") {
+            "approved-fzz"
+        } else {
+            "approved-funzzy"
+        };
+        let root = scratch(label);
+        let config = root.join(".watch.yaml");
+        let marker = root.join("recovered");
+        write_config(&config, &marker);
 
-    let (status, output) = run_with_answer(&config, b"yes\n");
-    assert!(
-        status.success(),
-        "approved recovery failed: status={status:?} output={output:?} root={root:?}"
-    );
-    assert!(marker.exists(), "approved recovery must execute");
-    assert!(output.contains("Recovery approval required"));
-    assert!(output.contains("generation=0"));
-    assert!(output.contains("touch "));
+        let (status, output) = run_with_answer(binary, &config, b"yes\n");
+        assert!(
+            status.success(),
+            "approved recovery failed: status={status:?} output={output:?} root={root:?}"
+        );
+        assert!(marker.exists(), "approved recovery must execute");
+        assert!(output.contains("Recovery approval required"));
+        assert!(output.contains("generation=0"));
+        assert!(output.contains("touch "));
+    }
 }
 
 #[test]
@@ -94,7 +105,7 @@ fn default_decline_keeps_failure_and_does_not_mutate() {
     let marker = root.join("recovered");
     write_config(&config, &marker);
 
-    let (status, output) = run_with_answer(&config, b"n\n");
+    let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"n\n");
     assert!(!status.success(), "declined recovery must fail: {output}");
     assert!(!marker.exists(), "declined recovery must not execute");
 }
