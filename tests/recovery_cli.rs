@@ -22,7 +22,7 @@ fn config(path: &Path, marker: &Path) {
     std::fs::write(
         path,
         format!(
-            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: \"test -f '{marker}'\"\n    recovery: \"touch '{marker}'\"\n"
+            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: \"test -f '{marker}'\"\n    recovery: \"touch '{marker}'\"\n    run_on_init: true\n"
         ),
     )
     .expect("write recovery config");
