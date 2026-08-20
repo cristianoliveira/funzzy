@@ -1753,7 +1753,7 @@ mod tests {
         .unwrap()
         .with_recovery_approval(Arc::new(approval));
         let completed = executor.run_to_completion(
-            RunMetadata::new(42, "test"),
+            RunMetadata::new(42, "test").with_revision(9, "revision-hash".to_owned()),
             RunPlan::from_rules(vec![recovery_rule(
                 &format!("test -f '{path}'"),
                 &[&format!("touch '{path}'")],
@@ -1761,6 +1761,8 @@ mod tests {
         );
         assert!(completed.outcome.is_success());
         assert_eq!(requests.lock().unwrap()[0].generation, 42);
+        assert_eq!(requests.lock().unwrap()[0].revision, Some(9));
+        assert_eq!(requests.lock().unwrap()[0].job_position, 0);
         assert_eq!(
             requests.lock().unwrap()[0].commands,
             vec![format!("touch '{path}'")]
