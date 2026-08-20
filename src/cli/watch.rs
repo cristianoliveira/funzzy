@@ -61,7 +61,9 @@ impl Command for WatchCommand {
             self.watches.concurrency(),
             self.events.clone(),
         )
-        .with_hooks(self.watches.hooks());
+        .with_hooks(self.watches.hooks())
+        .with_recovery_policy(self.watches.recovery_policy())
+        .with_recovery_approval(std::sync::Arc::new(crate::approval::TtyRecoveryApproval));
         let shared = std::sync::Arc::new(std::sync::Mutex::new(self.watches.clone()));
         watch_loop(
             &shared,

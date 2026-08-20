@@ -129,6 +129,20 @@ impl EventStream {
                 "tsMs": ts_ms,
                 "supersededBy": superseded_by,
             }),
+            Event::RecoveryPhase {
+                run_id,
+                job,
+                phase,
+                outcome,
+            } => json!({
+                "schemaVersion": EVENT_SCHEMA_VERSION,
+                "event": "recovery_phase",
+                "runId": run_id,
+                "tsMs": ts_ms,
+                "job": job,
+                "phase": phase,
+                "outcome": outcome,
+            }),
         }
     }
 }

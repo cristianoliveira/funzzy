@@ -1,6 +1,7 @@
 // #![feature(plugin)]
 // #![plugin(clippy)]
 pub mod app;
+pub mod approval;
 pub mod arguments;
 pub mod awaiting;
 pub mod cli;

@@ -58,6 +58,19 @@ impl RunCommand {
         self
     }
 
+    pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
+        self.workflow = self.workflow.with_recovery_policy(policy);
+        self
+    }
+
+    pub fn with_recovery_approval(
+        mut self,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self {
+        self.workflow = self.workflow.with_recovery_approval(approval);
+        self
+    }
+
     pub fn execute(&self, plan: RunPlan, target: &str) -> Result<bool, String> {
         // Structural target identity (TASK-0054): the recorder never parses
         // the trigger string; the signature is filled from the resolved plan

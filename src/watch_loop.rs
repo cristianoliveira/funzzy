@@ -419,6 +419,19 @@ impl BlockingStrategy {
         self.workflow = self.workflow.with_hooks(hooks);
         self
     }
+
+    pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
+        self.workflow = self.workflow.with_recovery_policy(policy);
+        self
+    }
+
+    pub fn with_recovery_approval(
+        mut self,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self {
+        self.workflow = self.workflow.with_recovery_approval(approval);
+        self
+    }
 }
 
 impl RunStrategy for BlockingStrategy {

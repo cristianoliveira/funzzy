@@ -149,6 +149,7 @@ impl Command for WatchNonBlockCommand {
                 Some(worker_outputs),
             )
             .with_hooks(hooks)
+            .with_recovery_policy(self.watches.recovery_policy())
             .with_revision(self.watches.revision().cloned().unwrap_or(
                 crate::config_revision::ConfigRevision {
                     number: 0,

@@ -48,6 +48,36 @@ pub struct TaskSnapshot {
     pub duration_ms: Option<u64>,
 }
 
+/// One exact generation/job recovery approval request. Command text is
+/// rendered for the attached user but never used as an authorization key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryRequest {
+    pub generation: u64,
+    pub revision: Option<u64>,
+    pub job_position: usize,
+    pub job: String,
+    pub commands: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Approved,
+    Declined,
+}
+
+pub trait RecoveryApproval: Send + Sync {
+    fn approve(&self, requests: &[RecoveryRequest]) -> ApprovalDecision;
+}
+
+/// Safe default used by headless composition until a TTY adapter is injected.
+pub struct DenyRecoveryApproval;
+
+impl RecoveryApproval for DenyRecoveryApproval {
+    fn approve(&self, _requests: &[RecoveryRequest]) -> ApprovalDecision {
+        ApprovalDecision::Declined
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Started {
@@ -100,6 +130,13 @@ pub enum Event {
     /// generation. Emitted per task so the correlated snapshot can show task
     /// outcomes and durations (TASK-0050).
     TaskTerminal { run_id: u64, task: TaskSnapshot },
+    /// Non-terminal recovery lifecycle evidence for one generation/job.
+    RecoveryPhase {
+        run_id: u64,
+        job: String,
+        phase: String,
+        outcome: Option<String>,
+    },
 }
 
 pub trait EventSink: Send + Sync {
@@ -223,6 +260,8 @@ pub struct RunMetadata {
     /// Run-level terminal hooks (TASK-0040): `success`/`failure` commands run
     /// once at the generation terminal outcome.
     pub hooks: crate::config::GenerationHooks,
+    /// Frozen recovery policy for this generation.
+    pub recovery_policy: crate::config::RecoveryPolicy,
     /// Immutable config revision this generation was frozen under
     /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4). None for legacy runs that
     /// never observe reload.
@@ -245,6 +284,7 @@ impl RunMetadata {
             effective_concurrency: None,
             concurrency_source: None,
             hooks: crate::config::GenerationHooks::default(),
+            recovery_policy: crate::config::RecoveryPolicy::Prompt,
             revision: None,
             revision_hash: None,
         }
@@ -271,6 +311,7 @@ impl RunMetadata {
             effective_concurrency: None,
             concurrency_source: None,
             hooks: crate::config::GenerationHooks::default(),
+            recovery_policy: crate::config::RecoveryPolicy::Prompt,
             revision: None,
             revision_hash: None,
         }
@@ -316,6 +357,12 @@ impl RunMetadata {
         self.hooks = hooks;
         self
     }
+
+    /// Attaches the frozen recovery policy for this generation.
+    pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
+        self.recovery_policy = policy;
+        self
+    }
 }
 
 pub struct CompletedRun {
@@ -342,6 +389,8 @@ struct ActiveTask {
     name: String,
     position: usize,
     commands: VecDeque<CommandLine>,
+    original_commands: Vec<CommandLine>,
+    recovery_commands: Option<VecDeque<CommandLine>>,
     child: Option<Box<dyn ChildProcess>>,
     current_command: Option<String>,
     failures: Vec<String>,
@@ -364,6 +413,8 @@ struct ActiveTask {
     service: bool,
     /// Unexpected-exit restart attempts remaining for a service (TASK-0035).
     service_restarts_left: usize,
+    /// Defer original command errors while recovery may change the outcome.
+    defer_failure: bool,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -372,6 +423,8 @@ impl From<TaskPlan> for ActiveTask {
             name: task.name,
             position: task.position,
             commands: task.commands.clone().into(),
+            original_commands: task.commands.clone(),
+            recovery_commands: task.recovery_commands.clone().map(VecDeque::from),
             child: None,
             current_command: None,
             failures: vec![],
@@ -385,6 +438,7 @@ impl From<TaskPlan> for ActiveTask {
             output: task.output,
             service: task.service,
             service_restarts_left: crate::executor::SERVICE_MAX_RESTARTS,
+            defer_failure: task.recovery_commands.is_some(),
         }
     }
 }
@@ -393,6 +447,8 @@ pub struct Run {
     stages: VecDeque<Stage>,
     queued: VecDeque<TaskPlan>,
     active: Vec<ActiveTask>,
+    /// Original failures eligible for one post-stage recovery pass.
+    pending_recoveries: Vec<ActiveTask>,
     /// Running managed services (TASK-0035): spawned, alive, and NOT blocking
     /// later stages. Reaped on cancellation/supersession/shutdown.
     services: Vec<ActiveTask>,
@@ -447,6 +503,8 @@ pub struct Executor {
     /// Retained-output registry fed at task terminal (TASK-0045); None keeps
     /// capture disabled (no control surface consumes it).
     outputs: Option<Arc<OutputRegistry>>,
+    /// Injected approval boundary; domain code never reads global stdin.
+    approval: Arc<dyn RecoveryApproval>,
 }
 
 impl Executor {
@@ -470,6 +528,7 @@ impl Executor {
             fail_fast,
             verbose,
             outputs: None,
+            approval: Arc::new(DenyRecoveryApproval),
         })
     }
 
@@ -497,7 +556,14 @@ impl Executor {
             fail_fast,
             verbose,
             outputs,
+            approval: Arc::new(DenyRecoveryApproval),
         })
+    }
+
+    /// Injects the approval adapter used by future generations.
+    pub fn with_recovery_approval(mut self, approval: Arc<dyn RecoveryApproval>) -> Self {
+        self.approval = approval;
+        self
     }
 
     pub fn concurrency_limit(&self) -> usize {
@@ -552,6 +618,7 @@ impl Executor {
             stages: plan.stages.into(),
             queued: VecDeque::new(),
             active: vec![],
+            pending_recoveries: vec![],
             services: vec![],
             stage_limit: 0,
             results: vec![],
@@ -601,6 +668,7 @@ impl Executor {
                     &mut run.active[index],
                     &mut run.results,
                     run.metadata.run_id,
+                    self.fail_fast,
                 ) {
                     TaskStep::Running => {
                         // TASK-0035: a spawned-and-running service is moved
@@ -615,13 +683,16 @@ impl Executor {
                     }
                     TaskStep::Finished => {
                         let task = run.active.remove(index);
-                        self.record_task_outcome(run, task);
+                        self.defer_or_record(run, task);
                         task_finished = true;
                     }
                     TaskStep::FailedFast => {
                         let task = run.active.remove(index);
-                        self.record_task_outcome(run, task);
+                        self.defer_or_record(run, task);
                         self.stop_after_failure(run);
+                        if !run.pending_recoveries.is_empty() {
+                            self.resolve_recoveries(run);
+                        }
                         return Step::Finished;
                     }
                 }
@@ -634,6 +705,10 @@ impl Executor {
             }
 
             if run.active.is_empty() && run.queued.is_empty() {
+                if !run.pending_recoveries.is_empty() {
+                    self.resolve_recoveries(run);
+                    continue;
+                }
                 // TASK-0035: background services keep the generation alive
                 // until superseded/cancelled/finished, so their restart and
                 // failure policy is polled; a generation with only services
@@ -666,6 +741,7 @@ impl Executor {
         task: &mut ActiveTask,
         results: &mut Vec<Result<(), String>>,
         run_id: u64,
+        fail_fast: bool,
     ) -> TaskStep {
         if !task.context_validated {
             task.context_validated = true;
@@ -677,9 +753,11 @@ impl Executor {
                         cwd.display()
                     );
                     task.failures.push(failure.clone());
-                    results.push(Err(failure));
+                    if !task.defer_failure {
+                        results.push(Err(failure));
+                    }
                     task.commands.clear();
-                    return if self.fail_fast {
+                    return if fail_fast {
                         TaskStep::FailedFast
                     } else {
                         TaskStep::Finished
@@ -743,9 +821,11 @@ impl Executor {
                         let failure = format!("Command {} failed to start: {}", display, err);
                         stdout::error(&failure);
                         task.failures.push(failure.clone());
-                        results.push(Err(failure));
+                        if !task.defer_failure {
+                            results.push(Err(failure));
+                        }
                         task.current_command = None;
-                        if self.fail_fast {
+                        if fail_fast {
                             return TaskStep::FailedFast;
                         }
                     }
@@ -809,8 +889,10 @@ impl Executor {
 
                     let failure = format!("Command {} has failed with {}", display, status);
                     task.failures.push(failure.clone());
-                    results.push(Err(failure));
-                    if self.fail_fast {
+                    if !task.defer_failure {
+                        results.push(Err(failure));
+                    }
+                    if fail_fast {
                         return TaskStep::FailedFast;
                     }
                 }
@@ -819,8 +901,10 @@ impl Executor {
                     task.current_command = None;
                     let failure = format!("Command {} has errored with {}", display, err);
                     task.failures.push(failure.clone());
-                    results.push(Err(failure));
-                    if self.fail_fast {
+                    if !task.defer_failure {
+                        results.push(Err(failure));
+                    }
+                    if fail_fast {
                         return TaskStep::FailedFast;
                     }
                 }
@@ -877,6 +961,190 @@ impl Executor {
                     logging::log_plain(&attributed);
                 }
             }
+        }
+    }
+
+    fn defer_or_record(&self, run: &mut Run, task: ActiveTask) {
+        if !task.failures.is_empty() && task.recovery_commands.is_some() {
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "original_failed".to_owned(),
+                outcome: None,
+            });
+            run.pending_recoveries.push(task);
+        } else {
+            self.record_task_outcome(run, task);
+        }
+    }
+
+    fn resolve_recoveries(&self, run: &mut Run) {
+        run.pending_recoveries.sort_by_key(|task| task.position);
+        let mut pending = std::mem::take(&mut run.pending_recoveries);
+        if pending.is_empty() {
+            return;
+        }
+
+        let requests: Vec<RecoveryRequest> = pending
+            .iter()
+            .map(|task| RecoveryRequest {
+                generation: run.metadata.run_id,
+                revision: run.metadata.revision,
+                job_position: task.position,
+                job: task.name.clone(),
+                commands: task
+                    .recovery_commands
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|commands| commands.iter())
+                    .map(CommandLine::display)
+                    .collect(),
+            })
+            .collect();
+        for request in &requests {
+            self.events.emit(Event::RecoveryPhase {
+                run_id: request.generation,
+                job: request.job.clone(),
+                phase: "approval_requested".to_owned(),
+                outcome: None,
+            });
+        }
+
+        let approved = matches!(
+            run.metadata.recovery_policy,
+            crate::config::RecoveryPolicy::Prompt
+        ) && matches!(self.approval.approve(&requests), ApprovalDecision::Approved);
+        if !approved {
+            let reason = match run.metadata.recovery_policy {
+                crate::config::RecoveryPolicy::Skip => "skipped",
+                crate::config::RecoveryPolicy::Prompt => "declined",
+            };
+            for task in pending.drain(..) {
+                self.events.emit(Event::RecoveryPhase {
+                    run_id: run.metadata.run_id,
+                    job: task.name.clone(),
+                    phase: "approval_decided".to_owned(),
+                    outcome: Some(reason.to_owned()),
+                });
+                run.results.push(Err(task
+                    .failures
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| format!("Job '{}' failed", task.name))));
+                self.record_task_outcome(run, task);
+            }
+            return;
+        }
+
+        let mut remaining = pending.into_iter();
+        while let Some(mut task) = remaining.next() {
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "approval_decided".to_owned(),
+                outcome: Some("approved".to_owned()),
+            });
+            let original_failures = task.failures.clone();
+            let Some(recovery_commands) = task.recovery_commands.take() else {
+                self.record_task_outcome(run, task);
+                continue;
+            };
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "recovery_started".to_owned(),
+                outcome: None,
+            });
+            task.commands = recovery_commands;
+            task.failures.clear();
+            task.current_command = None;
+            task.child = None;
+            task.command_index = 0;
+            task.command_total = task.commands.len();
+            task.defer_failure = false;
+            let mut recovery_results = vec![];
+            while matches!(
+                self.advance_task(&mut task, &mut recovery_results, run.metadata.run_id, true,),
+                TaskStep::Running
+            ) {
+                self.clock.sleep(POLL_INTERVAL);
+            }
+            let recovery_failed = !task.failures.is_empty();
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "recovery_finished".to_owned(),
+                outcome: Some(if recovery_failed { "failed" } else { "passed" }.to_owned()),
+            });
+            if recovery_failed {
+                let mut failures = original_failures;
+                failures.extend(task.failures.clone());
+                task.failures = failures;
+                run.results.push(Err(task
+                    .failures
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| format!("Recovery failed for job '{}'", task.name))));
+                self.record_task_outcome(run, task);
+                for remaining in remaining {
+                    run.results.push(Err(remaining
+                        .failures
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| format!("Job '{}' failed", remaining.name))));
+                    self.record_task_outcome(run, remaining);
+                }
+                return;
+            }
+
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "verification_started".to_owned(),
+                outcome: None,
+            });
+            task.commands = task.original_commands.clone().into();
+            task.failures.clear();
+            task.current_command = None;
+            task.child = None;
+            task.command_index = 0;
+            task.command_total = task.commands.len();
+            task.defer_failure = false;
+            let mut verification_results = vec![];
+            while matches!(
+                self.advance_task(
+                    &mut task,
+                    &mut verification_results,
+                    run.metadata.run_id,
+                    true,
+                ),
+                TaskStep::Running
+            ) {
+                self.clock.sleep(POLL_INTERVAL);
+            }
+            let verification_failed = !task.failures.is_empty();
+            self.events.emit(Event::RecoveryPhase {
+                run_id: run.metadata.run_id,
+                job: task.name.clone(),
+                phase: "verification_finished".to_owned(),
+                outcome: Some(
+                    if verification_failed {
+                        "failed"
+                    } else {
+                        "passed"
+                    }
+                    .to_owned(),
+                ),
+            });
+            if verification_failed {
+                run.results
+                    .push(Err(task.failures.last().cloned().unwrap_or_else(|| {
+                        format!("Verification failed for job '{}'", task.name)
+                    })));
+            } else {
+                run.results.push(Ok(()));
+            }
+            self.record_task_outcome(run, task);
         }
     }
 
@@ -1369,6 +1637,19 @@ mod tests {
         CommandLine::Shell(command.to_owned())
     }
 
+    #[derive(Clone)]
+    struct TestApproval {
+        decision: ApprovalDecision,
+        requests: Arc<Mutex<Vec<RecoveryRequest>>>,
+    }
+
+    impl RecoveryApproval for TestApproval {
+        fn approve(&self, requests: &[RecoveryRequest]) -> ApprovalDecision {
+            self.requests.lock().unwrap().extend_from_slice(requests);
+            self.decision
+        }
+    }
+
     fn task(name: &str, group: Option<&str>, commands: &[&str]) -> Rules {
         let rule = Rules::new(
             name.to_owned(),
@@ -1381,6 +1662,22 @@ mod tests {
             Some(group) => rule.with_parallel(group.to_owned()),
             None => rule,
         }
+    }
+
+    fn recovery_rule(run: &str, recovery: &[&str]) -> Rules {
+        Rules::new(
+            "recoverable".to_owned(),
+            vec![run.to_owned()],
+            vec![],
+            vec![],
+            true,
+        )
+        .with_recovery(
+            recovery
+                .iter()
+                .map(|command| (*command).to_owned())
+                .collect(),
+        )
     }
 
     fn run_commands(commands: Vec<CommandLine>, fail_fast: bool) -> Vec<Result<(), String>> {
@@ -1416,6 +1713,119 @@ mod tests {
         .expect("concurrency one is supported")
         .run_to_completion(RunMetadata::new(0, "test"), plan)
         .results
+    }
+
+    #[test]
+    fn approved_recovery_runs_once_then_verifies_original_job() {
+        let marker =
+            std::env::temp_dir().join(format!("funzzy-recovery-{}-{}", std::process::id(), 1));
+        let _ = std::fs::remove_file(&marker);
+        let path = marker.display().to_string();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let approval = TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests: Arc::clone(&requests),
+        };
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(approval));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(42, "test"),
+            RunPlan::from_rules(vec![recovery_rule(
+                &format!("test -f '{path}'"),
+                &[&format!("touch '{path}'")],
+            )]),
+        );
+        assert!(completed.outcome.is_success());
+        assert_eq!(requests.lock().unwrap()[0].generation, 42);
+        assert_eq!(
+            requests.lock().unwrap()[0].commands,
+            vec![format!("touch '{path}'")]
+        );
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[test]
+    fn skip_policy_preserves_failure_without_spawning_recovery() {
+        let marker =
+            std::env::temp_dir().join(format!("funzzy-recovery-skip-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let path = marker.display().to_string();
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let completed = executor.run_to_completion(
+            RunMetadata::new(43, "test").with_recovery_policy(crate::config::RecoveryPolicy::Skip),
+            RunPlan::from_rules(vec![recovery_rule("false", &[&format!("touch '{path}'")])]),
+        );
+        assert!(!completed.outcome.is_success());
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn declined_recovery_preserves_original_failure() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::Declined,
+            requests,
+        }));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(44, "test"),
+            RunPlan::from_rules(vec![recovery_rule("false", &["true"])]),
+        );
+        assert!(!completed.outcome.is_success());
+        assert!(completed.results.iter().any(Result::is_err));
+    }
+
+    #[test]
+    fn recovery_failure_and_verification_failure_are_final_failures() {
+        let approval = Arc::new(TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests: Arc::new(Mutex::new(Vec::new())),
+        });
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(approval);
+        let failed_recovery = executor.run_to_completion(
+            RunMetadata::new(45, "test"),
+            RunPlan::from_rules(vec![recovery_rule("false", &["false"])]),
+        );
+        assert!(!failed_recovery.outcome.is_success());
+
+        let verification_failure = executor.run_to_completion(
+            RunMetadata::new(46, "test"),
+            RunPlan::from_rules(vec![recovery_rule("false", &["true"])]),
+        );
+        assert!(!verification_failure.outcome.is_success());
     }
 
     #[test]

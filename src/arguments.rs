@@ -79,6 +79,8 @@ pub struct Arguments {
     pub on_busy: OnBusy,
     pub no_run_on_init: bool,
     pub fail_fast: bool,
+    /// Explicit CLI override for configured recovery policy.
+    pub recovery_policy: Option<crate::config::RecoveryPolicy>,
     pub sequential: bool,
     pub verbose: bool,
 }
@@ -307,6 +309,12 @@ impl Arguments {
             },
             no_run_on_init: matches.get_flag("no_run_on_init"),
             fail_fast: matches.get_flag("fail_fast"),
+            recovery_policy: matches.get_one::<String>("recovery_policy").map(
+                |policy| match policy.as_str() {
+                    "skip" => crate::config::RecoveryPolicy::Skip,
+                    _ => crate::config::RecoveryPolicy::Prompt,
+                },
+            ),
             sequential: match matches.subcommand() {
                 Some(("run" | "watch", sub)) => sub.get_flag("sequential"),
                 _ => false,
@@ -405,6 +413,14 @@ pub fn command() -> Command {
                 .global(true)
                 .action(ArgAction::SetTrue)
                 .help("Bail current execution if a task fails (exit code != 0)."),
+        )
+        .arg(
+            Arg::new("recovery_policy")
+                .long("recovery-policy")
+                .global(true)
+                .value_name("POLICY")
+                .value_parser(clap::builder::PossibleValuesParser::new(["prompt", "skip"]))
+                .help("Recovery policy for failed jobs (prompt|skip); overrides execution.recovery_policy."),
         )
         .arg(
             Arg::new("log_truncate_on_change")
@@ -992,6 +1008,21 @@ mod tests {
         );
         assert!(parse(&["run"]).is_err());
         assert!(parse(&["run", "@quick", "src/lib.rs"]).is_err());
+    }
+
+    #[test]
+    fn recovery_policy_override_accepts_only_prompt_or_skip() {
+        let args = parse(&["watch", "--recovery-policy", "skip"]).expect("parse");
+        assert_eq!(
+            args.recovery_policy,
+            Some(crate::config::RecoveryPolicy::Skip)
+        );
+        let args = parse(&["run", "@quick", "--recovery-policy", "prompt"]).expect("parse");
+        assert_eq!(
+            args.recovery_policy,
+            Some(crate::config::RecoveryPolicy::Prompt)
+        );
+        assert!(parse(&["watch", "--recovery-policy", "auto"]).is_err());
     }
 
     #[test]

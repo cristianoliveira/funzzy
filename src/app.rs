@@ -159,7 +159,7 @@ pub fn run() {
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(load_recovery_policy(&args.config))
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
             .with_hooks(load_hooks(&args.config))
             .with_session_hooks(load_session_hooks(&args.config));
             // TASK-0092: resolve the config-declared control socket BEFORE
@@ -184,7 +184,7 @@ pub fn run() {
                     debounce,
                     backend,
                     load_respect_gitignore(&args.config),
-                    load_recovery_policy(&args.config),
+                    effective_recovery_policy(&args, &args.config),
                     load_hooks(&args.config),
                     load_session_hooks(&args.config),
                     control_socket.as_deref().map(std::path::PathBuf::from),
@@ -227,7 +227,7 @@ pub fn run() {
                 concurrency,
             )
             .with_debounce(debounce)
-            .with_recovery_policy(load_recovery_policy(&args.config));
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config));
             let plan = match watches.run_target_plan(target) {
                 Ok(plan) => plan,
                 Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
@@ -253,7 +253,9 @@ pub fn run() {
                 )))),
                 event_stream.clone(),
             )
-            .with_hooks(load_hooks(&args.config));
+            .with_hooks(load_hooks(&args.config))
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
             let result = command.execute(plan, target);
             let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
             if signal_exit != 0 {
@@ -278,7 +280,7 @@ pub fn run() {
             .with_debounce(load_debounce(&args.config))
             .with_backend(load_watch_backend(&args.config))
             .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(load_recovery_policy(&args.config))
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
             .with_hooks(load_hooks(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
@@ -632,6 +634,14 @@ fn load_respect_gitignore(config_file: &Option<String>) -> bool {
     };
     config::respect_gitignore_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid gitignore config", err))
+}
+
+fn effective_recovery_policy(
+    args: &Arguments,
+    config_file: &Option<String>,
+) -> config::RecoveryPolicy {
+    args.recovery_policy
+        .unwrap_or_else(|| load_recovery_policy(config_file))
 }
 
 fn load_recovery_policy(config_file: &Option<String>) -> config::RecoveryPolicy {

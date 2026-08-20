@@ -21,6 +21,7 @@ pub struct WorkflowRunner {
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040) applied to each finite run.
     hooks: crate::config::GenerationHooks,
+    recovery_policy: crate::config::RecoveryPolicy,
 }
 
 impl WorkflowRunner {
@@ -31,6 +32,20 @@ impl WorkflowRunner {
     /// Attaches run-level terminal hooks (TASK-0040).
     pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
+        self
+    }
+
+    /// Attaches the finite-run recovery policy and approval adapter.
+    pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
+        self.recovery_policy = policy;
+        self
+    }
+
+    pub fn with_recovery_approval(
+        mut self,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self {
+        self.executor = self.executor.with_recovery_approval(approval);
         self
     }
 
@@ -102,6 +117,7 @@ impl WorkflowRunner {
             concurrency,
             fail_fast,
             hooks: crate::config::GenerationHooks::default(),
+            recovery_policy: crate::config::RecoveryPolicy::Prompt,
         }
     }
 
@@ -117,7 +133,9 @@ impl WorkflowRunner {
             paths: vec![],
             current_dir: self.root.display().to_string(),
         });
-        let metadata = metadata.with_hooks(self.hooks.clone());
+        let metadata = metadata
+            .with_hooks(self.hooks.clone())
+            .with_recovery_policy(self.recovery_policy);
         if self.verbose {
             // Blocking strategy: one in-process run per decision; the record
             // carries the debounce batch when scheduled from a file change.

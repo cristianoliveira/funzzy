@@ -305,6 +305,7 @@ impl ReloadCoordinator {
             // TASK-0092: hooks are part of the committed policy surface —
             // post-commit generations run the committed hooks (swap).
             worker.set_hooks(transaction.candidate.hooks());
+            worker.set_recovery_policy(transaction.candidate.recovery_policy());
             // AC6: reconcile managed services — stop removed/signature-changed
             // services gracefully; start new/changed services under the new
             // revision appended to the active generation (unchanged services

@@ -38,6 +38,8 @@ struct RunRequest {
     concurrency_source: Option<&'static str>,
     /// Run-level terminal hooks (TASK-0040).
     hooks: crate::config::GenerationHooks,
+    /// Frozen recovery policy for this request.
+    recovery_policy: crate::config::RecoveryPolicy,
     /// Immutable config revision this request is frozen under (TASK-0089).
     revision: Option<u64>,
     /// Non-secret semantic hash of the frozen config revision.
@@ -248,6 +250,8 @@ pub struct Worker {
     concurrency: Arc<std::sync::atomic::AtomicUsize>,
     /// Fail-fast policy; part of the execution signature (TASK-0054).
     fail_fast: bool,
+    /// Frozen recovery policy, applied to future generations.
+    recovery_policy: std::sync::Mutex<crate::config::RecoveryPolicy>,
     /// Run-level terminal hooks (TASK-0040), applied to target runs.
     /// Interior-mutable (TASK-0092): a reload swaps the shared hooks at the
     /// commit boundary so post-commit generations run the committed hooks
@@ -322,6 +326,31 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
+        Self::with_root_and_concurrency_and_outputs_and_approval(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            outputs,
+            Arc::new(crate::approval::TtyRecoveryApproval),
+        )
+    }
+
+    /// Worker constructor with an explicit approval adapter owned by the
+    /// composition root.
+    pub fn with_root_and_concurrency_and_outputs_and_approval<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
         let events: Arc<dyn EventSink> = Arc::new(move |event: Event| {
             on_event(event);
         });
@@ -342,6 +371,7 @@ impl Worker {
             outputs,
         )
         .expect("worker concurrency must be positive")
+        .with_recovery_approval(approval)
         .with_concurrency_handle(Arc::clone(&concurrency_handle));
 
         let consumer = std::thread::spawn(move || {
@@ -369,6 +399,7 @@ impl Worker {
                                 .with_effective_concurrency(req.effective_concurrency)
                                 .with_concurrency_source(req.concurrency_source)
                                 .with_hooks(req.hooks.clone())
+                                .with_recovery_policy(req.recovery_policy)
                                 .with_revision(
                                     req.revision.unwrap_or(0),
                                     req.revision_hash.clone().unwrap_or_default(),
@@ -397,6 +428,7 @@ impl Worker {
                                     .with_effective_concurrency(req.effective_concurrency)
                                     .with_concurrency_source(req.concurrency_source)
                                     .with_hooks(req.hooks.clone())
+                                    .with_recovery_policy(req.recovery_policy)
                                     .with_revision(
                                         req.revision.unwrap_or(0),
                                         req.revision_hash.clone().unwrap_or_default(),
@@ -609,6 +641,7 @@ impl Worker {
             root,
             concurrency: concurrency_handle,
             fail_fast,
+            recovery_policy: std::sync::Mutex::new(crate::config::RecoveryPolicy::Prompt),
             hooks: std::sync::Mutex::new(crate::config::GenerationHooks::default()),
             revision: std::sync::Mutex::new(None),
             consumer: Some(consumer),
@@ -645,6 +678,16 @@ impl Worker {
     /// signature (TASK-0054/0055).
     pub fn fail_fast(&self) -> bool {
         self.fail_fast
+    }
+
+    /// Attaches the recovery policy applied to future generations.
+    pub fn with_recovery_policy(self, policy: crate::config::RecoveryPolicy) -> Self {
+        *self.recovery_policy.lock().unwrap() = policy;
+        self
+    }
+
+    pub fn set_recovery_policy(&self, policy: crate::config::RecoveryPolicy) {
+        *self.recovery_policy.lock().unwrap() = policy;
     }
 
     /// Attaches run-level terminal hooks (TASK-0040) applied to target runs.
@@ -832,6 +875,7 @@ impl Worker {
             // `set_hooks`), exactly like the control path — never the empty
             // default.
             hooks: self.hooks.lock().unwrap().clone(),
+            recovery_policy: *self.recovery_policy.lock().unwrap(),
             revision: revision.as_ref().map(|r| r.number),
             revision_hash: revision.as_ref().map(|r| r.hash.clone()),
         })

@@ -216,6 +216,7 @@ impl WatcherState {
                     self.tasks.push(task);
                 }
             }
+            Event::RecoveryPhase { .. } => {}
         }
     }
 }
