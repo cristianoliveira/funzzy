@@ -8,7 +8,7 @@ mod setup;
 fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
     let test_log_file = "test_it_allows_run_arbitrary_commans_with_by_piping_files.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -19,12 +19,14 @@ fn test_it_allows_run_arbitrary_commans_with_by_piping_files() {
 
         let mut child = fzz_cmd
             .args(["exec", "--", "echo", "running arbitrary command"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn grep command");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -75,7 +77,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
     setup::with_output(
         "test_it_allows_templates_in_arbitrary_commands.log",
         |fzz_cmd, mut output_log, fixture| {
-            let files = Command::new("find")
+            let mut files = Command::new("find")
                 .arg(".")
                 .arg("-name")
                 .arg("*.txt")
@@ -87,12 +89,14 @@ fn test_it_allows_templates_in_arbitrary_commands() {
             let mut child = fzz_cmd
                 .arg("-v") // DEBUG
                 .args(["exec", "--", "echo", "this file changed: {{filepath}}"])
-                .stdin(files.stdout.expect("failed to open stdin"))
+                .stdin(files.stdout.take().expect("failed to open stdin"))
                 .spawn()
                 .expect("Failed to spawn grep command");
+            let _ = files.wait();
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -148,7 +152,7 @@ fn test_it_allows_templates_in_arbitrary_commands() {
 fn it_runs_on_init_by_default_with_stdin() {
     let test_log_file = "it_runs_on_init_by_default_with_stdin.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -158,12 +162,14 @@ fn it_runs_on_init_by_default_with_stdin() {
             .expect("failed to run find");
         let mut child = fzz_cmd
             .args(["exec", "--", "echo", "it runs on init by default"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn grep command");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -194,6 +200,7 @@ fn it_timesout_after_x_secs_and_inform() {
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();

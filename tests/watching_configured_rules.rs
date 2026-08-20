@@ -49,6 +49,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -65,7 +66,7 @@ fn test_it_is_not_triggered_by_ignored_files() {
                 output
             );
 
-            output.truncate(0);
+            output.clear();
 
             write_to_file!(fixture.join("examples/workdir/ignored/modifyme.txt"));
 
@@ -117,6 +118,7 @@ fn test_it_watch_files_and_execute_configured_commands() {
             let mut output = String::new();
             defer!({
                 child.kill().expect("failed to close process");
+                let _ = child.wait();
             });
 
             wait_until!(
@@ -131,7 +133,7 @@ fn test_it_watch_files_and_execute_configured_commands() {
                 output
             );
 
-            output.truncate(0);
+            output.clear();
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
@@ -206,6 +208,7 @@ fn accepts_full_or_relativepaths() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -317,6 +320,7 @@ fn fails_with_unkown_paths() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -534,6 +538,7 @@ fn newly_created_file_under_existing_watched_dir_triggers_job() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -591,6 +596,7 @@ fn directory_created_after_startup_becomes_covered_without_restart() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -641,6 +647,7 @@ fn delete_and_recreate_stays_observable_without_restart() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -708,6 +715,7 @@ fn atomic_editor_save_triggers_destination_once_without_temp_leak() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();

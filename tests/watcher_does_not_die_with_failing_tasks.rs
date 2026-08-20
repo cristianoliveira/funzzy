@@ -16,6 +16,7 @@ fn test_it_watches_a_list_of_tasks_and_do_not_panic() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn sub process");
             defer!({
                 child.kill().expect("failed to kill sub process");
+                let _ = child.wait();
             });
 
             wait_until!({

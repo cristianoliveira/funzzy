@@ -15,7 +15,7 @@ mod setup;
 fn test_it_preserves_argv_boundaries_when_piping_files() {
     let test_log_file = "test_it_preserves_argv_boundaries_when_piping_files.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -29,12 +29,14 @@ fn test_it_preserves_argv_boundaries_when_piping_files() {
         // would print `<a>` and `<b>` separately instead of `<a b>`.
         let mut child = fzz_cmd
             .args(["exec", "--", "printf", "<%s>\\n", "a b", "c"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn fzz");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -56,7 +58,7 @@ fn test_it_preserves_argv_boundaries_when_piping_files() {
 fn test_it_runs_shell_only_when_explicitly_invoked() {
     let test_log_file = "test_it_runs_shell_only_when_explicitly_invoked.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -69,12 +71,14 @@ fn test_it_runs_shell_only_when_explicitly_invoked() {
         // pipe operator, so the full string must be printed verbatim.
         let mut child = fzz_cmd
             .args(["exec", "--", "echo", "a | b"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn fzz");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -96,7 +100,7 @@ fn test_it_runs_shell_only_when_explicitly_invoked() {
 fn test_it_invokes_shell_when_caller_asks_for_one() {
     let test_log_file = "test_it_invokes_shell_when_caller_asks_for_one.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -108,12 +112,14 @@ fn test_it_invokes_shell_when_caller_asks_for_one() {
         // Explicit `sh -c` keeps shell semantics available on demand.
         let mut child = fzz_cmd
             .args(["exec", "--", "sh", "-c", "echo shell-ran"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn fzz");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -135,7 +141,7 @@ fn test_it_invokes_shell_when_caller_asks_for_one() {
 fn test_it_expands_templates_in_argv_elements() {
     let test_log_file = "test_it_expands_templates_in_argv_elements.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -148,12 +154,14 @@ fn test_it_expands_templates_in_argv_elements() {
         // expand per changed path while the rest of the argv stays intact.
         let mut child = fzz_cmd
             .args(["exec", "--", "printf", "changed:%s", "{{filepath}}"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn fzz");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();
@@ -175,7 +183,7 @@ fn test_it_expands_templates_in_argv_elements() {
 fn test_it_reports_child_failure_but_keeps_watching() {
     let test_log_file = "test_it_reports_child_failure_but_keeps_watching.log";
     setup::with_output(test_log_file, |fzz_cmd, mut output_log, fixture| {
-        let files = Command::new("find")
+        let mut files = Command::new("find")
             .arg(".")
             .arg("-name")
             .arg("*.txt")
@@ -189,12 +197,14 @@ fn test_it_reports_child_failure_but_keeps_watching() {
         // alive to keep watching.
         let mut child = fzz_cmd
             .args(["exec", "--", "sh", "-c", "exit 3"])
-            .stdin(files.stdout.expect("failed to open stdin"))
+            .stdin(files.stdout.take().expect("failed to open stdin"))
             .spawn()
             .expect("Failed to spawn fzz");
+        let _ = files.wait();
 
         defer!({
             child.kill().expect("failed to kill child");
+            let _ = child.wait();
         });
 
         let mut output = String::new();

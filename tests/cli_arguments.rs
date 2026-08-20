@@ -51,7 +51,7 @@ fn with_tmp_dir<F: FnOnce(&std::path::Path)>(suffix: &str, f: F) {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("failed to create temp dir");
-    let _ = f(&dir);
+    f(&dir);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

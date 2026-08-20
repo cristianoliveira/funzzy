@@ -21,6 +21,7 @@ fn test_it_filter_tasks_with_watch_target() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();

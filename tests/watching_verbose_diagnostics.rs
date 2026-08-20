@@ -29,7 +29,7 @@ fn scratch_config(label: &str, content: &str) -> (PathBuf, PathBuf) {
 }
 
 fn read_log(output_log: &mut std::fs::File, output: &mut String) {
-    output.truncate(0);
+    output.clear();
     // The child appends to the same inode; rewind our handle so every read
     // sees the whole log regardless of the previous cursor position.
     output_log
@@ -69,6 +69,7 @@ fn verbose_emits_startup_event_matched_and_outcome_records() {
             let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -92,7 +93,7 @@ fn verbose_emits_startup_event_matched_and_outcome_records() {
                 output
             );
 
-            output.truncate(0);
+            output.clear();
             write_to_file!(fixture.join("examples/workdir/guide.md"));
             wait_until!(
                 {
@@ -148,7 +149,7 @@ fn verbose_emits_startup_event_matched_and_outcome_records() {
             );
 
             // Failure outcome: the failing task reports state=failed.
-            output.truncate(0);
+            output.clear();
             write_to_file!(fixture.join("examples/workdir/boom.fail"));
             wait_until!(
                 {
@@ -181,6 +182,7 @@ fn verbose_explains_ignored_and_unmatched_paths_without_running() {
             let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -197,7 +199,7 @@ fn verbose_explains_ignored_and_unmatched_paths_without_running() {
             // ignored, naming the winning ignore rule and its origin.
             std::fs::create_dir_all(fixture.join("examples/workdir/generated"))
                 .expect("create generated dir");
-            output.truncate(0);
+            output.clear();
             write_to_file!(fixture.join("examples/workdir/generated/out.rs"));
             wait_until!(
                 {
@@ -223,7 +225,7 @@ fn verbose_explains_ignored_and_unmatched_paths_without_running() {
             // A path matching nothing is an explicit unmatched decision. The
             // wait is path-specific: FSEvents can replay copied fixture files
             // at registration, so an early unmatched record alone is not proof.
-            output.truncate(0);
+            output.clear();
             write_to_file!(fixture.join("examples/workdir/notes.txt"));
             wait_until!(
                 {
@@ -260,6 +262,7 @@ tasks:
             let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -272,7 +275,7 @@ tasks:
                 output
             );
 
-            output.truncate(0);
+            output.clear();
             write_to_file!(fixture.join("examples/workdir/main.rs"));
             wait_until!(
                 {
@@ -315,6 +318,7 @@ fn non_block_verbose_emits_generations_cancellations_and_loop_warning() {
                 .expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -401,6 +405,7 @@ fn unrelated_rapid_events_never_warn() {
             let mut child = fzz_cmd.arg("-v").spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -416,7 +421,7 @@ fn unrelated_rapid_events_never_warn() {
             // Distinct paths, spaced beyond one debounce window so each is its
             // own batch: rapid unrelated events must never warn.
             for index in 0..4 {
-                output.truncate(0);
+                output.clear();
                 write_to_file!(fixture.join(format!("examples/workdir/page-{}.md", index)));
                 wait_until!(
                     {
@@ -455,6 +460,7 @@ fn normal_mode_output_has_no_debug_records() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn child");
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();

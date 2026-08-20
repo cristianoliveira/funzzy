@@ -20,6 +20,7 @@ fn test_when_using_fail_fast_exit_before() {
                 .expect("failed to spawn sub process");
             defer!({
                 child.kill().expect("failed to kill sub process");
+                let _ = child.wait();
             });
 
             wait_until!({
@@ -104,6 +105,7 @@ fn test_when_using_fail_fast_exit_before_with_env() {
                     let mut child = fzz_cmd.spawn().expect("failed to spawn sub process");
                     defer!({
                         child.kill().expect("failed to kill sub process");
+                        let _ = child.wait();
                     });
 
                     wait_until!({
@@ -193,6 +195,7 @@ fn test_fail_fast_with_non_block() {
                 .expect("failed to spawn sub process");
             defer!({
                 child.kill().expect("failed to kill sub process");
+                let _ = child.wait();
             });
 
             wait_until!({

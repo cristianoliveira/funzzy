@@ -23,7 +23,7 @@ fn it_fails_when_config_file_alredy_exists() -> Result<(), Box<dyn std::error::E
             .assert()
             .failure()
             .stdout(
-                vec![
+                [
                     "\u{1b}[31mError\u{1b}[0m: Command failed to execute",
                     "Configuration file already exists (.watch.yaml)",
                     "",
@@ -62,9 +62,8 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
             // Restore the folder permissions first (so it can be removed),
             // then remove it, then restore the process cwd: sibling tests
             // in this binary rely on running from the repo root.
-            let mut perms = folder.permissions();
-            perms.set_readonly(false);
-            std::fs::set_permissions(".", perms).expect("failed to set read only");
+            std::fs::set_permissions(".", folder.permissions())
+                .expect("failed to restore folder permissions");
             let _ = std::fs::remove_dir_all(&dir);
             std::env::set_current_dir(&original_dir).expect("failed to restore dir");
         });
@@ -77,7 +76,7 @@ fn it_fails_folder_is_read_only() -> Result<(), Box<dyn std::error::Error>> {
             .assert()
             .failure()
             .stdout(
-                vec![
+                [
                     "Error: Command failed to execute",
                     "Failed to create the configuration file",
                     "Reason: Permission denied (os error 13)",

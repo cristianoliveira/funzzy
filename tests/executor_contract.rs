@@ -31,6 +31,7 @@ fn failing_plan_reports_same_outcome_in_wait_mode() {
             let mut child = fzz_cmd.spawn().expect("failed to spawn fzz");
             defer!({
                 let _ = child.kill();
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -68,6 +69,7 @@ fn failing_plan_reports_same_outcome_in_restart_mode() {
                 .expect("failed to spawn fzz");
             defer!({
                 let _ = child.kill();
+                let _ = child.wait();
             });
 
             let mut output = String::new();

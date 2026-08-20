@@ -121,6 +121,7 @@ fn restart_cancel_reaches_grandchildren() {
             let mut child = fzz_cmd.arg("--restart").spawn().expect("spawn fzz");
             defer!({
                 let _ = child.kill();
+                let _ = child.wait();
             });
 
             let mut output = String::new();

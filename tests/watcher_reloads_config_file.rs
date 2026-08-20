@@ -8,6 +8,7 @@ mod setup;
 /// - a no-op save (the example's init tasks touch the config file without
 ///   changing its content) reports no-op in-process (contract §3);
 /// - a real semantic change hot-reloads to a new revision in-process.
+///
 /// The child process never exits on a valid save.
 #[test]
 fn valid_config_change_hot_reloads_without_process_exit() {

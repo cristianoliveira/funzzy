@@ -26,6 +26,7 @@ fn test_it_writes_output_to_log_file() {
 
             defer!({
                 let _ = child.kill();
+                let _ = child.wait();
                 let _ = std::fs::remove_file(&log_path);
             });
 
@@ -43,7 +44,7 @@ fn test_it_writes_output_to_log_file() {
                 console_output
             );
 
-            console_output.truncate(0);
+            console_output.clear();
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 
@@ -104,6 +105,7 @@ fn test_it_truncates_log_on_config_change() {
         fn drop(&mut self) {
             if let Some(mut child) = self.child.take() {
                 let _ = child.kill();
+                let _ = child.wait();
             }
             let _ = std::fs::write(&self.config_path, &self.original_config);
             let _ = std::fs::remove_file(&self.log_path);
@@ -154,7 +156,7 @@ fn test_it_truncates_log_on_config_change() {
                 console_output
             );
 
-            console_output.truncate(0);
+            console_output.clear();
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 

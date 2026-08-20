@@ -66,7 +66,7 @@ pub fn fixture_root(label: &str) -> std::path::PathBuf {
     // resolve inside the fixture or fzz warns "unknown file/directory".
     for tree in ["examples", "src", "tests"] {
         copy_dir_recursive(tree, &root.join(tree))
-            .expect(&format!("failed to copy {} tree into fixture", tree));
+            .unwrap_or_else(|_| panic!("failed to copy {} tree into fixture", tree));
     }
     // Resolve symlink prefixes (macOS maps /var -> /private/var) so the
     // fixture paths the test writes, the paths notify reports, and the
@@ -97,32 +97,29 @@ pub const CLEAR_SCREEN: &str = "[2J";
 
 #[cfg(not(feature = "test-integration"))]
 #[allow(dead_code)]
-pub fn with_example<F>(_: Options, _: F) -> ()
+pub fn with_example<F>(_: Options, _: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     println!("WARNING: Skipping integration tests");
-    ()
 }
 
 #[cfg(not(feature = "test-integration"))]
 #[allow(dead_code)]
-pub fn with_config<F>(_: &std::path::Path, _: &str, _: F) -> ()
+pub fn with_config<F>(_: &std::path::Path, _: &str, _: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     println!("WARNING: Skipping integration tests");
-    ()
 }
 
 #[cfg(not(feature = "test-integration"))]
 #[allow(dead_code)]
-pub fn with_output<F>(_output_file_path: &str, _handler: F) -> ()
+pub fn with_output<F>(_output_file_path: &str, _handler: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     println!("WARNING: Skipping integration tests");
-    ()
 }
 
 #[cfg(feature = "test-integration")]

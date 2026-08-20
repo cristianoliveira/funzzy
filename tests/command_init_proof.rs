@@ -273,7 +273,7 @@ fn template_comments_cover_catalog_without_unsupported_properties() {
             // prose lines like "Next commands:" or "Comprehensive commented
             // starter:" never match.
             let key = key.trim();
-            (key.len() > 0 && key.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            (!key.is_empty() && key.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
                 .then(|| key.to_string())
         })
         .collect();

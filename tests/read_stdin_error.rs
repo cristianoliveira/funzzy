@@ -17,11 +17,9 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
         .assert()
         .failure()
         .stdout(
-            vec![
-                "Error: No files provided via stdin.",
+            ["Error: No files provided via stdin.",
                 "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.",
-                "",
-            ]
+                ""]
             .join("\n"),
         );
 
@@ -45,19 +43,17 @@ fn it_validates_when_given_list_of_paths_is_invalid() -> Result<(), Box<dyn std:
         .assert()
         .failure()
         .stdout(predicate::str::contains(
-            vec![
+            [
                 "Error: Failed to get rules from stdin",
                 "Unknown path \'total", //... 8' line 1
             ]
             .join("\n"))
         )
         .stdout(predicate::str::contains(
-            vec![
-                "Reason: No such file or directory (os error 2)",
+            ["Reason: No such file or directory (os error 2)",
                 "Hint: When using stdin, make sure to provide a list of valid files or directories.",
                 "The output of command `find` is a good example",
-                "",
-            ]
+                ""]
             .join("\n")),
         );
 

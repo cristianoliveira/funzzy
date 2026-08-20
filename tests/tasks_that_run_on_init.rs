@@ -24,6 +24,7 @@ fn test_it_executes_tasks_on_init_when_configured() {
 
                     defer!({
                         child.kill().expect("failed to kill child");
+                        let _ = child.wait();
                     });
 
                     let mut output = String::new();
@@ -107,6 +108,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
 
                     defer!({
                         child.kill().expect("failed to kill child");
+                        let _ = child.wait();
                     });
 
                     let mut output = String::new();

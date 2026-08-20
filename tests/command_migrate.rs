@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// TASK-0098: `fzz migrate` is the explicit, atomic, idempotent rewrite of
 /// accepted legacy configuration into the preferred `jobs:` form.
 /// `fzz init --migrate` is removed (V2 breaking cleanup, no deprecated path).
-
 fn scratch(label: &str) -> std::path::PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

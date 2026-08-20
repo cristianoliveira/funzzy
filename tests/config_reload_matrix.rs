@@ -113,12 +113,10 @@ fn status_generation_running(scratch: &std::path::Path) -> bool {
     }
     serde_json::from_str::<serde_json::Value>(&line)
         .ok()
-        .and_then(|value| {
+        .map(|value| {
             let result = value["result"].clone();
-            Some(
-                result["generation"].as_u64().unwrap_or(0) >= 1
-                    && result["state"].as_str() == Some("running"),
-            )
+            result["generation"].as_u64().unwrap_or(0) >= 1
+                && result["state"].as_str() == Some("running")
         })
         .unwrap_or(false)
 }
@@ -371,7 +369,7 @@ fn socket_path_change_binds_new_before_retiring_old() {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut new_connected = false;
         while std::time::Instant::now() < deadline {
-            if std::os::unix::net::UnixStream::connect(&scratch.join("sock2")).is_ok() {
+            if std::os::unix::net::UnixStream::connect(scratch.join("sock2")).is_ok() {
                 new_connected = true;
                 break;
             }

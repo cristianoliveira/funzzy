@@ -18,6 +18,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -34,7 +35,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
                 output
             );
 
-            output.truncate(0);
+            output.clear();
 
             write_to_file!(fixture.join("examples/workdir/ignored/modifyme.txt"));
 
@@ -55,7 +56,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
             // path also matches the workdir rule (no ignore), so the batch
             // triggers it; the ignoring task itself must never run (asserted
             // below).
-            output.truncate(0);
+            output.clear();
 
             write_to_file!(fixture.join("examples/workdir/another_ignored_file.foo"));
 
@@ -72,7 +73,7 @@ fn test_it_gives_more_context_of_events_when_using_verbose() {
                 output
             );
 
-            output.truncate(0);
+            output.clear();
 
             write_to_file!(fixture.join("examples/workdir/trigger-watcher.txt"));
 

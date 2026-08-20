@@ -4,12 +4,10 @@
 /// # Examples
 ///
 /// ```
-/// fn main() {
-///    defer!({
-///        println!("World");
-///    });
-///    println!("Hello");
-/// }
+/// defer!({
+///     println!("World");
+/// });
+/// println!("Hello");
 /// // Output:
 /// //   Hello
 /// //   World

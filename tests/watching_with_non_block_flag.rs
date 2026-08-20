@@ -21,6 +21,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -120,6 +121,7 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
 
                     defer!({
                         child.kill().expect("failed to kill child");
+                        let _ = child.wait();
                     });
 
                     let mut output = String::new();

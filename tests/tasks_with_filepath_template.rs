@@ -20,6 +20,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
@@ -108,6 +109,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
 
             defer!({
                 child.kill().expect("failed to kill child");
+                let _ = child.wait();
             });
 
             let mut output = String::new();
