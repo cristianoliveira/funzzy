@@ -1,7 +1,7 @@
 ---
 id: TASK-0120
 title: Define user-approved job recovery contract
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: [design, config, jobs, recovery, approval, determinism]
