@@ -99,7 +99,7 @@ cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`
 stops at the first failing task. **Logging**: `--log-file FILE` mirrors all
 output; **events**: `--events FILE` appends NDJSON run events.
 
-**Exit codes**: 0 success/no-op, 1 workflow/operational failure, 2 usage.
+**Exit codes**: 0 success/no-op, 1 workflow/operational failure, 2 usage. `--recovery-policy prompt|skip` overrides the configured policy for `fzz run` and watch sessions; it does not edit the config.
 
 ## 3. Configuration guide
 
@@ -117,6 +117,7 @@ on:
 execution:
   concurrency: 2          # scheduler bound (default: available parallelism)
   output: show-on-failure # default job output policy
+  recovery_policy: prompt # prompt | skip; default prompt
 
 hooks:
   success: echo "checks passed"
@@ -132,6 +133,10 @@ jobs:
     change: "src/**"      # per-job triggers
     ignore: "target/**"   # per-job ignores (strongest precedence)
     run_on_init: true     # run when the watcher starts
+
+  - name: format-check
+    run: cargo fmt --all -- --check
+    recovery: cargo fmt --all # offered only after an explicit failure approval
 ```
 
 - **Matching**: a job runs when a change glob matches and no ignore glob wins.
@@ -143,10 +148,44 @@ jobs:
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
 - **Hooks**: `hooks.success` runs after each passing generation and `hooks.failure` after each failing generation; neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run it (RUN-HOOKS-CONTRACT).
+- **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
   are rewritten deterministically with `fzz migrate`.
 
-## 4. Recovery actions
+## 4. Approved recovery workflow
+
+Use recovery only for a bounded, known-safe mutation. Configuration declares
+what may be offered; it never authorizes execution by itself:
+
+```yaml
+execution:
+  recovery_policy: prompt
+
+jobs:
+  - name: format-check @quick
+    run: cargo fmt --all -- --check
+    recovery: cargo fmt --all
+```
+
+After the original check fails, Funzzy prints the exact generation, job, and
+commands and asks `[y/N]`. Only `y` or `yes` authorizes the commands. The
+recovery runs sequentially and fail-fast, followed by one verification rerun.
+A declined, skipped, headless, cancelled, or failed recovery remains a final
+failure. There is no automatic acceptance and Funzzy does not infer approval
+from `CI=true`.
+
+For CI or detached watchers, opt out explicitly:
+
+```bash
+fzz run --recovery-policy skip "@quick"
+fzz watch --recovery-policy skip
+```
+
+`hooks.failure` is different: it observes the final failed generation and
+cannot change its result; `jobs[].recovery` runs before the final result and can
+make verification pass. Service jobs cannot declare recovery.
+
+## 5. Recovery actions
 
 | Symptom | Action |
 |---|---|

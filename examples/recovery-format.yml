@@ -1,0 +1,10 @@
+# User-approved formatting recovery.
+# `fzz run --recovery-policy skip "@quick"` is safe for CI/headless runs.
+execution:
+  recovery_policy: prompt
+
+jobs:
+  - name: format-check @quick
+    run: cargo fmt --all -- --check
+    recovery: cargo fmt --all
+    change: "**/*.rs"

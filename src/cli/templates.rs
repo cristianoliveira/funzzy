@@ -115,6 +115,7 @@ on:
 
 execution:
   concurrency: 2
+  recovery_policy: prompt
 
 jobs:
   - name: verify @agent-final
@@ -124,6 +125,7 @@ jobs:
 
   - name: lint @quick
     run: "cargo fmt -- --check"
+    recovery: "cargo fmt --"
     change: "src/**"
     run_on_init: true
 "#

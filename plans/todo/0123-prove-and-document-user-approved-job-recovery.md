@@ -1,7 +1,7 @@
 ---
 id: TASK-0123
 title: Prove and document user-approved job recoveries
-status: todo
+status: doing
 depends_on: [TASK-0122]
 priority: high
 tags: [integration-tests, docs, config, recovery, tty, reliability]

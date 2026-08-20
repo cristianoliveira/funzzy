@@ -106,6 +106,24 @@ structured output (TOON default for agents, JSON interoperability).
 `freshness: current` means the snapshot is exactly the requested generation;
 `stale` means a newer batch exists. Never reconstruct freshness by polling.
 
+### Recovery and control-socket boundaries
+
+A control client can observe recovery phase events and await the final result,
+but it cannot approve a recovery in this MVP. Approval is local to the
+foreground watcher TTY. Use an explicit policy for headless runs:
+
+```sh
+fzz run --recovery-policy skip "@quick"
+fzz watch --recovery-policy skip
+```
+
+With `prompt`, the watcher waits for one attached TTY answer after original
+jobs quiesce. Only `y` or `yes` runs the exact declared recovery commands; the
+commands run once and the original job is verified once. Empty input, `n`,
+invalid input, EOF, no TTY, cancellation, and supersession preserve failure.
+`--recovery-policy` overrides `execution.recovery_policy` for that invocation;
+`CI=true` is not inferred as approval.
+
 ## 3. Agent edit-feedback loop
 
 The compact loop (proven end-to-end, AGENT-FEEDBACK-CONTRACT §9):
