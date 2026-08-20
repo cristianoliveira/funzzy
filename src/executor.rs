@@ -1684,14 +1684,11 @@ mod tests {
     }
 
     fn recovery_rule(run: &str, recovery: &[&str]) -> Rules {
-        Rules::new(
-            "recoverable".to_owned(),
-            vec![run.to_owned()],
-            vec![],
-            vec![],
-            true,
-        )
-        .with_recovery(
+        named_recovery_rule("recoverable", run, recovery)
+    }
+
+    fn named_recovery_rule(name: &str, run: &str, recovery: &[&str]) -> Rules {
+        Rules::new(name.to_owned(), vec![run.to_owned()], vec![], vec![], true).with_recovery(
             recovery
                 .iter()
                 .map(|command| (*command).to_owned())
@@ -1769,6 +1766,40 @@ mod tests {
             vec![format!("touch '{path}'")]
         );
         let _ = std::fs::remove_file(marker);
+    }
+
+    #[test]
+    fn parallel_recovery_requests_follow_declaration_order() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            2,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests: Arc::clone(&requests),
+        }));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(47, "test"),
+            RunPlan::from_rules(vec![
+                named_recovery_rule("first", "false", &["true"]),
+                named_recovery_rule("second", "false", &["true"]),
+            ]),
+        );
+        let requests = requests.lock().unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.job.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        assert!(!completed.outcome.is_success());
     }
 
     #[test]
