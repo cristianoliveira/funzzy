@@ -44,8 +44,9 @@ fmt: ## Format the code (with cargo fmt) and add the changes to the git stage
 	@cargo fmt
 
 .PHONY: lint
-lint:
+lint: ## Check formatting and report the current Clippy baseline
 	@cargo fmt -- --check
+	@cargo clippy --locked --all-targets
 
 .PHONY: linter
 linter: lint

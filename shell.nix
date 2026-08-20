@@ -10,6 +10,7 @@ pkgs.mkShell {
     rustc
     cargo
     rustfmt
+    clippy
     libiconv
 
     gnused # for macos

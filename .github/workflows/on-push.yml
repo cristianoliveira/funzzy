@@ -19,7 +19,7 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@1.97.1
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Build
         run: make prebuild
