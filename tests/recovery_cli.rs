@@ -56,6 +56,10 @@ fn prompt_mode_without_tty_declines_for_funzzy_and_fzz() {
             !marker.exists(),
             "headless prompt must not mutate workspace"
         );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("no TTY"),
+            "headless decline should explain the safety reason"
+        );
     }
 }
 
@@ -69,4 +73,5 @@ fn explicit_skip_override_never_spawns_recovery() {
     let output = run(env!("CARGO_BIN_EXE_fzz"), &config_path, Some("skip"));
     assert!(!output.status.success(), "skip must preserve the failure");
     assert!(!marker.exists(), "skip must not mutate workspace");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("recovery_policy: skip"));
 }

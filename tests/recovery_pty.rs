@@ -92,8 +92,8 @@ fn approval_runs_exact_recovery_and_one_verification() {
             "approved recovery failed: status={status:?} output={output:?} root={root:?}"
         );
         assert!(marker.exists(), "approved recovery must execute");
-        assert!(output.contains("Recovery approval required"));
-        assert!(output.contains("generation=0"));
+        assert!(output.contains("Generation 0 failed in jobs: recover @quick"));
+        assert!(output.contains("Proposed recoveries (run once, in this order):"));
         assert!(output.contains("touch "));
     }
 }

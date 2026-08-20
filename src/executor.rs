@@ -63,6 +63,9 @@ pub struct RecoveryRequest {
 pub enum ApprovalDecision {
     Approved,
     Declined,
+    NoTty,
+    Eof,
+    Invalid,
 }
 
 pub trait RecoveryApproval: Send + Sync {
@@ -1010,15 +1013,31 @@ impl Executor {
             });
         }
 
-        let approved = matches!(
+        let decision = if matches!(
             run.metadata.recovery_policy,
             crate::config::RecoveryPolicy::Prompt
-        ) && matches!(self.approval.approve(&requests), ApprovalDecision::Approved);
-        if !approved {
-            let reason = match run.metadata.recovery_policy {
-                crate::config::RecoveryPolicy::Skip => "skipped",
-                crate::config::RecoveryPolicy::Prompt => "declined",
+        ) {
+            self.approval.approve(&requests)
+        } else {
+            ApprovalDecision::Declined
+        };
+        if !matches!(decision, ApprovalDecision::Approved) {
+            let reason = match (run.metadata.recovery_policy, decision) {
+                (crate::config::RecoveryPolicy::Skip, _) => "recovery_policy: skip",
+                (_, ApprovalDecision::NoTty) => "no TTY",
+                (_, ApprovalDecision::Eof) => "EOF",
+                (_, ApprovalDecision::Invalid) => "invalid answer",
+                (_, ApprovalDecision::Declined) => "declined",
+                (_, ApprovalDecision::Approved) => unreachable!(),
             };
+            stdout::warn(&format!(
+                "Recovery for job(s) {} was not run: {reason}",
+                requests
+                    .iter()
+                    .map(|request| request.job.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
             for task in pending.drain(..) {
                 self.events.emit(Event::RecoveryPhase {
                     run_id: run.metadata.run_id,

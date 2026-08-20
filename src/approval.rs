@@ -15,35 +15,49 @@ impl RecoveryApproval for TtyRecoveryApproval {
         let stdin = io::stdin();
         let stdout = io::stdout();
         if !stdin.is_terminal() || !stdout.is_terminal() {
-            return ApprovalDecision::Declined;
+            return ApprovalDecision::NoTty;
         }
 
         let mut output = stdout.lock();
-        let _ = writeln!(
-            output,
-            "Recovery approval required for the failed generation:"
-        );
+        let generation = requests
+            .first()
+            .map(|request| request.generation)
+            .unwrap_or_default();
+        let jobs = requests
+            .iter()
+            .map(|request| request.job.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(output, "Generation {generation} failed in jobs: {jobs}");
+        let _ = writeln!(output, "Proposed recoveries (run once, in this order):");
         for request in requests {
             let _ = writeln!(
                 output,
-                "  generation={} job={} (position={})",
-                request.generation, request.job, request.job_position
+                "  [{}] (position={})",
+                request.job, request.job_position
             );
+
             for (index, command) in request.commands.iter().enumerate() {
                 let _ = writeln!(output, "    {}. {}", index + 1, command);
             }
         }
-        let _ = write!(output, "Run these recoveries once and verify? [y/N] ");
+        let _ = writeln!(output, "These commands may mutate the workspace.");
+        let _ = write!(
+            output,
+            "Run these recoveries and verify the failed jobs? [y/N] "
+        );
         let _ = output.flush();
         drop(output);
 
         let mut answer = String::new();
         if stdin.read_line(&mut answer).is_err() {
-            return ApprovalDecision::Declined;
+            return ApprovalDecision::Eof;
         }
         match answer.trim().to_ascii_lowercase().as_str() {
             "y" | "yes" => ApprovalDecision::Approved,
-            _ => ApprovalDecision::Declined,
+            "" => ApprovalDecision::Eof,
+            "n" | "no" => ApprovalDecision::Declined,
+            _ => ApprovalDecision::Invalid,
         }
     }
 }
