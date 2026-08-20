@@ -49,6 +49,7 @@ pub struct PolicyDefaults {
     pub debounce: Duration,
     pub backend: WatchBackend,
     pub gitignore: bool,
+    pub recovery_policy: crate::config::RecoveryPolicy,
     pub hooks: GenerationHooks,
     pub session_hooks: SessionHooks,
 }
@@ -94,6 +95,9 @@ pub fn validate_candidate(
         .unwrap_or(defaults.backend);
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(semantic)?;
+    let recovery_policy =
+        crate::config::recovery_policy_from_yaml_with_default(content, defaults.recovery_policy)
+            .map_err(semantic)?;
     let hooks = crate::config::generation_hooks_from_yaml(content).map_err(semantic)?;
     let session_hooks = crate::config::session_hooks_from_yaml(content).map_err(semantic)?;
     let control_socket = crate::config::control_socket_from_yaml(content)
@@ -107,6 +111,7 @@ pub fn validate_candidate(
         debounce,
         backend,
         respect_gitignore,
+        recovery_policy,
         hooks,
         session_hooks,
         control_socket,
@@ -184,6 +189,7 @@ mod tests {
             debounce: Duration::from_millis(1000),
             backend: WatchBackend::Native,
             gitignore: false,
+            recovery_policy: crate::config::RecoveryPolicy::Prompt,
             hooks: GenerationHooks::default(),
             session_hooks: crate::config::SessionHooks::default(),
         }

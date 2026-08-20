@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 
 /// Schema version of the canonical signature encoding (contract §5). Bump
 /// only on a breaking encoding change; bumping invalidates all old profiles.
-pub const SIGNATURE_SCHEMA_VERSION: u64 = 1;
+pub const SIGNATURE_SCHEMA_VERSION: u64 = 2;
 
 /// Process context applied only to one task's child commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -49,6 +49,8 @@ pub struct TaskPlan {
     pub position: usize,
     /// Sequential commands, in declared order, after template expansion.
     pub commands: Vec<CommandLine>,
+    /// Optional job-local recovery commands, after template expansion.
+    pub recovery_commands: Option<Vec<CommandLine>>,
     /// Optional named `parallel` group this task belongs to.
     pub parallel: Option<String>,
     /// Stable group-occurrence identity `name#N` (contract §1): the named
@@ -103,7 +105,10 @@ impl TaskPlan {
     /// Expands template variables in this task's commands for the given
     /// path options, returning the expanded commands and any unknown
     /// variables. Pure: no process, stdout, or control-socket side effects.
-    pub fn expand(&self, opts: &TemplateOptions) -> (Vec<CommandLine>, Vec<String>) {
+    pub fn expand(
+        &self,
+        opts: &TemplateOptions,
+    ) -> (Vec<CommandLine>, Option<Vec<CommandLine>>, Vec<String>) {
         let mut unknown = vec![];
         let mut task_options = opts.clone();
         if let Some(cwd) = &self.context.cwd {
@@ -118,7 +123,17 @@ impl TaskPlan {
                 out.command
             })
             .collect();
-        (expanded, unknown)
+        let recovery = self.recovery_commands.as_ref().map(|commands| {
+            commands
+                .iter()
+                .map(|cmd| {
+                    let out = template::template_line(cmd.clone(), task_options.clone());
+                    unknown.extend(out.unknown_variables);
+                    out.command
+                })
+                .collect()
+        });
+        (expanded, recovery, unknown)
     }
 }
 
@@ -231,6 +246,7 @@ impl RunPlan {
                 name: rule.name.clone(),
                 position,
                 commands: rule.command_lines(),
+                recovery_commands: rule.recovery_command_lines(),
                 parallel: rule.parallel().map(str::to_string),
                 group_occurrence: None,
                 context: TaskContext {
@@ -305,20 +321,22 @@ impl RunPlan {
             .iter()
             .map(|stage| match stage {
                 Stage::Serial(task) => {
-                    let (commands, task_unknown) = task.expand(opts);
+                    let (commands, recovery_commands, task_unknown) = task.expand(opts);
                     unknown.extend(task_unknown);
                     let mut expanded = task.clone();
                     expanded.commands = commands;
+                    expanded.recovery_commands = recovery_commands;
                     Stage::Serial(expanded)
                 }
                 Stage::Parallel { group, tasks } => {
                     let tasks = tasks
                         .iter()
                         .map(|task| {
-                            let (commands, task_unknown) = task.expand(opts);
+                            let (commands, recovery_commands, task_unknown) = task.expand(opts);
                             unknown.extend(task_unknown);
                             let mut expanded = task.clone();
                             expanded.commands = commands;
+                            expanded.recovery_commands = recovery_commands;
                             expanded
                         })
                         .collect();
@@ -510,6 +528,28 @@ impl TaskPlan {
                 }
             }
         }
+        match &self.recovery_commands {
+            Some(commands) => {
+                canonical.byte(1);
+                canonical.u64(commands.len() as u64);
+                for command in commands {
+                    match command {
+                        CommandLine::Shell(command) => {
+                            canonical.byte(0);
+                            canonical.string(command);
+                        }
+                        CommandLine::Argv(argv) => {
+                            canonical.byte(1);
+                            canonical.u64(argv.len() as u64);
+                            for argument in argv {
+                                canonical.string(argument);
+                            }
+                        }
+                    }
+                }
+            }
+            None => canonical.byte(0),
+        }
         match &self.context.cwd {
             Some(cwd) => {
                 canonical.byte(1);
@@ -609,6 +649,55 @@ mod tests {
         assert_eq!(names(&plan), vec!["A", "B"]);
         assert!(matches!(plan.stages[0], Stage::Serial(_)));
         assert!(matches!(plan.stages[1], Stage::Serial(_)));
+    }
+
+    #[test]
+    fn recovery_commands_are_carried_and_expanded_with_run_commands() {
+        let rule = rule("format", None, false).with_recovery(vec![
+            "format {{filepath}}".to_owned(),
+            "git diff --check".to_owned(),
+        ]);
+        let plan = RunPlan::from_rules(vec![rule]);
+        let task = match &plan.stages[0] {
+            Stage::Serial(task) => task,
+            Stage::Parallel { .. } => panic!("expected serial task"),
+        };
+        assert_eq!(
+            task.recovery_commands,
+            Some(vec![
+                CommandLine::Shell("format {{filepath}}".to_owned()),
+                CommandLine::Shell("git diff --check".to_owned()),
+            ])
+        );
+        let (expanded, unknown) = plan.expand(&TemplateOptions {
+            filepath: Some("src/lib.rs".to_owned()),
+            paths: vec![],
+            current_dir: "/workspace".to_owned(),
+        });
+        let task = match &expanded.stages[0] {
+            Stage::Serial(task) => task,
+            Stage::Parallel { .. } => panic!("expected serial task"),
+        };
+        assert!(unknown.is_empty());
+        assert_eq!(
+            task.recovery_commands,
+            Some(vec![
+                CommandLine::Shell("format src/lib.rs".to_owned()),
+                CommandLine::Shell("git diff --check".to_owned())
+            ])
+        );
+    }
+
+    #[test]
+    fn recovery_changes_execution_signature() {
+        let plain = RunPlan::from_rules(vec![rule("format", None, false)]);
+        let recovery = RunPlan::from_rules(vec![
+            rule("format", None, false).with_recovery(vec!["format".to_owned()])
+        ]);
+        assert_ne!(
+            plain.execution_signature(1, false),
+            recovery.execution_signature(1, false)
+        );
     }
 
     #[test]
@@ -1022,7 +1111,7 @@ mod tests {
             paths: vec![],
             current_dir: "/root".to_owned(),
         };
-        let (expanded, unknown) = task.expand(&opts);
+        let (expanded, recovery, unknown) = task.expand(&opts);
 
         // Expanded path values are preserved exactly.
         assert_eq!(
@@ -1031,6 +1120,7 @@ mod tests {
                 "echo /root/src/main.rs src/main.rs {{oops}}".to_owned()
             )]
         );
+        assert_eq!(recovery, None);
         // Unknown template variables are reported without side effects.
         assert_eq!(unknown, vec!["oops".to_owned()]);
     }
@@ -1057,7 +1147,7 @@ mod tests {
         assert_eq!(first.to_string().len(), 64, "sha256 lowercase hex");
         assert_eq!(
             first.to_string(),
-            "26bc5e11aa85e0d317a877e6a2dbb2e1f0e200316e445f9d2cff17735ce561bb"
+            "b1d26b16da54ba57ecbb973c66ac6bd5108853ae37956efedfe1c3fdaca216df"
         );
     }
 

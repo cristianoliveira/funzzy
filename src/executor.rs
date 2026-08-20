@@ -1396,6 +1396,7 @@ mod tests {
                 name: "test".to_owned(),
                 position: 0,
                 commands,
+                recovery_commands: None,
                 parallel: None,
                 group_occurrence: None,
                 rule,

@@ -17,6 +17,8 @@ pub struct ExplainRule {
     pub cwd: String,
     /// Task-local environment names; values remain redacted.
     pub environment_keys: Vec<String>,
+    /// Whether this job declares an available recovery; approval is separate.
+    pub recovery_available: bool,
     /// Where the effective rule came from (TASK-0023): `task` or `group`
     /// when the responsible pattern was inherited from a group `on` section.
     pub origin: String,
@@ -94,6 +96,8 @@ pub struct Watches {
     backend: crate::watcher::WatchBackend,
     /// Whether workspace `.gitignore` rules are respected (TASK-0036).
     respect_gitignore: bool,
+    /// Effective user-approved recovery policy for failed jobs.
+    recovery_policy: crate::config::RecoveryPolicy,
     /// Generation terminal hooks (TASK-0040): success/failure commands.
     hooks: crate::config::GenerationHooks,
     /// Watcher-session terminal hook (TASK-0101): close command. Kept out of
@@ -139,6 +143,7 @@ impl Watches {
             backend: crate::watcher::WatchBackend::Auto,
             respect_gitignore: false,
             gitignore: None,
+            recovery_policy: crate::config::RecoveryPolicy::Prompt,
             hooks: crate::config::GenerationHooks::default(),
             session_hooks: crate::config::SessionHooks::default(),
             revision: None,
@@ -201,6 +206,17 @@ impl Watches {
         self.respect_gitignore
     }
 
+    /// Sets the effective user-approved recovery policy.
+    pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
+        self.recovery_policy = policy;
+        self
+    }
+
+    /// The effective recovery policy for this frozen watch configuration.
+    pub fn recovery_policy(&self) -> crate::config::RecoveryPolicy {
+        self.recovery_policy
+    }
+
     /// Overrides run-level terminal hooks (TASK-0040).
     pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
@@ -260,6 +276,7 @@ impl Watches {
             backend: self.backend,
             respect_gitignore: self.respect_gitignore,
             gitignore: self.gitignore.clone(),
+            recovery_policy: self.recovery_policy,
             hooks: self.hooks.clone(),
             session_hooks: self.session_hooks.clone(),
             revision: self.revision.clone(),
@@ -567,6 +584,7 @@ impl Watches {
                     ignore_patterns: vec![],
                     cwd,
                     environment_keys,
+                    recovery_available: rule.recovery_commands().is_some(),
                     origin,
                 });
             } else {
@@ -581,6 +599,7 @@ impl Watches {
                     ignore_patterns: effective_ignores,
                     cwd,
                     environment_keys,
+                    recovery_available: rule.recovery_commands().is_some(),
                     origin,
                 });
             }

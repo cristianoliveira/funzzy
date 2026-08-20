@@ -46,6 +46,7 @@ pub struct OptionSpec {
 
 const OUTPUT_VALUES: &[&str] = &["inherit", "quiet", "capture", "show-on-failure"];
 const BACKEND_VALUES: &[&str] = &["native", "poll", "auto"];
+const RECOVERY_POLICY_VALUES: &[&str] = &["prompt", "skip"];
 
 /// Ordered `on:` properties — order is stable and defines comment/schema order
 /// (INIT-TEMPLATE-CONTRACT §8).
@@ -143,6 +144,16 @@ const EXECUTION_SPECS: &[OptionSpec] = &[
         example: &["output: quiet"],
         kind: SpecKind::Enum(OUTPUT_VALUES),
     },
+    OptionSpec {
+        name: "recovery_policy",
+        owner: Owner::Execution,
+        required: false,
+        default: Some("prompt"),
+        help: "Recovery approval policy for failed jobs with a recovery command; missing TTY safely skips.",
+        values: Some("prompt | skip"),
+        example: &["recovery_policy: prompt"],
+        kind: SpecKind::Enum(RECOVERY_POLICY_VALUES),
+    },
 ];
 
 const HOOK_SPECS: &[OptionSpec] = &[
@@ -198,6 +209,16 @@ const JOB_SPECS: &[OptionSpec] = &[
         help: "Command(s): a shell string or an argv list. Template variables: {{filepath}}, {{paths}}, {{relative_filepath}}.",
         values: None,
         example: &["run: [\"echo\", \"{{filepath}}\", \"{{paths}}\"]"],
+        kind: SpecKind::StringList,
+    },
+    OptionSpec {
+        name: "recovery",
+        owner: Owner::Job,
+        required: false,
+        default: None,
+        help: "Optional ordered shell commands offered for one approved recovery after this job fails; declaration never authorizes execution.",
+        values: None,
+        example: &["recovery: cargo fmt --all"],
         kind: SpecKind::StringList,
     },
     OptionSpec {
@@ -382,7 +403,10 @@ mod tests {
                 "respect_gitignore"
             ]
         );
-        assert_eq!(property_names(Owner::Execution), ["concurrency", "output"]);
+        assert_eq!(
+            property_names(Owner::Execution),
+            ["concurrency", "output", "recovery_policy"]
+        );
         assert_eq!(
             property_names(Owner::Hooks),
             ["success", "failure", "close"]
@@ -394,6 +418,7 @@ mod tests {
         let expected = [
             "name",
             "run",
+            "recovery",
             "change",
             "ignore",
             "run_on_init",

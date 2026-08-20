@@ -63,6 +63,7 @@ impl ReloadSession {
             debounce,
             backend: watches.backend(),
             gitignore: watches.respects_gitignore(),
+            recovery_policy: watches.recovery_policy(),
             hooks: watches.hooks(),
             session_hooks: watches.session_hooks(),
         };
@@ -397,7 +398,8 @@ fn fatal_reload(
 
 /// Builds a fresh `Watches` from a validated config candidate, bound to the
 /// new revision (TASK-0090 commit). The candidate's OWN declared policy
-/// (concurrency/debounce/backend/gitignore/hooks) is parsed from the content;
+/// (concurrency/debounce/backend/gitignore/recovery/hooks) is parsed from the content;
+
 /// missing keys keep the startup defaults — so a policy change committed by
 /// the reload is actually applied to post-commit generations (TASK-0092).
 fn build_watches_from_content(
@@ -419,6 +421,10 @@ fn build_watches_from_content(
         .unwrap_or(defaults.backend);
     let respect_gitignore =
         crate::config::respect_gitignore_from_yaml(content).map_err(|err| err.to_string())?;
+    let recovery_policy =
+        crate::config::recovery_policy_from_yaml_with_default(content, defaults.recovery_policy)
+            .map_err(|err| err.to_string())?;
+
     let hooks =
         crate::config::generation_hooks_from_yaml(content).map_err(|err| err.to_string())?;
     let session_hooks =
@@ -428,6 +434,7 @@ fn build_watches_from_content(
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(respect_gitignore)
+            .with_recovery_policy(recovery_policy)
             .with_hooks(hooks)
             .with_session_hooks(session_hooks)
             .with_revision(revision),

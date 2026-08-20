@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 1;
+pub const REVISION_SCHEMA_VERSION: u64 = 2;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -46,6 +46,7 @@ pub struct RuntimeConfig {
     pub debounce: Duration,
     pub backend: WatchBackend,
     pub respect_gitignore: bool,
+    pub recovery_policy: crate::config::RecoveryPolicy,
     pub hooks: GenerationHooks,
     pub session_hooks: SessionHooks,
     /// Control socket path from `on.socket` (TASK-0090 AC8): part of the
@@ -66,6 +67,7 @@ impl RuntimeConfig {
         debounce: Duration,
         backend: WatchBackend,
         respect_gitignore: bool,
+        recovery_policy: crate::config::RecoveryPolicy,
         hooks: GenerationHooks,
         session_hooks: SessionHooks,
         control_socket: Option<PathBuf>,
@@ -77,6 +79,7 @@ impl RuntimeConfig {
             debounce,
             backend,
             respect_gitignore,
+            recovery_policy,
             hooks,
             session_hooks,
             control_socket,
@@ -115,6 +118,10 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
     canonical.u64(config.debounce.as_millis() as u64);
     canonical.string(&backend_tag(config.backend));
     canonical.bool(config.respect_gitignore);
+    canonical.string(match config.recovery_policy {
+        crate::config::RecoveryPolicy::Prompt => "prompt",
+        crate::config::RecoveryPolicy::Skip => "skip",
+    });
     canonical.string(&hooks_tag(&config.hooks));
     canonical.string(&format!("{:?}", config.session_hooks));
     // AC8: the control socket path is part of the semantic surface.
@@ -164,6 +171,17 @@ fn encode_rule(canonical: &mut CanonicalEncoder, rule: &Rules) {
     canonical.u64(commands.len() as u64);
     for command in &commands {
         canonical.string(command);
+    }
+
+    match rule.recovery_commands() {
+        Some(recovery) => {
+            canonical.byte(1);
+            canonical.u64(recovery.len() as u64);
+            for command in recovery {
+                canonical.string(&command);
+            }
+        }
+        None => canonical.byte(0),
     }
 
     // Environment: KEYS ONLY (sorted). Values are secrets and never enter
@@ -349,6 +367,7 @@ mod tests {
             Duration::from_millis(1000),
             WatchBackend::Native,
             false,
+            crate::config::RecoveryPolicy::Prompt,
             GenerationHooks::default(),
             SessionHooks::default(),
             None,
@@ -364,13 +383,14 @@ mod tests {
             Duration::from_millis(1000),
             WatchBackend::Native,
             false,
+            crate::config::RecoveryPolicy::Prompt,
             GenerationHooks::default(),
             SessionHooks::default(),
             None,
         );
         assert_eq!(
             semantic_hash(&config),
-            "6e48785ccf1cb8df5b95818898955fd23f6e33709637e81292b1cef9af24dc65"
+            "b215943524772f865efd5d158cbed9a78337cc2a73a5d556a48ca61147c87994"
         );
     }
 
@@ -467,6 +487,15 @@ mod tests {
             ..base.clone()
         };
         assert_ne!(semantic_hash(&base), semantic_hash(&different_debounce));
+
+        let different_recovery_policy = RuntimeConfig {
+            recovery_policy: crate::config::RecoveryPolicy::Skip,
+            ..base.clone()
+        };
+        assert_ne!(
+            semantic_hash(&base),
+            semantic_hash(&different_recovery_policy)
+        );
     }
 
     #[test]
@@ -649,6 +678,7 @@ mod history_tests {
             Duration::from_millis(1000),
             WatchBackend::Native,
             false,
+            crate::config::RecoveryPolicy::Prompt,
             GenerationHooks::default(),
             SessionHooks::default(),
             None,

@@ -27,6 +27,9 @@ pub struct Rules {
     pub name: String,
 
     commands: Vec<String>,
+    /// Optional job-local recovery commands, in declaration order. Recovery
+    /// is unavailable on ad-hoc exec rules and is never inferred.
+    recovery: Option<Vec<String>>,
     /// When present, the rule is an ad-hoc `exec` command: this exact argv
     /// is spawned directly without a shell. Mutually exclusive with
     /// `commands` (an argv rule has no shell command list).
@@ -63,6 +66,7 @@ impl Rules {
         Rules {
             name,
             commands,
+            recovery: None,
             argv: None,
             watch_patterns: watches,
             ignore_patterns: ignores,
@@ -89,6 +93,7 @@ impl Rules {
         Rules {
             name,
             commands: vec![],
+            recovery: None,
             argv: Some(argv),
             watch_patterns: watches,
             ignore_patterns: ignores,
@@ -103,6 +108,12 @@ impl Rules {
     }
 
     /// Adds task-local process context without mutating parent process.
+    /// Adds an optional job-local recovery command list, preserving order.
+    pub fn with_recovery(mut self, commands: Vec<String>) -> Self {
+        self.recovery = Some(commands);
+        self
+    }
+
     pub fn with_execution_context(
         mut self,
         cwd: Option<String>,
@@ -293,6 +304,21 @@ impl Rules {
         }
     }
 
+    /// Returns the optional job-local recovery commands in declaration order.
+    pub fn recovery_commands(&self) -> Option<Vec<String>> {
+        self.recovery.clone()
+    }
+
+    /// Returns recovery commands as shell command lines, preserving absence.
+    pub fn recovery_command_lines(&self) -> Option<Vec<CommandLine>> {
+        self.recovery.as_ref().map(|commands| {
+            commands
+                .iter()
+                .map(|command| CommandLine::Shell(command.clone()))
+                .collect()
+        })
+    }
+
     pub fn watch_patterns(&self) -> Vec<String> {
         self.watch_patterns.clone()
     }
@@ -333,6 +359,13 @@ impl Rules {
         if self.command_lines().is_empty() {
             return Err(format!(
                 "job '{}' contains no command to run. Empty 'run' property.",
+                name
+            ));
+        }
+
+        if self.service && self.recovery.is_some() {
+            return Err(format!(
+                "job '{}' cannot declare recovery when service is true",
                 name
             ));
         }
@@ -481,6 +514,9 @@ pub fn available_targets(rules: &[Rules]) -> String {
         if rule.run_on_init {
             output.push_str("    run_on_init: true\n");
         }
+        if rule.recovery.is_some() {
+            output.push_str("    recovery: configured (approval required)\n");
+        }
     }
 
     output
@@ -553,6 +589,22 @@ mod tests {
         );
         // Display form joins for presentation only; execution keeps argv.
         assert_eq!(rule.commands(), vec!["echo hello world"]);
+    }
+
+    #[test]
+    fn recovery_commands_are_optional_and_ordered() {
+        let without = rule("plain", &["check"], &[], &[], false);
+        assert_eq!(without.recovery_commands(), None);
+
+        let with = without.with_recovery(vec!["format".to_owned(), "git diff --check".to_owned()]);
+        assert_eq!(
+            with.recovery_command_lines(),
+            Some(vec![
+                super::CommandLine::Shell("format".to_owned()),
+                super::CommandLine::Shell("git diff --check".to_owned()),
+            ])
+        );
+        assert!(with.clone().with_service(true).validate().is_err());
     }
 
     #[test]

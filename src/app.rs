@@ -159,6 +159,7 @@ pub fn run() {
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
+            .with_recovery_policy(load_recovery_policy(&args.config))
             .with_hooks(load_hooks(&args.config))
             .with_session_hooks(load_session_hooks(&args.config));
             // TASK-0092: resolve the config-declared control socket BEFORE
@@ -183,6 +184,7 @@ pub fn run() {
                     debounce,
                     backend,
                     load_respect_gitignore(&args.config),
+                    load_recovery_policy(&args.config),
                     load_hooks(&args.config),
                     load_session_hooks(&args.config),
                     control_socket.as_deref().map(std::path::PathBuf::from),
@@ -224,7 +226,8 @@ pub fn run() {
                 workspace_root.clone(),
                 concurrency,
             )
-            .with_debounce(debounce);
+            .with_debounce(debounce)
+            .with_recovery_policy(load_recovery_policy(&args.config));
             let plan = match watches.run_target_plan(target) {
                 Ok(plan) => plan,
                 Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
@@ -275,6 +278,7 @@ pub fn run() {
             .with_debounce(load_debounce(&args.config))
             .with_backend(load_watch_backend(&args.config))
             .with_gitignore(load_respect_gitignore(&args.config))
+            .with_recovery_policy(load_recovery_policy(&args.config))
             .with_hooks(load_hooks(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
@@ -371,6 +375,9 @@ fn explain_output(
                 "        env keys: [{}]\n",
                 rule.environment_keys.join(", ")
             ));
+            if rule.recovery_available {
+                output.push_str("        recovery: configured (approval required)\n");
+            }
             for change in &rule.change_patterns {
                 output.push_str(&format!("        change: {}\n", change));
             }
@@ -386,6 +393,9 @@ fn explain_output(
                 "        env keys: [{}]\n",
                 rule.environment_keys.join(", ")
             ));
+            if rule.recovery_available {
+                output.push_str("        recovery: configured (approval required)\n");
+            }
             for change in &rule.change_patterns {
                 output.push_str(&format!("        change: {}\n", change));
             }
@@ -469,6 +479,8 @@ fn check_config(config_file: &Option<String>) {
     {
         stdout::info(&format!("debounce: {:?}", debounce));
     }
+    let _recovery_policy = config::recovery_policy_from_file(&config_path)
+        .unwrap_or_else(|err| stdout::failure("Invalid recovery policy config", err));
     let concurrency = config::concurrency_from_file(&config_path)
         .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
         .unwrap_or_else(|| {
@@ -620,6 +632,24 @@ fn load_respect_gitignore(config_file: &Option<String>) -> bool {
     };
     config::respect_gitignore_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid gitignore config", err))
+}
+
+fn load_recovery_policy(config_file: &Option<String>) -> config::RecoveryPolicy {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return config::RecoveryPolicy::Prompt;
+    };
+    config::recovery_policy_from_file(&path)
+        .unwrap_or_else(|err| stdout::failure("Invalid recovery policy config", err))
 }
 
 fn load_concurrency(config_file: &Option<String>) -> usize {

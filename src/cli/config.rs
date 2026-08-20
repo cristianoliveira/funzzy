@@ -120,14 +120,21 @@ fn section_on() -> Value {
 }
 
 fn section_job() -> Value {
-    json!({
+    let mut schema = json!({
         "type": "object",
         "title": "job",
         "description": "One configured workflow unit. Runs as a task in each generation.",
         "required": ["name", "run"],
         "properties": section_properties(Owner::Job),
         "additionalProperties": false
-    })
+    });
+    schema["allOf"] = json!([{
+        "not": {
+            "required": ["service", "recovery"],
+            "properties": { "service": { "const": true } }
+        }
+    }]);
+    schema
 }
 
 fn section_matching() -> Value {

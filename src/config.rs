@@ -19,6 +19,13 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::time::Duration;
 pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
+    if yaml["recovery"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'recovery' is supported only in preferred V2 jobs".to_owned(),
+            None,
+            Some("Move this task into a `jobs:` configuration before adding recovery.".to_owned()),
+        ));
+    }
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns = ensure_glob_only(
@@ -257,6 +264,17 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     }
     let key = if has_jobs { "jobs" } else { "tasks" };
 
+    if has_tasks {
+        if yaml["execution"]["recovery_policy"] != Yaml::BadValue {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'execution.recovery_policy' is supported only in preferred V2 jobs"
+                    .to_owned(),
+                None,
+                Some("Rename 'tasks' to 'jobs' before configuring recovery policy.".to_owned()),
+            ));
+        }
+    }
+
     // Extract the jobs/tasks array (ordered list; mapping form is rejected so
     // declaration order can never be reordered implicitly).
     let tasks_yaml = &yaml[key];
@@ -305,6 +323,8 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     }
 
     validate_v2_sections(yaml)?;
+    recovery_policy_from_root(yaml)
+        .map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))?;
 
     // Extract common rules from the 'on' section (optional). Execution policy
     // has its own V2 owner and is inherited by jobs that omit `output`.
@@ -316,6 +336,13 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     let mut rules = vec![];
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for task_yaml in tasks_array {
+        if has_tasks && task_yaml["recovery"] != Yaml::BadValue {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'recovery' is supported only in preferred V2 jobs".to_owned(),
+                None,
+                Some("Rename 'tasks' to 'jobs' before declaring a recovery.".to_owned()),
+            ));
+        }
         let rule = rule_from_with_common(task_yaml, &common_rules)?;
         if !seen.insert(rule.name.clone()) {
             return Err(errors::FzzError::InvalidConfigError(
@@ -410,6 +437,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
     let cwd = yaml::extract_optional_string(yaml, "cwd")?;
     let environment = yaml::extract_optional_string_map(yaml, "env")?;
+    let recovery = recovery_commands_from_yaml(yaml, &name)?;
     // Strict: `service` must be a boolean when present (TASK-0035); a typo
     // like `yes` must not silently disable service management.
     let service = match &yaml["service"] {
@@ -426,6 +454,20 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ))
         }
     };
+    if service && recovery.is_some() {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' cannot declare recovery when service is true",
+                name
+            ),
+            None,
+            Some(
+                "A service has no finite verification boundary; remove `recovery` or `service`."
+                    .to_owned(),
+            ),
+        ));
+    }
+
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => common.output_policy,
         Some(raw) => match raw.as_str() {
@@ -451,10 +493,70 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         .with_inherited_patterns(inherited_patterns(common))
         .with_output(output)
         .with_service(service);
+    let rule = match recovery {
+        Some(commands) => rule.with_recovery(commands),
+        None => rule,
+    };
     Ok(match parallel {
         Some(group) => rule.with_parallel(group),
         None => rule,
     })
+}
+
+fn recovery_commands_from_yaml(yaml: &Yaml, name: &str) -> errors::Result<Option<Vec<String>>> {
+    match &yaml["recovery"] {
+        Yaml::BadValue => Ok(None),
+        Yaml::String(command) if command.trim().is_empty() => {
+            Err(errors::FzzError::InvalidConfigError(
+                format!("Job '{}' recovery must be a non-empty command", name),
+                None,
+                None,
+            ))
+        }
+        Yaml::String(command) => Ok(Some(vec![command.clone()])),
+        Yaml::Array(commands) if commands.is_empty() => Err(errors::FzzError::InvalidConfigError(
+            format!("Job '{}' recovery must contain at least one command", name),
+            None,
+            None,
+        )),
+        Yaml::Array(commands) => {
+            let mut parsed = Vec::with_capacity(commands.len());
+            for (index, command) in commands.iter().enumerate() {
+                let Some(command) = command.as_str() else {
+                    return Err(errors::FzzError::InvalidConfigError(
+                        format!(
+                            "Job '{}' recovery command {} must be a string",
+                            name,
+                            index + 1
+                        ),
+                        None,
+                        None,
+                    ));
+                };
+                if command.trim().is_empty() {
+                    return Err(errors::FzzError::InvalidConfigError(
+                        format!(
+                            "Job '{}' recovery command {} must be non-empty",
+                            name,
+                            index + 1
+                        ),
+                        None,
+                        None,
+                    ));
+                }
+                parsed.push(command.to_owned());
+            }
+            Ok(Some(parsed))
+        }
+        _ => Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' recovery must be a command string or ordered string list",
+                name
+            ),
+            None,
+            None,
+        )),
+    }
 }
 
 /// Append task-specific patterns to the common ones, dropping duplicates.
@@ -624,8 +726,72 @@ pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String
     control_socket_from_yaml(&content)
 }
 
-/// Reads optional global `execution.concurrency` cap. Missing yields `Ok(None)`
-/// (caller decides default); zero, negative, and non-integer values fail.
+/// Policy for whether a failed job's configured recovery may be offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecoveryPolicy {
+    Prompt,
+    Skip,
+}
+
+/// Reads `execution.recovery_policy`. Preferred V2 defaults to `prompt`;
+/// legacy task-list inputs cannot opt into this policy through YAML.
+pub fn recovery_policy_from_yaml(content: &str) -> Result<RecoveryPolicy, String> {
+    recovery_policy_from_yaml_with_default(content, RecoveryPolicy::Prompt)
+}
+
+/// Parses the recovery policy while preserving a caller's startup default when
+/// the candidate omits the policy entirely (used by live reload).
+pub fn recovery_policy_from_yaml_with_default(
+    content: &str,
+    default: RecoveryPolicy,
+) -> Result<RecoveryPolicy, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    if root["execution"] == Yaml::BadValue || root["execution"]["recovery_policy"] == Yaml::BadValue
+    {
+        return Ok(default);
+    }
+    recovery_policy_from_root(root)
+}
+
+fn recovery_policy_from_root(root: &Yaml) -> Result<RecoveryPolicy, String> {
+    let execution = &root["execution"];
+    if execution == &Yaml::BadValue {
+        return Ok(RecoveryPolicy::Prompt);
+    }
+    if root["tasks"] != Yaml::BadValue && execution["recovery_policy"] != Yaml::BadValue {
+        return Err(
+            "Property 'execution.recovery_policy' is supported only in preferred V2 jobs"
+                .to_owned(),
+        );
+    }
+    if !matches!(execution, Yaml::Hash(_)) {
+        return Err("Property 'execution' must be an object".to_owned());
+    }
+    match &execution["recovery_policy"] {
+        Yaml::BadValue => Ok(RecoveryPolicy::Prompt),
+        Yaml::String(value) => match value.as_str() {
+            "prompt" => Ok(RecoveryPolicy::Prompt),
+            "skip" => Ok(RecoveryPolicy::Skip),
+            other => Err(format!(
+                "Property 'execution.recovery_policy' has invalid value '{}': expected prompt or skip",
+                other
+            )),
+        },
+        _ => Err("Property 'execution.recovery_policy' must be prompt or skip".to_owned()),
+    }
+}
+
+pub fn recovery_policy_from_file(filename: &str) -> Result<RecoveryPolicy, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    recovery_policy_from_yaml(&content)
+}
+
 pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
@@ -773,6 +939,9 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
     let mut lines = vec![format!("name: {}", rule.name)];
 
     lines.push(render_scalar_or_list("run", &rule.commands()));
+    if let Some(recovery) = rule.recovery_commands() {
+        lines.push(render_scalar_or_list("recovery", &recovery));
+    }
     if !rule.watch_patterns().is_empty() {
         lines.push(render_scalar_or_list("change", &rule.watch_patterns()));
     }
@@ -824,6 +993,27 @@ mod tests {
     use super::rule_as_yaml;
     use super::rule_from;
     use std::env::current_dir;
+
+    #[test]
+    fn recovery_policy_defaults_to_prompt_and_accepts_skip() {
+        assert_eq!(
+            super::recovery_policy_from_yaml("jobs: []\n").unwrap(),
+            super::RecoveryPolicy::Prompt
+        );
+        assert_eq!(
+            super::recovery_policy_from_yaml("execution:\n  recovery_policy: skip\njobs: []\n")
+                .unwrap(),
+            super::RecoveryPolicy::Skip
+        );
+    }
+
+    #[test]
+    fn recovery_policy_rejects_invalid_values() {
+        for value in ["true", "auto", "always", "never"] {
+            let yaml = format!("execution:\n  recovery_policy: {value}\njobs: []\n");
+            assert!(super::recovery_policy_from_yaml(&yaml).is_err(), "{value}");
+        }
+    }
 
     #[test]
     fn it_reads_control_socket_from_on_config() {
@@ -1985,6 +2175,49 @@ mod jobs_tests {
                 "on:\n  change: '**/*'\njobs:\n  - name: dup\n    run: echo a\n  - name: dup\n    run: echo b\n"
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn recovery_accepts_scalar_and_preserves_ordered_list() {
+        let scalar = from_yaml("jobs:\n  - name: format\n    run: check\n    recovery: format\n")
+            .expect("scalar recovery");
+        assert_eq!(
+            scalar[0].recovery_commands(),
+            Some(vec!["format".to_owned()])
+        );
+
+        let list = from_yaml(
+            "jobs:\n  - name: format\n    run: check\n    recovery:\n      - format\n      - git diff --check\n",
+        )
+        .expect("list recovery");
+        assert_eq!(
+            list[0].recovery_commands(),
+            Some(vec!["format".to_owned(), "git diff --check".to_owned()])
+        );
+    }
+
+    #[test]
+    fn recovery_is_absent_or_rejected_without_silent_coercion() {
+        let absent = from_yaml("jobs:\n  - name: check\n    run: check\n").unwrap();
+        assert_eq!(absent[0].recovery_commands(), None);
+
+        for recovery in ["''", "[]", "{}", "true", "[format, true]"] {
+            let yaml =
+                format!("jobs:\n  - name: check\n    run: check\n    recovery: {recovery}\n");
+            assert!(from_yaml(&yaml).is_err(), "recovery must reject {recovery}");
+        }
+    }
+
+    #[test]
+    fn recovery_rejects_service_jobs_and_legacy_shapes() {
+        assert!(from_yaml(
+            "jobs:\n  - name: server\n    run: run\n    service: true\n    recovery: restart\n"
+        )
+        .is_err());
+        assert!(from_yaml("- name: check\n  run: check\n  recovery: repair\n").is_err());
+        assert!(
+            from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
     }
 }
