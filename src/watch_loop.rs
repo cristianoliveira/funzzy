@@ -445,6 +445,7 @@ impl RunStrategy for BlockingStrategy {
                 completed.results,
                 completed.elapsed,
                 Some(&completed.outcome),
+                &completed.tasks,
             ),
             Err(error) => stdout::error(&error),
         }
@@ -465,6 +466,7 @@ impl RunStrategy for BlockingStrategy {
                 completed.results,
                 completed.elapsed,
                 Some(&completed.outcome),
+                &completed.tasks,
             ),
             Err(error) => stdout::error(&error),
         }

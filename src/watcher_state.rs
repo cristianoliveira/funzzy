@@ -214,6 +214,7 @@ impl WatcherState {
             Event::TaskTerminal { run_id, task } => {
                 if run_id == self.generation {
                     self.tasks.push(task);
+                    self.tasks.sort_by_key(|task| task.position);
                 }
             }
             Event::RecoveryPhase { .. } => {}
@@ -311,6 +312,33 @@ mod tests {
         assert_eq!(state.predecessor(), Some(1));
         assert_eq!(state.superseded_by(), None);
         assert_eq!(state.state(), &WatcherExecutionState::Running);
+    }
+
+    #[test]
+    fn task_snapshots_sort_by_executor_declaration_position() {
+        let mut state = WatcherState::default();
+        state.apply(started(1, None, None));
+        for (position, name) in [(1, "second"), (0, "first")] {
+            state.apply(Event::TaskTerminal {
+                run_id: 1,
+                task: TaskSnapshot {
+                    position,
+                    id: name.to_owned(),
+                    name: name.to_owned(),
+                    state: crate::executor::TaskState::Passed,
+                    duration_ms: Some(42),
+                },
+            });
+        }
+
+        assert_eq!(
+            state
+                .tasks()
+                .iter()
+                .map(|task| task.name.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
     }
 
     #[test]

@@ -385,6 +385,7 @@ mod tests {
         state.lock().unwrap().apply(Event::TaskTerminal {
             run_id: 1,
             task: TaskSnapshot {
+                position: 0,
                 id: "checks#1".to_owned(),
                 name: "check".to_owned(),
                 state: crate::executor::TaskState::Passed,
@@ -529,6 +530,7 @@ mod tests {
         state.lock().unwrap().apply(Event::TaskTerminal {
             run_id: 4,
             task: TaskSnapshot {
+                position: 0,
                 id: "t-1".to_owned(),
                 name: "test @agent-final".to_owned(),
                 state: crate::executor::TaskState::Passed,
@@ -571,6 +573,7 @@ mod tests {
         assert_eq!(json["tasks"][0]["name"], "test @agent-final");
         assert_eq!(json["tasks"][0]["state"], "passed");
         assert_eq!(json["tasks"][0]["durationMs"], 42);
+        assert!(json["tasks"][0].get("position").is_none());
         assert_eq!(json["pending"], 0);
         assert_eq!(json["durationMs"], 42);
         assert!(json["failures"].as_array().unwrap().is_empty());

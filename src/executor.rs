@@ -63,6 +63,10 @@ pub enum TaskState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskSnapshot {
+    /// Configured declaration position. It orders in-process report projections
+    /// but is intentionally absent from the additive control/event wire shape.
+    #[serde(skip)]
+    pub position: usize,
     pub id: String,
     pub name: String,
     pub state: TaskState,
@@ -406,6 +410,9 @@ pub struct CompletedRun {
     pub results: Vec<Result<(), String>>,
     pub elapsed: Duration,
     pub outcome: RunOutcome,
+    /// Terminal job snapshots in configured declaration order. These carry
+    /// the executor's only per-job monotonic duration measurements.
+    pub tasks: Vec<TaskSnapshot>,
 }
 
 /// How a run cancellation ended (TASK-0046): graceful when every active child
@@ -492,6 +499,9 @@ pub struct Run {
     stage_limit: usize,
     results: Vec<Result<(), String>>,
     outcomes: Vec<(usize, String, Option<String>, TaskOutcome)>,
+    /// Terminal snapshots retain their configured position so every projection
+    /// is deterministic when parallel jobs complete out of order.
+    task_snapshots: Vec<TaskSnapshot>,
     metadata: RunMetadata,
     superseded_by: Option<u64>,
     cancellation: CancellationToken,
@@ -669,6 +679,7 @@ impl Executor {
             stage_limit: 0,
             results: vec![],
             outcomes: vec![],
+            task_snapshots: vec![],
             metadata,
             superseded_by: None,
             cancellation: CancellationToken::new(),
@@ -970,22 +981,26 @@ impl Executor {
     /// belongs to a named parallel group, else the task name.
     fn record_task_snapshot(
         &self,
-        run_id: u64,
+        run: &mut Run,
+        position: usize,
         name: &str,
         group_occurrence: Option<&str>,
         state: TaskState,
         duration_ms: Option<u64>,
     ) {
+        let task = TaskSnapshot {
+            position,
+            id: group_occurrence
+                .map(str::to_owned)
+                .unwrap_or_else(|| name.to_owned()),
+            name: name.to_owned(),
+            state,
+            duration_ms,
+        };
+        run.task_snapshots.push(task.clone());
         self.events.emit(Event::TaskTerminal {
-            run_id,
-            task: TaskSnapshot {
-                id: group_occurrence
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| name.to_owned()),
-                name: name.to_owned(),
-                state,
-                duration_ms,
-            },
+            run_id: run.metadata.run_id,
+            task,
         });
     }
 
@@ -1283,7 +1298,8 @@ impl Executor {
             (TaskState::Failed, TaskOutcome::Failed { failures })
         };
         self.record_task_snapshot(
-            run.metadata.run_id,
+            run,
+            task.position,
             &task.name,
             task.group_occurrence.as_deref(),
             state,
@@ -1298,7 +1314,7 @@ impl Executor {
     }
 
     fn stop_after_failure(&self, run: &mut Run) {
-        for mut task in run.active.drain(..) {
+        for mut task in std::mem::take(&mut run.active) {
             self.shutdown_task(&mut task);
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
                 outputs.record(
@@ -1313,7 +1329,8 @@ impl Executor {
                 .started
                 .map(|started| self.clock.elapsed(started).as_millis() as u64);
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
@@ -1326,9 +1343,10 @@ impl Executor {
                 TaskOutcome::Cancelled,
             ));
         }
-        for task in run.queued.drain(..) {
+        for task in std::mem::take(&mut run.queued) {
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
@@ -1341,10 +1359,11 @@ impl Executor {
                 TaskOutcome::Skipped,
             ));
         }
-        for stage in run.stages.drain(..) {
+        for stage in std::mem::take(&mut run.stages) {
             for task in stage_tasks(stage) {
                 self.record_task_snapshot(
-                    run.metadata.run_id,
+                    run,
+                    task.position,
                     &task.name,
                     task.group_occurrence.as_deref(),
                     TaskState::Cancelled,
@@ -1408,6 +1427,17 @@ impl Executor {
                         service.failures.push(failure.clone());
                         run.results.push(Err(failure));
                         let done = run.services.remove(index);
+                        let duration_ms = done
+                            .started
+                            .map(|started| self.clock.elapsed(started).as_millis() as u64);
+                        self.record_task_snapshot(
+                            run,
+                            done.position,
+                            &done.name,
+                            done.group_occurrence.as_deref(),
+                            TaskState::Failed,
+                            duration_ms,
+                        );
                         run.outcomes.push((
                             done.position,
                             done.name.clone(),
@@ -1432,6 +1462,17 @@ impl Executor {
                     if status.success() {
                         // Deliberate stop: remove from background.
                         let done = run.services.remove(index);
+                        let duration_ms = done
+                            .started
+                            .map(|started| self.clock.elapsed(started).as_millis() as u64);
+                        self.record_task_snapshot(
+                            run,
+                            done.position,
+                            &done.name,
+                            done.group_occurrence.as_deref(),
+                            TaskState::Passed,
+                            duration_ms,
+                        );
                         run.outcomes.push((
                             done.position,
                             done.name.clone(),
@@ -1459,6 +1500,17 @@ impl Executor {
                     service.failures.push(failure.clone());
                     run.results.push(Err(failure));
                     let done = run.services.remove(index);
+                    let duration_ms = done
+                        .started
+                        .map(|started| self.clock.elapsed(started).as_millis() as u64);
+                    self.record_task_snapshot(
+                        run,
+                        done.position,
+                        &done.name,
+                        done.group_occurrence.as_deref(),
+                        TaskState::Failed,
+                        duration_ms,
+                    );
                     run.outcomes.push((
                         done.position,
                         done.name.clone(),
@@ -1567,10 +1619,12 @@ impl Executor {
             elapsed,
             failures: failures.clone(),
         });
+        run.task_snapshots.sort_by_key(|task| task.position);
         CompletedRun {
             results: run.results,
             elapsed,
             outcome,
+            tasks: run.task_snapshots,
         }
     }
 
@@ -1583,8 +1637,8 @@ impl Executor {
     pub fn cancel(&self, run: &mut Run, superseded_by: Option<u64>) -> CancelDisposition {
         run.superseded_by = superseded_by;
         let mut escalated = false;
-        for task in &mut run.active {
-            if self.shutdown_task(task) {
+        for mut task in std::mem::take(&mut run.active) {
+            if self.shutdown_task(&mut task) {
                 escalated = true;
             }
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
@@ -1600,15 +1654,16 @@ impl Executor {
                 .started
                 .map(|started| self.clock.elapsed(started).as_millis() as u64);
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
                 duration_ms,
             );
         }
-        for task in &mut run.services {
-            if self.shutdown_task(task) {
+        for mut task in std::mem::take(&mut run.services) {
+            if self.shutdown_task(&mut task) {
                 escalated = true;
             }
             if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
@@ -1624,19 +1679,21 @@ impl Executor {
                 .started
                 .map(|started| self.clock.elapsed(started).as_millis() as u64);
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
                 duration_ms,
             );
         }
-        for task in &mut run.pending_recoveries {
-            if self.shutdown_task(task) {
+        for mut task in std::mem::take(&mut run.pending_recoveries) {
+            if self.shutdown_task(&mut task) {
                 escalated = true;
             }
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
@@ -1644,19 +1701,21 @@ impl Executor {
                     .map(|started| self.clock.elapsed(started).as_millis() as u64),
             );
         }
-        for task in run.queued.drain(..) {
+        for task in std::mem::take(&mut run.queued) {
             self.record_task_snapshot(
-                run.metadata.run_id,
+                run,
+                task.position,
                 &task.name,
                 task.group_occurrence.as_deref(),
                 TaskState::Cancelled,
                 None,
             );
         }
-        for stage in run.stages.drain(..) {
+        for stage in std::mem::take(&mut run.stages) {
             for task in stage_tasks(stage) {
                 self.record_task_snapshot(
-                    run.metadata.run_id,
+                    run,
+                    task.position,
                     &task.name,
                     task.group_occurrence.as_deref(),
                     TaskState::Cancelled,
@@ -1664,11 +1723,6 @@ impl Executor {
                 );
             }
         }
-        run.active.clear();
-        run.services.clear();
-        run.pending_recoveries.clear();
-        run.queued.clear();
-        run.stages.clear();
         if self.verbose {
             diagnostics::debug(&diagnostics::Record {
                 generation: Some(run.metadata.run_id),
@@ -1902,6 +1956,9 @@ mod tests {
             )]),
         );
         assert!(completed.outcome.is_success());
+        assert_eq!(completed.tasks.len(), 1);
+        assert_eq!(completed.tasks[0].state, TaskState::Passed);
+        assert!(completed.tasks[0].duration_ms.is_some());
         assert_eq!(requests.lock().unwrap()[0].generation, 42);
         assert_eq!(requests.lock().unwrap()[0].revision, Some(9));
         assert_eq!(requests.lock().unwrap()[0].job_position, 0);
@@ -2164,6 +2221,75 @@ mod tests {
         }
 
         fn sleep(&self, _duration: Duration) {}
+    }
+
+    #[test]
+    fn completed_run_carries_executor_snapshots_for_failed_and_skipped_jobs() {
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(FixedClock),
+            1,
+            Arc::new(|_| {}),
+            true,
+            false,
+        )
+        .unwrap();
+        let completed = executor.run_to_completion(
+            RunMetadata::new(8, "test"),
+            RunPlan::from_rules(vec![
+                task("failed", None, &["false"]),
+                task("skipped", None, &["true"]),
+            ]),
+        );
+
+        assert_eq!(completed.tasks.len(), 2);
+        assert_eq!(completed.tasks[0].name, "failed");
+        assert_eq!(completed.tasks[0].state, TaskState::Failed);
+        assert_eq!(completed.tasks[0].duration_ms, Some(42));
+        assert_eq!(completed.tasks[1].name, "skipped");
+        assert_eq!(completed.tasks[1].state, TaskState::Cancelled);
+        assert_eq!(completed.tasks[1].duration_ms, None);
+    }
+
+    #[test]
+    fn completed_run_sorts_parallel_snapshots_by_configured_position() {
+        let runner = FakeRunner::default();
+        let executor = Executor::new(
+            Arc::new(runner.clone()),
+            Arc::new(FixedClock),
+            2,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let mut run = executor.start(
+            RunMetadata::new(9, "test"),
+            RunPlan::from_rules(vec![
+                task("first", Some("checks"), &["first"]),
+                task("second", Some("checks"), &["second"]),
+            ]),
+        );
+        assert!(matches!(executor.advance(&mut run), Step::Running));
+        runner.complete("second", true);
+        assert!(matches!(executor.advance(&mut run), Step::Running));
+        runner.complete("first", true);
+        assert!(matches!(executor.advance(&mut run), Step::Finished));
+
+        let completed = executor.finish(run);
+        assert_eq!(
+            completed
+                .tasks
+                .iter()
+                .map(|task| task.name.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"],
+            "parallel completion order never changes report order"
+        );
+        assert!(completed
+            .tasks
+            .iter()
+            .all(|task| task.duration_ms == Some(42)));
     }
 
     #[test]
@@ -2465,6 +2591,19 @@ mod tests {
         assert!(matches!(executor.advance(&mut run), Step::Finished));
         let completed = executor.finish(run);
         assert!(completed.outcome.has_failures());
+        assert_eq!(
+            completed
+                .tasks
+                .iter()
+                .map(|task| (task.name.as_str(), task.state, task.duration_ms))
+                .collect::<Vec<_>>(),
+            [
+                ("A", TaskState::Failed, Some(42)),
+                ("B", TaskState::Cancelled, Some(42)),
+                ("C", TaskState::Cancelled, None),
+                ("D", TaskState::Cancelled, None),
+            ]
+        );
         assert!(runner.state.lock().unwrap().shutdown.contains("b"));
         assert!(!runner.started_commands().contains(&"c".to_owned()));
         assert!(!runner.started_commands().contains(&"d".to_owned()));

@@ -83,6 +83,7 @@ impl RunCommand {
             completed.results,
             completed.elapsed,
             Some(&completed.outcome),
+            &completed.tasks,
         );
         Ok(succeeded)
     }

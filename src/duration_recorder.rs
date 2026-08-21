@@ -418,6 +418,7 @@ mod tests {
             recorder.observe(&Event::TaskTerminal {
                 run_id: 1,
                 task: crate::executor::TaskSnapshot {
+                    position: 0,
                     id: task.to_owned(),
                     name: task.to_owned(),
                     state: crate::executor::TaskState::Passed,

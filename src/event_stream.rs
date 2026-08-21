@@ -253,6 +253,7 @@ mod tests {
         stream.emit(Event::TaskTerminal {
             run_id: 7,
             task: TaskSnapshot {
+                position: 0,
                 id: "checks#1".to_owned(),
                 name: "test @quick".to_owned(),
                 state: crate::executor::TaskState::Passed,

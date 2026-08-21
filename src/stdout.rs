@@ -117,10 +117,74 @@ pub fn print_time_elapsed(_elapsed_param: std::time::Duration) -> () {
     logging::log_plain(&message);
 }
 
+/// Produces the deterministic per-job duration table shared by every local
+/// result path. Callers supply executor terminal snapshots already sorted by
+/// configured declaration order; this function never measures time.
+pub fn job_duration_rows(tasks: &[crate::executor::TaskSnapshot]) -> Vec<String> {
+    if tasks.is_empty() {
+        return vec![];
+    }
+
+    let identities: Vec<String> = tasks
+        .iter()
+        .map(|task| match task.id == task.name {
+            true => task.name.clone(),
+            false => format!("[{}] {}", task.id, task.name),
+        })
+        .collect();
+    let states: Vec<&str> = tasks
+        .iter()
+        .map(|task| match task.state {
+            crate::executor::TaskState::Passed => "passed",
+            crate::executor::TaskState::Failed => "failed",
+            crate::executor::TaskState::Cancelled => "cancelled",
+        })
+        .collect();
+    let name_width = identities
+        .iter()
+        .map(String::len)
+        .max()
+        .unwrap_or(3)
+        .max("JOB".len());
+    let state_width = states
+        .iter()
+        .map(|state| state.len())
+        .max()
+        .unwrap_or(6)
+        .max("RESULT".len());
+    let mut rows = vec![format!(
+        "{:<name_width$}  {:<state_width$}  DURATION",
+        "JOB", "RESULT"
+    )];
+    rows.extend(
+        identities
+            .iter()
+            .zip(states)
+            .zip(tasks)
+            .map(|((identity, state), task)| {
+                let duration = task
+                    .duration_ms
+                    .map(format_job_duration)
+                    .unwrap_or_else(|| "-".to_owned());
+                format!("{identity:<name_width$}  {state:<state_width$}  {duration}")
+            }),
+    );
+    rows
+}
+
+fn format_job_duration(duration_ms: u64) -> String {
+    if duration_ms < 100 {
+        format!("{duration_ms}ms")
+    } else {
+        format!("{:.1}s", duration_ms as f64 / 1_000.0)
+    }
+}
+
 pub fn present_results(
     results: Vec<Result<(), String>>,
     time_elapsed: std::time::Duration,
     outcome: Option<&crate::plan::RunOutcome>,
+    tasks: &[crate::executor::TaskSnapshot],
 ) {
     let errors: Vec<Result<(), String>> = results.iter().filter(|&r| r.is_err()).cloned().collect();
     let completed = results.iter().filter(|&r| r.is_ok()).count();
@@ -153,6 +217,11 @@ pub fn present_results(
                 logging::log_line(&message);
             }
         }
+    }
+
+    for row in job_duration_rows(tasks) {
+        println!("{}", row);
+        logging::log_line(&row);
     }
 
     if !errors.is_empty() {
@@ -197,4 +266,42 @@ pub fn present_results(
 pub fn clear_screen() {
     // See https://archive.ph/d3Z3O
     print!("\n{}[2J", 27 as char);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::executor::{TaskSnapshot, TaskState};
+
+    #[test]
+    fn job_duration_rows_preserve_declaration_order_and_absent_duration() {
+        let rows = job_duration_rows(&[
+            TaskSnapshot {
+                position: 0,
+                id: "format".to_owned(),
+                name: "format".to_owned(),
+                state: TaskState::Passed,
+                duration_ms: Some(700),
+            },
+            TaskSnapshot {
+                position: 1,
+                id: "checks#1".to_owned(),
+                name: "lint".to_owned(),
+                state: TaskState::Failed,
+                duration_ms: Some(1_800),
+            },
+            TaskSnapshot {
+                position: 2,
+                id: "docs".to_owned(),
+                name: "docs".to_owned(),
+                state: TaskState::Cancelled,
+                duration_ms: None,
+            },
+        ]);
+
+        assert!(rows[0].contains("JOB") && rows[0].contains("RESULT"));
+        assert!(rows[1].contains("format") && rows[1].ends_with("0.7s"));
+        assert!(rows[2].contains("[checks#1] lint") && rows[2].ends_with("1.8s"));
+        assert!(rows[3].contains("docs") && rows[3].ends_with("-"));
+    }
 }

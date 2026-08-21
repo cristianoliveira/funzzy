@@ -670,6 +670,7 @@ impl Worker {
                             completed.results,
                             completed.elapsed,
                             Some(&completed.outcome),
+                            &completed.tasks,
                         );
                     }
                 }
