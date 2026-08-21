@@ -554,7 +554,7 @@ fn parallel_job_rows_follow_declaration_not_completion_order() {
     let directory = fixture("duration-parallel-order");
     write_config(
         &directory,
-        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: declared first @duration\n    parallel: checks\n    run: 'touch first.ready; while [ ! -f second.ready ]; do sleep 0.01; done; sleep 0.1'\n  - name: declared second @duration\n    parallel: checks\n    run: 'touch second.ready; while [ ! -f first.ready ]; do sleep 0.01; done'\n",
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: declared first @duration\n    parallel: checks\n    run: 'touch first.ready; i=0; while [ ! -f second.ready ] && [ $i -lt 100 ]; do sleep 0.01; i=$((i + 1)); done; test -f second.ready || exit 1; sleep 0.1'\n  - name: declared second @duration\n    parallel: checks\n    run: 'touch second.ready; i=0; while [ ! -f first.ready ] && [ $i -lt 100 ]; do sleep 0.01; i=$((i + 1)); done; test -f first.ready || exit 1'\n",
     );
 
     let output = fzz(&directory)
