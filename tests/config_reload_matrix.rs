@@ -4,6 +4,8 @@
 //! (or the new behavior appears) — never a process exit, never a silent
 //! stale continuation.
 
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use std::time::Duration;
 
 #[path = "./common/lib.rs"]
@@ -48,6 +50,50 @@ fn spawn_watcher(scratch: &std::path::Path, config: &str) -> std::process::Child
         std::thread::sleep(Duration::from_millis(100));
     }
     child
+}
+
+/// Requests the watcher's normal shutdown and waits for it to reap its
+/// managed process groups. A forced fallback keeps a failed test from leaking
+/// its fixture into the host, but the boolean lets callers assert that the
+/// graceful path was used.
+fn stop_watcher_gracefully(child: &mut std::process::Child) -> bool {
+    let _ = signal::kill(Pid::from_raw(child.id() as i32), Signal::SIGTERM);
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if child.try_wait().expect("poll watcher shutdown").is_some() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn process_group_alive(pgid: i32) -> bool {
+    !matches!(
+        signal::kill(Pid::from_raw(-pgid), None),
+        Err(nix::errno::Errno::ESRCH)
+    )
+}
+
+/// Waits until a managed service's whole process group is gone. This checks
+/// descendants too, not just the shell process that the watcher owns.
+fn wait_for_process_group_exit(pgid: i32) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if !process_group_alive(pgid) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+fn force_kill_process_group(pgid: i32) {
+    let _ = signal::kill(Pid::from_raw(-pgid), Signal::SIGKILL);
 }
 
 /// Waits for `needle` in the child log; panics with the log on timeout.
@@ -405,7 +451,7 @@ fn service_signature_change_replaces_service_without_process_exit() {
         let scratch = scratch_root("service-sig");
         std::fs::write(
             scratch.join("svc.sh"),
-            "#!/usr/bin/env bash\nwhile true; do touch svc-ready; sleep 0.2; done\n",
+            "#!/usr/bin/env bash\necho $$ >> svc-pids\nwhile true; do touch svc-ready; sleep 0.2; done\n",
         )
         .unwrap();
         #[cfg(unix)]
@@ -444,22 +490,64 @@ fn service_signature_change_replaces_service_without_process_exit() {
             "service signature change must not exit the process"
         );
         // The reloaded service keeps running (the replaced process touches
-        // svc-ready again).
-        let _ = std::fs::remove_file(scratch.join("svc-ready"));
+        // svc-ready again). Wait for the second service PID before checking
+        // the readiness file, so a final write from the old service cannot
+        // make replacement appear complete.
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         let mut replaced = false;
         while std::time::Instant::now() < deadline {
-            if scratch.join("svc-ready").exists() {
+            let service_count = std::fs::read_to_string(scratch.join("svc-pids"))
+                .unwrap_or_default()
+                .lines()
+                .count();
+            if service_count >= 2 {
                 replaced = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let _ = child.kill();
-        let _ = child.wait();
+        let _ = std::fs::remove_file(scratch.join("svc-ready"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut still_running = false;
+        while std::time::Instant::now() < deadline {
+            if scratch.join("svc-ready").exists() {
+                still_running = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // SIGKILLing the watcher skips its shutdown coordinator and leaves the
+        // service group orphaned. Use the real shutdown path, then assert both
+        // service generations (including their `sleep` descendants) are gone.
+        let service_groups: Vec<i32> = std::fs::read_to_string(scratch.join("svc-pids"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect();
+        let graceful = stop_watcher_gracefully(&mut child);
+        let groups_stopped = service_groups
+            .iter()
+            .copied()
+            .all(wait_for_process_group_exit);
+        if !groups_stopped {
+            // Keep teardown leak-free even when the regression assertion
+            // fails, so one broken run cannot accumulate fixture processes.
+            for pgid in &service_groups {
+                force_kill_process_group(*pgid);
+            }
+        }
+        assert!(replaced, "changed service must be replaced");
+        assert!(still_running, "changed service must keep running");
+        assert_eq!(
+            service_groups.len(),
+            2,
+            "reload must start exactly two services"
+        );
+        assert!(graceful, "watcher must exit through graceful shutdown");
         assert!(
-            replaced,
-            "changed service must be replaced and keep running"
+            groups_stopped,
+            "watcher shutdown must stop and reap every managed service process group"
         );
         std::fs::remove_dir_all(&scratch).unwrap();
     });
