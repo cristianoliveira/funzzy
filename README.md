@@ -79,6 +79,7 @@ Learn more:
 - [V1 to V2 migration](docs/MIGRATION.md)
 - [Configuration schema and agent discovery](docs/AGENT-CONFIG-CONTRACT.md)
 - [User-approved job recovery contract](docs/JOB-RECOVERY-CONTRACT.md)
+- [Current-run job duration report contract](docs/CURRENT-RUN-JOB-DURATION-REPORT-CONTRACT.md)
 - [Dependency inventory and update policy](docs/DEPENDENCY-POLICY.md)
 - [Pi watcher extension](pi-watcher/README.md)
 - [Examples](examples/README.md)
