@@ -7,7 +7,7 @@ use crate::plan::{ExecutionSignature, RunPlan};
 use crate::rules::Rules;
 use crate::stdout;
 use crate::template::TemplateOptions;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -110,6 +110,7 @@ struct Scheduler {
     state: Mutex<SchedulerState>,
     ready: Condvar,
     events: Arc<dyn EventSink>,
+    active_cancellations: Mutex<HashMap<u64, crate::executor::CancellationToken>>,
 }
 
 impl Scheduler {
@@ -118,10 +119,35 @@ impl Scheduler {
             state: Mutex::new(SchedulerState::default()),
             ready: Condvar::new(),
             events,
+            active_cancellations: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn register_active(&self, run_id: u64, token: crate::executor::CancellationToken) {
+        self.active_cancellations
+            .lock()
+            .unwrap()
+            .insert(run_id, token);
+    }
+
+    fn unregister_active(&self, run_id: u64) {
+        self.active_cancellations.lock().unwrap().remove(&run_id);
+    }
+
+    fn cancel_active(&self, generation: Option<u64>) {
+        let active = self.active_cancellations.lock().unwrap();
+        match generation {
+            Some(id) => active.get(&id).into_iter().for_each(|token| token.cancel()),
+            None => active.values().for_each(|token| token.cancel()),
         }
     }
 
     fn send(&self, command: WorkerCommand) {
+        match &command {
+            WorkerCommand::Run(_) => self.cancel_active(None),
+            WorkerCommand::Cancel { generation, .. } => self.cancel_active(*generation),
+            _ => {}
+        }
         let mut state = self.state.lock().unwrap();
         match command {
             WorkerCommand::Run(new_req) => {
@@ -407,6 +433,10 @@ impl Worker {
                                 req.plan,
                             ),
                         );
+                        if let Some(run) = active.as_ref() {
+                            consumer_scheduler
+                                .register_active(run.run_id(), run.cancellation_token());
+                        }
                         continue;
                     }
 
@@ -436,6 +466,10 @@ impl Worker {
                                     req.plan,
                                 ),
                             );
+                            if let Some(run) = active.as_ref() {
+                                consumer_scheduler
+                                    .register_active(run.run_id(), run.cancellation_token());
+                            }
                         }
                         Some(WorkerCommand::Cancel { generation, reply }) => {
                             // No active run: an exact cancel is a no-op unless
@@ -481,6 +515,10 @@ impl Worker {
                                     plan,
                                 ),
                             );
+                            if let Some(run) = active.as_ref() {
+                                consumer_scheduler
+                                    .register_active(run.run_id(), run.cancellation_token());
+                            }
                         }
                         None => break,
                     }
@@ -493,6 +531,7 @@ impl Worker {
                         Some(WorkerCommand::Run(req)) => {
                             let mut replaced = active.take().expect("active run");
                             let replaced_id = replaced.run_id();
+                            consumer_scheduler.unregister_active(replaced_id);
                             executor.cancel(&mut replaced, Some(req.run_id));
                             let mut superseding = req;
                             superseding.predecessor = Some(replaced_id);
@@ -598,6 +637,7 @@ impl Worker {
                             Some(id) => {
                                 if active.as_ref().is_some_and(|run| run.run_id() == id) {
                                     let mut cancelled = active.take().expect("active run");
+                                    consumer_scheduler.unregister_active(id);
                                     let disposition = executor.cancel(&mut cancelled, None);
                                     let revision = cancelled.revision();
                                     if let Some(reply) = reply {
@@ -615,6 +655,7 @@ impl Worker {
                             }
                             None => {
                                 if let Some(mut cancelled) = active.take() {
+                                    consumer_scheduler.unregister_active(cancelled.run_id());
                                     executor.cancel(&mut cancelled, None);
                                 }
                             }
@@ -622,7 +663,9 @@ impl Worker {
                         None => std::thread::sleep(Duration::from_millis(200)),
                     },
                     Step::Finished => {
-                        let completed = executor.finish(active.take().expect("active run"));
+                        let completed_run = active.take().expect("active run");
+                        consumer_scheduler.unregister_active(completed_run.run_id());
+                        let completed = executor.finish(completed_run);
                         stdout::present_results(
                             completed.results,
                             completed.elapsed,
@@ -954,6 +997,37 @@ mod tests {
     use std::sync::mpsc::{channel, Receiver};
     use std::time::Instant;
 
+    struct BlockingApproval;
+
+    struct ApprovingApproval;
+
+    impl crate::executor::RecoveryApproval for ApprovingApproval {
+        fn approve(
+            &self,
+            _requests: &[crate::executor::RecoveryRequest],
+            cancellation: &crate::executor::CancellationToken,
+        ) -> crate::executor::ApprovalDecision {
+            if cancellation.is_cancelled() {
+                crate::executor::ApprovalDecision::Cancelled
+            } else {
+                crate::executor::ApprovalDecision::Approved
+            }
+        }
+    }
+
+    impl crate::executor::RecoveryApproval for BlockingApproval {
+        fn approve(
+            &self,
+            _requests: &[crate::executor::RecoveryRequest],
+            cancellation: &crate::executor::CancellationToken,
+        ) -> crate::executor::ApprovalDecision {
+            while !cancellation.is_cancelled() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            crate::executor::ApprovalDecision::Cancelled
+        }
+    }
+
     fn output_file(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("funzzy-worker-{}-{}", std::process::id(), name))
     }
@@ -976,6 +1050,325 @@ mod tests {
             }),
             rx,
         )
+    }
+
+    struct GatedApproval {
+        requests: Arc<Mutex<Vec<crate::executor::RecoveryRequest>>>,
+        released: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl crate::executor::RecoveryApproval for GatedApproval {
+        fn approve(
+            &self,
+            requests: &[crate::executor::RecoveryRequest],
+            cancellation: &crate::executor::CancellationToken,
+        ) -> crate::executor::ApprovalDecision {
+            self.requests.lock().unwrap().extend_from_slice(requests);
+            while !self.released.load(std::sync::atomic::Ordering::SeqCst)
+                && !cancellation.is_cancelled()
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if cancellation.is_cancelled() {
+                crate::executor::ApprovalDecision::Cancelled
+            } else {
+                crate::executor::ApprovalDecision::Approved
+            }
+        }
+    }
+
+    #[test]
+    fn parallel_recovery_waits_for_original_siblings_and_serializes_passes() {
+        let root = output_file("parallel-recovery");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let first = root.join("first");
+        let second = root.join("second");
+        let first_running = root.join("first.running");
+        let second_running = root.join("second.running");
+        let recovery_one = root.join("recovery-one.running");
+        let recovery_two = root.join("recovery-two.running");
+        let overlap = root.join("overlap");
+        let run = |marker: &Path, running: &Path| {
+            format!(
+                "if test -f '{}'; then exit 0; else touch '{}'; sleep 0.1; rm -f '{}'; exit 1; fi",
+                marker.display(),
+                running.display(),
+                running.display()
+            )
+        };
+        let recovery = |marker: &Path, running: &Path, other: &Path| {
+            format!(
+                "if test -f '{}' || test -f '{}'; then touch '{}'; exit 1; fi; touch '{}'; sleep 0.05; rm -f '{}'; touch '{}'",
+                other.display(),
+                recovery_two.display(),
+                overlap.display(),
+                running.display(),
+                running.display(),
+                marker.display()
+            )
+        };
+        let (tx, rx) = channel();
+        let worker = Worker::with_root_and_concurrency_and_outputs_and_approval(
+            false,
+            false,
+            std::env::current_dir().unwrap(),
+            2,
+            move |event| tx.send(event).unwrap(),
+            None,
+            Arc::new(ApprovingApproval),
+        );
+        let rules = vec![
+            Rules::new(
+                "first".to_owned(),
+                vec![run(&first, &first_running)],
+                vec![],
+                vec![],
+                true,
+            )
+            .with_parallel("checks".to_owned())
+            .with_recovery(vec![recovery(&first, &recovery_one, &second_running)]),
+            Rules::new(
+                "second".to_owned(),
+                vec![run(&second, &second_running)],
+                vec![],
+                vec![],
+                true,
+            )
+            .with_parallel("checks".to_owned())
+            .with_recovery(vec![recovery(&second, &recovery_two, &recovery_one)]),
+        ];
+        let run_id = worker
+            .schedule_with_trigger(rules, "parallel", None)
+            .unwrap();
+        expect_event(
+            &rx,
+            "parallel recovery finished",
+            |event| matches!(event, WorkerEvent::Finished { run_id: id, .. } if *id == run_id),
+        );
+        assert!(first.exists() && second.exists());
+        assert!(!overlap.exists(), "recovery phases must not overlap");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recovery_request_keeps_frozen_revision_and_commands_after_reload() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = channel();
+        let worker = Worker::with_root_and_concurrency_and_outputs_and_approval(
+            false,
+            true,
+            std::env::current_dir().unwrap(),
+            1,
+            move |event| tx.send(event).unwrap(),
+            None,
+            Arc::new(GatedApproval {
+                requests: Arc::clone(&requests),
+                released: Arc::clone(&released),
+            }),
+        );
+        let old = crate::config_revision::ConfigRevision {
+            number: 11,
+            hash: "old-revision".to_owned(),
+        };
+        let plan = RunPlan::from_rules(vec![Rules::new(
+            "recoverable".to_owned(),
+            vec!["false".to_owned()],
+            vec![],
+            vec![],
+            true,
+        )
+        .with_recovery(vec!["echo old-recovery".to_owned()])]);
+        worker
+            .schedule_plan_with_trigger(plan, "old-trigger", None, Some(old.clone()))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while requests.lock().unwrap().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(requests.lock().unwrap().len(), 1);
+
+        worker.set_revision(crate::config_revision::ConfigRevision {
+            number: 12,
+            hash: "new-revision".to_owned(),
+        });
+        worker.set_recovery_policy(crate::config::RecoveryPolicy::Skip);
+        released.store(true, std::sync::atomic::Ordering::SeqCst);
+        let request = requests.lock().unwrap()[0].clone();
+        assert_eq!(request.revision, Some(old.number));
+        assert_eq!(request.commands, ["echo old-recovery"]);
+        expect_event(
+            &rx,
+            "finished",
+            |event| matches!(event, WorkerEvent::Finished { run_id: id, .. } if *id == request.generation),
+        );
+    }
+
+    #[test]
+    fn cancellation_during_recovery_reaps_child_and_skips_terminal_hooks() {
+        let marker = output_file("cancel-recovery-child.hook");
+        let (tx, rx) = channel();
+        let worker = Worker::with_root_and_concurrency_and_outputs_and_approval(
+            false,
+            true,
+            std::env::current_dir().unwrap(),
+            1,
+            move |event| tx.send(event).unwrap(),
+            None,
+            Arc::new(ApprovingApproval),
+        )
+        .with_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some(format!("touch '{}'", marker.display())),
+        });
+        let run_id = worker
+            .schedule_with_trigger(
+                vec![Rules::new(
+                    "recoverable".to_owned(),
+                    vec!["false".to_owned()],
+                    vec![],
+                    vec![],
+                    true,
+                )
+                .with_recovery(vec!["sleep 30".to_owned()])],
+                "test",
+                None,
+            )
+            .unwrap();
+        expect_event(&rx, "recovery started", |event| {
+            matches!(
+                event,
+                WorkerEvent::RecoveryPhase {
+                    run_id: id,
+                    phase,
+                    ..
+                } if *id == run_id && phase == "recovery_started"
+            )
+        });
+        assert!(matches!(
+            worker.cancel_generation(run_id).unwrap(),
+            CancelResult::Cancelled { .. }
+        ));
+        expect_event(
+            &rx,
+            "cancelled",
+            |event| matches!(event, WorkerEvent::Cancelled { run_id: id, .. } if *id == run_id),
+        );
+        assert!(!marker.exists(), "cancelled generations must not run hooks");
+        let _ = std::fs::remove_file(marker);
+    }
+
+    #[test]
+    fn cancellation_during_verification_reaps_child_and_skips_terminal_hooks() {
+        let marker = output_file("cancel-verification.marker");
+        let hook = output_file("cancel-verification.hook");
+        let run = format!(
+            "if test -f '{}'; then sleep 30; else exit 1; fi",
+            marker.display()
+        );
+        let (tx, rx) = channel();
+        let worker = Worker::with_root_and_concurrency_and_outputs_and_approval(
+            false,
+            true,
+            std::env::current_dir().unwrap(),
+            1,
+            move |event| tx.send(event).unwrap(),
+            None,
+            Arc::new(ApprovingApproval),
+        )
+        .with_hooks(crate::config::GenerationHooks {
+            success: Some(format!("touch '{}'", hook.display())),
+            failure: Some(format!("touch '{}'", hook.display())),
+        });
+        let run_id = worker
+            .schedule_with_trigger(
+                vec![
+                    Rules::new("recoverable".to_owned(), vec![run], vec![], vec![], true)
+                        .with_recovery(vec![format!("touch '{}'", marker.display())]),
+                ],
+                "test",
+                None,
+            )
+            .unwrap();
+        expect_event(&rx, "verification started", |event| {
+            matches!(
+                event,
+                WorkerEvent::RecoveryPhase {
+                    run_id: id,
+                    phase,
+                    ..
+                } if *id == run_id && phase == "verification_started"
+            )
+        });
+        assert!(matches!(
+            worker.cancel_generation(run_id).unwrap(),
+            CancelResult::Cancelled { .. }
+        ));
+        expect_event(
+            &rx,
+            "cancelled",
+            |event| matches!(event, WorkerEvent::Cancelled { run_id: id, .. } if *id == run_id),
+        );
+        assert!(!hook.exists(), "cancelled generations must not run hooks");
+        let _ = std::fs::remove_file(marker);
+        let _ = std::fs::remove_file(hook);
+    }
+
+    #[test]
+    fn cancellation_during_recovery_approval_reaps_and_skips_terminal_hooks() {
+        let root = output_file("cancel-recovery-approval");
+        let marker = root.with_extension("hook");
+        let (tx, rx) = channel();
+        let worker = Worker::with_root_and_concurrency_and_outputs_and_approval(
+            false,
+            true,
+            std::env::current_dir().unwrap(),
+            1,
+            move |event| tx.send(event).unwrap(),
+            None,
+            Arc::new(BlockingApproval),
+        )
+        .with_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some(format!("touch '{}'", marker.display())),
+        });
+        let run_id = worker
+            .schedule_with_trigger(
+                vec![Rules::new(
+                    "recoverable".to_owned(),
+                    vec!["false".to_owned()],
+                    vec![],
+                    vec![],
+                    true,
+                )
+                .with_recovery(vec!["true".to_owned()])],
+                "test",
+                None,
+            )
+            .unwrap();
+        expect_event(&rx, "approval requested", |event| {
+            matches!(
+                event,
+                WorkerEvent::RecoveryPhase {
+                    run_id: id,
+                    phase,
+                    ..
+                } if *id == run_id && phase == "approval_requested"
+            )
+        });
+
+        let result = worker.cancel_generation(run_id).unwrap();
+        assert!(matches!(result, CancelResult::Cancelled { .. }));
+        expect_event(&rx, "cancelled", |event| {
+            matches!(
+                event,
+                WorkerEvent::Cancelled { run_id: id, .. } if *id == run_id
+            )
+        });
+        assert!(!marker.exists(), "cancelled generations must not run hooks");
+        let _ = std::fs::remove_file(marker);
+        let _ = std::fs::remove_file(root);
     }
 
     fn rule(commands: Vec<&str>) -> Rules {

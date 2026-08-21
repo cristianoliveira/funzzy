@@ -4,14 +4,20 @@
 //! foreground CLI's TTY adapter. Headless callers get a bounded default-deny
 //! response rather than a read that can block forever.
 
-use crate::executor::{ApprovalDecision, RecoveryApproval, RecoveryRequest};
+use crate::executor::{ApprovalDecision, CancellationToken, RecoveryApproval, RecoveryRequest};
 use std::io::{self, IsTerminal, Write};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 #[derive(Default)]
 pub struct TtyRecoveryApproval;
 
 impl RecoveryApproval for TtyRecoveryApproval {
-    fn approve(&self, requests: &[RecoveryRequest]) -> ApprovalDecision {
+    fn approve(
+        &self,
+        requests: &[RecoveryRequest],
+        cancellation: &CancellationToken,
+    ) -> ApprovalDecision {
         let stdin = io::stdin();
         let stdout = io::stdout();
         if !stdin.is_terminal() || !stdout.is_terminal() {
@@ -50,6 +56,34 @@ impl RecoveryApproval for TtyRecoveryApproval {
         drop(output);
 
         let mut answer = String::new();
+        #[cfg(unix)]
+        {
+            let mut poll = nix::libc::pollfd {
+                fd: stdin.as_raw_fd(),
+                events: nix::libc::POLLIN,
+                revents: 0,
+            };
+            loop {
+                if cancellation.is_cancelled() {
+                    return ApprovalDecision::Cancelled;
+                }
+                let ready = unsafe { nix::libc::poll(&mut poll, 1, 50) };
+                if ready < 0 {
+                    if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    return ApprovalDecision::Eof;
+                }
+                if ready == 0 {
+                    continue;
+                }
+                break;
+            }
+        }
+        #[cfg(not(unix))]
+        if cancellation.is_cancelled() {
+            return ApprovalDecision::Cancelled;
+        }
         if stdin.read_line(&mut answer).is_err() {
             return ApprovalDecision::Eof;
         }

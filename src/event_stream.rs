@@ -271,6 +271,25 @@ mod tests {
     }
 
     #[test]
+    fn recovery_phase_carries_structured_phase_and_outcome() {
+        let (path, stream) = stream_in_temp("recovery-phase");
+        stream.emit(Event::RecoveryPhase {
+            run_id: 7,
+            job: "format @quick".to_owned(),
+            phase: "verification_finished".to_owned(),
+            outcome: Some("passed".to_owned()),
+        });
+        drop(stream);
+        let records = read_lines(&path);
+        assert_eq!(records[0]["event"], "recovery_phase");
+        assert_eq!(records[0]["runId"], 7);
+        assert_eq!(records[0]["job"], "format @quick");
+        assert_eq!(records[0]["phase"], "verification_finished");
+        assert_eq!(records[0]["outcome"], "passed");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn cancelled_and_superseded_are_distinct_records() {
         let (path, stream) = stream_in_temp("cancelled");
         stream.emit(Event::Cancelled {

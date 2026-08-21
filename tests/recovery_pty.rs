@@ -7,6 +7,9 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
+
+static PTY_LOCK: Mutex<()> = Mutex::new(());
 
 fn scratch(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -43,16 +46,32 @@ fn run_with_answer(
     config: &Path,
     answer: &[u8],
 ) -> (std::process::ExitStatus, String) {
+    run_with_answer_and_events(binary, config, answer, None)
+}
+
+fn run_with_answer_and_events(
+    binary: &str,
+    config: &Path,
+    answer: &[u8],
+    events: Option<&Path>,
+) -> (std::process::ExitStatus, String) {
+    let _pty_guard = PTY_LOCK.lock().expect("pty test lock");
     let pty = openpty(None, None).expect("open pty");
     let master = File::from(pty.master);
-    let mut writer = master.try_clone().expect("clone pty master");
+    let mut writer = Some(master.try_clone().expect("clone pty master"));
     let mut reader = master;
     let slave = File::from(pty.slave);
     assert!(nix::unistd::isatty(&slave).expect("check pty slave"));
     let child_stdin = slave.try_clone().expect("clone pty slave");
     let child_stderr = slave.try_clone().expect("clone pty slave for stderr");
-    let mut child = Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .args(["-c", config.to_str().unwrap(), "run", "@quick"])
+        .env("FUNZZY_BAIL", "false");
+    if let Some(events) = events {
+        command.arg("--events").arg(events);
+    }
+    let mut child = command
         .stdin(Stdio::from(child_stdin))
         .stdout(Stdio::from(slave))
         .stderr(Stdio::from(child_stderr))
@@ -67,8 +86,12 @@ fn run_with_answer(
             Ok(_) => {
                 output.push(byte[0]);
                 if output.ends_with(b"[y/N] ") {
-                    writer.write_all(answer).expect("write approval answer");
-                    drop(writer);
+                    writer
+                        .as_mut()
+                        .expect("approval writer is open")
+                        .write_all(answer)
+                        .expect("write approval answer");
+                    writer.take();
                     break;
                 }
             }
@@ -77,8 +100,64 @@ fn run_with_answer(
         }
     }
     let status = child.wait().expect("wait for fzz");
-    let _ = reader.read_to_end(&mut output);
     (status, String::from_utf8_lossy(&output).into_owned())
+}
+
+#[test]
+fn approved_recovery_emits_phases_and_runs_only_success_hook_once() {
+    let root = scratch("observability");
+    let config = root.join(".watch.yaml");
+    let events = root.join("events.ndjson");
+    let marker = root.join("recovered");
+    let hook = root.join("hook.log");
+    std::fs::write(
+        &config,
+        format!(
+            "execution:\n  recovery_policy: prompt\nhooks:\n  success: \"printf success >> '{}'\"\n  failure: \"printf failure >> '{}'\"\njobs:\n  - name: recover @quick\n    run: {:?}\n    recovery: \"touch '{}'\"\n    run_on_init: true\n",
+            hook.display(),
+            hook.display(),
+            format!(
+                "if test -f '{}'; then exit 0; else exit 1; fi",
+                marker.display()
+            ),
+            marker.display(),
+        ),
+    )
+    .expect("write observability config");
+    let (status, output) =
+        run_with_answer_and_events(env!("CARGO_BIN_EXE_fzz"), &config, b"yes\n", Some(&events));
+    assert!(status.success(), "approved recovery failed: {output}");
+    assert_eq!(std::fs::read_to_string(&hook).unwrap(), "success");
+    let records: Vec<serde_json::Value> = std::fs::read_to_string(&events)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let phases: Vec<&str> = records
+        .iter()
+        .filter(|record| record["event"] == "recovery_phase")
+        .map(|record| record["phase"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        phases,
+        [
+            "original_failed",
+            "approval_requested",
+            "approval_decided",
+            "recovery_started",
+            "recovery_finished",
+            "verification_started",
+            "verification_finished",
+        ]
+    );
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["event"] == "task_terminal")
+            .count(),
+        1
+    );
+    assert!(records.iter().any(|record| record["event"] == "finished"));
 }
 
 #[test]

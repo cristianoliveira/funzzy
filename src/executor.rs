@@ -22,10 +22,31 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::io;
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Cancellation signal shared by the scheduler, executor, and approval
+/// adapter. It lets a replacement or exact cancel interrupt a blocking
+/// recovery boundary before the worker can process the queued command.
+#[derive(Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 
 /// Wire-level task state for the correlated snapshot (contract §7). `Skipped`
 /// (fail-fast skipped work) collapses to `Cancelled` — never-started work is
@@ -66,18 +87,31 @@ pub enum ApprovalDecision {
     NoTty,
     Eof,
     Invalid,
+    Cancelled,
 }
 
 pub trait RecoveryApproval: Send + Sync {
-    fn approve(&self, requests: &[RecoveryRequest]) -> ApprovalDecision;
+    fn approve(
+        &self,
+        requests: &[RecoveryRequest],
+        cancellation: &CancellationToken,
+    ) -> ApprovalDecision;
 }
 
 /// Safe default used by headless composition until a TTY adapter is injected.
 pub struct DenyRecoveryApproval;
 
 impl RecoveryApproval for DenyRecoveryApproval {
-    fn approve(&self, _requests: &[RecoveryRequest]) -> ApprovalDecision {
-        ApprovalDecision::Declined
+    fn approve(
+        &self,
+        _requests: &[RecoveryRequest],
+        cancellation: &CancellationToken,
+    ) -> ApprovalDecision {
+        if cancellation.is_cancelled() {
+            ApprovalDecision::Cancelled
+        } else {
+            ApprovalDecision::Declined
+        }
     }
 }
 
@@ -460,6 +494,7 @@ pub struct Run {
     outcomes: Vec<(usize, String, Option<String>, TaskOutcome)>,
     metadata: RunMetadata,
     superseded_by: Option<u64>,
+    cancellation: CancellationToken,
     started: Instant,
 }
 
@@ -483,6 +518,14 @@ impl Run {
             }),
             _ => None,
         }
+    }
+
+    pub(crate) fn cancellation_token(&self) -> CancellationToken {
+        self.cancellation.clone()
+    }
+
+    fn cancellation_requested(&self) -> bool {
+        self.cancellation.is_cancelled()
     }
 }
 
@@ -628,11 +671,16 @@ impl Executor {
             outcomes: vec![],
             metadata,
             superseded_by: None,
+            cancellation: CancellationToken::new(),
             started: self.clock.now(),
         }
     }
 
     pub fn advance(&self, run: &mut Run) -> Step {
+        if run.cancellation_requested() {
+            return Step::Running;
+        }
+
         loop {
             if run.active.is_empty() && run.queued.is_empty() {
                 let Some(stage) = run.stages.pop_front() else {
@@ -693,8 +741,8 @@ impl Executor {
                         let task = run.active.remove(index);
                         self.defer_or_record(run, task);
                         self.stop_after_failure(run);
-                        if !run.pending_recoveries.is_empty() {
-                            self.resolve_recoveries(run);
+                        if !run.pending_recoveries.is_empty() && self.resolve_recoveries(run) {
+                            return Step::Running;
                         }
                         return Step::Finished;
                     }
@@ -709,7 +757,9 @@ impl Executor {
 
             if run.active.is_empty() && run.queued.is_empty() {
                 if !run.pending_recoveries.is_empty() {
-                    self.resolve_recoveries(run);
+                    if self.resolve_recoveries(run) {
+                        return Step::Running;
+                    }
                     continue;
                 }
                 // TASK-0035: background services keep the generation alive
@@ -981,11 +1031,18 @@ impl Executor {
         }
     }
 
-    fn resolve_recoveries(&self, run: &mut Run) {
+    /// Resolves one bounded recovery pass. Returns `true` when cancellation
+    /// interrupted approval, recovery, or verification; the worker then
+    /// consumes the queued cancel and reaps the preserved task state.
+    fn resolve_recoveries(&self, run: &mut Run) -> bool {
         run.pending_recoveries.sort_by_key(|task| task.position);
         let mut pending = std::mem::take(&mut run.pending_recoveries);
         if pending.is_empty() {
-            return;
+            return false;
+        }
+        if run.cancellation_requested() {
+            run.pending_recoveries.append(&mut pending);
+            return true;
         }
 
         let requests: Vec<RecoveryRequest> = pending
@@ -1017,10 +1074,34 @@ impl Executor {
             run.metadata.recovery_policy,
             crate::config::RecoveryPolicy::Prompt
         ) {
-            self.approval.approve(&requests)
+            let approval = Arc::clone(&self.approval);
+            let cancellation = run.cancellation_token();
+            let requested = requests.clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let decision = approval.approve(&requested, &cancellation);
+                let _ = sender.send(decision);
+            });
+            loop {
+                if run.cancellation_requested() {
+                    run.pending_recoveries.append(&mut pending);
+                    return true;
+                }
+                match receiver.recv_timeout(POLL_INTERVAL) {
+                    Ok(decision) => break decision,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        break ApprovalDecision::Invalid
+                    }
+                }
+            }
         } else {
             ApprovalDecision::Declined
         };
+        if matches!(decision, ApprovalDecision::Cancelled) || run.cancellation_requested() {
+            run.pending_recoveries.append(&mut pending);
+            return true;
+        }
         if !matches!(decision, ApprovalDecision::Approved) {
             let reason = match (run.metadata.recovery_policy, decision) {
                 (crate::config::RecoveryPolicy::Skip, _) => "recovery_policy: skip",
@@ -1028,6 +1109,7 @@ impl Executor {
                 (_, ApprovalDecision::Eof) => "EOF",
                 (_, ApprovalDecision::Invalid) => "invalid answer",
                 (_, ApprovalDecision::Declined) => "declined",
+                (_, ApprovalDecision::Cancelled) => "cancelled",
                 (_, ApprovalDecision::Approved) => unreachable!(),
             };
             stdout::warn(&format!(
@@ -1052,7 +1134,7 @@ impl Executor {
                     .unwrap_or_else(|| format!("Job '{}' failed", task.name))));
                 self.record_task_outcome(run, task);
             }
-            return;
+            return false;
         }
 
         let mut remaining = pending.into_iter();
@@ -1086,6 +1168,12 @@ impl Executor {
                 self.advance_task(&mut task, &mut recovery_results, run.metadata.run_id, true,),
                 TaskStep::Running
             ) {
+                if run.cancellation_requested() {
+                    self.shutdown_task(&mut task);
+                    run.pending_recoveries.push(task);
+                    run.pending_recoveries.extend(remaining);
+                    return true;
+                }
                 self.clock.sleep(POLL_INTERVAL);
             }
             let recovery_failed = !task.failures.is_empty();
@@ -1113,7 +1201,7 @@ impl Executor {
                         .unwrap_or_else(|| format!("Job '{}' failed", remaining.name))));
                     self.record_task_outcome(run, remaining);
                 }
-                return;
+                return false;
             }
 
             self.events.emit(Event::RecoveryPhase {
@@ -1139,6 +1227,12 @@ impl Executor {
                 ),
                 TaskStep::Running
             ) {
+                if run.cancellation_requested() {
+                    self.shutdown_task(&mut task);
+                    run.pending_recoveries.push(task);
+                    run.pending_recoveries.extend(remaining);
+                    return true;
+                }
                 self.clock.sleep(POLL_INTERVAL);
             }
             let verification_failed = !task.failures.is_empty();
@@ -1165,6 +1259,7 @@ impl Executor {
             }
             self.record_task_outcome(run, task);
         }
+        false
     }
 
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
@@ -1512,6 +1607,43 @@ impl Executor {
                 duration_ms,
             );
         }
+        for task in &mut run.services {
+            if self.shutdown_task(task) {
+                escalated = true;
+            }
+            if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
+                outputs.record(
+                    run.metadata.run_id,
+                    task.name.clone(),
+                    capture.finish(),
+                    run.metadata.revision,
+                    run.metadata.revision_hash.clone(),
+                );
+            }
+            let duration_ms = task
+                .started
+                .map(|started| self.clock.elapsed(started).as_millis() as u64);
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                duration_ms,
+            );
+        }
+        for task in &mut run.pending_recoveries {
+            if self.shutdown_task(task) {
+                escalated = true;
+            }
+            self.record_task_snapshot(
+                run.metadata.run_id,
+                &task.name,
+                task.group_occurrence.as_deref(),
+                TaskState::Cancelled,
+                task.started
+                    .map(|started| self.clock.elapsed(started).as_millis() as u64),
+            );
+        }
         for task in run.queued.drain(..) {
             self.record_task_snapshot(
                 run.metadata.run_id,
@@ -1533,6 +1665,8 @@ impl Executor {
             }
         }
         run.active.clear();
+        run.services.clear();
+        run.pending_recoveries.clear();
         run.queued.clear();
         run.stages.clear();
         if self.verbose {
@@ -1663,9 +1797,17 @@ mod tests {
     }
 
     impl RecoveryApproval for TestApproval {
-        fn approve(&self, requests: &[RecoveryRequest]) -> ApprovalDecision {
+        fn approve(
+            &self,
+            requests: &[RecoveryRequest],
+            cancellation: &CancellationToken,
+        ) -> ApprovalDecision {
             self.requests.lock().unwrap().extend_from_slice(requests);
-            self.decision
+            if cancellation.is_cancelled() {
+                ApprovalDecision::Cancelled
+            } else {
+                self.decision
+            }
         }
     }
 
