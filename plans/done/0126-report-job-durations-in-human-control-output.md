@@ -18,17 +18,23 @@ This is primarily presentation change. Preserve existing additive wire field and
 
 ## Acceptance criteria
 
-- [ ] Write failing Rust and pi-watcher presentation tests first for terminal task durations, absent durations, failures, cancellation, and legacy snapshots.
-- [ ] Render job timing rows in human control results wherever a correlated terminal snapshot is available, including exact await/observation flows.
-- [ ] Preserve existing JSON/TOON `tasks[].durationMs` shape and integer value without adding duplicate duration fields.
-- [ ] Preserve job declaration order and state labels; do not reorder by duration or parallel completion time.
-- [ ] Keep generation `durationMs` visually and semantically separate from each job's duration.
-- [ ] Render absent duration as unknown/dash, never zero, for skipped jobs and legacy servers.
-- [ ] Keep compact agent output bounded: include timing rows in structured content while avoiding repeated prose or parallelism disclaimers.
-- [ ] Ensure failure evidence, freshness, generation identity, configured/effective concurrency, and next-action hints remain unchanged.
-- [ ] Do not make per-job duration availability a freshness guarantee or infer it by parsing NDJSON/log text.
-- [ ] Synchronize Rust fixtures and pi-watcher decoders/presenters when a shared golden payload changes.
-- [ ] Cover negotiated and legacy happy/unhappy paths with deterministic tests before implementation.
+- [x] Write failing Rust and pi-watcher presentation tests first for terminal task durations, absent durations, failures, cancellation, and legacy snapshots.
+- [x] Render job timing rows in human control results wherever a correlated terminal snapshot is available, including exact await/observation flows.
+- [x] Preserve existing JSON/TOON `tasks[].durationMs` shape and integer value without adding duplicate duration fields.
+- [x] Preserve job declaration order and state labels; do not reorder by duration or parallel completion time.
+- [x] Keep generation `durationMs` visually and semantically separate from each job's duration.
+- [x] Render absent duration as unknown/dash, never zero, for skipped jobs and legacy servers.
+- [x] Keep compact agent output bounded: include timing rows in structured content while avoiding repeated prose or parallelism disclaimers.
+- [x] Ensure failure evidence, freshness, generation identity, configured/effective concurrency, and next-action hints remain unchanged.
+- [x] Do not make per-job duration availability a freshness guarantee or infer it by parsing NDJSON/log text.
+- [x] Synchronize Rust fixtures and pi-watcher decoders/presenters when a shared golden payload changes.
+- [x] Cover negotiated and legacy happy/unhappy paths with deterministic tests before implementation.
+
+## Outcome
+
+Terminal control, `watcher_observe`, and terminal `watcher_verify` reports now reuse ordered executor snapshots, show `-` for absent job duration, and keep legacy task availability unknown. The control wire keeps `tasks[].durationMs` integer-or-null with internal position omitted.
+
+Evidence: Rust focused suites (`control_client` 30, `cli::control` 23, `cli::format` 10, `watcher_state` 7), Pi watcher focused tests (72), format/typecheck/lint, and `npm pack --dry-run` passed. The final watcher integration run exposed a TASK-0125-local-output-sensitive filepath-template assertion; it was not changed in this task.
 
 ## Notes
 
