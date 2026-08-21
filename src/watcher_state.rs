@@ -65,9 +65,9 @@ pub struct WatcherState {
     changed: Vec<String>,
     predecessor: Option<u64>,
     superseded_by: Option<u64>,
-    /// Per-task terminal outcomes are exposed through correlated snapshots,
-    /// not legacy status serialization.
-    #[serde(skip)]
+    /// Per-task terminal outcomes are additive control data. `TaskSnapshot`
+    /// keeps its internal declaration position serde-skipped, preserving the
+    /// existing `tasks[].durationMs` wire shape.
     tasks: Vec<TaskSnapshot>,
     effective_concurrency: Option<usize>,
     concurrency_source: Option<&'static str>,
@@ -339,6 +339,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["first", "second"]
         );
+    }
+
+    #[test]
+    fn status_serializes_ordered_task_snapshots_without_internal_position() {
+        let mut state = WatcherState::default();
+        state.apply(started(1, None, None));
+        for (position, name, duration_ms) in [(1, "second", None), (0, "first", Some(42))] {
+            state.apply(Event::TaskTerminal {
+                run_id: 1,
+                task: TaskSnapshot {
+                    position,
+                    id: name.to_owned(),
+                    name: name.to_owned(),
+                    state: crate::executor::TaskState::Passed,
+                    duration_ms,
+                },
+            });
+        }
+
+        let json = serde_json::to_value(state).unwrap();
+        assert_eq!(json["tasks"][0]["name"], "first");
+        assert_eq!(json["tasks"][0]["durationMs"], 42);
+        assert_eq!(json["tasks"][1]["durationMs"], serde_json::Value::Null);
+        assert!(json["tasks"][0].get("position").is_none());
     }
 
     #[test]

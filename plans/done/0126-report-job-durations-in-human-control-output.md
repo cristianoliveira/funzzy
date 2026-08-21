@@ -1,7 +1,7 @@
 ---
 id: TASK-0126
 title: Report job durations in human control output
-status: todo
+status: done
 depends_on: [TASK-0124]
 priority: high
 tags: [rust, typescript, control-socket, duration, output, tdd]

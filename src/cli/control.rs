@@ -7,7 +7,7 @@ use crate::config;
 use crate::control_client::{
     AwaitMode, AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, ConfigSnapshot, ControlClient,
     ControlClientError, EmitSnapshot, OutputSnapshot, ScheduledRunSnapshot, StatusSnapshot,
-    TargetSnapshot,
+    TargetSnapshot, TerminalTaskSnapshot,
 };
 use crate::duration_history::RunEstimate;
 use crate::errors::FzzError;
@@ -520,7 +520,55 @@ pub fn render_status(status: &StatusSnapshot) -> String {
             output.push_str(&format!("  - {}\n", failure));
         }
     }
+    output.push_str(&render_job_timing_rows(
+        status.tasks.as_deref().unwrap_or(&[]),
+    ));
     output
+}
+
+/// Renders ordered executor snapshots without adding a timer or sorting them.
+/// Empty task data is the explicit legacy path and retains the prior output.
+fn render_job_timing_rows(tasks: &[TerminalTaskSnapshot]) -> String {
+    if tasks.is_empty() {
+        return String::new();
+    }
+    let identities: Vec<String> = tasks
+        .iter()
+        .map(|task| {
+            if task.id == task.name {
+                task.name.clone()
+            } else {
+                format!("[{}] {}", task.id, task.name)
+            }
+        })
+        .collect();
+    let name_width = identities
+        .iter()
+        .map(String::len)
+        .max()
+        .unwrap_or(3)
+        .max("JOB".len());
+    let state_width = tasks
+        .iter()
+        .map(|task| task.state.len())
+        .max()
+        .unwrap_or(6)
+        .max("RESULT".len());
+    let mut rows = format!(
+        "jobs:\n  {:<name_width$}  {:<state_width$}  DURATION\n",
+        "JOB", "RESULT"
+    );
+    for (identity, task) in identities.iter().zip(tasks) {
+        let duration = task
+            .duration_ms
+            .map(format_duration)
+            .unwrap_or_else(|| "-".to_owned());
+        rows.push_str(&format!(
+            "  {identity:<name_width$}  {:<state_width$}  {duration}\n",
+            task.state
+        ));
+    }
+    rows
 }
 
 /// Compact deterministic `capabilities` rendering: protocol facts a client
@@ -832,6 +880,20 @@ mod tests {
             commands: vec!["cargo test".to_string()],
             duration_ms: Some(42),
             failures: vec!["invalid concurrency value".to_string()],
+            tasks: Some(vec![
+                TerminalTaskSnapshot {
+                    id: "checks#1".to_string(),
+                    name: "lint".to_string(),
+                    state: "failed".to_string(),
+                    duration_ms: Some(1_800),
+                },
+                TerminalTaskSnapshot {
+                    id: "docs".to_string(),
+                    name: "docs".to_string(),
+                    state: "cancelled".to_string(),
+                    duration_ms: None,
+                },
+            ]),
             effective_concurrency: Some(1),
             concurrency_source: Some("control".to_string()),
             revision: Some(2),
@@ -844,6 +906,10 @@ mod tests {
         assert!(rendered.contains("duration_ms: 42"));
         assert!(rendered.contains("  - cargo test"));
         assert!(rendered.contains("  - invalid concurrency value"));
+        assert!(rendered.contains("JOB"));
+        assert!(rendered.contains("[checks#1] lint"));
+        assert!(rendered.contains("1.8s"));
+        assert!(rendered.contains("docs") && rendered.contains("-"));
         assert!(!rendered.contains("(none)"));
     }
 
@@ -856,6 +922,7 @@ mod tests {
             commands: vec![],
             duration_ms: None,
             failures: vec![],
+            tasks: None,
             effective_concurrency: None,
             concurrency_source: None,
             revision: None,
@@ -887,6 +954,7 @@ mod tests {
                 commands: vec!["cargo test".to_string()],
                 duration_ms: Some(42),
                 failures: vec![],
+                tasks: None,
                 effective_concurrency: Some(1),
                 concurrency_source: Some("control".to_string()),
                 revision: None,
@@ -954,6 +1022,7 @@ mod tests {
                 commands: vec!["cargo test".to_string()],
                 duration_ms: Some(42),
                 failures: vec!["boom".to_string()],
+                tasks: None,
                 effective_concurrency: None,
                 concurrency_source: None,
                 revision: None,

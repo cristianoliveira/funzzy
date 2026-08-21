@@ -99,6 +99,17 @@ impl fmt::Display for ControlClientError {
     }
 }
 
+/// One immutable terminal job snapshot carried by additive control responses.
+/// Its source order is the executor's configured declaration order; clients
+/// render it as received and never derive a new duration or ordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalTaskSnapshot {
+    pub id: String,
+    pub name: String,
+    pub state: String,
+    pub duration_ms: Option<u64>,
+}
+
 /// Validated `status` result (additive contract §7 legacy shape, preserved).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusSnapshot {
@@ -108,6 +119,9 @@ pub struct StatusSnapshot {
     pub commands: Vec<String>,
     pub duration_ms: Option<u64>,
     pub failures: Vec<String>,
+    /// Additive terminal task snapshots. `None` means a legacy server did not
+    /// expose task data; `Some(vec![])` is a known empty task set.
+    pub tasks: Option<Vec<TerminalTaskSnapshot>>,
     /// Effective concurrency of the latest generation (TASK-0073): None on
     /// legacy servers or when the configured bound applied (additive).
     pub effective_concurrency: Option<u64>,
@@ -158,6 +172,7 @@ impl StatusSnapshot {
             }
         };
         let failures = read_string_array(object, "failures")?;
+        let tasks = read_optional_terminal_tasks(object)?;
         let effective_concurrency = match object.get("effectiveConcurrency") {
             None | Some(Value::Null) => None,
             Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
@@ -200,6 +215,7 @@ impl StatusSnapshot {
             commands,
             duration_ms,
             failures,
+            tasks,
             effective_concurrency,
             concurrency_source,
             revision,
@@ -997,6 +1013,60 @@ impl ConfigTransitionSnapshot {
     }
 }
 
+fn read_optional_terminal_tasks(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Option<Vec<TerminalTaskSnapshot>>, String> {
+    let Some(values) = object.get("tasks") else {
+        return Ok(None);
+    };
+    let values = values
+        .as_array()
+        .ok_or_else(|| "status result field \"tasks\" must be an array".to_string())?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let task = value
+                .as_object()
+                .ok_or_else(|| format!("status result task at index {index} must be an object"))?;
+            let id = task
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("status result task at index {index} field \"id\" must be a string"))?;
+            let name = task
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| format!("status result task at index {index} field \"name\" must be a string"))?;
+            let state = task
+                .get("state")
+                .and_then(Value::as_str)
+                .filter(|state| matches!(*state, "passed" | "failed" | "cancelled"))
+                .map(str::to_owned)
+                .ok_or_else(|| format!("status result task at index {index} field \"state\" is invalid"))?;
+            let duration_ms = match task.get("durationMs") {
+                Some(Value::Null) => None,
+                Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
+                    format!("status result task at index {index} field \"durationMs\" must be a number or null")
+                })?,
+                _ => {
+                    return Err(format!(
+                        "status result task at index {index} field \"durationMs\" must be a number or null"
+                    ))
+                }
+            };
+            Ok(TerminalTaskSnapshot {
+                id,
+                name,
+                state,
+                duration_ms,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
 fn read_string_array(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -1349,12 +1419,33 @@ mod tests {
             "trigger": "src/main.rs",
             "commands": ["cargo test"],
             "durationMs": 42,
-            "failures": []
+            "failures": [],
+            "tasks": [
+                {"id": "checks#1", "name": "lint", "state": "failed", "durationMs": 120},
+                {"id": "test", "name": "test", "state": "cancelled", "durationMs": null}
+            ]
         });
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
         let status = client.status().expect("status");
         handle.join().expect("server thread");
+        assert_eq!(
+            status.tasks,
+            Some(vec![
+                TerminalTaskSnapshot {
+                    id: "checks#1".to_owned(),
+                    name: "lint".to_owned(),
+                    state: "failed".to_owned(),
+                    duration_ms: Some(120),
+                },
+                TerminalTaskSnapshot {
+                    id: "test".to_owned(),
+                    name: "test".to_owned(),
+                    state: "cancelled".to_owned(),
+                    duration_ms: None,
+                },
+            ])
+        );
         assert_eq!(
             status,
             StatusSnapshot {
@@ -1368,6 +1459,20 @@ mod tests {
                 concurrency_source: None,
                 revision: None,
                 revision_hash: None,
+                tasks: Some(vec![
+                    TerminalTaskSnapshot {
+                        id: "checks#1".to_owned(),
+                        name: "lint".to_owned(),
+                        state: "failed".to_owned(),
+                        duration_ms: Some(120),
+                    },
+                    TerminalTaskSnapshot {
+                        id: "test".to_owned(),
+                        name: "test".to_owned(),
+                        state: "cancelled".to_owned(),
+                        duration_ms: None,
+                    },
+                ]),
             }
         );
     }
@@ -1385,6 +1490,10 @@ mod tests {
         assert_eq!(status.duration_ms, None);
         assert!(status.commands.is_empty());
         assert!(status.failures.is_empty());
+        assert!(
+            status.tasks.is_none(),
+            "legacy status must preserve unavailable job timing"
+        );
     }
 
     #[test]
@@ -1647,7 +1756,8 @@ mod tests {
                     "trigger": "src/main.rs",
                     "commands": ["cargo test"],
                     "durationMs": 42,
-                    "failures": []
+                    "failures": [],
+                    "tasks": [{"id": "lint", "name": "lint", "state": "passed", "durationMs": 42}]
                 },
                 "terminalReason": "passed",
                 "latestGeneration": 7,
@@ -1675,6 +1785,11 @@ mod tests {
         assert_eq!(result.freshness, "current");
         assert_eq!(result.snapshot.generation, 7);
         assert_eq!(result.snapshot.state, "passed");
+        assert_eq!(result.snapshot.tasks.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            result.snapshot.tasks.as_ref().unwrap()[0].duration_ms,
+            Some(42)
+        );
         assert!(!result.pending_work.debounce_active);
     }
 

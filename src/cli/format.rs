@@ -60,6 +60,17 @@ pub fn status_document(status: &StatusSnapshot) -> Value {
         "effectiveConcurrency": status.effective_concurrency,
         "concurrencySource": status.concurrency_source,
     });
+    if let Some(tasks) = &status.tasks {
+        doc["tasks"] = json!(tasks
+            .iter()
+            .map(|task| json!({
+                "id": task.id,
+                "name": task.name,
+                "state": task.state,
+                "durationMs": task.duration_ms,
+            }))
+            .collect::<Vec<_>>());
+    }
     // TASK-0091, AC2: the frozen config revision of the latest generation
     // (additive; omitted on legacy servers).
     if let Some(revision) = status.revision {
@@ -266,7 +277,7 @@ mod tests {
     use crate::control_client::{
         AwaitSnapshot, CancelSnapshot, CapabilitiesSnapshot, CapabilityFeatures, CapabilityLimits,
         EmitSnapshot, FailureEvidenceSnapshot, OutputSnapshot, RetrievedTaskSnapshot,
-        StatusSnapshot, StreamSnapshot,
+        StatusSnapshot, StreamSnapshot, TerminalTaskSnapshot,
     };
     use crate::duration_history::{EstimateConfidence, EstimateSource, RunEstimate};
 
@@ -278,6 +289,12 @@ mod tests {
             commands: vec!["cargo test".to_owned()],
             duration_ms: Some(42),
             failures: vec!["test: boom".to_owned()],
+            tasks: Some(vec![TerminalTaskSnapshot {
+                id: "checks#1".to_owned(),
+                name: "lint".to_owned(),
+                state: "failed".to_owned(),
+                duration_ms: Some(42),
+            }]),
             effective_concurrency: Some(1),
             concurrency_source: Some("control".to_owned()),
             revision: Some(2),
@@ -306,6 +323,7 @@ mod tests {
                 "revision",
                 "revisionHash",
                 "state",
+                "tasks",
                 "trigger"
             ]
         );
@@ -323,6 +341,7 @@ mod tests {
         assert!(toon_str.contains("generation"), "toon: {toon_str}");
         assert!(toon_str.contains("4"), "toon: {toon_str}");
         assert!(toon_str.contains("boom"), "toon: {toon_str}");
+        assert_eq!(doc["tasks"][0]["durationMs"], 42);
     }
 
     #[test]
