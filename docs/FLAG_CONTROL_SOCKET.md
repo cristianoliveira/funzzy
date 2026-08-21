@@ -33,10 +33,17 @@ The socket uses JSON-RPC 2.0 framed as NDJSON: send one newline-terminated JSON-
 ```
 
 ```json
-{"jsonrpc":"2.0","id":"status","result":{"generation":4,"state":"passed","trigger":"src/main.rs","commands":["cargo test"],"durationMs":42,"failures":[]}}
+{"jsonrpc":"2.0","id":"status","result":{"generation":4,"state":"passed","trigger":"src/main.rs","commands":["cargo test"],"durationMs":42,"tasks":[{"id":"checks#1","name":"test","state":"passed","durationMs":37}],"failures":[]}}
 ```
 
-States are `idle`, `running`, `passed`, `failed`, and `cancelled`.
+States are `idle`, `running`, `passed`, `failed`, and `cancelled`. Terminal
+snapshots additionally expose one configured-declaration-ordered `tasks` row
+per job. A row's `durationMs` is the executor's monotonic job duration; it is
+independent of serial/parallel scheduling. `null` means the job never started
+or was skipped, while a started cancellation carries its partial elapsed
+integer. Generation `durationMs` is separate wall time, never a sum of rows.
+Human `fzz control status`/`await` output renders the same rows with `-` for
+an absent duration; use JSON or TOON when the exact integer is required.
 
 ### List targets
 

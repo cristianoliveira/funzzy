@@ -3,6 +3,7 @@
 use assert_cmd::cargo;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn fixture(name: &str) -> PathBuf {
     let directory =
@@ -469,6 +470,104 @@ fn run_events_flag_writes_ndjson_stream() {
             .all(|r| r["runId"].is_number() || r["event"] == "tick"),
         "run identity on records: {content}"
     );
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn current_run_rows_match_terminal_events_and_both_binary_aliases() {
+    // Current-run rows are human projections of executor terminal snapshots.
+    // This intentionally asserts state/identity and integer-or-null evidence,
+    // never host-speed-specific durations.
+    let directory = fixture("duration-report");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\njobs:\n  - name: alpha @duration\n    run: 'true'\n  - name: broken @duration\n    run: 'false'\n  - name: skipped @duration\n    run: 'true'\n",
+    );
+
+    for (binary, label) in [
+        (env!("CARGO_BIN_EXE_fzz"), "fzz"),
+        (env!("CARGO_BIN_EXE_funzzy"), "funzzy"),
+    ] {
+        let events = directory.join(format!("{label}.ndjson"));
+        let output = Command::new(binary)
+            .current_dir(&directory)
+            .env("FUNZZY_COLORED", "false")
+            .args([
+                "-c",
+                ".watch.yaml",
+                "--fail-fast",
+                "run",
+                "@duration",
+                "--events",
+                events.to_str().unwrap(),
+            ])
+            .output()
+            .expect("run configured workflow");
+        assert_eq!(output.status.code(), Some(1), "{label} exit status");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let alpha = stdout.find("alpha @duration").expect("alpha row");
+        let broken = stdout.find("broken @duration").expect("broken row");
+        let skipped = stdout.find("skipped @duration").expect("skipped row");
+        assert!(
+            alpha < broken && broken < skipped,
+            "declaration order: {stdout}"
+        );
+        assert!(
+            stdout.contains("JOB") && stdout.contains("DURATION"),
+            "rows: {stdout}"
+        );
+        assert!(
+            stdout.contains("Duration:"),
+            "separate generation total: {stdout}"
+        );
+
+        let records: Vec<serde_json::Value> = std::fs::read_to_string(&events)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let terminals: Vec<&serde_json::Value> = records
+            .iter()
+            .filter(|record| record["event"] == "task_terminal")
+            .collect();
+        assert_eq!(
+            terminals.len(),
+            3,
+            "one terminal record per job: {records:?}"
+        );
+        assert_eq!(terminals[0]["task"], "alpha @duration");
+        assert_eq!(terminals[0]["state"], "passed");
+        assert!(terminals[0]["durationMs"].is_u64());
+        assert_eq!(terminals[1]["task"], "broken @duration");
+        assert_eq!(terminals[1]["state"], "failed");
+        assert!(terminals[1]["durationMs"].is_u64());
+        assert_eq!(terminals[2]["task"], "skipped @duration");
+        assert_eq!(terminals[2]["state"], "cancelled");
+        assert!(terminals[2]["durationMs"].is_null());
+    }
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn parallel_job_rows_follow_declaration_not_completion_order() {
+    let directory = fixture("duration-parallel-order");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: declared first @duration\n    parallel: checks\n    run: 'touch first.ready; while [ ! -f second.ready ]; do sleep 0.01; done; sleep 0.1'\n  - name: declared second @duration\n    parallel: checks\n    run: 'touch second.ready; while [ ! -f first.ready ]; do sleep 0.01; done'\n",
+    );
+
+    let output = fzz(&directory)
+        .args(["run", "@duration"])
+        .output()
+        .expect("run parallel jobs");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "parallel run failed: {stdout}");
+    let first = stdout.find("declared first @duration").unwrap();
+    let second = stdout.find("declared second @duration").unwrap();
+    assert!(first < second, "rows retain configured order: {stdout}");
+    assert!(stdout.contains("[checks#1] declared first @duration"));
+    assert!(stdout.contains("[checks#1] declared second @duration"));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

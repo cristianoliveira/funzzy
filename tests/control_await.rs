@@ -228,6 +228,83 @@ tasks:
     change: "*.txt"
 "#;
 
+const DURATION_PARITY: &str = r#"
+on:
+  socket: sock
+jobs:
+  - name: serial first
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+  - name: serial second
+    run: "true"
+    change: "*.txt"
+    run_on_init: true
+"#;
+
+fn start_watcher_with_events(directory: &std::path::Path, events: &std::path::Path) -> TestProcess {
+    let child_log = std::fs::File::create(directory.join("child.err")).unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(directory)
+        .env_remove("FUNZZY_BAIL")
+        .env_remove("FUNZZY_NON_BLOCK")
+        .args(["--events", events.to_str().unwrap()])
+        .stdout(Stdio::from(child_log.try_clone().unwrap()))
+        .stderr(Stdio::from(child_log))
+        .spawn()
+        .unwrap();
+    TestProcess {
+        child,
+        directory: directory.to_path_buf(),
+    }
+}
+
+#[test]
+fn control_snapshot_human_rows_and_terminal_events_agree() {
+    let directory = setup_directory("duration-parity", DURATION_PARITY);
+    let events = directory.join("events.ndjson");
+    let _watcher = start_watcher_with_events(&directory, &events);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(1)
+            && status["state"].as_str() == Some("passed")
+            && status["tasks"]
+                .as_array()
+                .is_some_and(|tasks| tasks.len() == 2)
+    });
+
+    let snapshot = try_status(&socket).unwrap()["result"].clone();
+    let tasks = snapshot["tasks"].as_array().unwrap();
+    assert_eq!(tasks[0]["name"], "serial first");
+    assert_eq!(tasks[1]["name"], "serial second");
+    assert!(tasks.iter().all(|task| task["durationMs"].is_u64()));
+
+    let human = run_cli(&directory, &["control", "status"]);
+    let human = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        human.contains("jobs:") && human.contains("DURATION"),
+        "{human}"
+    );
+    assert!(
+        human.find("serial first") < human.find("serial second"),
+        "human declaration order: {human}"
+    );
+
+    let records: Vec<serde_json::Value> = std::fs::read_to_string(&events)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|record| record["event"] == "task_terminal")
+        .collect();
+    assert_eq!(records.len(), 2);
+    for (task, event) in tasks.iter().zip(records) {
+        assert_eq!(event["task"], task["name"]);
+        assert_eq!(event["state"], task["state"]);
+        assert_eq!(event["durationMs"], task["durationMs"]);
+    }
+}
+
 #[test]
 fn await_already_terminal_generation_returns_immediately() {
     let directory = setup_directory("already-terminal", INIT_FAST);
@@ -498,6 +575,10 @@ fn control_run_wait_returns_one_observation() {
     assert!(
         stdout.contains("terminal reason: passed"),
         "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("jobs:") && stdout.contains("init task") && stdout.contains("DURATION"),
+        "human control result includes the terminal job row: {stdout}"
     );
 }
 

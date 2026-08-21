@@ -63,6 +63,20 @@ fzz run "@quick"    # target can be a name, @tag, or unambiguous substring
 
 `run` exits with the combined outcome (0 all pass, 1 any fail).
 
+### Current-run job durations
+
+Finite runs render one declaration-ordered `JOB / RESULT / DURATION` row for
+each configured job. Per-job duration is the executor's monotonic elapsed
+measurement, valid whether jobs are serial or parallel. The generation
+`Duration:` remains separate wall-clock time and is never calculated by adding
+job rows.
+
+Started cancellations retain a partial duration; skipped or never-started jobs
+render `-` and structured snapshots/events expose `durationMs: null`. A
+recovered job appears once with its final state and a duration through final
+verification. For exact integer milliseconds, inspect `tasks[].durationMs` in
+a control snapshot or a `task_terminal` NDJSON event.
+
 ### 1.4 Inspect before executing
 
 ```bash

@@ -209,6 +209,14 @@ fn cancel_running_generation_reports_cancelled() {
         status["generation"].as_u64() == Some(run_id)
             && status["state"].as_str() == Some("cancelled")
     });
+    let snapshot = try_status(&socket).unwrap();
+    let task = &snapshot["result"]["tasks"][0];
+    assert_eq!(task["name"], "long running");
+    assert_eq!(task["state"], "cancelled");
+    assert!(
+        task["durationMs"].is_u64(),
+        "started cancellation keeps partial duration: {snapshot}"
+    );
 }
 
 #[test]

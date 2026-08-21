@@ -252,6 +252,19 @@ fzz run "@quick"
 # Exits with combined configured task outcome; useful in CI.
 ```
 
+### Current-run job durations
+
+Every finite local run prints one `JOB / RESULT / DURATION` row per configured
+job in declaration order. A row's duration is that job's monotonic elapsed
+runtime; it remains meaningful for both serial and parallel jobs. The final
+`Duration:` is the separate generation wall time, never a sum of job rows.
+
+A cancelled job that started reports its partial duration. A skipped or
+never-started job prints `-` (`durationMs: null` in structured snapshots). A
+recovered job has one final row whose duration includes recovery and
+verification. Use the control snapshot or NDJSON `task_terminal` event when an
+exact integer `durationMs` is needed.
+
 Inspect or control a watcher configured with `on.socket`:
 
 ```bash

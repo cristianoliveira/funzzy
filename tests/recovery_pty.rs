@@ -150,13 +150,16 @@ fn approved_recovery_emits_phases_and_runs_only_success_hook_once() {
             "verification_finished",
         ]
     );
-    assert_eq!(
-        records
-            .iter()
-            .filter(|record| record["event"] == "task_terminal")
-            .count(),
-        1
-    );
+    let terminals: Vec<&serde_json::Value> = records
+        .iter()
+        .filter(|record| record["event"] == "task_terminal")
+        .collect();
+    assert_eq!(terminals.len(), 1, "recovery has one final job row");
+    assert_eq!(terminals[0]["task"], "recover @quick");
+    assert_eq!(terminals[0]["state"], "passed");
+    assert!(terminals[0]["durationMs"].is_u64());
+    // The PTY helper owns the approval prompt stream; the NDJSON terminal
+    // record is the stable cross-surface evidence for this recovered row.
     assert!(records.iter().any(|record| record["event"] == "finished"));
 }
 
