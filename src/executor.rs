@@ -1102,13 +1102,13 @@ impl Executor {
             crate::config::RecoveryPolicy::Prompt
         ) {
             let approval = Arc::clone(&self.approval);
-            let cancellation = run.cancellation_token();
             let requested = requests.clone();
             let timeout = run.metadata.recovery_timeout;
-            let approval_cancellation = cancellation.clone();
+            let approval_cancellation = CancellationToken::new();
+            let approval_signal = approval_cancellation.clone();
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let decision = approval.approve(&requested, &approval_cancellation, timeout);
+                let decision = approval.approve(&requested, &approval_signal, timeout);
                 let _ = sender.send(decision);
             });
             let deadline = Instant::now() + timeout;
@@ -1118,14 +1118,14 @@ impl Executor {
                     // for its cooperative cancellation before the worker can
                     // promote a successor, otherwise stale/partial input
                     // could be consumed by that next generation.
-                    cancellation.cancel();
+                    approval_cancellation.cancel();
                     let _ = receiver.recv_timeout(Duration::from_millis(500));
                     run.pending_recoveries.append(&mut pending);
                     return true;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    cancellation.cancel();
+                    approval_cancellation.cancel();
                     let _ = receiver.recv_timeout(Duration::from_millis(500));
                     break ApprovalDecision::TimedOut;
                 }

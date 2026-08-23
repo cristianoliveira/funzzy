@@ -13,6 +13,17 @@ use std::sync::{Mutex, MutexGuard};
 
 static PTY_LOCK: Mutex<()> = Mutex::new(());
 
+struct ChildCleanup(Option<Child>);
+
+impl Drop for ChildCleanup {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 struct PtyGuard {
     _thread: MutexGuard<'static, ()>,
     lock_file: File,
@@ -251,12 +262,15 @@ fn run_with_answer_and_events(
     if let Some(events) = events {
         command.arg("--events").arg(events);
     }
-    let mut child = command
+    let child = command
         .stdin(Stdio::from(child_stdin))
         .stdout(Stdio::from(slave))
         .stderr(Stdio::from(child_stderr))
         .spawn()
         .expect("spawn fzz under pty");
+    // Keep the child bounded even when a PTY assertion panics; otherwise a
+    // stalled approval leaves a live watcher that interferes with later tests.
+    let mut child = ChildCleanup(Some(child));
 
     let mut output = Vec::new();
     let mut byte = [0_u8; 1];
@@ -285,7 +299,13 @@ fn run_with_answer_and_events(
                                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                                 Err(error) => panic!("read pty output: {error}"),
                             }
-                            if let Some(status) = child.try_wait().expect("poll child") {
+                            if let Some(status) = child
+                                .0
+                                .as_mut()
+                                .expect("child remains owned")
+                                .try_wait()
+                                .expect("poll child")
+                            {
                                 return (status, String::from_utf8_lossy(&output).into_owned());
                             }
                             assert!(
@@ -309,7 +329,12 @@ fn run_with_answer_and_events(
             Err(error) => panic!("read pty output: {error}"),
         }
     }
-    let status = child.wait().expect("wait for fzz");
+    let status = child
+        .0
+        .take()
+        .expect("child remains owned")
+        .wait()
+        .expect("wait for fzz");
     (status, String::from_utf8_lossy(&output).into_owned())
 }
 
