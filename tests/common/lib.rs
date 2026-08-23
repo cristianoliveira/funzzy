@@ -410,7 +410,7 @@ pub fn clean_output(output_file: &str) -> String {
                 return "Funzzy: finished in 0.0s".to_string();
             }
 
-            if line.contains("JOB                          RESULT  DURATION") {
+            if line.split_whitespace().eq(["JOB", "RESULT", "DURATION"]) {
                 in_job_duration_table = true;
                 return line.to_string();
             }

@@ -6,12 +6,12 @@ mod setup;
 
 #[test]
 fn clean_output_normalizes_only_job_table_rows() {
-    let output = "Funzzy results ----------------------------\nJOB                          RESULT  DURATION\nfirst job                   passed  12ms\nsecond job                  failed  0.1s\nSuccess; Completed: 1; Duration: 12ms\nFailure; Completed: 1; Failed: 1; Duration: 34ms";
+    let output = "Funzzy results ----------------------------\nJOB                                     RESULT  DURATION\nfirst job with a wider name             passed  12ms\nsecond job with a wider name            failed  0.1s\nSuccess; Completed: 1; Duration: 12ms\nFailure; Completed: 1; Failed: 1; Duration: 34ms";
 
     setup::serialized(|| {
         assert_eq!(
             setup::clean_output(output),
-            "Funzzy results ----------------------------\nJOB                          RESULT  DURATION\nfirst job                   passed  0ms\nsecond job                  failed  0ms\nSuccess; Completed: 1; Duration: 0.0000s\nFailure; Completed: 1; Failed: 1; Duration: 0.0000s",
+            "Funzzy results ----------------------------\nJOB                                     RESULT  DURATION\nfirst job with a wider name             passed  0ms\nsecond job with a wider name            failed  0ms\nSuccess; Completed: 1; Duration: 0.0000s\nFailure; Completed: 1; Failed: 1; Duration: 0.0000s",
         );
     });
 }
