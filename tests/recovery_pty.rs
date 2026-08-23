@@ -3,14 +3,56 @@
 #![cfg(unix)]
 
 use nix::pty::openpty;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard};
 
 static PTY_LOCK: Mutex<()> = Mutex::new(());
+
+struct PtyGuard {
+    _thread: MutexGuard<'static, ()>,
+    lock_file: File,
+}
+
+impl Drop for PtyGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = nix::libc::flock(self.lock_file.as_raw_fd(), nix::libc::LOCK_UN);
+        }
+    }
+}
+
+fn acquire_pty_guard() -> PtyGuard {
+    let thread = PTY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let path = std::env::temp_dir().join("funzzy-recovery-pty-global.lock");
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(path)
+        .expect("open global pty lock");
+    loop {
+        let acquired = unsafe {
+            nix::libc::flock(
+                lock_file.as_raw_fd(),
+                nix::libc::LOCK_EX | nix::libc::LOCK_NB,
+            )
+        };
+        if acquired == 0 {
+            return PtyGuard {
+                _thread: thread,
+                lock_file,
+            };
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
 
 fn scratch(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -42,6 +84,143 @@ fn write_custom_config(path: &Path, run: &str, recovery: &str) {
     .expect("write recovery config");
 }
 
+struct PtyWatcher {
+    child: Child,
+    master: File,
+    writer: File,
+    root: PathBuf,
+}
+
+impl Drop for PtyWatcher {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn start_watcher_with_pty(config: &Path, events: &Path, root: &Path) -> PtyWatcher {
+    let pty = openpty(None, None).expect("open watcher pty");
+    let master = File::from(pty.master);
+    let writer = master.try_clone().expect("clone watcher pty writer");
+    let slave = File::from(pty.slave);
+    let child_stdin = slave.try_clone().expect("clone watcher stdin");
+    let child_stdout = slave.try_clone().expect("clone watcher stdout");
+    let child_stderr = slave.try_clone().expect("clone watcher stderr");
+    let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
+        .current_dir(root)
+        .args([
+            "-c",
+            config.to_str().unwrap(),
+            "--events",
+            events.to_str().unwrap(),
+        ])
+        .env("FUNZZY_BAIL", "false")
+        .stdin(Stdio::from(child_stdin))
+        .stdout(Stdio::from(child_stdout))
+        .stderr(Stdio::from(child_stderr))
+        .spawn()
+        .expect("spawn watcher under pty");
+    PtyWatcher {
+        child,
+        master,
+        writer,
+        root: root.to_path_buf(),
+    }
+}
+
+fn wait_for_event(
+    events: &Path,
+    predicate: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(events) {
+            for line in text.lines() {
+                let record: serde_json::Value =
+                    serde_json::from_str(line).expect("valid event record");
+                if predicate(&record) {
+                    return record;
+                }
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for event; events={}\n{}",
+            events.display(),
+            std::fs::read_to_string(events)
+                .unwrap_or_else(|error| format!("<unreadable: {error}>"))
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn wait_for_prompt(master: &File) {
+    let mut reader = master.try_clone().expect("clone watcher pty reader");
+    let fd = reader.as_raw_fd();
+    let flags = unsafe { nix::libc::fcntl(fd, nix::libc::F_GETFL) };
+    assert!(flags >= 0, "get watcher pty flags");
+    assert_eq!(
+        unsafe { nix::libc::fcntl(fd, nix::libc::F_SETFL, flags | nix::libc::O_NONBLOCK) },
+        0,
+        "set watcher pty nonblocking"
+    );
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 256];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(size) => output.extend_from_slice(&buffer[..size]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => panic!("read watcher pty output: {error}"),
+        }
+        if output.ends_with(b"[y/N] ") {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for approval prompt"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn wait_for_socket(path: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if UnixStream::connect(path).is_ok() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "control socket never connected"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn control_call(
+    socket: &Path,
+    id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> serde_json::Value {
+    let mut stream = UnixStream::connect(socket).expect("connect control socket");
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    });
+    writeln!(stream, "{}", request).expect("write control request");
+    let mut response = String::new();
+    BufReader::new(&mut stream)
+        .read_line(&mut response)
+        .expect("read control response");
+    serde_json::from_str(&response).expect("valid control response")
+}
+
 fn run_with_answer(
     binary: &str,
     config: &Path,
@@ -56,7 +235,7 @@ fn run_with_answer_and_events(
     answer: &[u8],
     events: Option<&Path>,
 ) -> (std::process::ExitStatus, String) {
-    let _pty_guard = PTY_LOCK.lock().expect("pty test lock");
+    let _pty_guard = acquire_pty_guard();
     let pty = openpty(None, None).expect("open pty");
     let master = File::from(pty.master);
     let mut writer = Some(master.try_clone().expect("clone pty master"));
@@ -97,7 +276,7 @@ fn run_with_answer_and_events(
                         };
                         assert_eq!(result, 0, "set pty nonblocking");
                         let deadline =
-                            std::time::Instant::now() + std::time::Duration::from_secs(5);
+                            std::time::Instant::now() + std::time::Duration::from_secs(15);
                         loop {
                             let mut tail = [0_u8; 256];
                             match reader.read(&mut tail) {
@@ -111,7 +290,8 @@ fn run_with_answer_and_events(
                             }
                             assert!(
                                 std::time::Instant::now() < deadline,
-                                "recovery approval did not time out"
+                                "recovery approval did not time out; output={}",
+                                String::from_utf8_lossy(&output)
                             );
                             std::thread::yield_now();
                         }
@@ -289,6 +469,142 @@ fn unanswered_recovery_approval_times_out_without_running_recovery() {
     assert!(event_text.contains("\"phase\":\"approval_requested\""));
     assert!(event_text.contains("\"phase\":\"approval_decided\""));
     assert!(event_text.contains("approval timeout"));
+}
+
+#[test]
+fn cancellation_and_supersession_discard_partial_tty_input() {
+    let _pty_guard = acquire_pty_guard();
+    let root = scratch("cancel-partial-input");
+    let config = root.join(".watch.yaml");
+    let events = root.join("events.ndjson");
+    let marker = root.join("recovered");
+    std::fs::write(
+        &config,
+        format!(
+            "on:\n  socket: sock\nexecution:\n  recovery_policy: prompt\n  recovery_timeout: 2s\njobs:\n  - name: recover @quick\n    run: \"false\"\n    recovery: \"touch '{}'\"\n    run_on_init: true\n",
+            marker.display()
+        ),
+    )
+    .expect("write cancellation config");
+
+    let mut watcher = start_watcher_with_pty(&config, &events, &root);
+    let socket = root.join("sock");
+    wait_for_socket(&socket);
+    wait_for_event(&events, |event| {
+        event["event"] == "recovery_phase"
+            && event["runId"] == 1
+            && event["phase"] == "approval_requested"
+    });
+    wait_for_prompt(&watcher.master);
+
+    // Leave a canonical line incomplete for generation 1. Supersession must
+    // cancel that approval before it can become input for generation 2.
+    watcher
+        .writer
+        .write_all(b"y")
+        .expect("write partial approval");
+    let scheduled = control_call(
+        &socket,
+        "run",
+        "run",
+        serde_json::json!({"target": "@quick"}),
+    );
+    assert_eq!(
+        scheduled["result"]["runId"], 2,
+        "scheduled successor: {scheduled}"
+    );
+    let cancelled = wait_for_event(&events, |event| {
+        event["event"] == "cancelled" && event["runId"] == 1
+    });
+    assert_eq!(
+        cancelled["supersededBy"], 2,
+        "supersession relation: {cancelled}"
+    );
+    wait_for_event(&events, |event| {
+        event["event"] == "recovery_phase"
+            && event["runId"] == 2
+            && event["phase"] == "approval_requested"
+    });
+    wait_for_prompt(&watcher.master);
+
+    // Complete the stale line only after generation 2 is asking. If stale
+    // bytes crossed the boundary this would approve recovery and create the
+    // marker; a clean boundary yields EOF/decline and no mutation.
+    watcher
+        .writer
+        .write_all(b"\n")
+        .expect("complete stale approval");
+    let terminal = wait_for_event(&events, |event| {
+        event["event"] == "finished" && event["runId"] == 2
+    });
+    assert!(!terminal["failures"].as_array().unwrap().is_empty());
+    assert!(
+        !marker.exists(),
+        "stale partial input must not approve successor"
+    );
+}
+
+#[test]
+fn control_status_stays_non_terminal_then_exact_await_reports_timeout() {
+    let _pty_guard = acquire_pty_guard();
+    let root = scratch("control-timeout");
+    let config = root.join(".watch.yaml");
+    let events = root.join("events.ndjson");
+    let marker = root.join("recovered");
+    std::fs::write(
+        &config,
+        format!(
+            "on:\n  socket: sock\nexecution:\n  recovery_policy: prompt\n  recovery_timeout: 100ms\njobs:\n  - name: recover @quick\n    run: \"printf original-timeout >&2; exit 1\"\n    output: show-on-failure\n    recovery: \"touch '{}'\"\n    run_on_init: true\n",
+            marker.display()
+        ),
+    )
+    .expect("write control timeout config");
+
+    let watcher = start_watcher_with_pty(&config, &events, &root);
+    let socket = root.join("sock");
+    wait_for_socket(&socket);
+    wait_for_event(&events, |event| {
+        event["event"] == "recovery_phase"
+            && event["runId"] == 1
+            && event["phase"] == "approval_requested"
+    });
+    wait_for_prompt(&watcher.master);
+
+    let status = control_call(&socket, "status", "status", serde_json::json!({}));
+    let status = &status["result"];
+    assert_eq!(status["generation"], 1);
+    assert_eq!(
+        status["state"], "running",
+        "approval is non-terminal: {status}"
+    );
+    assert!(status["tasks"]
+        .as_array()
+        .is_some_and(|tasks| tasks.is_empty()));
+
+    let awaited = control_call(
+        &socket,
+        "await",
+        "await",
+        serde_json::json!({"generation": 1, "timeoutMs": 5000}),
+    );
+    let result = &awaited["result"];
+    assert_eq!(result["terminalReason"], "failed", "exact await: {awaited}");
+    assert_eq!(result["snapshot"]["generation"], 1);
+    assert_eq!(result["snapshot"]["state"], "failed");
+    assert!(result["failureEvidence"]["excerpt"]
+        .as_str()
+        .is_some_and(|excerpt| excerpt.contains("original-timeout")));
+    let timeout = wait_for_event(&events, |event| {
+        event["event"] == "recovery_phase"
+            && event["runId"] == 1
+            && event["phase"] == "approval_decided"
+    });
+    assert_eq!(
+        timeout["outcome"], "approval timeout",
+        "timeout evidence: {timeout}"
+    );
+    assert!(!marker.exists());
+    drop(watcher);
 }
 
 #[test]

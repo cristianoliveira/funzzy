@@ -1114,12 +1114,19 @@ impl Executor {
             let deadline = Instant::now() + timeout;
             loop {
                 if run.cancellation_requested() {
+                    // The approval adapter owns the TTY read. Wait briefly
+                    // for its cooperative cancellation before the worker can
+                    // promote a successor, otherwise stale/partial input
+                    // could be consumed by that next generation.
+                    cancellation.cancel();
+                    let _ = receiver.recv_timeout(Duration::from_millis(500));
                     run.pending_recoveries.append(&mut pending);
                     return true;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
                     cancellation.cancel();
+                    let _ = receiver.recv_timeout(Duration::from_millis(500));
                     break ApprovalDecision::TimedOut;
                 }
                 match receiver.recv_timeout(POLL_INTERVAL.min(remaining)) {

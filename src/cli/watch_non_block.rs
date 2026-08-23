@@ -139,17 +139,22 @@ impl Command for WatchNonBlockCommand {
                 self.watches.concurrency(),
                 move |event| {
                     recorder_state.observe(&event);
+                    // Apply the correlated snapshot before waking exact
+                    // awaiters. Otherwise a terminal coordinator transition
+                    // can race its snapshot projection and return a failed
+                    // reason with a still-running snapshot.
+                    worker_state.lock().unwrap().apply(event.clone());
                     coordinator_state.observe(&event);
                     if let Some(stream) = &events_state {
-                        stream.emit_event(event.clone());
+                        stream.emit_event(event);
                     }
-                    worker_state.lock().unwrap().apply(event);
                     broker_state.publish();
                 },
                 Some(worker_outputs),
             )
             .with_hooks(hooks)
             .with_recovery_policy(self.watches.recovery_policy())
+            .with_recovery_timeout(self.watches.recovery_timeout())
             .with_revision(self.watches.revision().cloned().unwrap_or(
                 crate::config_revision::ConfigRevision {
                     number: 0,

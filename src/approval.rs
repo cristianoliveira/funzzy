@@ -13,6 +13,16 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub struct TtyRecoveryApproval;
 
+#[cfg(unix)]
+fn flush_pending_input(fd: std::os::unix::io::RawFd) {
+    // Best effort: the TTY remains the transport boundary, and an input
+    // flush is safer than allowing stale canonical bytes to cross a
+    // generation boundary. The next prompt starts with a clean line.
+    unsafe {
+        let _ = nix::libc::tcflush(fd, nix::libc::TCIFLUSH);
+    }
+}
+
 impl RecoveryApproval for TtyRecoveryApproval {
     fn approve(
         &self,
@@ -61,6 +71,11 @@ impl RecoveryApproval for TtyRecoveryApproval {
         #[cfg(unix)]
         {
             let fd = stdin.as_raw_fd();
+            // Input typed for a generation that was cancelled or superseded
+            // must never become an approval for its successor. Discard any
+            // bytes left in the terminal's canonical input queue before
+            // presenting this generation's prompt.
+            flush_pending_input(fd);
             let started = Instant::now();
             let deadline = started + timeout;
             let mut poll = nix::libc::pollfd {
@@ -70,6 +85,7 @@ impl RecoveryApproval for TtyRecoveryApproval {
             };
             loop {
                 if cancellation.is_cancelled() {
+                    flush_pending_input(fd);
                     return ApprovalDecision::Cancelled;
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -77,7 +93,14 @@ impl RecoveryApproval for TtyRecoveryApproval {
                     return ApprovalDecision::TimedOut;
                 }
                 poll.revents = 0;
-                let wait_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+                // Keep cancellation responsive even though libc::poll has no
+                // cancellation-fd integration here. The executor waits for a
+                // cooperative TTY adapter before promoting a successor.
+                let wait_ms = remaining
+                    .min(Duration::from_millis(50))
+                    .as_millis()
+                    .max(1)
+                    .min(i32::MAX as u128) as i32;
                 let ready = unsafe { nix::libc::poll(&mut poll, 1, wait_ms) };
                 if ready < 0 {
                     if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
@@ -86,7 +109,10 @@ impl RecoveryApproval for TtyRecoveryApproval {
                     return ApprovalDecision::Eof;
                 }
                 if ready == 0 {
-                    return ApprovalDecision::TimedOut;
+                    if Instant::now() >= deadline {
+                        return ApprovalDecision::TimedOut;
+                    }
+                    continue;
                 }
                 let mut buffer = [0u8; 256];
                 let read = unsafe { nix::libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
