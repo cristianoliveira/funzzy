@@ -264,15 +264,13 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     }
     let key = if has_jobs { "jobs" } else { "tasks" };
 
-    if has_tasks {
-        if yaml["execution"]["recovery_policy"] != Yaml::BadValue {
-            return Err(errors::FzzError::InvalidConfigError(
-                "Property 'execution.recovery_policy' is supported only in preferred V2 jobs"
-                    .to_owned(),
-                None,
-                Some("Rename 'tasks' to 'jobs' before configuring recovery policy.".to_owned()),
-            ));
-        }
+    if has_tasks && yaml["execution"]["recovery_policy"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'execution.recovery_policy' is supported only in preferred V2 jobs"
+                .to_owned(),
+            None,
+            Some("Rename 'tasks' to 'jobs' before configuring recovery policy.".to_owned()),
+        ));
     }
 
     // Extract the jobs/tasks array (ordered list; mapping form is rejected so

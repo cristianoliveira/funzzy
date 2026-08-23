@@ -400,8 +400,8 @@ fn fatal_reload(
 /// Builds a fresh `Watches` from a validated config candidate, bound to the
 /// new revision (TASK-0090 commit). The candidate's OWN declared policy
 /// (concurrency/debounce/backend/gitignore/recovery/hooks) is parsed from the content;
-
-/// missing keys keep the startup defaults — so a policy change committed by
+///
+/// Missing keys keep the startup defaults — so a policy change committed by
 /// the reload is actually applied to post-commit generations (TASK-0092).
 fn build_watches_from_content(
     content: &str,
