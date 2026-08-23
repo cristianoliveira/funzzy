@@ -15,13 +15,15 @@ on:
 
 execution:
   concurrency: 2
+  recovery_policy: prompt
 
-tasks:
+jobs:
   # These two contiguous tasks overlap. Formatting is cheap while the test
   # task owns all compilation, avoiding the previous build/test duplication.
   - name: format @quick @agent-final
     parallel: quick-check
-    run: direnv exec . cargo fmt --all
+    run: direnv exec . cargo fmt --all -- --check
+    recovery: direnv exec . cargo fmt --all
     run_on_init: true
     change:
       - "src/**/*.rs"
