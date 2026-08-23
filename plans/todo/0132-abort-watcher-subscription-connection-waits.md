@@ -1,7 +1,7 @@
 ---
 id: TASK-0132
 title: Abort watcher subscription connection waits
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [typescript, pi-watcher, socket, observer, timeout, cancellation, tdd]
