@@ -169,6 +169,9 @@ Funzzy: echo 'something changed in workdir!'
 
 something changed in workdir!
 Funzzy results ----------------------------
+JOB                                     RESULT  DURATION
+run a list of commands                  passed  0ms
+run if anything inside workdir changes  passed  0ms
 Success; Completed: 4; Failed: 0; Duration: 0.0000s"
             );
         },

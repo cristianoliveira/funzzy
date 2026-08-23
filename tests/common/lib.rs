@@ -415,6 +415,20 @@ pub fn clean_output(output_file: &str) -> String {
                 }
             }
 
+            // Job summary durations are wall-clock measurements and vary with
+            // machine load. Keep exact-output snapshots deterministic while
+            // retaining the job/result rows themselves in the assertion.
+            let fields: Vec<_> = line.split_whitespace().collect();
+            if fields.len() >= 3
+                && matches!(fields[fields.len() - 2], "passed" | "failed")
+                && (fields.last().is_some_and(|value| {
+                    value.ends_with("ms") || value.ends_with('s')
+                }))
+            {
+                let duration_start = line.rfind(fields.last().unwrap()).unwrap();
+                return format!("{}0ms", &line[..duration_start]);
+            }
+
             line.to_string()
         })
         .filter(|line| !line.contains("@@@@"))
