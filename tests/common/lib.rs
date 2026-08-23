@@ -419,10 +419,10 @@ pub fn clean_output(output_file: &str) -> String {
             // their human-readable values depend on host scheduling. Keep the
             // table shape while normalizing only its duration column.
             if in_job_duration_table {
-                let mut fields = line.split_whitespace();
+                let columns = line.split_whitespace().collect::<Vec<_>>();
                 let has_job_result_duration =
-                    fields.next().is_some() && fields.next().is_some() && fields.next().is_some();
-                let duration = line.split_whitespace().last().unwrap_or_default();
+                    columns.len() >= 3 && matches!(columns[columns.len() - 2], "passed" | "failed");
+                let duration = columns.last().copied().unwrap_or_default();
                 if has_job_result_duration && (duration.ends_with("ms") || duration.ends_with('s'))
                 {
                     if let Some(index) = line.rfind(duration) {
