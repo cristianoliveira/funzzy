@@ -8,6 +8,7 @@ use crate::executor::{ApprovalDecision, CancellationToken, RecoveryApproval, Rec
 use std::io::{self, IsTerminal, Write};
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub struct TtyRecoveryApproval;
@@ -17,6 +18,7 @@ impl RecoveryApproval for TtyRecoveryApproval {
         &self,
         requests: &[RecoveryRequest],
         cancellation: &CancellationToken,
+        timeout: Duration,
     ) -> ApprovalDecision {
         let stdin = io::stdin();
         let stdout = io::stdout();
@@ -58,8 +60,11 @@ impl RecoveryApproval for TtyRecoveryApproval {
         let mut answer = String::new();
         #[cfg(unix)]
         {
+            let fd = stdin.as_raw_fd();
+            let started = Instant::now();
+            let deadline = started + timeout;
             let mut poll = nix::libc::pollfd {
-                fd: stdin.as_raw_fd(),
+                fd,
                 events: nix::libc::POLLIN,
                 revents: 0,
             };
@@ -67,7 +72,13 @@ impl RecoveryApproval for TtyRecoveryApproval {
                 if cancellation.is_cancelled() {
                     return ApprovalDecision::Cancelled;
                 }
-                let ready = unsafe { nix::libc::poll(&mut poll, 1, 50) };
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return ApprovalDecision::TimedOut;
+                }
+                poll.revents = 0;
+                let wait_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
+                let ready = unsafe { nix::libc::poll(&mut poll, 1, wait_ms) };
                 if ready < 0 {
                     if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
                         continue;
@@ -75,17 +86,36 @@ impl RecoveryApproval for TtyRecoveryApproval {
                     return ApprovalDecision::Eof;
                 }
                 if ready == 0 {
-                    continue;
+                    return ApprovalDecision::TimedOut;
                 }
-                break;
+                let mut buffer = [0u8; 256];
+                let read = unsafe { nix::libc::read(fd, buffer.as_mut_ptr().cast(), buffer.len()) };
+                if read == 0 {
+                    return ApprovalDecision::Eof;
+                }
+                if read < 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() == std::io::ErrorKind::Interrupted
+                        || error.kind() == std::io::ErrorKind::WouldBlock
+                    {
+                        continue;
+                    }
+                    return ApprovalDecision::Eof;
+                }
+                answer.push_str(&String::from_utf8_lossy(&buffer[..read as usize]));
+                if answer.contains('\n') {
+                    break;
+                }
             }
         }
         #[cfg(not(unix))]
-        if cancellation.is_cancelled() {
-            return ApprovalDecision::Cancelled;
-        }
-        if stdin.read_line(&mut answer).is_err() {
-            return ApprovalDecision::Eof;
+        {
+            if cancellation.is_cancelled() {
+                return ApprovalDecision::Cancelled;
+            }
+            if stdin.read_line(&mut answer).is_err() {
+                return ApprovalDecision::Eof;
+            }
         }
         match answer.trim().to_ascii_lowercase().as_str() {
             "y" | "yes" => ApprovalDecision::Approved,

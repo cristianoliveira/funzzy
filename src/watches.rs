@@ -98,6 +98,8 @@ pub struct Watches {
     respect_gitignore: bool,
     /// Effective user-approved recovery policy for failed jobs.
     recovery_policy: crate::config::RecoveryPolicy,
+    /// Approval-only recovery timeout frozen into this watch configuration.
+    recovery_timeout: Duration,
     /// Generation terminal hooks (TASK-0040): success/failure commands.
     hooks: crate::config::GenerationHooks,
     /// Watcher-session terminal hook (TASK-0101): close command. Kept out of
@@ -144,6 +146,7 @@ impl Watches {
             respect_gitignore: false,
             gitignore: None,
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
+            recovery_timeout: Duration::from_secs(60),
             hooks: crate::config::GenerationHooks::default(),
             session_hooks: crate::config::SessionHooks::default(),
             revision: None,
@@ -217,6 +220,15 @@ impl Watches {
         self.recovery_policy
     }
 
+    pub fn with_recovery_timeout(mut self, timeout: Duration) -> Self {
+        self.recovery_timeout = timeout;
+        self
+    }
+
+    pub fn recovery_timeout(&self) -> Duration {
+        self.recovery_timeout
+    }
+
     /// Overrides run-level terminal hooks (TASK-0040).
     pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
         self.hooks = hooks;
@@ -277,6 +289,7 @@ impl Watches {
             respect_gitignore: self.respect_gitignore,
             gitignore: self.gitignore.clone(),
             recovery_policy: self.recovery_policy,
+            recovery_timeout: self.recovery_timeout,
             hooks: self.hooks.clone(),
             session_hooks: self.session_hooks.clone(),
             revision: self.revision.clone(),

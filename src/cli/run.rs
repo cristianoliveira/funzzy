@@ -63,6 +63,11 @@ impl RunCommand {
         self
     }
 
+    pub fn with_recovery_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.workflow = self.workflow.with_recovery_timeout(timeout);
+        self
+    }
+
     pub fn with_recovery_approval(
         mut self,
         approval: Arc<dyn crate::executor::RecoveryApproval>,

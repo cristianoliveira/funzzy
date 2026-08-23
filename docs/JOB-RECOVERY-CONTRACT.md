@@ -31,6 +31,7 @@ The feature is available in the preferred V2 `jobs:` format:
 ```yaml
 execution:
   recovery_policy: prompt # prompt | skip; default: prompt
+  recovery_timeout: 60s # approval-only bound; default: 60s
 
 jobs:
   - name: format-check
@@ -60,8 +61,10 @@ field path and job name for unsupported placement or invalid values.
 | `prompt` (default) | An eligible failure may ask the attached user once. |
 | `skip` | Do not prompt and do not execute any recovery; preserve the failure. |
 
-Unknown values and non-string values are configuration errors. `on.recovery_policy`,
-`hooks.recovery`, and a top-level `recovery_policy` are not aliases.
+Unknown values and non-string values are configuration errors. `on.recovery_policy`, `hooks.recovery`, and a top-level `recovery_policy` are not aliases.
+
+`execution.recovery_timeout` is a positive duration using the canonical `ms`, `s`, or `m` syntax. It defaults to `60s` and bounds only the local approval decision; recovery and verification commands keep their existing process and cancellation behavior. The budget starts when `approval_requested` is emitted and ends when a valid decision arrives, cancellation/supersession wins, or the budget expires. Expiry is default-deny: emit `approval_decided` with `approval timeout`, preserve the original failure, start no recovery or verification command, and finalize the generation as failed. Late input is ignored and cannot authorize this or a later generation.
+
 
 A job with `service: true` cannot declare `recovery`. Configuration validation must
 reject the combination at `jobs[].recovery` (or the equivalent job name/path),
@@ -147,7 +150,7 @@ headless client:
 - a control-socket client cannot approve a recovery in this MVP.
 
 A decline preserves the original job failure and emits an actionable reason
-(`declined`, `no TTY`, `EOF`, `invalid answer`, or `cancelled`). A declined
+(`declined`, `no TTY`, `EOF`, `invalid answer`, `approval timeout`, or `cancelled`). A declined
 recovery never spawns even its first recovery command. Remote clients may observe
 that a generation is awaiting/processing a recovery decision, but they cannot
 send an approval token or turn a stale response into authorization.
@@ -254,8 +257,9 @@ the newer generation receives a new generation identity. Input typed after
 that transition cannot authorize either generation.
 
 Each generation captures one immutable configuration revision before its
-original attempt. A reload that changes `recovery`, `execution.recovery_policy`, or the
-CLI-effective policy affects only later generations. A pending approval keeps
+original attempt. A reload that changes `recovery`, `execution.recovery_policy`,
+`execution.recovery_timeout`, or the CLI-effective policy affects only later
+generations. A pending approval keeps
 using its captured job names, command set, revision, and policy; it is not
 silently rewritten while the user is reading it. A malformed reload never
 replaces the active revision.
@@ -270,7 +274,7 @@ additive phase vocabulary is:
 ```text
 original_failed
 approval_requested
-approval_decided       (approved | declined | skipped)
+approval_decided       (approved | declined | skipped | timed_out)
 recovery_started
 recovery_finished           (passed | failed | cancelled)
 verification_started

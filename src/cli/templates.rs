@@ -116,6 +116,7 @@ on:
 execution:
   concurrency: 2
   recovery_policy: prompt
+  recovery_timeout: 60s
 
 jobs:
   - name: verify @agent-final

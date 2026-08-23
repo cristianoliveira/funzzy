@@ -154,6 +154,16 @@ const EXECUTION_SPECS: &[OptionSpec] = &[
         example: &["recovery_policy: prompt"],
         kind: SpecKind::Enum(RECOVERY_POLICY_VALUES),
     },
+    OptionSpec {
+        name: "recovery_timeout",
+        owner: Owner::Execution,
+        required: false,
+        default: Some("60s"),
+        help: "Maximum time to wait for interactive recovery approval.",
+        values: None,
+        example: &["recovery_timeout: 60s"],
+        kind: SpecKind::Duration,
+    },
 ];
 
 const HOOK_SPECS: &[OptionSpec] = &[
@@ -387,7 +397,7 @@ mod tests {
 
     /// The inventory in INIT-TEMPLATE-CONTRACT §3, locked as the exact
     /// allowed sets. Any parser-supported preferred property missing here is
-    /// drift; any extra entry is a pseudo-field masquerading as config.
+    /// drift; any extra entry is a pseudo-field masquerading as config (including recovery timeout).
     #[test]
     fn on_inventory_matches_contract_section_3_2() {
         let actual: Vec<&str> = property_names(Owner::On);
@@ -405,7 +415,7 @@ mod tests {
         );
         assert_eq!(
             property_names(Owner::Execution),
-            ["concurrency", "output", "recovery_policy"]
+            ["concurrency", "output", "recovery_policy", "recovery_timeout"]
         );
         assert_eq!(
             property_names(Owner::Hooks),

@@ -50,6 +50,7 @@ pub struct PolicyDefaults {
     pub backend: WatchBackend,
     pub gitignore: bool,
     pub recovery_policy: crate::config::RecoveryPolicy,
+    pub recovery_timeout: Duration,
     pub hooks: GenerationHooks,
     pub session_hooks: SessionHooks,
 }
@@ -98,6 +99,9 @@ pub fn validate_candidate(
     let recovery_policy =
         crate::config::recovery_policy_from_yaml_with_default(content, defaults.recovery_policy)
             .map_err(semantic)?;
+    let recovery_timeout =
+        crate::config::recovery_timeout_from_yaml_with_default(content, defaults.recovery_timeout)
+            .map_err(semantic)?;
     let hooks = crate::config::generation_hooks_from_yaml(content).map_err(semantic)?;
     let session_hooks = crate::config::session_hooks_from_yaml(content).map_err(semantic)?;
     let control_socket = crate::config::control_socket_from_yaml(content)
@@ -112,6 +116,7 @@ pub fn validate_candidate(
         backend,
         respect_gitignore,
         recovery_policy,
+        recovery_timeout,
         hooks,
         session_hooks,
         control_socket,
@@ -190,6 +195,7 @@ mod tests {
             backend: WatchBackend::Native,
             gitignore: false,
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
+            recovery_timeout: Duration::from_secs(60),
             hooks: GenerationHooks::default(),
             session_hooks: crate::config::SessionHooks::default(),
         }
@@ -251,6 +257,14 @@ mod tests {
         );
         assert_eq!(runtime.hooks.success.as_deref(), Some("echo done"));
         assert_eq!(runtime.session_hooks.close.as_deref(), Some("echo closed"));
+    }
+
+    #[test]
+    fn candidate_recovery_timeout_is_frozen_and_reloadable() {
+        let runtime = base_runtime(
+            "execution:\n  recovery_timeout: 250ms\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+        );
+        assert_eq!(runtime.recovery_timeout, Duration::from_millis(250));
     }
 
     #[test]

@@ -223,6 +223,7 @@ impl ReloadCoordinator {
             candidate.backend(),
             candidate.respects_gitignore(),
             candidate.recovery_policy(),
+            candidate.recovery_timeout(),
             candidate.hooks(),
             candidate.session_hooks(),
             candidate_socket.clone(),
@@ -252,6 +253,7 @@ impl ReloadCoordinator {
             shared.backend(),
             shared.respects_gitignore(),
             shared.recovery_policy(),
+            shared.recovery_timeout(),
             shared.hooks(),
             shared.session_hooks(),
             None,
@@ -306,6 +308,7 @@ impl ReloadCoordinator {
             // post-commit generations run the committed hooks (swap).
             worker.set_hooks(transaction.candidate.hooks());
             worker.set_recovery_policy(transaction.candidate.recovery_policy());
+            worker.set_recovery_timeout(transaction.candidate.recovery_timeout());
             // AC6: reconcile managed services — stop removed/signature-changed
             // services gracefully; start new/changed services under the new
             // revision appended to the active generation (unchanged services
@@ -801,6 +804,7 @@ mod tests {
             backend: WatchBackend::Native,
             gitignore: false,
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
+            recovery_timeout: std::time::Duration::from_secs(60),
             hooks: GenerationHooks::default(),
             session_hooks: crate::config::SessionHooks::default(),
         };
@@ -815,6 +819,7 @@ mod tests {
             runtime.backend,
             runtime.respect_gitignore,
             runtime.recovery_policy,
+            runtime.recovery_timeout,
             runtime.hooks.clone(),
             runtime.session_hooks.clone(),
             runtime.control_socket.clone(),

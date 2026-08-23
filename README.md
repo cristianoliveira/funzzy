@@ -35,6 +35,7 @@ on:
 execution:
   concurrency: 2
   recovery_policy: prompt # prompt | skip; default prompt
+  recovery_timeout: 60s # approval-only bound; default 60s
 
 hooks:
   success: "notify-send 'checks passed'"
@@ -65,7 +66,7 @@ Declaration order is semantic. Only consecutive jobs with same `parallel` name o
 - **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
 - **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
 - **Workflow automation:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result.
-- **Approved recovery:** optionally run a declared `jobs[].recovery` once after an approved failure, then verify the original job once; use `--recovery-policy skip` in CI.
+- **Approved recovery:** optionally run a declared `jobs[].recovery` once after an approved failure, then verify the original job once; unanswered approval defaults to failure after `execution.recovery_timeout` (60s by default); use `--recovery-policy skip` in CI.
 - **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
 - **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
 - **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.

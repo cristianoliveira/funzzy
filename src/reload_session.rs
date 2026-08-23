@@ -64,6 +64,7 @@ impl ReloadSession {
             backend: watches.backend(),
             gitignore: watches.respects_gitignore(),
             recovery_policy: watches.recovery_policy(),
+            recovery_timeout: watches.recovery_timeout(),
             hooks: watches.hooks(),
             session_hooks: watches.session_hooks(),
         };

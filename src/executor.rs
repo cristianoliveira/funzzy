@@ -91,6 +91,7 @@ pub enum ApprovalDecision {
     NoTty,
     Eof,
     Invalid,
+    TimedOut,
     Cancelled,
 }
 
@@ -99,6 +100,7 @@ pub trait RecoveryApproval: Send + Sync {
         &self,
         requests: &[RecoveryRequest],
         cancellation: &CancellationToken,
+        timeout: Duration,
     ) -> ApprovalDecision;
 }
 
@@ -110,6 +112,7 @@ impl RecoveryApproval for DenyRecoveryApproval {
         &self,
         _requests: &[RecoveryRequest],
         cancellation: &CancellationToken,
+        _timeout: Duration,
     ) -> ApprovalDecision {
         if cancellation.is_cancelled() {
             ApprovalDecision::Cancelled
@@ -303,6 +306,8 @@ pub struct RunMetadata {
     pub hooks: crate::config::GenerationHooks,
     /// Frozen recovery policy for this generation.
     pub recovery_policy: crate::config::RecoveryPolicy,
+    /// Approval-only timeout frozen for this generation.
+    pub recovery_timeout: Duration,
     /// Immutable config revision this generation was frozen under
     /// (TASK-0089, CONFIG-RELOAD-CONTRACT §4). None for legacy runs that
     /// never observe reload.
@@ -326,6 +331,7 @@ impl RunMetadata {
             concurrency_source: None,
             hooks: crate::config::GenerationHooks::default(),
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
+            recovery_timeout: Duration::from_secs(60),
             revision: None,
             revision_hash: None,
         }
@@ -353,6 +359,7 @@ impl RunMetadata {
             concurrency_source: None,
             hooks: crate::config::GenerationHooks::default(),
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
+            recovery_timeout: Duration::from_secs(60),
             revision: None,
             revision_hash: None,
         }
@@ -402,6 +409,11 @@ impl RunMetadata {
     /// Attaches the frozen recovery policy for this generation.
     pub fn with_recovery_policy(mut self, policy: crate::config::RecoveryPolicy) -> Self {
         self.recovery_policy = policy;
+        self
+    }
+
+    pub fn with_recovery_timeout(mut self, timeout: Duration) -> Self {
+        self.recovery_timeout = timeout;
         self
     }
 }
@@ -1092,17 +1104,25 @@ impl Executor {
             let approval = Arc::clone(&self.approval);
             let cancellation = run.cancellation_token();
             let requested = requests.clone();
+            let timeout = run.metadata.recovery_timeout;
+            let approval_cancellation = cancellation.clone();
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let decision = approval.approve(&requested, &cancellation);
+                let decision = approval.approve(&requested, &approval_cancellation, timeout);
                 let _ = sender.send(decision);
             });
+            let deadline = Instant::now() + timeout;
             loop {
                 if run.cancellation_requested() {
                     run.pending_recoveries.append(&mut pending);
                     return true;
                 }
-                match receiver.recv_timeout(POLL_INTERVAL) {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    cancellation.cancel();
+                    break ApprovalDecision::TimedOut;
+                }
+                match receiver.recv_timeout(POLL_INTERVAL.min(remaining)) {
                     Ok(decision) => break decision,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -1124,6 +1144,7 @@ impl Executor {
                 (_, ApprovalDecision::Eof) => "EOF",
                 (_, ApprovalDecision::Invalid) => "invalid answer",
                 (_, ApprovalDecision::Declined) => "declined",
+                (_, ApprovalDecision::TimedOut) => "approval timeout",
                 (_, ApprovalDecision::Cancelled) => "cancelled",
                 (_, ApprovalDecision::Approved) => unreachable!(),
             };
@@ -1855,6 +1876,7 @@ mod tests {
             &self,
             requests: &[RecoveryRequest],
             cancellation: &CancellationToken,
+            _timeout: Duration,
         ) -> ApprovalDecision {
             self.requests.lock().unwrap().extend_from_slice(requests);
             if cancellation.is_cancelled() {
@@ -2100,6 +2122,36 @@ mod tests {
         );
         assert!(!completed.outcome.is_success());
         assert!(completed.results.iter().any(Result::is_err));
+    }
+
+    #[test]
+    fn timed_out_recovery_preserves_failure_without_running_recovery() {
+        let marker =
+            std::env::temp_dir().join(format!("funzzy-recovery-timeout-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::TimedOut,
+            requests,
+        }));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(45, "test").with_recovery_timeout(Duration::from_millis(1)),
+            RunPlan::from_rules(vec![recovery_rule(
+                "false",
+                &[&format!("touch '{}'", marker.display())],
+            )]),
+        );
+        assert!(!completed.outcome.is_success());
+        assert!(!marker.exists());
     }
 
     #[test]

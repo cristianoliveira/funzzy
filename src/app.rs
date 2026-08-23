@@ -160,6 +160,7 @@ pub fn run() {
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
             .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config))
             .with_hooks(load_hooks(&args.config))
             .with_session_hooks(load_session_hooks(&args.config));
             // TASK-0092: resolve the config-declared control socket BEFORE
@@ -185,6 +186,7 @@ pub fn run() {
                     backend,
                     load_respect_gitignore(&args.config),
                     effective_recovery_policy(&args, &args.config),
+                    load_recovery_timeout(&args.config),
                     load_hooks(&args.config),
                     load_session_hooks(&args.config),
                     control_socket.as_deref().map(std::path::PathBuf::from),
@@ -227,7 +229,8 @@ pub fn run() {
                 concurrency,
             )
             .with_debounce(debounce)
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config));
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config));
             let plan = match watches.run_target_plan(target) {
                 Ok(plan) => plan,
                 Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
@@ -255,6 +258,7 @@ pub fn run() {
             )
             .with_hooks(load_hooks(&args.config))
             .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config))
             .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
             let result = command.execute(plan, target);
             let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
@@ -281,6 +285,7 @@ pub fn run() {
             .with_backend(load_watch_backend(&args.config))
             .with_gitignore(load_respect_gitignore(&args.config))
             .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config))
             .with_hooks(load_hooks(&args.config));
             let result = watches.explain(path);
             let facts = crate::watches::ExplainFacts {
@@ -642,6 +647,27 @@ fn effective_recovery_policy(
 ) -> config::RecoveryPolicy {
     args.recovery_policy
         .unwrap_or_else(|| load_recovery_policy(config_file))
+}
+
+fn load_recovery_timeout(config_file: &Option<String>) -> std::time::Duration {
+    let path = match config_file.as_deref() {
+        Some(path) => Some(path.to_owned()),
+        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
+            Some(cli::watch::DEFAULT_FILENAME.to_owned())
+        }
+        None => {
+            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+            std::path::Path::new(&yaml).exists().then_some(yaml)
+        }
+    };
+    let Some(path) = path else {
+        return std::time::Duration::from_secs(60);
+    };
+    config::recovery_timeout_from_yaml_with_default(
+        &std::fs::read_to_string(&path).unwrap_or_default(),
+        std::time::Duration::from_secs(60),
+    )
+    .unwrap_or_else(|err| stdout::failure("Invalid recovery timeout config", err))
 }
 
 fn load_recovery_policy(config_file: &Option<String>) -> config::RecoveryPolicy {

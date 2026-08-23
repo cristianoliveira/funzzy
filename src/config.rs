@@ -792,6 +792,46 @@ pub fn recovery_policy_from_file(filename: &str) -> Result<RecoveryPolicy, Strin
     recovery_policy_from_yaml(&content)
 }
 
+/// Parses the approval-only recovery timeout. Missing values preserve the
+/// caller's effective default so reloads can freeze the prior policy.
+pub fn recovery_timeout_from_yaml_with_default(
+    content: &str,
+    default: Duration,
+) -> Result<Duration, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    let execution = &root["execution"];
+    if *execution == Yaml::BadValue || execution["recovery_timeout"] == Yaml::BadValue {
+        return Ok(default);
+    }
+    if !matches!(execution, Yaml::Hash(_)) {
+        return Err("Property 'execution' must be an object".to_owned());
+    }
+    let raw = match &execution["recovery_timeout"] {
+        Yaml::Integer(value) => value.to_string(),
+        Yaml::String(value) => value.clone(),
+        _ => {
+            return Err(
+                "Property 'execution.recovery_timeout' must be a duration string or number"
+                    .to_owned(),
+            )
+        }
+    };
+    parse_recovery_timeout(&raw)
+}
+
+pub fn recovery_timeout_from_yaml(content: &str) -> Result<Duration, String> {
+    recovery_timeout_from_yaml_with_default(content, Duration::from_secs(60))
+}
+
+fn parse_recovery_timeout(raw: &str) -> Result<Duration, String> {
+    parse_debounce(raw)?
+        .ok_or_else(|| "recovery timeout cannot be empty".to_owned())
+        .map_err(|error| error.replace("'on.debounce'", "'execution.recovery_timeout'"))
+}
+
 pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
@@ -1005,6 +1045,27 @@ mod tests {
                 .unwrap(),
             super::RecoveryPolicy::Skip
         );
+    }
+
+    #[test]
+    fn recovery_timeout_defaults_to_sixty_seconds_and_accepts_duration_syntax() {
+        assert_eq!(
+            super::recovery_timeout_from_yaml("jobs: []\n").unwrap(),
+            std::time::Duration::from_secs(60)
+        );
+        assert_eq!(
+            super::recovery_timeout_from_yaml("execution:\n  recovery_timeout: 250ms\njobs: []\n")
+                .unwrap(),
+            std::time::Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn recovery_timeout_rejects_zero_and_invalid_values() {
+        for value in ["0", "fast", "1h"] {
+            let yaml = format!("execution:\n  recovery_timeout: {value}\njobs: []\n");
+            assert!(super::recovery_timeout_from_yaml(&yaml).is_err(), "{value}");
+        }
     }
 
     #[test]

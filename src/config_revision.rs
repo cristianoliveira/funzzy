@@ -47,6 +47,7 @@ pub struct RuntimeConfig {
     pub backend: WatchBackend,
     pub respect_gitignore: bool,
     pub recovery_policy: crate::config::RecoveryPolicy,
+    pub recovery_timeout: Duration,
     pub hooks: GenerationHooks,
     pub session_hooks: SessionHooks,
     /// Control socket path from `on.socket` (TASK-0090 AC8): part of the
@@ -68,6 +69,7 @@ impl RuntimeConfig {
         backend: WatchBackend,
         respect_gitignore: bool,
         recovery_policy: crate::config::RecoveryPolicy,
+        recovery_timeout: Duration,
         hooks: GenerationHooks,
         session_hooks: SessionHooks,
         control_socket: Option<PathBuf>,
@@ -80,6 +82,7 @@ impl RuntimeConfig {
             backend,
             respect_gitignore,
             recovery_policy,
+            recovery_timeout,
             hooks,
             session_hooks,
             control_socket,
@@ -122,6 +125,7 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
         crate::config::RecoveryPolicy::Prompt => "prompt",
         crate::config::RecoveryPolicy::Skip => "skip",
     });
+    canonical.u64(config.recovery_timeout.as_millis() as u64);
     canonical.string(&hooks_tag(&config.hooks));
     canonical.string(&format!("{:?}", config.session_hooks));
     // AC8: the control socket path is part of the semantic surface.
@@ -368,6 +372,7 @@ mod tests {
             WatchBackend::Native,
             false,
             crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
             GenerationHooks::default(),
             SessionHooks::default(),
             None,
@@ -384,13 +389,14 @@ mod tests {
             WatchBackend::Native,
             false,
             crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
             GenerationHooks::default(),
             SessionHooks::default(),
             None,
         );
         assert_eq!(
             semantic_hash(&config),
-            "b215943524772f865efd5d158cbed9a78337cc2a73a5d556a48ca61147c87994"
+            "d624fc3e4a0674488d328b93d26f55d37737d695f0f13f4bfc258dcff936b266"
         );
     }
 
@@ -679,6 +685,7 @@ mod history_tests {
             WatchBackend::Native,
             false,
             crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
             GenerationHooks::default(),
             SessionHooks::default(),
             None,

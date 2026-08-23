@@ -40,6 +40,7 @@ struct RunRequest {
     hooks: crate::config::GenerationHooks,
     /// Frozen recovery policy for this request.
     recovery_policy: crate::config::RecoveryPolicy,
+    recovery_timeout: Duration,
     /// Immutable config revision this request is frozen under (TASK-0089).
     revision: Option<u64>,
     /// Non-secret semantic hash of the frozen config revision.
@@ -278,6 +279,7 @@ pub struct Worker {
     fail_fast: bool,
     /// Frozen recovery policy, applied to future generations.
     recovery_policy: std::sync::Mutex<crate::config::RecoveryPolicy>,
+    recovery_timeout: std::sync::Mutex<Duration>,
     /// Run-level terminal hooks (TASK-0040), applied to target runs.
     /// Interior-mutable (TASK-0092): a reload swaps the shared hooks at the
     /// commit boundary so post-commit generations run the committed hooks
@@ -426,6 +428,7 @@ impl Worker {
                                 .with_concurrency_source(req.concurrency_source)
                                 .with_hooks(req.hooks.clone())
                                 .with_recovery_policy(req.recovery_policy)
+                                .with_recovery_timeout(req.recovery_timeout)
                                 .with_revision(
                                     req.revision.unwrap_or(0),
                                     req.revision_hash.clone().unwrap_or_default(),
@@ -459,6 +462,7 @@ impl Worker {
                                     .with_concurrency_source(req.concurrency_source)
                                     .with_hooks(req.hooks.clone())
                                     .with_recovery_policy(req.recovery_policy)
+                                    .with_recovery_timeout(req.recovery_timeout)
                                     .with_revision(
                                         req.revision.unwrap_or(0),
                                         req.revision_hash.clone().unwrap_or_default(),
@@ -686,6 +690,7 @@ impl Worker {
             concurrency: concurrency_handle,
             fail_fast,
             recovery_policy: std::sync::Mutex::new(crate::config::RecoveryPolicy::Prompt),
+            recovery_timeout: std::sync::Mutex::new(Duration::from_secs(60)),
             hooks: std::sync::Mutex::new(crate::config::GenerationHooks::default()),
             revision: std::sync::Mutex::new(None),
             consumer: Some(consumer),
@@ -732,6 +737,15 @@ impl Worker {
 
     pub fn set_recovery_policy(&self, policy: crate::config::RecoveryPolicy) {
         *self.recovery_policy.lock().unwrap() = policy;
+    }
+
+    pub fn with_recovery_timeout(self, timeout: Duration) -> Self {
+        *self.recovery_timeout.lock().unwrap() = timeout;
+        self
+    }
+
+    pub fn set_recovery_timeout(&self, timeout: Duration) {
+        *self.recovery_timeout.lock().unwrap() = timeout;
     }
 
     /// Attaches run-level terminal hooks (TASK-0040) applied to target runs.
@@ -920,6 +934,7 @@ impl Worker {
             // default.
             hooks: self.hooks.lock().unwrap().clone(),
             recovery_policy: *self.recovery_policy.lock().unwrap(),
+            recovery_timeout: *self.recovery_timeout.lock().unwrap(),
             revision: revision.as_ref().map(|r| r.number),
             revision_hash: revision.as_ref().map(|r| r.hash.clone()),
         })
@@ -1007,6 +1022,7 @@ mod tests {
             &self,
             _requests: &[crate::executor::RecoveryRequest],
             cancellation: &crate::executor::CancellationToken,
+            _timeout: Duration,
         ) -> crate::executor::ApprovalDecision {
             if cancellation.is_cancelled() {
                 crate::executor::ApprovalDecision::Cancelled
@@ -1021,6 +1037,7 @@ mod tests {
             &self,
             _requests: &[crate::executor::RecoveryRequest],
             cancellation: &crate::executor::CancellationToken,
+            _timeout: Duration,
         ) -> crate::executor::ApprovalDecision {
             while !cancellation.is_cancelled() {
                 std::thread::sleep(Duration::from_millis(5));
@@ -1063,6 +1080,7 @@ mod tests {
             &self,
             requests: &[crate::executor::RecoveryRequest],
             cancellation: &crate::executor::CancellationToken,
+            _timeout: Duration,
         ) -> crate::executor::ApprovalDecision {
             self.requests.lock().unwrap().extend_from_slice(requests);
             while !self.released.load(std::sync::atomic::Ordering::SeqCst)

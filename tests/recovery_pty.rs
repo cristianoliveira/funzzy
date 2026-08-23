@@ -5,6 +5,7 @@
 use nix::pty::openpty;
 use std::fs::File;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -35,7 +36,7 @@ fn write_custom_config(path: &Path, run: &str, recovery: &str) {
     std::fs::write(
         path,
         format!(
-            "execution:\n  recovery_policy: prompt\njobs:\n  - name: recover @quick\n    run: {run:?}\n    recovery: {recovery}\n    run_on_init: true\n"
+            "execution:\n  recovery_policy: prompt\n  recovery_timeout: 60ms\njobs:\n  - name: recover @quick\n    run: {run:?}\n    recovery: {recovery}\n    run_on_init: true\n"
         ),
     )
     .expect("write recovery config");
@@ -86,6 +87,35 @@ fn run_with_answer_and_events(
             Ok(_) => {
                 output.push(byte[0]);
                 if output.ends_with(b"[y/N] ") {
+                    if answer == b"__TIMEOUT__" {
+                        writer.take();
+                        let fd = reader.as_raw_fd();
+                        let flags = unsafe { nix::libc::fcntl(fd, nix::libc::F_GETFL) };
+                        assert!(flags >= 0, "get pty flags");
+                        let result = unsafe {
+                            nix::libc::fcntl(fd, nix::libc::F_SETFL, flags | nix::libc::O_NONBLOCK)
+                        };
+                        assert_eq!(result, 0, "set pty nonblocking");
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        loop {
+                            let mut tail = [0_u8; 256];
+                            match reader.read(&mut tail) {
+                                Ok(size) => output.extend_from_slice(&tail[..size]),
+                                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                                Err(error) => panic!("read pty output: {error}"),
+                            }
+                            if let Some(status) = child.try_wait().expect("poll child") {
+                                return (status, String::from_utf8_lossy(&output).into_owned());
+                            }
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "recovery approval did not time out"
+                            );
+                            std::thread::yield_now();
+                        }
+                    }
                     writer
                         .as_mut()
                         .expect("approval writer is open")
@@ -229,6 +259,36 @@ fn verification_failure_remains_a_final_failure() {
 
     let (status, output) = run_with_answer(env!("CARGO_BIN_EXE_fzz"), &config, b"y\n");
     assert!(!status.success(), "failed verification must fail: {output}");
+}
+
+#[test]
+fn unanswered_recovery_approval_times_out_without_running_recovery() {
+    let root = scratch("approval-timeout");
+    let config = root.join(".watch.yaml");
+    let marker = root.join("recovered");
+    let events = root.join("events.ndjson");
+    write_custom_config(
+        &config,
+        "\"false\"",
+        &format!("\"touch '{}'\"", marker.display()),
+    );
+
+    let (status, output) = run_with_answer_and_events(
+        env!("CARGO_BIN_EXE_fzz"),
+        &config,
+        b"__TIMEOUT__",
+        Some(&events),
+    );
+    assert!(!status.success(), "timed out approval must fail: {output}");
+    assert!(!marker.exists(), "timed out approval must not run recovery");
+    assert!(
+        output.contains("approval timeout"),
+        "timeout reason missing: {output}"
+    );
+    let event_text = std::fs::read_to_string(events).expect("read timeout events");
+    assert!(event_text.contains("\"phase\":\"approval_requested\""));
+    assert!(event_text.contains("\"phase\":\"approval_decided\""));
+    assert!(event_text.contains("approval timeout"));
 }
 
 #[test]
