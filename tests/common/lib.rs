@@ -401,12 +401,35 @@ pub fn strip_ansi_codes(input: &str) -> String {
 
 #[allow(dead_code)]
 pub fn clean_output(output_file: &str) -> String {
+    let mut in_job_duration_table = false;
     output_file
         .lines()
         .map(|line| {
             // This line prints the time so is not deterministic
             if line.contains("Funzzy: finished in") {
                 return "Funzzy: finished in 0.0s".to_string();
+            }
+
+            if line.contains("JOB                          RESULT  DURATION") {
+                in_job_duration_table = true;
+                return line.to_string();
+            }
+
+            // Job durations are intentionally covered by control-socket tests, but
+            // their human-readable values depend on host scheduling. Keep the
+            // table shape while normalizing only its duration column.
+            if in_job_duration_table {
+                let mut fields = line.split_whitespace();
+                let has_job_result_duration =
+                    fields.next().is_some() && fields.next().is_some() && fields.next().is_some();
+                let duration = line.split_whitespace().last().unwrap_or_default();
+                if has_job_result_duration && (duration.ends_with("ms") || duration.ends_with('s'))
+                {
+                    if let Some(index) = line.rfind(duration) {
+                        return format!("{}0ms", &line[..index]);
+                    }
+                }
+                in_job_duration_table = false;
             }
 
             if line.contains("Duration: ") {
