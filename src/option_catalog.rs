@@ -415,7 +415,12 @@ mod tests {
         );
         assert_eq!(
             property_names(Owner::Execution),
-            ["concurrency", "output", "recovery_policy", "recovery_timeout"]
+            [
+                "concurrency",
+                "output",
+                "recovery_policy",
+                "recovery_timeout"
+            ]
         );
         assert_eq!(
             property_names(Owner::Hooks),
