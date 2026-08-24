@@ -44,6 +44,7 @@ fn acquire_pty_guard() -> PtyGuard {
     let path = std::env::temp_dir().join("funzzy-recovery-pty-global.lock");
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)
