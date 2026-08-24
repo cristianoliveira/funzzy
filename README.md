@@ -23,7 +23,6 @@ find . -name '*.ts' | fzz exec -- npx eslint {{relative_filepath}}
 ```
 
 Or for more complex workflows like:
-
 ```yaml
 # .watch.yml
 on:

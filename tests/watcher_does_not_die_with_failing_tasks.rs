@@ -56,6 +56,10 @@ Funzzy: echo finally
 
 finally
 Funzzy results ----------------------------
+JOB                          RESULT  DURATION
+run a list of watches        passed  0ms
+run another task with error  failed  0ms
+run finally                  passed  0ms
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 2; Failed: 1; Duration: 0.0000s
 [2J
@@ -87,6 +91,11 @@ Funzzy: echo finally
 
 finally
 Funzzy results ----------------------------
+JOB                          RESULT  DURATION
+run a list of watches        passed  0ms
+tasks with errors            failed  0ms
+run another task with error  failed  0ms
+run finally                  passed  0ms
 - Command exit 1 has failed with exit status: 1
 - Command cat foo/bar/baz has failed with exit status: 1
 - Command exit 125 has failed with exit status: 125

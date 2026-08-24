@@ -69,6 +69,9 @@ Funzzy: echo 'quick lint'
 
 quick lint
 Funzzy results ----------------------------
+JOB                 RESULT  DURATION
+run my test @quick  passed  0ms
+run my lint @quick  passed  0ms
 Success; Completed: 3; Failed: 0; Duration: 0.0000s"
             );
         },

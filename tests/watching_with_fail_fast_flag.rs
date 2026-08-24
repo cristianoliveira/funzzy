@@ -42,6 +42,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
@@ -67,6 +71,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
@@ -81,6 +89,11 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+tasks with errors            failed     0ms
+run another task with error  cancelled  -
+run finally                  cancelled  -
 - Command exit 1 has failed with exit status: 1
 Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                 "failed to match ouput: {}",
@@ -127,6 +140,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
                     );
@@ -152,6 +169,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
@@ -166,6 +187,11 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+tasks with errors            failed     0ms
+run another task with error  cancelled  -
+run finally                  cancelled  -
 - Command exit 1 has failed with exit status: 1
 Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                         "failed to match ouput: {}",
@@ -217,6 +243,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s"
             );
@@ -242,6 +272,10 @@ third
 Funzzy: cat baz/bar/foo 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+run another task with error  failed     0ms
+run finally                  cancelled  -
 - Command cat baz/bar/foo has failed with exit status: 1
 Failure; Completed: 1; Failed: 1; Duration: 0.0000s
 [2J
@@ -256,6 +290,11 @@ before
 Funzzy: exit 1 
 
 Funzzy results ----------------------------
+JOB                          RESULT     DURATION
+run a list of watches        passed     0ms
+tasks with errors            failed     0ms
+run another task with error  cancelled  -
+run finally                  cancelled  -
 - Command exit 1 has failed with exit status: 1
 Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
                 "failed to match ouput: {}",
