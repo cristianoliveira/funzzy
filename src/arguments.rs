@@ -923,6 +923,9 @@ const HELP_TEMPLATE: &str = "\
 Alias:
   fzz -> funzzy
 
+Config:
+  fzz config describes the config schema and prints runnable examples.
+
 {usage-heading} {usage}
 
 {all-args}
@@ -2028,6 +2031,9 @@ mod config_command_tests {
                 "help must mention {expected}:\n{help}"
             );
         }
+        assert!(help.contains("fzz config"));
+        assert!(help.contains("schema"));
+        assert!(help.contains("examples"));
     }
 }
 
