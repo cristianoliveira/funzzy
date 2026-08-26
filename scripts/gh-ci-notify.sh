@@ -9,6 +9,8 @@
 #   CREW_NOTIFY   failures|all|off (default failures)
 #   CREW_MANIFEST crew manifest path (default .pi/bebop/crew.json)
 #   PI_BEBOP_BIN  pi-bebop CLI (default pi-bebop on PATH)
+#   GH_BIN        gh CLI (default gh)
+#   GH_FAIL_LINES lines of failed-run output embedded in crew alerts (default 40)
 set -u
 NEW="${1:?missing changed file path}"
 STATE_DIR="$(dirname "$NEW")"
@@ -28,7 +30,17 @@ notify() { # $1 title, $2 body
   fi
 }
 
-crew_alert() { # $1 workflow, $2 conclusion, $3 branch, $4 title, $5 url
+failed_log() { # $1 = run databaseId; cleaned tail of gh --log-failed
+  GH="${GH_BIN:-gh}"
+  ESC=$(printf '\033')
+  "$GH" run view "$1" --log-failed 2>/dev/null \
+    | cut -f3- \
+    | sed "s/${ESC}\\[[0-9;]*m//g" \
+    | sed 's/^[0-9][0-9T:.,-]*Z //' \
+    | tail -n "${GH_FAIL_LINES:-40}" || true
+}
+
+crew_alert() { # $1 workflow, $2 conclusion, $3 branch, $4 title, $5 url, $6 run id
   MODE="${CREW_NOTIFY:-failures}"
   [ "$MODE" = "off" ] && return 0
   if [ "$MODE" = "failures" ] && [ "$2" = "success" ]; then
@@ -42,8 +54,18 @@ crew_alert() { # $1 workflow, $2 conclusion, $3 branch, $4 title, $5 url
   fi
   ICON="❌"
   [ "$2" = "success" ] && ICON="✅"
-  printf 'CI %s %s - %s - %s - %s\n%s\n' "$ICON" "$2" "$1" "$3" "$4" "$5" \
-  | "$PI_BEBOP_BIN" send --crew "$CREW_MANIFEST" --from "gh-actions" --stdin \
+  {
+    printf 'CI %s %s - %s - %s - %s\n%s\n' "$ICON" "$2" "$1" "$3" "$4" "$5"
+    if [ "$2" != "success" ] && [ -n "${6:-}" ]; then
+      LOG_OUT=$(failed_log "$6")
+      if [ -n "$LOG_OUT" ]; then
+        printf -- '--- failed output (last %s lines) ---\n' "${GH_FAIL_LINES:-40}"
+        printf '%s\n' "$LOG_OUT"
+      else
+        echo "(no failed-step log available)"
+      fi
+    fi
+  } | "$PI_BEBOP_BIN" send --crew "$CREW_MANIFEST" --from "gh-actions" --stdin \
     >> "$LOG" 2>&1 || true
 }
 
@@ -64,17 +86,17 @@ CHANGED=$(jq -cr --slurpfile old "$LAST" '
       | select($n.status == "completed")
       | ([$o[] | select(.databaseId == $n.databaseId)] | first) as $p
       | select($p == null or ($p.conclusion // "?") != ($n.conclusion // "?"))
-      | $n | {workflowName, conclusion, headBranch, displayTitle, url}
+      | $n | {workflowName, conclusion, headBranch, displayTitle, url, databaseId}
   ]' "$NEW")
 
 echo "$(date +%H:%M:%S) $CHANGED" >> "$LOG"
 
-echo "$CHANGED" | jq -cr '.[] | "\(.workflowName)|\(.conclusion)|\(.headBranch)|\(.displayTitle)|\(.url // "")"' \
-| while IFS='|' read -r WF CONCLUSION BRANCH TITLE URL; do
+echo "$CHANGED" | jq -cr '.[] | "\(.workflowName)|\(.conclusion)|\(.headBranch)|\(.displayTitle)|\(.url // "")|\(.databaseId)"' \
+| while IFS='|' read -r WF CONCLUSION BRANCH TITLE URL RUN_ID; do
   ICON="❌"
   [ "$CONCLUSION" = "success" ] && ICON="✅"
   notify "fzz gh $ICON" "$CONCLUSION · $BRANCH · $TITLE"
-  crew_alert "$WF" "$CONCLUSION" "$BRANCH" "$TITLE" "$URL"
+  crew_alert "$WF" "$CONCLUSION" "$BRANCH" "$TITLE" "$URL" "$RUN_ID"
 done
 
 # Publish new baseline atomically after processing.

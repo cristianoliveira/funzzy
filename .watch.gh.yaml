@@ -25,6 +25,7 @@ jobs:
   # Reactor: one desktop notification per changed CI run + crew alert.
   # Crew alert envs (defaults): CREW_NOTIFY=failures|all|off,
   # CREW_MANIFEST=.pi/bebop/crew.json, PI_BEBOP_BIN=pi-bebop.
+  # Failed-run output: GH_FAIL_LINES=40 embedded in crew alerts (GH_BIN=gh).
   - name: gh notify
     run: sh scripts/gh-ci-notify.sh "{{filepath}}"
     change:
