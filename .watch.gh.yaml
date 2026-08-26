@@ -1,0 +1,29 @@
+# GitHub Actions watcher — dedicated instance, run alongside the main
+# edit loop:
+#
+#   fzz watch -c .watch.gh.yaml
+#
+# Why a dedicated config (not jobs in .watch.yaml): services are
+# generation-scoped today; an event the service does not match kills it
+# without respawn (restart-by-reinclusion, TASK-0133). This config's
+# only watched path is the mirror file, so every event re-includes the
+# bridge and it restarts cleanly (stateless).
+jobs:
+  # Bridge: poll gh -> mirror file. Watches its OWN output: each publish
+  # re-includes it in the superseding generation (the designed restart).
+  - name: gh mirror
+    service: true
+    run_on_init: true
+    output: quiet
+    change:
+      - ".tmp/gh/runs.json"
+    run: sh scripts/gh-mirror.sh
+    env:
+      OUT: .tmp/gh/runs.json
+      INTERVAL: "60"
+
+  # Reactor: one desktop notification per newly completed CI run.
+  - name: gh notify
+    run: sh scripts/gh-ci-notify.sh "{{filepath}}"
+    change:
+      - ".tmp/gh/runs.json"
