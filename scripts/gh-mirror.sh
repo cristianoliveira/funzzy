@@ -26,10 +26,10 @@ poll() {
   BRANCH="${GH_BRANCH:-$(git branch --show-current 2>/dev/null || true)}"
   if [ -n "$BRANCH" ]; then
     gh run list --branch "$BRANCH" --limit 20 \
-      --json databaseId,status,conclusion,headBranch,workflowName,displayTitle
+      --json databaseId,status,conclusion,headBranch,workflowName,displayTitle,url
   else
     gh run list --limit 20 \
-      --json databaseId,status,conclusion,headBranch,workflowName,displayTitle
+      --json databaseId,status,conclusion,headBranch,workflowName,displayTitle,url
   fi | jq -S 'sort_by(.databaseId)'
 }
 
