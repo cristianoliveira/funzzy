@@ -3,7 +3,7 @@ id: TASK-0133
 title: Document service restart-by-reinclusion model and the init-only service footgun
 status: todo
 depends_on: []
-priority: normal
+priority: low
 tags: [rust, docs, services, config]
 ---
 
@@ -11,81 +11,32 @@ tags: [rust, docs, services, config]
 
 ## Problem
 
-`service: true` restart-on-change is implemented as generation
-replacement: the active generation is cancelled (services shut down) and
-the superseding plan re-includes the service only when the event
-matches its patterns — the per-job `change:` merged with root
-`on.change` (`merge_patterns`, `src/config.rs:431`). That model works
-and is by design (TASK-0035), but nothing tells the user it exists:
+Users cannot predict a managed service's lifetime from current documentation. A `service: true` job belongs to the active generation: supersession stops it, and the replacement generation restarts it only when its effective change patterns include it. Consequently, an init-only service dies on the first later generation and stays stopped.
 
-1. A service declared with only `run_on_init: true` (validator accepts
-   `change` OR `run_on_init`) is guaranteed to die on the first
-   scheduled generation and never come back. Silent footgun.
-2. The supported idiom for a long-lived bridge/poller — declare
-   `change: [<its own output file>]` so every publish re-includes it —
-   is undiscoverable without reading the executor source.
+This behavior was uncovered while exploring external-system observation, but managed services are not the chosen primitive for that use case. A blocking finite job has different terminal semantics and is tracked separately by TASK-0134 through TASK-0137.
 
-## How to reproduce
+## Evidence
 
-Init-only service (footgun):
+- Services are reaped when a generation is replaced.
+- Non-zero service exits are retried within the existing bounded policy.
+- Zero exit is treated as deliberate service stop.
+- A service declared only with `run_on_init: true` is not re-included by later path-selected generations.
+- Reproduction and source trace: `.tmp/reports/26-08-26/gh-actions-watch-design-a.md`.
 
-```yaml
-jobs:
-  - name: gh-actions mirror
-    service: true
-    run_on_init: true
-    output: quiet
-    run: sh .tmp/gh-test/mirror.sh   # poll loop writing runs.json
-    env: { OUT: .tmp/gh-test/state/runs.json, INTERVAL: "1" }
+## Acceptance criteria
 
-  - name: ci status changed
-    run: sh .tmp/gh-test/reactor.sh "{{filepath}}"
-    change: [".tmp/gh-test/state/runs.json"]
-```
+- [ ] Document that services are generation-owned and restarted by re-inclusion, not watcher-owned indefinitely.
+- [ ] Document how root and per-job change patterns determine whether a service joins a replacement generation.
+- [ ] State that init-only services stop after the first superseding generation and do not silently return.
+- [ ] Make `fzz check` reject or actionably warn about `service: true` with `run_on_init` but no change trigger; record which behavior is chosen and why.
+- [ ] Document that a generation containing a live service remains running until shutdown, supersession, or terminal service failure.
+- [ ] Keep existing restart, cancellation, reload, and legacy configuration behavior unchanged.
+- [ ] Add focused validation/documentation tests so canonical config help cannot drift from the lifecycle description.
 
-12s run: the mirror's first publish fires the reactor generation, which
-replaces (and kills) the init generation; the service is not in the new
-path-filtered plan and stays dead (1 gh call, 1 event; evidence in
-`.tmp/reports/26-08-26/gh-actions-watch-design-a.md`).
+## Non-goals
 
-Working idiom (same config, service gains one line):
-
-```yaml
-    change: [".tmp/gh-test2/state/runs.json"]   # its own output
-```
-
-12s run (26-08-26, `.tmp/gh-test2/`): bridge started 4x (init + 3
-re-inclusions), published 3 state transitions, reactor fired exactly 3
-events with correct `{{filepath}}`. The cmp guard in the poller
-prevents a restart loop (unchanged state is never rewritten).
-
-## Expected
-
-- Docs (USAGE/ADVANCED-GUIDE + `fzz config` service help) state the
-  model: a service lives in the generations whose merged patterns it
-  matches; cancel-and-respawn is the restart mechanism; common
-  `on.change` triggers are how services rejoin generations.
-- Docs show the bridge idiom: watch your own output file; keep the
-  poller stateless (restart loses memory) and idempotent (guard
-  against rewrite loops).
-- Decision on the footgun, one of:
-  - `fzz check` warns when a `service: true` job declares no `change:`
-    (init-only services cannot survive generation churn), or
-  - explicitly documented as unsupported shape.
-- Adjacent note for the same docs page: a service present in a
-  generation's plan keeps that generation alive (`Step::Running`), so
-  the results summary renders only at shutdown/supersede.
-
-## Current
-
-- Behavior is consistent and by design; only the discoverability is
-  missing. Working single-config bridge today: service with
-  `change: [<own output>]` + reactor on the same path
-  (`.tmp/gh-test2/watch.yaml`).
-- Split-instance alternative (bridge-only config + reactor config)
-  also works but needs two processes
-  (`.tmp/gh-test/watch.bridge.yaml`, `watch.react.yaml`).
-- Events matching only other jobs' exclusive patterns still kill a
-  service without respawn (restart happens solely via re-inclusion);
-  common triggers covering the edit surface make this rare — worth one
-  sentence in the docs, not a behavior change.
+- External-provider integrations.
+- Treating service exit as a finite observation result.
+- Adding service-exit-to-target bindings.
+- Changing services to watcher-owned processes.
+- Blocking integration-agnostic finite-job observation work.
