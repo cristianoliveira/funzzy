@@ -10,6 +10,10 @@ on:
         description: 'Exact release tag to build and attach (must exist)'
         required: false
         default: ''
+      ref:
+        description: 'Git ref to build from (defaults to the tag; point at a branch to rebuild an immutable tag with fixed build wiring)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -43,11 +47,12 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
-      # Tag push: the pushed tag. Manual dispatch: the explicit tag input
-      # (defaults to the dispatched ref so the gate fails closed).
+      # Tag push: the pushed tag. Manual dispatch: the explicit build ref
+      # (defaults to the tag) so an immutable tag can be rebuilt from a
+      # branch carrying build-wiring fixes.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.ref || inputs.tag || github.ref }}
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -59,12 +64,6 @@ jobs:
           # SDK (via SDKROOT) provides CoreServices now.
           extra_nix_config: |
             extra-platforms = aarch64-linux i686-linux aarch64-darwin x86_64-darwin
-
-      - name: Enable cross-compilation on Linux (for aarch64)
-        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-linux'
-        run: |
-          # Enable emulation for aarch64
-          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
       - name: Build with Nix
         shell: bash
@@ -79,19 +78,19 @@ jobs:
           if [[ "$SYSTEM" == "$NATIVE_SYSTEM" ]]; then
             echo "Building natively for $SYSTEM"
             nix build .#local --verbose -L
-          else
+          elif [[ "$SYSTEM" == "aarch64-linux" ]]; then
+            # True cross-compilation: every build-time tool (rustc, the cargo
+            # vendor fetcher) runs natively on the host; only the artifacts
+            # target aarch64. Emulation (qemu-user) breaks nixpkgs'
+            # PATH-resolving python wrappers and never produced a green run.
             echo "Cross-compiling for $SYSTEM from $NATIVE_SYSTEM"
-            # For cross-compilation, we may need to adjust the approach
-            if [[ "$SYSTEM" == "aarch64-linux" && "$NATIVE_SYSTEM" == "x86_64-linux" ]]; then
-              # Use emulation for aarch64 on x86_64 Linux
-              nix build .#local --system $SYSTEM --verbose -L
-            elif [[ "$NATIVE_SYSTEM" == "x86_64-darwin" ]]; then
-              # macOS native cross-compilation
-              nix build .#local --system $SYSTEM --verbose -L
-            else
-              echo "Cross-compilation from $NATIVE_SYSTEM to $SYSTEM may not be supported"
-              nix build .#local --verbose -L
-            fi
+            nix build .#local-aarch64 --verbose -L
+          elif [[ "$NATIVE_SYSTEM" == "x86_64-darwin" ]]; then
+            # macOS native cross-compilation
+            nix build .#local --system $SYSTEM --verbose -L
+          else
+            echo "Cross-compilation from $NATIVE_SYSTEM to $SYSTEM may not be supported"
+            nix build .#local --verbose -L
           fi
 
       - name: Package binaries

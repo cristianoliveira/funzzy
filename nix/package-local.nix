@@ -1,4 +1,4 @@
-{ lib , rustPlatform , fetchFromGitHub }:
+{ lib , rustPlatform , fetchFromGitHub , doCheck ? true }:
 
 rustPlatform.buildRustPackage {
   pname = "funzzy";
