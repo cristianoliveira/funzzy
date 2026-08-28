@@ -45,5 +45,6 @@ As a user, when the fzz watcher has finished its current run and is idle, I pres
 
 - **Lead decision (Mony, 28-08):** sequenced after TASK-0148 (watcher observation UX). Assumptions accepted provisionally; lead validates against pi-watcher patterns/docs before assigning implementation. Sequencing is a priority choice, not a hard dependency — `depends_on` stays empty.
 
-- Feasibility evidence: pi extensions support `pi.registerShortcut(shortcut, { description, handler(ctx) })`; pi-watcher already owns the trigger path via the control socket (`run`) and freshness proof (`watcher_verify`).
+- Feasibility evidence: pi extensions support `pi.registerShortcut(shortcut, { description, handler(ctx) })`; pi-watcher already owns the trigger path via the control socket (`run`) and freshness proof (`watcher_verify`). Handler `ctx.ui.notify` directly covers the visible-feedback criterion.
+- pi-watcher currently registers no shortcuts — TASK-0149 is a greenfield surface. The chosen default key must not collide with pi built-in keybindings (see pi `docs/keybindings.md`) and must be documented as user-rebindable via `~/.pi/agent/keybindings.json`.
 - Related but independent: TASK-0148 (exclusive observation feedback) — no dependency.
