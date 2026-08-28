@@ -1,7 +1,7 @@
 ---
 id: TASK-0142
 title: Implement gated watcher surface registration
-status: todo
+status: done
 depends_on: [TASK-0141]
 priority: normal
 tags: [pi-watcher, extension, registration, tdd]
