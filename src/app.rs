@@ -520,6 +520,23 @@ fn check_config(config_file: &Option<String>) {
             missing_paths.join(", ")
         ));
     }
+
+    // SERVICE-LIFECYCLE-CONTRACT §5–§6: an init-only service (service: true,
+    // run_on_init: true, empty effective change patterns) is legal but dies
+    // on the first superseding generation and nothing re-includes it.
+    // Actionable warning, never a rejection: the shape is valid and has a
+    // legitimate split-instance use.
+    let init_only_services: Vec<&str> = rules
+        .iter()
+        .filter(|rule| rule.service() && rule.run_on_init() && rule.watch_patterns().is_empty())
+        .map(|rule| rule.name.as_str())
+        .collect();
+    if !init_only_services.is_empty() {
+        stdout::warn(&format!(
+            "init-only service(s) [{}] are not automatically re-included by unrelated replacement generations: the service is reaped when its generation is superseded. Add `change:` patterns so re-inclusion restarts it, or isolate it in a dedicated config instance",
+            init_only_services.join(", ")
+        ));
+    }
     stdout::info(&format!(
         "config valid: {} job(s), {} in parallel group(s), concurrency {}",
         rules.len(),

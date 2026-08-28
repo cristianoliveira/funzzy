@@ -296,7 +296,7 @@ const JOB_SPECS: &[OptionSpec] = &[
         owner: Owner::Job,
         required: false,
         default: Some("false"),
-        help: "Managed long-running service: started on init, restarted on change, stopped on exit.",
+        help: "Managed long-running service: owned by the active generation; restarted by re-inclusion in a replacement generation and retried up to 3 times on non-zero exit; stopped on supersession or exit.",
         values: None,
         example: &["service: true"],
         kind: SpecKind::Bool,
@@ -485,5 +485,19 @@ mod tests {
                 assert!(!values.is_empty(), "{} enum is empty", spec.name);
             }
         }
+    }
+
+    /// SERVICE-LIFECYCLE-CONTRACT §6: the `service` help must state generation
+    /// ownership, re-inclusion restart, bounded retry, and supersession/exit —
+    /// "restarted on change" drifts from the real model and hid the init-only
+    /// footgun. Pinned verbatim so help and the contract cannot diverge.
+    #[test]
+    fn service_help_pins_the_service_lifecycle_contract() {
+        assert_eq!(
+            find("service").unwrap().help,
+            "Managed long-running service: owned by the active generation; \
+             restarted by re-inclusion in a replacement generation and retried \
+             up to 3 times on non-zero exit; stopped on supersession or exit."
+        );
     }
 }
