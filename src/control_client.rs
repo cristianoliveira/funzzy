@@ -1042,9 +1042,16 @@ fn read_optional_terminal_tasks(
             let state = task
                 .get("state")
                 .and_then(Value::as_str)
-                .filter(|state| matches!(*state, "passed" | "failed" | "cancelled"))
+                // FINITE-JOB-TIMEOUT-CONTRACT §4/§9: the additive "timedout"
+                // task state must pass client-side validation, or `fzz ctl`
+                // rejects a legitimate timed-out generation.
+                .filter(|state| {
+                    matches!(*state, "passed" | "failed" | "cancelled" | "timedout")
+                })
                 .map(str::to_owned)
-                .ok_or_else(|| format!("status result task at index {index} field \"state\" is invalid"))?;
+                .ok_or_else(|| {
+                    format!("status result task at index {index} field \"state\" is invalid")
+                })?;
             let duration_ms = match task.get("durationMs") {
                 Some(Value::Null) => None,
                 Some(Value::Number(value)) => value.as_u64().map(Some).ok_or_else(|| {
@@ -1409,6 +1416,46 @@ mod tests {
 
     fn ok_response(id: u64, result: Value) -> String {
         serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+    }
+
+    /// FINITE-JOB-TIMEOUT-CONTRACT §4/§9 (TASK-0140 e2e catch): the client
+    /// validator must accept the additive "timedout" task state — `fzz ctl`
+    /// previously rejected a legitimate timed-out generation as malformed.
+    #[test]
+    fn status_roundtrip_accepts_the_timedout_task_state() {
+        let result = serde_json::json!({
+            "generation": 9,
+            "state": "failed",
+            "trigger": "src/main.rs",
+            "commands": ["./await-remote.sh"],
+            "durationMs": 317,
+            "failures": ["Job 'await-remote' timed out after 300ms and was terminated"],
+            "tasks": [
+                {"id": "t-1", "name": "await-remote", "state": "timedout", "durationMs": 317}
+            ]
+        });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let status = client.status().expect("timedout state must validate");
+        handle.join().expect("server thread");
+        assert_eq!(status.tasks.as_deref().unwrap_or(&[])[0].state, "timedout");
+    }
+
+    #[test]
+    fn status_roundtrip_still_rejects_unknown_task_states() {
+        let result = serde_json::json!({
+            "generation": 4,
+            "state": "passed",
+            "commands": [],
+            "tasks": [
+                {"id": "t-1", "name": "x", "state": "green", "durationMs": 1}
+            ]
+        });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let error = client.status().expect_err("unknown states stay malformed");
+        handle.join().expect("server thread");
+        assert!(error.to_string().contains("state\" is invalid"));
     }
 
     #[test]

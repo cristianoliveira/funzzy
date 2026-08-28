@@ -64,6 +64,7 @@ Declaration order is semantic. Only consecutive jobs with same `parallel` name o
 - **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
 - **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
 - **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
+- **Finite execution deadlines:** `jobs[].timeout` terminates timed-out process trees and records the typed `timedout` outcome; control `--timeout` only bounds the caller's wait.
 - **Workflow automation:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result.
 - **Approved recovery:** optionally run a declared `jobs[].recovery` once after an approved failure, then verify the original job once; unanswered approval defaults to failure after `execution.recovery_timeout` (60s by default); use `--recovery-policy skip` in CI.
 - **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
@@ -386,6 +387,30 @@ jobs:
   - name: package
     run: cargo build   # serial: runs alone, after the group
 ```
+
+## Finite job execution deadlines
+
+Use `jobs[].timeout` to bound a finite job's complete invocation:
+
+```yaml
+jobs:
+  - name: await-remote
+    trigger: manual
+    timeout: 30m
+    run: ./scripts/await-remote.sh
+```
+
+The execution timeout starts at the first successful spawn. When it elapses,
+Funzzy terminates the complete process group (graceful `SIGTERM`, escalating
+to `SIGKILL` when needed), reaps it, retains bounded output, and records the
+job's typed `timedout` state in the failed generation. Use the exact generation
+with `fzz control output --generation N` to retrieve pre-termination evidence.
+
+This is separate from control `--timeout`: that option bounds only how long a
+caller waits for `control await` or `control run --wait`; it never terminates
+the child. A timeout in the job configuration owns child lifetime, while a
+client timeout owns caller patience. See the full provider-neutral recipe in
+[the advanced guide](docs/ADVANCED-GUIDE.md).
 
 ## Troubleshooting
 

@@ -250,13 +250,18 @@ on:
 jobs:
   - name: await-remote
     trigger: manual
+    timeout: 30m
     run: ./scripts/await-remote.sh
 ```
 
 `trigger: manual` (MANUAL-TRIGGER-CONTRACT) means explicit invocation only:
 the job never runs at watcher init, never matches filesystem events — even
 when a root `on.change` would select every other job — and never inherits
-root patterns. It starts only through explicit selection:
+root patterns. It starts only through explicit selection. `timeout:`
+(optionally) bounds the job's execution (FINITE-JOB-TIMEOUT-CONTRACT):
+on elapse the whole process tree is terminated and the generation fails
+with the typed `timedout` task state — bounded observation without the
+script implementing its own deadline.
 
 ```sh
 # Foreground composition (local, one-shot process):
@@ -295,8 +300,8 @@ terminal observation in one round trip.
   later generations are never affected).
 
 Control `--timeout` bounds **waiting only**; it never terminates the
-observed process. Until job execution timeouts land, the script itself owns
-its execution deadline (exit non-zero when the deadline passes).
+observed process. The job's own lifetime is bounded separately by
+`jobs[].timeout` (§8.5) — the two deadlines are independent surfaces.
 
 ### 8.4 Why not `service: true`
 
@@ -307,10 +312,34 @@ only by re-inclusion (SERVICE-LIFECYCLE-CONTRACT). A blocking observation
 needs exactly one invocation with one terminal result: `trigger: manual` on
 a normal finite job.
 
-### 8.5 Proof
+### 8.5 Bounded observation: `jobs[].timeout` vs control `--timeout`
 
-The recipe is proven black-box in `tests/manual_observation_recipe.rs`:
-silent at init and on matching changes (with root `on.change` present),
-alive→running, exit 0→passed once, non-zero→failed once with bounded
-evidence, exact-generation await/output/cancel with stale-cancel isolation,
-TOON output, and foreground exit-code composition.
+Two independent deadlines — never conflate them:
+
+- **`jobs[].timeout: <duration>`** owns the **child's lifetime** (`30m`,
+  `500ms`, `90s`; a bare number means seconds). It starts at the job's
+  first successful spawn, covers the job's whole invocation (including
+  multi-command sequences), and on elapse terminates the complete process
+  group — graceful SIGTERM, escalating to SIGKILL, then reap. The job
+  records the typed `timedout` state, the generation fails, pre-kill output
+  stays retrievable (`control output --generation N`), duration history
+  records a failure, and recovery is never offered. Exact user cancellation,
+  generation supersession, and watcher shutdown all outrank the deadline.
+- **Control `--timeout`** owns only the **caller's wait**: an await that
+  expires reports `timeout` and performs no cancellation whatsoever.
+
+A config reload that changes `timeout` affects only generations scheduled
+under the new revision; running generations keep their frozen deadline and
+a stale timer never touches replacement work. `timeout` is rejected on
+`service: true` jobs (a managed service is intentionally unbounded).
+
+Proven black-box in `tests/finite_job_timeouts.rs`.
+
+### 8.6 Proof
+
+The recipe is proven black-box in `tests/manual_observation_recipe.rs`
+(manual silence, alive→running, exit mapping, exact-generation isolation,
+TOON, foreground composition) and in `tests/finite_job_timeouts.rs`
+(deadline elapse terminates the process tree with the typed `timedout`
+outcome, natural outcomes unchanged, cancellation precedence, reload
+freeze, and local/control agreement).

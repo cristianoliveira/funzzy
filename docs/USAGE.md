@@ -149,6 +149,8 @@ jobs:
     run_on_init: true     # run when the watcher starts
     trigger: manual       # explicit run only: never matches events or init
                              # (see ADVANCED-GUIDE §8)
+    timeout: 30m          # bound execution; elapse terminates the job and
+                             # fails the generation (not a client wait bound)
 
   - name: format-check
     run: cargo fmt --all -- --check
@@ -162,6 +164,12 @@ jobs:
   surface — no init run, no filesystem matching, no root `on.change`
   inheritance; it starts only via `fzz run TARGET` or `fzz ctl run TARGET`
   (MANUAL-TRIGGER-CONTRACT, ADVANCED-GUIDE §8).
+- **Execution timeout**: `timeout: <duration>` (`30m`, `90s`, `500ms`; a
+  bare number means seconds) bounds the job's whole invocation. On elapse
+  the complete process group is terminated, the job records the typed
+  `timedout` state, the generation fails, and pre-kill output stays
+  retrievable. It is independent from control `--timeout`, which bounds only
+  the caller's wait (FINITE-JOB-TIMEOUT-CONTRACT, ADVANCED-GUIDE §8.5).
 - **Templates**: `{{filepath}}` (trigger path, backward compatible),
   `{{paths}}` (whole batch, shell-escaped), `{{relative_filepath}}`.
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
