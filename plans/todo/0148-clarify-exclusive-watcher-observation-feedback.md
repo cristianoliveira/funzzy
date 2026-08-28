@@ -43,6 +43,13 @@ TIMEOUT gen>16 current=16 state=failed excluded=true freshness=current waited=60
 next: watcher_observe wait=true generation=16
 ```
 
+Idle baseline timeout (no generation ever observed; exact hint wording is dev's choice, but it must name one copyable trigger action):
+
+```text
+TIMEOUT gen>16 current=none freshness=current waited=600s (polled)
+next: watcher_verify  # example shape, not mandated wording
+```
+
 ## Acceptance criteria
 
 - [ ] Write failing domain tests first for failed/passed/cancelled/running/idle baselines at or below `afterGeneration`, including selector greater than current.
