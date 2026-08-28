@@ -9,13 +9,15 @@
 use crate::cli::Command;
 use crate::errors::FzzError;
 use crate::stdout;
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 /// Migrates an accepted legacy config to the preferred V2 `jobs:` format
 /// (TASK-0075/0076): a root task list is wrapped into an ordered `jobs:`
 /// list preserving declaration order, comments, quoting, and commands; a
-/// grouped `tasks:` root is renamed to `jobs:`. Already-preferred input is
-/// returned unchanged (idempotent, byte-preserving no-op).
+/// grouped `tasks:` root is renamed to `jobs:`. Root-list groups are flattened
+/// in declaration order with effective group patterns materialized on each
+/// child job. Already-preferred input is returned unchanged (idempotent,
+/// byte-preserving no-op).
 pub fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     let documents = YamlLoader::load_from_str(legacy).map_err(|err| {
         FzzError::InvalidConfigError(
@@ -32,6 +34,9 @@ pub fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     }
 
     match documents.first() {
+        Some(Yaml::Array(items)) if items.iter().any(is_nested_group) => {
+            return flatten_nested_groups(legacy, items);
+        }
         Some(Yaml::Array(_)) => {}
         Some(document) if document["jobs"] != Yaml::BadValue => {
             // Already preferred: idempotent no-op (TASK-0078) — return the
@@ -81,6 +86,133 @@ pub fn migrate_content(legacy: &str) -> Result<String, FzzError> {
     }
 
     Ok(migrated)
+}
+
+fn is_nested_group(item: &Yaml) -> bool {
+    matches!(item, Yaml::Hash(_)) && item["tasks"] != Yaml::BadValue
+}
+
+/// Flattens the accepted root-list group form into one ordered V2 `jobs`
+/// array. Group matching policy is materialized on each child job because a
+/// V2 jobs list cannot contain nested `on`/`tasks` objects.
+fn flatten_nested_groups(legacy: &str, items: &[Yaml]) -> Result<String, FzzError> {
+    let mut jobs = Vec::new();
+    for item in items {
+        if !is_nested_group(item) {
+            jobs.push(item.clone());
+            continue;
+        }
+
+        let common = pattern_map(item, "on")?;
+        let tasks = match &item["tasks"] {
+            Yaml::Array(tasks) => tasks,
+            other => {
+                return Err(FzzError::GenericError(format!(
+                    "Nested group 'tasks' must be an ordered list, got {}",
+                    crate::yaml::get_type(other)
+                )));
+            }
+        };
+        for task in tasks {
+            if is_nested_group(task) {
+                return Err(FzzError::GenericError(
+                    "Nested groups may not contain another on/tasks group".to_string(),
+                ));
+            }
+            jobs.push(materialize_group_patterns(task, &common)?);
+        }
+    }
+
+    let mut emitted = String::new();
+    // yaml-rust intentionally discards comments. Keep comment-only lines in a
+    // deterministic preamble rather than silently deleting documentation from
+    // a migrated shipped example; semantic ordering comes from the YAML AST.
+    for line in legacy
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+    {
+        emitted.push_str(line.trim_start());
+        emitted.push('\n');
+    }
+    emitted.push_str("jobs:\n");
+    let mut body = String::new();
+    YamlEmitter::new(&mut body)
+        .dump(&Yaml::Array(jobs))
+        .map_err(|err| FzzError::GenericError(format!("Failed to emit migrated jobs: {err}")))?;
+    for line in body.lines().filter(|line| *line != "---") {
+        emitted.push_str("  ");
+        emitted.push_str(line);
+        emitted.push('\n');
+    }
+    if !legacy.ends_with('\n') {
+        emitted.pop();
+    }
+    Ok(emitted)
+}
+
+fn pattern_map(group: &Yaml, section: &str) -> Result<(Vec<String>, Vec<String>), FzzError> {
+    let section_yaml = &group[section];
+    if section_yaml == &Yaml::BadValue {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    if !matches!(section_yaml, Yaml::Hash(_)) {
+        return Err(FzzError::GenericError(format!(
+            "Nested group '{section}' must be an object"
+        )));
+    }
+    Ok((
+        pattern_values(section_yaml, "change")?,
+        pattern_values(section_yaml, "ignore")?,
+    ))
+}
+
+fn pattern_values(section: &Yaml, key: &str) -> Result<Vec<String>, FzzError> {
+    match &section[key] {
+        Yaml::BadValue => Ok(Vec::new()),
+        Yaml::String(value) => Ok(vec![value.clone()]),
+        Yaml::Array(values) => values
+            .iter()
+            .map(|value| match value {
+                Yaml::String(value) => Ok(value.clone()),
+                other => Err(FzzError::GenericError(format!(
+                    "Pattern '{key}' must contain strings, got {}",
+                    crate::yaml::get_type(other)
+                ))),
+            })
+            .collect(),
+        other => Err(FzzError::GenericError(format!(
+            "Pattern '{key}' must be a string or list, got {}",
+            crate::yaml::get_type(other)
+        ))),
+    }
+}
+
+fn materialize_group_patterns(
+    task: &Yaml,
+    common: &(Vec<String>, Vec<String>),
+) -> Result<Yaml, FzzError> {
+    let Yaml::Hash(mut properties) = task.clone() else {
+        return Err(FzzError::GenericError(
+            "Nested group tasks must be job objects".to_string(),
+        ));
+    };
+    for (key, inherited) in [("change", &common.0), ("ignore", &common.1)] {
+        if inherited.is_empty() {
+            continue;
+        }
+        let local = pattern_values(task, key)?;
+        let mut merged = inherited.clone();
+        for value in local {
+            if !merged.contains(&value) {
+                merged.push(value);
+            }
+        }
+        properties.insert(
+            Yaml::String(key.to_string()),
+            Yaml::Array(merged.into_iter().map(Yaml::String).collect()),
+        );
+    }
+    Ok(Yaml::Hash(properties))
 }
 
 /// Renames a root `old_key:` line to `new_key:` (same indentation), leaving
@@ -186,6 +318,86 @@ mod tests {
             migrate_content(LEGACY).unwrap(),
             "# project tasks\n\njobs:\n  - name: test\n    run: cargo test\n    change: src/**\n\n  # final task\n  - name: lint\n    run: cargo fmt -- --check\n    run_on_init: true\n"
         );
+    }
+
+    #[test]
+    fn flattens_nested_groups_with_effective_patterns_and_order() {
+        let nested = r#"# catalog heading
+- on:
+    change:
+      - "src/**"
+      - "shared/**"
+    ignore: "**/*.log"
+  tasks:
+    # group job comment
+    - name: build
+      run: "echo build"
+    - name: test @quick
+      run: |
+        echo test
+      change:
+        - "src/**"
+        - "tests/**"
+- name: final
+  run: echo final
+  change: docs/**
+"#;
+
+        let migrated = migrate_content(nested).expect("nested groups migrate");
+        let rules = crate::config::from_yaml(&migrated).expect("migrated config is valid");
+        assert_eq!(
+            rules
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            ["build", "test @quick", "final"]
+        );
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**", "shared/**"]);
+        assert_eq!(rules[0].ignore_glob_patterns(), vec!["**/*.log"]);
+        assert_eq!(
+            rules[1].watch_patterns(),
+            vec!["src/**", "shared/**", "tests/**"]
+        );
+        assert_eq!(rules[1].ignore_glob_patterns(), vec!["**/*.log"]);
+        assert_eq!(rules[1].commands(), vec!["echo test\n"]);
+        assert_eq!(rules[2].watch_patterns(), vec!["docs/**"]);
+        assert!(migrated.starts_with("# catalog heading\n"));
+        assert!(migrated.contains("jobs:\n"));
+        assert!(migrated.contains("# group job comment"));
+        assert!(!migrated.contains("tasks:"));
+        assert!(!migrated.contains("- on:"));
+    }
+
+    #[test]
+    fn flattens_empty_and_mixed_groups_without_reordering_jobs() {
+        let nested = r#"- name: before
+  run: echo before
+  change: before/**
+- on:
+    change: group/**
+  tasks: []
+- on:
+    change: /tmp/fzz/group/**
+    ignore: /tmp/fzz/ignored/**
+  tasks:
+    - name: inside
+      run: echo inside
+- name: after
+  run: echo after
+  change: after/**
+"#;
+
+        let migrated = migrate_content(nested).expect("mixed groups migrate");
+        let rules = crate::config::from_yaml(&migrated).expect("migrated config is valid");
+        assert_eq!(
+            rules
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            ["before", "inside", "after"]
+        );
+        assert_eq!(rules[1].watch_patterns(), vec!["/tmp/fzz/group/**"]);
+        assert_eq!(rules[1].ignore_glob_patterns(), vec!["/tmp/fzz/ignored/**"]);
     }
 
     /// Grouped `tasks:` root is renamed to `jobs:` byte-exactly.

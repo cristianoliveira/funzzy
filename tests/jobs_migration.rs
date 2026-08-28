@@ -222,6 +222,53 @@ fn migrated_config_with_cwd_env_and_init_runs_identically() {
 }
 
 #[test]
+fn shipped_nested_groups_migrate_and_check() {
+    let directory = fixture("shipped-nested-groups");
+    let config = directory.join("nested-groups.yml");
+    std::fs::copy("examples/nested-groups.yml", &config).expect("copy shipped fixture");
+
+    let migrate = cargo::cargo_bin_cmd!("fzz")
+        .current_dir(&directory)
+        .env("FUNZZY_COLORED", "false")
+        .args(["-c", config.to_str().unwrap(), "migrate"])
+        .output()
+        .unwrap();
+    assert!(
+        migrate.status.success(),
+        "nested fixture migration failed: {}",
+        String::from_utf8_lossy(&migrate.stdout)
+    );
+    let migrated = std::fs::read_to_string(&config).unwrap();
+    assert!(migrated.contains("jobs:\n"));
+    assert!(!migrated.contains("tasks:"));
+    assert!(!migrated.contains("- on:"));
+
+    let check = cargo::cargo_bin_cmd!("fzz")
+        .current_dir(&directory)
+        .env("FUNZZY_COLORED", "false")
+        .args(["-c", config.to_str().unwrap(), "check"])
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "migrated nested fixture is invalid: {}",
+        String::from_utf8_lossy(&check.stdout)
+    );
+    assert!(String::from_utf8_lossy(&check.stdout).contains("11 job(s)"));
+
+    // Preferred output is idempotent and byte-identical on the second run.
+    let second = cargo::cargo_bin_cmd!("fzz")
+        .current_dir(&directory)
+        .env("FUNZZY_COLORED", "false")
+        .args(["-c", config.to_str().unwrap(), "migrate"])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), migrated);
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
+#[test]
 fn every_example_passes_fzz_check() {
     // TASK-0068: every valid example fixture must pass `fzz check`; docs and
     // examples can never drift from the parser. Intentionally-invalid
