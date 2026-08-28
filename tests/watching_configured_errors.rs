@@ -43,7 +43,6 @@ fn it_fails_using_an_config_with_missing_properties() -> Result<(), Box<dyn std:
                 "Error: Failed to read config file",
                 "Missing \'name\' in rule",
                 "```yaml",
-                "foo: bla",
                 "run: bar",
                 "```",
                 "Hint: Check for typos or wrong identation",
@@ -66,15 +65,11 @@ fn it_fails_using_an_config_with_non_list() -> Result<(), Box<dyn std::error::Er
         .assert()
         .failure()
         .stdout(
-            ["Error: Failed to read config file",
-                "Configuration file is invalid. When using the 'on' format, you must provide a 'tasks' array",
-                "Hint: Example:",
-                "on:",
-                "  change: [\"src/**\"]",
-                "jobs:",
-                "  - name: build",
-                "    run: cargo build",
-                ""]
+            [
+                "Error: Failed to read config file",
+                "Property 'on' must be an object",
+                "",
+            ]
             .join("\n"),
         );
 
