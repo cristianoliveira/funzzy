@@ -10,6 +10,7 @@ extern crate glob;
 
 use self::glob::Pattern;
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// Per-job output policy (OUTPUT-POLICY-CONTRACT, TASK-0041). `Inherit` is
 /// the default and matches streaming behavior.
@@ -58,6 +59,9 @@ pub struct Rules {
     /// they never match filesystem events, never run at init, and never
     /// inherit root `on.change`. None = change-triggered (today's model).
     trigger: Option<TriggerMode>,
+    /// Finite execution deadline (FINITE-JOB-TIMEOUT-CONTRACT): job-wide
+    /// budget from the job's first successful spawn; None = unbounded.
+    timeout: Option<Duration>,
 }
 
 /// Configured trigger mode for a job (MANUAL-TRIGGER-CONTRACT §2).
@@ -98,6 +102,7 @@ impl Rules {
             output: OutputPolicy::Inherit,
             service: false,
             trigger: None,
+            timeout: None,
         }
     }
 
@@ -126,6 +131,7 @@ impl Rules {
             output: OutputPolicy::Inherit,
             service: false,
             trigger: None,
+            timeout: None,
         }
     }
 
@@ -206,6 +212,24 @@ impl Rules {
     /// selection (MANUAL-TRIGGER-CONTRACT §3).
     pub fn is_manual(&self) -> bool {
         matches!(self.trigger, Some(TriggerMode::Manual))
+    }
+
+    /// Sets the finite execution deadline (FINITE-JOB-TIMEOUT-CONTRACT).
+    pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// The configured finite deadline; `None` = unbounded (§1 absence).
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Deadline for this job's invocation from its first successful spawn
+    /// (§2): the job-wide original start — continuations recheck this same
+    /// deadline, never a fresh one (§3 amendment).
+    pub fn deadline_from(&self, started: std::time::Instant) -> Option<std::time::Instant> {
+        self.timeout.map(|timeout| started + timeout)
     }
 
     pub fn with_parallel(mut self, group: String) -> Self {

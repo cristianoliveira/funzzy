@@ -36,6 +36,15 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
             Some("Rename 'tasks' to 'jobs' before declaring a trigger mode.".to_owned()),
         ));
     }
+    // FINITE-JOB-TIMEOUT-CONTRACT §1: `timeout` is preferred-V2 only; the
+    // legacy root-list site rejects it like `trigger`/`recovery`.
+    if yaml["timeout"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'timeout' is supported only in preferred V2 jobs".to_owned(),
+            None,
+            Some("Rename 'tasks' to 'jobs' before declaring a timeout.".to_owned()),
+        ));
+    }
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns = ensure_glob_only(
@@ -360,6 +369,15 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
                 Some("Rename 'tasks' to 'jobs' before declaring a trigger mode.".to_owned()),
             ));
         }
+        // FINITE-JOB-TIMEOUT-CONTRACT §1: grouped legacy `tasks:` entries
+        // reject `timeout` at the second legacy parse site.
+        if has_tasks && task_yaml["timeout"] != Yaml::BadValue {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'timeout' is supported only in preferred V2 jobs".to_owned(),
+                None,
+                Some("Rename 'tasks' to 'jobs' before declaring a timeout.".to_owned()),
+            ));
+        }
         let rule = rule_from_with_common(task_yaml, &common_rules)?;
         if !seen.insert(rule.name.clone()) {
             return Err(errors::FzzError::InvalidConfigError(
@@ -571,6 +589,55 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ),
         ));
     }
+    // FINITE-JOB-TIMEOUT-CONTRACT §7: a managed service is intentionally
+    // unbounded; a finite deadline contradicts the service contract.
+    let timeout = match &yaml["timeout"] {
+        Yaml::BadValue => None,
+        Yaml::String(raw) => parse_duration("timeout", raw).map_err(|error| {
+            errors::FzzError::InvalidConfigError(
+                format!("Invalid 'timeout' value for job '{}': {error}", name),
+                None,
+                Some(
+                    "Use a positive duration with ms/s/m units, e.g. `timeout: 30m` (bare number = seconds)."
+                        .to_owned(),
+                ),
+            )
+        })?,
+        // A bare YAML integer is seconds, same grammar as the string form
+        // (FINITE-JOB-TIMEOUT-CONTRACT §1: bare number = seconds).
+        Yaml::Integer(seconds) => parse_duration("timeout", &format!("{seconds}s")).map_err(
+            |error| {
+                errors::FzzError::InvalidConfigError(
+                    format!("Invalid 'timeout' value for job '{}': {error}", name),
+                    None,
+                    Some(
+                        "Use a positive duration with ms/s/m units, e.g. `timeout: 30m` (bare number = seconds)."
+                            .to_owned(),
+                    ),
+                )
+            },
+        )?,
+        _ => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Invalid 'timeout' value for job '{}': must be a duration string (e.g. 30m, 45s, 200ms)",
+                    name
+                ),
+                None,
+                None,
+            ));
+        }
+    };
+    if timeout.is_some() && service {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' cannot declare both 'timeout' and 'service: true'",
+                name
+            ),
+            None,
+            Some("A service is intentionally unbounded; remove 'timeout' or 'service'.".to_owned()),
+        ));
+    }
 
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => common.output_policy,
@@ -597,7 +664,8 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         .with_inherited_patterns(inherited_patterns(common))
         .with_output(output)
         .with_service(service)
-        .with_trigger(trigger);
+        .with_trigger(trigger)
+        .with_timeout(timeout);
     let rule = match recovery {
         Some(commands) => rule.with_recovery(commands),
         None => rule,
@@ -1007,6 +1075,14 @@ pub fn debounce_from_yaml(content: &str) -> Result<Option<Duration>, String> {
 /// Parses one debounce duration: `<number>` (seconds), or `<number>ms|s|m`.
 /// Rejects zero and unknown suffixes so a typo never silently changes timing.
 pub fn parse_debounce(raw: &str) -> Result<Option<Duration>, String> {
+    parse_duration("on.debounce", raw)
+}
+
+/// Shared duration grammar (FINITE-JOB-TIMEOUT-CONTRACT §1, same as
+/// `on.debounce`): `<number>` with optional `ms`/`s`/`m` suffix; a bare
+/// number means seconds; strictly positive; hours/composite are NOT
+/// accepted. TASK-0139 must not extend this parser.
+pub fn parse_duration(field: &str, raw: &str) -> Result<Option<Duration>, String> {
     let raw = raw.trim();
     let (digits, multiplier) = if let Some(stripped) = raw.strip_suffix("ms") {
         (stripped, 1u64)
@@ -1019,19 +1095,17 @@ pub fn parse_debounce(raw: &str) -> Result<Option<Duration>, String> {
     };
     let value: u64 = digits.trim().parse().map_err(|_| {
         format!(
-            "invalid 'on.debounce' duration '{}': expected <number> with optional ms/s/m suffix (bare number = seconds)",
-            raw
+            "invalid '{field}' duration '{raw}': expected <number> with optional ms/s/m suffix (bare number = seconds)"
         )
     })?;
     if value == 0 {
         return Err(format!(
-            "invalid 'on.debounce' duration '{}': must be positive",
-            raw
+            "invalid '{field}' duration '{raw}': must be positive"
         ));
     }
     let millis = value
         .checked_mul(multiplier)
-        .ok_or_else(|| format!("invalid 'on.debounce' duration '{}': too large", raw))?;
+        .ok_or_else(|| format!("invalid '{field}' duration '{raw}': too large"))?;
     Ok(Some(Duration::from_millis(millis)))
 }
 
@@ -1093,6 +1167,11 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
         // invalid config (silent trigger loss).
         lines.push(format!("trigger: {}", trigger.as_str()));
     }
+    if let Some(timeout) = rule.timeout() {
+        // FINITE-JOB-TIMEOUT-CONTRACT §1/QA P2: a rendered bounded job must
+        // stay bounded — dropping `timeout` would silently unbound it.
+        lines.push(format!("timeout: {}", render_duration(timeout)));
+    }
     if !rule.watch_patterns().is_empty() {
         lines.push(render_scalar_or_list("change", &rule.watch_patterns()));
     }
@@ -1107,6 +1186,19 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
     }
 
     lines.join("\n")
+}
+
+/// Canonical duration text (m > s > ms, largest unit that divides evenly);
+/// always round-trips through `parse_duration` (FINITE-JOB-TIMEOUT-CONTRACT §1).
+fn render_duration(duration: Duration) -> String {
+    let ms = duration.as_millis();
+    if ms >= 60_000 && ms.is_multiple_of(60_000) {
+        format!("{}m", ms / 60_000)
+    } else if ms >= 1_000 && ms.is_multiple_of(1_000) {
+        format!("{}s", ms / 1_000)
+    } else {
+        format!("{}ms", ms)
+    }
 }
 
 fn render_scalar_or_list(prop: &str, values: &[String]) -> String {
@@ -1353,6 +1445,52 @@ tasks:
         assert_eq!(
             round_tripped[0].trigger(),
             Some(crate::rules::TriggerMode::Manual)
+        );
+    }
+
+    #[test]
+    fn it_formats_timeout_rule_as_yaml_with_canonical_duration() {
+        // FINITE-JOB-TIMEOUT-CONTRACT §1 + QA P2: verbose render must keep
+        // `timeout` — dropping it would silently unbound a bounded job.
+        // Canonical rendering: largest unit that divides evenly (m > s > ms).
+        let file_content = "
+        jobs:
+          - name: await-remote
+            run: ./scripts/await-remote.sh
+            trigger: manual
+            timeout: 90s
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        let rendered = rule_as_yaml(&rules[0]);
+        assert_eq!(
+            rendered,
+            [
+                "name: await-remote",
+                "run: ./scripts/await-remote.sh",
+                "trigger: manual",
+                "timeout: 90s",
+            ]
+            .join("\n"),
+            "Failed to format timeout rule as string {}",
+            rendered
+        );
+
+        // Round-trip: the rendered form re-parses to the same deadline.
+        let round_tripped = from_yaml(&format!(
+            "jobs:\n{}\n",
+            rendered
+                .replace("name: ", "  - name: ")
+                .replace("\nrun: ", "\n    run: ")
+                .replace("\ntrigger: ", "\n    trigger: ")
+                .replace("\ntimeout: ", "\n    timeout: ")
+        ))
+        .expect("rendered config must re-parse");
+        assert_eq!(
+            round_tripped[0].timeout(),
+            rules[0].timeout(),
+            "rendered timeout must round-trip to the same deadline"
         );
     }
 
@@ -3077,5 +3215,89 @@ mod manual_trigger_tests {
                 .expect("unchanged config parses");
         assert!(!rules[0].is_manual());
         assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod timeout_config_tests {
+    use super::from_yaml;
+
+    #[test]
+    fn timeout_parses_ms_s_m_and_bare_seconds() {
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 200ms\n    change: a/**\n")
+                .expect("ms parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_millis(200))
+        );
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 45s\n    change: a/**\n")
+                .expect("s parses");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(45)));
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    change: a/**\n")
+                .expect("m parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_secs(1800))
+        );
+
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 2\n    change: a/**\n")
+            .expect("bare = seconds");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn timeout_rejects_zero_negative_garbage_and_hours() {
+        for bad in ["0s", "0", "-5s", "banana", "1h", "1h30m"] {
+            let err = from_yaml(&format!(
+                "jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: {bad}\n"
+            ))
+            .expect_err(&format!("'{bad}' must be rejected"));
+            assert!(
+                err.to_string().contains("timeout"),
+                "error names the field for '{bad}': {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_rejects_service_and_non_string() {
+        let err = from_yaml(
+            "jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    service: true\n    change: a/**\n",
+        )
+        .expect_err("timeout+service rejected");
+        assert!(err.to_string().contains("'timeout' and 'service: true'"));
+
+        let err =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: true\n")
+                .expect_err("non-duration type rejected");
+        assert!(err.to_string().contains("duration string"));
+    }
+
+    #[test]
+    fn timeout_rejected_at_both_legacy_sites() {
+        let err = from_yaml("- name: a\n  run: x\n  timeout: 30m\n  change: a/**\n")
+            .expect_err("root-list legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+
+        let err = from_yaml(
+            "on:\n  change: [\"a/**\"]\ntasks:\n  - name: a\n    run: x\n    timeout: 30m\n",
+        )
+        .expect_err("grouped legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn absent_timeout_means_unbounded() {
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
+        assert_eq!(rules[0].timeout(), None);
     }
 }

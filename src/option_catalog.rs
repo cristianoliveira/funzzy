@@ -302,6 +302,16 @@ const JOB_SPECS: &[OptionSpec] = &[
         kind: SpecKind::Enum(&["manual"]),
     },
     OptionSpec {
+        name: "timeout",
+        owner: Owner::Job,
+        required: false,
+        default: None,
+        help: "Bound this finite job's execution; on elapse the job is terminated and fails the generation. Not a client await deadline. Positive duration with ms/s/m units (bare number = seconds).",
+        values: None,
+        example: &["timeout: 30m"],
+        kind: SpecKind::Duration,
+    },
+    OptionSpec {
         name: "service",
         owner: Owner::Job,
         required: false,
@@ -451,6 +461,7 @@ mod tests {
             "cwd",
             "env",
             "trigger",
+            "timeout",
             "service",
             "output",
         ];

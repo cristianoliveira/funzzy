@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 3;
+pub const REVISION_SCHEMA_VERSION: u64 = 4;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -155,6 +155,10 @@ fn encode_rule(canonical: &mut CanonicalEncoder, rule: &Rules) {
     // distinct canonical value from `manual` so a trigger-only reload never
     // hashes as a no-op.
     canonical.optional_string(rule.trigger().map(|mode| mode.as_str().to_owned()));
+    // FINITE-JOB-TIMEOUT-CONTRACT §7: timeout is semantic (same pattern as
+    // trigger; schema version 4) — a timeout-only reload never hashes as a
+    // no-op; absence is distinct from a present budget.
+    canonical.optional_u64(rule.timeout().map(|timeout| timeout.as_millis() as u64));
     canonical.optional_string(rule.parallel().map(str::to_owned));
     canonical.bool(rule.service());
     canonical.string(&output_policy_tag(&rule.output()));
@@ -352,6 +356,18 @@ impl CanonicalEncoder {
             None => self.byte(0),
         }
     }
+
+    /// Optional u64 with presence discriminant (FINITE-JOB-TIMEOUT-
+    /// CONTRACT §7: absence is a distinct canonical value from a budget).
+    fn optional_u64(&mut self, value: Option<u64>) {
+        match value {
+            Some(value) => {
+                self.byte(1);
+                self.u64(value);
+            }
+            None => self.byte(0),
+        }
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -385,8 +401,8 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
-        // Schema version 3 (MANUAL-TRIGGER-CONTRACT §7): trigger mode is
-        // encoded; this fixture was regenerated for the new canonical form.
+        // Schema version 4 (MANUAL-TRIGGER-CONTRACT §7 + FINITE-JOB-TIMEOUT-
+        // CONTRACT §7): trigger and timeout are encoded; fixture regenerated.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
             rules("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"),
@@ -402,7 +418,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "fd211349f06dcfb517901ded2e69720f99febb91c524f416db9fb46b92f92f25"
+            "af2582489f83464e35f5292f5bc87269df8c5d0486cd5fd85701328cd1660a7a"
         );
     }
 
@@ -779,14 +795,13 @@ mod manual_trigger_tests {
         assert_ne!(hash_for(manual_rule(false)), hash_for(manual_rule(true)));
     }
 
-    /// TASK-0136 regression pin: the schema version is 3 — the bump that
-    /// makes trigger encoding part of the canonical form and invalidates
-    // pre-trigger revision hashes.
+    /// TASK-0136 regression pin: schema version 3 introduced trigger
+    /// encoding; TASK-0139 bumps to 4 for timeout encoding (both invalidate
+    /// prior revision hashes by design).
     #[test]
-    fn revision_schema_version_is_pinned_at_three() {
-        assert_eq!(REVISION_SCHEMA_VERSION, 3);
+    fn revision_schema_version_is_pinned() {
+        assert_eq!(REVISION_SCHEMA_VERSION, 4);
     }
-
     /// TASK-0136: a manual generation freezes its revision — a reload that
     /// edits ONLY the trigger mints a new revision (different hash), so the
     /// frozen generation can be attributed to the exact revision it ran
@@ -807,5 +822,53 @@ mod manual_trigger_tests {
     #[test]
     fn formatting_only_rewrite_keeps_hash_and_trigger_is_deterministic() {
         assert_eq!(hash_for(manual_rule(true)), hash_for(manual_rule(true)));
+    }
+}
+
+#[cfg(test)]
+mod timeout_revision_tests {
+    use super::*;
+    use crate::config::GenerationHooks;
+    use crate::rules::Rules;
+    use std::time::Duration;
+
+    fn rule_with(timeout: Option<Duration>) -> Rules {
+        Rules::new(
+            "build".to_owned(),
+            vec!["cargo build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_timeout(timeout)
+    }
+
+    fn hash_for(rule: Rules) -> String {
+        let config = RuntimeConfig::capture(
+            PathBuf::from("/workspace"),
+            vec![rule],
+            2,
+            Duration::from_millis(1000),
+            WatchBackend::Native,
+            false,
+            crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
+            GenerationHooks::default(),
+            SessionHooks::default(),
+            None,
+        );
+        semantic_hash(&config)
+    }
+
+    /// FINITE-JOB-TIMEOUT-CONTRACT §7: a timeout-only reload never hashes as
+    /// a no-op; absence, 200ms, and 30m are three distinct identities.
+    #[test]
+    fn timeout_is_semantic_and_absence_is_distinct() {
+        let none = hash_for(rule_with(None));
+        let small = hash_for(rule_with(Some(Duration::from_millis(200))));
+        let large = hash_for(rule_with(Some(Duration::from_secs(1800))));
+        assert_ne!(none, small);
+        assert_ne!(none, large);
+        assert_ne!(small, large);
     }
 }

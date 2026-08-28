@@ -203,7 +203,12 @@ impl SnapshotBroker {
             let failed_tasks: Vec<String> = state
                 .tasks()
                 .iter()
-                .filter(|task| task.state == crate::executor::TaskState::Failed)
+                .filter(|task| {
+                    matches!(
+                        task.state,
+                        crate::executor::TaskState::Failed | crate::executor::TaskState::TimedOut
+                    )
+                })
                 .map(|task| task.name.clone())
                 .collect();
             self.outputs.as_ref().and_then(|outputs| {

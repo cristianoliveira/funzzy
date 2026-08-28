@@ -907,7 +907,12 @@ fn status_result(
         let failed_tasks: Vec<String> = snapshot
             .tasks()
             .iter()
-            .filter(|task| task.state == crate::executor::TaskState::Failed)
+            .filter(|task| {
+                matches!(
+                    task.state,
+                    crate::executor::TaskState::Failed | crate::executor::TaskState::TimedOut
+                )
+            })
             .map(|task| task.name.clone())
             .collect();
         if let (Some(outputs), Some(evidence)) = (

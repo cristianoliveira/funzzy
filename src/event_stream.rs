@@ -102,6 +102,7 @@ impl EventStream {
                     crate::executor::TaskState::Passed => "passed",
                     crate::executor::TaskState::Failed => "failed",
                     crate::executor::TaskState::Cancelled => "cancelled",
+                    crate::executor::TaskState::TimedOut => "timedout",
                 },
                 "durationMs": task.duration_ms,
             }),

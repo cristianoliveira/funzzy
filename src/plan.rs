@@ -14,6 +14,7 @@ use crate::template::{self, TemplateOptions};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
 /// Schema version of the canonical signature encoding (contract §5). Bump
 /// only on a breaking encoding change; bumping invalidates all old profiles.
@@ -65,6 +66,10 @@ pub struct TaskPlan {
     pub output: OutputPolicy,
     /// Managed long-running service (TASK-0035); opt-in.
     pub service: bool,
+    /// Finite execution deadline frozen at plan build from the rule
+    /// (FINITE-JOB-TIMEOUT-CONTRACT §7: frozen into the plan at schedule
+    /// time so a reload mid-generation cannot change it).
+    pub timeout: Option<Duration>,
 }
 
 /// One stage of a run: a serial task or a named parallel-group occurrence.
@@ -242,6 +247,7 @@ impl RunPlan {
         for (position, rule) in rules.into_iter().enumerate() {
             let output = rule.output();
             let service = rule.service();
+            let timeout = rule.timeout();
             let plan = TaskPlan {
                 name: rule.name.clone(),
                 position,
@@ -256,6 +262,7 @@ impl RunPlan {
                 rule,
                 output,
                 service,
+                timeout,
             };
 
             match (plan.parallel.as_deref(), open_group.as_mut()) {

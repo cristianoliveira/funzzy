@@ -57,6 +57,9 @@ pub enum TaskState {
     Passed,
     Failed,
     Cancelled,
+    /// FINITE-JOB-TIMEOUT-CONTRACT §4: additive wire value `timedout` —
+    /// distinct from command failure and from client-await timeout.
+    TimedOut,
 }
 
 /// One task's terminal outcome for the correlated snapshot (TASK-0050).
@@ -471,6 +474,14 @@ struct ActiveTask {
     service_restarts_left: usize,
     /// Defer original command errors while recovery may change the outcome.
     defer_failure: bool,
+    /// FINITE-JOB-TIMEOUT-CONTRACT §4: terminal marker for the typed
+    /// TimedOut task state (distinct from command failure).
+    timed_out: bool,
+    /// Frozen finite deadline from the task plan (FINITE-JOB-TIMEOUT-
+    /// CONTRACT §7); computed against `started` once, never reset by
+    /// continuation spawns (§3 job-wide rule).
+    deadline: Option<Instant>,
+    timeout: Option<Duration>,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -495,6 +506,9 @@ impl From<TaskPlan> for ActiveTask {
             service: task.service,
             service_restarts_left: crate::executor::SERVICE_MAX_RESTARTS,
             defer_failure: task.recovery_commands.is_some(),
+            timed_out: false,
+            deadline: None,
+            timeout: task.timeout,
         }
     }
 }
@@ -555,6 +569,9 @@ enum TaskStep {
     Running,
     Finished,
     FailedFast,
+    /// FINITE-JOB-TIMEOUT-CONTRACT §3/§4: the job-wide deadline elapsed
+    /// before the child was reaped; the process group was terminated.
+    TimedOut,
 }
 
 pub struct Executor {
@@ -769,6 +786,22 @@ impl Executor {
                         }
                         return Step::Finished;
                     }
+                    TaskStep::TimedOut => {
+                        // FINITE-JOB-TIMEOUT-CONTRACT §3/§7: a timeout is a
+                        // failure — record the typed outcome and apply
+                        // fail-fast to siblings exactly as for command
+                        // failures: with fail_fast the generation stops
+                        // (active siblings cancelled, queued work skipped);
+                        // without it the generation continues and later work
+                        // still runs. Recovery is never offered (§7).
+                        let task = run.active.remove(index);
+                        self.record_task_outcome(run, task);
+                        if self.fail_fast {
+                            self.stop_after_failure(run);
+                            return Step::Finished;
+                        }
+                        task_finished = true;
+                    }
                 }
             }
 
@@ -844,6 +877,15 @@ impl Executor {
 
         loop {
             if task.child.is_none() {
+                // FINITE-JOB-TIMEOUT-CONTRACT §3 sequential recheck: the
+                // ORIGINAL deadline governs the job's whole invocation —
+                // recheck it BEFORE any continuation spawn so an expired
+                // budget never starts a command it must immediately kill.
+                if let Some(deadline) = task.deadline {
+                    if self.clock.now() >= deadline {
+                        return self.expire_task(task, results);
+                    }
+                }
                 let Some(command) = task.commands.pop_front() else {
                     return TaskStep::Finished;
                 };
@@ -877,6 +919,13 @@ impl Executor {
                         task.command_index += 1;
                         if task.started.is_none() {
                             task.started = Some(self.clock.now());
+                            // FINITE-JOB-TIMEOUT-CONTRACT §2/§3: the deadline
+                            // is minted ONCE from the job's first successful
+                            // spawn; continuation spawns reuse it (never
+                            // reset, never fresh).
+                            if let (Some(timeout), None) = (task.timeout, task.deadline) {
+                                task.deadline = task.started.map(|started| started + timeout);
+                            }
                         }
                         if self.verbose {
                             diagnostics::debug(&diagnostics::Record {
@@ -910,6 +959,15 @@ impl Executor {
             }
 
             let display = task.current_command.clone().unwrap_or_default();
+            // FINITE-JOB-TIMEOUT-CONTRACT §3: single ordering rule — the
+            // timeout check precedes try_wait in every iteration, so a
+            // child that exited at deadline−ε but is reaped in a later poll
+            // is a timeout outcome (indeterminism bounded by one interval).
+            if let Some(deadline) = task.deadline {
+                if self.clock.now() >= deadline {
+                    return self.expire_task(task, results);
+                }
+            }
             match task.child.as_mut().expect("child is running").try_wait() {
                 Ok(None) => {
                     self.events.emit(Event::Tick {
@@ -1319,8 +1377,15 @@ impl Executor {
         let duration_ms = task
             .started
             .map(|started| self.clock.elapsed(started).as_millis() as u64);
+        let timed_out = task.timed_out;
         let (state, outcome) = if task.failures.is_empty() {
             (TaskState::Passed, TaskOutcome::Passed)
+        } else if timed_out {
+            // FINITE-JOB-TIMEOUT-CONTRACT §4: a timeout is typed distinctly
+            // from command failure at the task-snapshot surface; the
+            // generation still fails.
+            let failures = task.failures.clone();
+            (TaskState::TimedOut, TaskOutcome::Failed { failures })
         } else {
             let failures = task.failures.clone();
             (TaskState::Failed, TaskOutcome::Failed { failures })
@@ -1339,6 +1404,40 @@ impl Executor {
             task.group_occurrence.clone(),
             outcome,
         ));
+    }
+
+    /// FINITE-JOB-TIMEOUT-CONTRACT §4–§7: terminate the task's process
+    /// group, record the typed timeout failure, and mark the task timed out.
+    /// Shared by the pre-try_wait deadline check and the pre-spawn
+    /// sequential recheck so both paths produce identical outcomes.
+    fn expire_task(
+        &self,
+        task: &mut ActiveTask,
+        results: &mut Vec<Result<(), String>>,
+    ) -> TaskStep {
+        let elapsed = task
+            .started
+            .map(|started| self.clock.elapsed(started))
+            .unwrap_or_default();
+        // Full process-group termination with graceful shutdown and
+        // escalation (§5), reusing the existing ownership.
+        self.shutdown_task(task);
+        let failure = format!(
+            "job '{}' timed out after {:?} and was terminated",
+            task.name,
+            elapsed.max(Duration::from_millis(0))
+        );
+        task.failures.push(failure);
+        results.push(Err(format!(
+            "Job '{}' timed out after {}ms and was terminated",
+            task.name,
+            elapsed.as_millis()
+        )));
+        // §7: a timed-out job never enters pending_recoveries — recovery
+        // targets command failures, not deadlines.
+        task.recovery_commands = None;
+        task.timed_out = true;
+        TaskStep::TimedOut
     }
 
     fn stop_after_failure(&self, run: &mut Run) {
@@ -1941,6 +2040,7 @@ mod tests {
                 context: crate::plan::TaskContext::default(),
                 output: crate::rules::OutputPolicy::Inherit,
                 service: false,
+                timeout: None,
             })],
         };
         Executor::new(
@@ -2449,6 +2549,16 @@ mod tests {
                 .started
                 .iter()
                 .map(|(_, command)| command.clone())
+                .collect()
+        }
+
+        fn shutdown_commands(&self) -> Vec<String> {
+            self.state
+                .lock()
+                .unwrap()
+                .shutdown
+                .iter()
+                .cloned()
                 .collect()
         }
     }
@@ -3001,6 +3111,280 @@ mod tests {
         assert!(
             completed.outcome.is_success(),
             "service never blocks later work"
+        );
+    }
+
+    /// Deterministic wall clock: `now` advances only when the test moves it
+    /// (explicitly via `advance_ms`, or virtually when the poll loop sleeps),
+    /// so the deadline check is a pure function of test-driven state. The
+    /// base is captured ONCE — never re-read from the real clock — otherwise
+    /// real-time drift leaks into deadline comparisons (QA defect).
+    struct ManualClock {
+        base: Instant,
+        elapsed_ms: std::sync::atomic::AtomicU64,
+    }
+
+    impl ManualClock {
+        fn new() -> Self {
+            Self {
+                base: Instant::now(),
+                elapsed_ms: std::sync::atomic::AtomicU64::new(0),
+            }
+        }
+
+        fn advance_ms(&self, ms: u64) {
+            self.elapsed_ms
+                .fetch_add(ms, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for ManualClock {
+        fn now(&self) -> Instant {
+            // Monotonic virtual time: fixed base + injected offset. Instants
+            // are only compared against deadlines minted from this clock.
+            self.base
+                + Duration::from_millis(self.elapsed_ms.load(std::sync::atomic::Ordering::SeqCst))
+        }
+
+        fn elapsed(&self, started: Instant) -> Duration {
+            self.now().saturating_duration_since(started)
+        }
+
+        fn sleep(&self, duration: Duration) {
+            // Virtual time: the poll loop's sleep advances the deterministic
+            // clock, so deadlines elapse without real waits and exactly as
+            // fast as the loop polls.
+            self.elapsed_ms.fetch_add(
+                duration.as_millis() as u64,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
+    }
+
+    fn timed_task(name: &str, timeout_ms: u64, commands: &[&str]) -> Rules {
+        Rules::new(
+            name.to_owned(),
+            commands.iter().map(|c| c.to_string()).collect(),
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_timeout(Some(Duration::from_millis(timeout_ms)))
+    }
+
+    fn executor_with(runner: FakeRunner, clock: Arc<ManualClock>, fail_fast: bool) -> Executor {
+        Executor::new(
+            Arc::new(runner),
+            clock,
+            1,
+            Arc::new(|_| {}),
+            fail_fast,
+            false,
+        )
+        .unwrap()
+    }
+
+    /// §4: the task snapshot is typed TimedOut, distinct from Failed, and
+    /// the generation fails with the timeout message.
+    #[test]
+    fn timed_out_job_records_typed_state_and_fails_the_generation() {
+        let runner = FakeRunner::default();
+        let clock = Arc::new(ManualClock::new());
+        let executor = executor_with(runner.clone(), clock, false);
+        // The fake child never completes: only the deadline ends it.
+        let completed = executor.run_to_completion(
+            RunMetadata::new(101, "test"),
+            RunPlan::from_rules(vec![timed_task("blocked", 100, &["never"])]),
+        );
+        assert!(!completed.outcome.is_success());
+        assert_eq!(completed.tasks[0].state, TaskState::TimedOut);
+        assert!(completed
+            .results
+            .iter()
+            .any(|r| r.as_ref().unwrap_err().contains("timed out")));
+    }
+
+    /// §3 precedence: a natural exit before the deadline is a normal outcome.
+    #[test]
+    fn natural_exit_before_deadline_wins() {
+        let runner = FakeRunner::default();
+        runner.complete("quick", true);
+        let executor = executor_with(runner.clone(), Arc::new(ManualClock::new()), false);
+        let completed = executor.run_to_completion(
+            RunMetadata::new(102, "test"),
+            RunPlan::from_rules(vec![timed_task("quick", 60_000, &["quick"])]),
+        );
+        assert!(completed.outcome.is_success());
+        assert_eq!(completed.tasks[0].state, TaskState::Passed);
+    }
+
+    /// §5: the whole process group is terminated through shutdown_task.
+    #[test]
+    fn timeout_terminates_the_process_group_via_shutdown() {
+        let runner = FakeRunner::default();
+        let executor = executor_with(runner.clone(), Arc::new(ManualClock::new()), false);
+        let _ = executor.run_to_completion(
+            RunMetadata::new(103, "test"),
+            RunPlan::from_rules(vec![timed_task("blocked", 5, &["stuck"])]),
+        );
+        assert!(
+            runner.shutdown_commands().contains(&"stuck".to_owned()),
+            "shutdown was invoked on the timed-out child"
+        );
+    }
+
+    /// §7: no recovery is offered after a timeout even when configured.
+    #[test]
+    fn timeout_never_enters_recovery_even_when_configured() {
+        let runner = FakeRunner::default();
+        let executor = executor_with(runner, Arc::new(ManualClock::new()), false);
+        let rule = timed_task("guarded", 5, &["stuck"]).with_recovery(vec!["echo fix".to_owned()]);
+        let completed = executor.run_to_completion(
+            RunMetadata::new(104, "test"),
+            RunPlan::from_rules(vec![rule]),
+        );
+        assert_eq!(completed.tasks[0].state, TaskState::TimedOut);
+        assert!(!completed.outcome.is_success());
+    }
+
+    /// §3 job-wide rule: a two-command job gets ONE budget; the second
+    /// command's spawn rechecks the ORIGINAL deadline (no reset). With the
+    /// fake clock frozen at spawn, the deadline is `started + timeout`, and
+    /// the timeout branch is reached only when `now` passes it — here the
+    /// first command completes instantly and the clock is already past the
+    /// whole budget at the second spawn check.
+    #[test]
+    fn sequential_commands_share_the_job_wide_budget() {
+        let runner = FakeRunner::default();
+        runner.complete("first", true);
+        // 'second' never completes: the shared budget must already be spent.
+        let executor = executor_with(runner.clone(), Arc::new(ManualClock::new()), false);
+        let rule = timed_task("pair", 1, &["first", "second"])
+            .with_timeout(Some(Duration::from_millis(1)));
+        let completed = executor.run_to_completion(
+            RunMetadata::new(105, "test"),
+            RunPlan::from_rules(vec![rule]),
+        );
+        assert_eq!(
+            completed.tasks[0].state,
+            TaskState::TimedOut,
+            "second command inherits the spent job budget, not a fresh one"
+        );
+        assert!(
+            runner.started_commands().contains(&"first".to_owned()),
+            "first command ran and completed naturally"
+        );
+        assert!(
+            !runner.started_commands().contains(&"second".to_owned()),
+            "the spent budget must not spawn the second command at all"
+        );
+    }
+
+    /// §7 fail-fast: a timed-out job fails the generation and stops siblings
+    /// exactly like a command failure.
+    #[test]
+    fn timeout_fail_fast_stops_parallel_siblings() {
+        let runner = FakeRunner::default();
+        runner.complete("sibling", true);
+        let executor = executor_with(runner, Arc::new(ManualClock::new()), true);
+        let completed = executor.run_to_completion(
+            RunMetadata::new(106, "test"),
+            RunPlan::from_rules(vec![
+                timed_task("blocked", 1, &["stuck"]),
+                timed_task("sibling", 60_000, &["sibling"]),
+            ]),
+        );
+        assert!(!completed.outcome.is_success());
+        assert!(completed
+            .tasks
+            .iter()
+            .any(|t| t.state == TaskState::TimedOut));
+    }
+
+    /// The virtual clock is deterministic by construction: `now` moves only
+    /// through `advance_ms` (tests) or `sleep` (poll loop), never real time.
+    #[test]
+    fn manual_clock_advances_only_when_moved() {
+        let clock = ManualClock::new();
+        let started = clock.now();
+        assert_eq!(clock.elapsed(started), Duration::from_millis(0));
+        clock.advance_ms(5);
+        assert_eq!(clock.elapsed(started), Duration::from_millis(5));
+        clock.sleep(Duration::from_millis(10));
+        assert_eq!(clock.elapsed(started), Duration::from_millis(15));
+    }
+
+    /// §3 sequential recheck (QA defect): the ORIGINAL deadline is rechecked
+    /// BEFORE a continuation spawn — an already-expired job budget must not
+    /// start the next command at all (it would be born dead and killed one
+    /// poll later).
+    #[test]
+    fn expired_sequential_continuation_is_never_spawned() {
+        let runner = FakeRunner::default();
+        runner.complete("first", true);
+        let executor = executor_with(runner.clone(), Arc::new(ManualClock::new()), false);
+        let rule = timed_task("pair", 5, &["first", "second"]);
+        let completed = executor.run_to_completion(
+            RunMetadata::new(107, "test"),
+            RunPlan::from_rules(vec![rule]),
+        );
+        assert_eq!(
+            completed.tasks[0].state,
+            TaskState::TimedOut,
+            "the spent job budget must end the job as a timeout"
+        );
+        assert!(
+            runner.started_commands().contains(&"first".to_owned()),
+            "first command ran and completed naturally"
+        );
+        assert!(
+            !runner.started_commands().contains(&"second".to_owned()),
+            "an expired budget must never spawn the continuation (§3 recheck-before-spawn)"
+        );
+    }
+
+    /// §7 fail-fast symmetry (QA defect): without fail_fast, a timed-out job
+    /// behaves exactly like a command failure — the running sibling keeps its
+    /// own deadline and completes naturally; the generation still fails.
+    #[test]
+    fn timeout_without_fail_fast_lets_a_running_sibling_finish() {
+        let runner = FakeRunner::default();
+        runner.complete("sibling", true);
+        let executor = Executor::new(
+            Arc::new(runner.clone()),
+            Arc::new(ManualClock::new()),
+            2,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let completed = executor.run_to_completion(
+            RunMetadata::new(108, "test"),
+            RunPlan::from_rules(vec![
+                timed_task("blocked", 1, &["stuck"]).with_parallel("obs".to_owned()),
+                timed_task("sibling", 60_000, &["sibling"]).with_parallel("obs".to_owned()),
+            ]),
+        );
+        assert!(
+            !completed.outcome.is_success(),
+            "timeout fails the generation"
+        );
+        let blocked = completed
+            .tasks
+            .iter()
+            .find(|t| t.name == "blocked")
+            .unwrap();
+        assert_eq!(blocked.state, TaskState::TimedOut);
+        let sibling = completed
+            .tasks
+            .iter()
+            .find(|t| t.name == "sibling")
+            .unwrap();
+        assert_eq!(
+            sibling.state,
+            TaskState::Passed,
+            "without fail_fast the sibling must not be cancelled by the timeout"
         );
     }
 }

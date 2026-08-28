@@ -70,8 +70,12 @@ fn schema_property(spec: &OptionSpec) -> Value {
             "items": { "type": "string" }
         }),
         SpecKind::Duration => json!({
-            "type": "string",
-            "pattern": "^[0-9]+(ms|s|m)?$"
+            // Same form as the parser and the debounce precedent: a duration
+            // string with ms/s/m units, or a bare YAML number (seconds).
+            // `pattern` constrains the string form only; `minimum` the number.
+            "type": ["string", "integer"],
+            "pattern": "^[0-9]+(ms|s|m)?$",
+            "minimum": 1
         }),
         SpecKind::Enum(values) => json!({ "type": "string", "enum": values }),
         SpecKind::StringMap => json!({
@@ -292,6 +296,19 @@ mod tests {
             1
         );
         assert!(a["required"].as_array().unwrap().contains(&"jobs".into()));
+    }
+
+    #[test]
+    fn duration_properties_accept_string_or_integer_schema_form() {
+        // FINITE-JOB-TIMEOUT-CONTRACT §1 alignment (QA P2): the parser and
+        // the debounce precedent accept a bare YAML number (seconds), so the
+        // schema form must accept string or integer — pattern applies to
+        // strings only, minimum bounds integers.
+        let schema = full_schema();
+        let timeout = &schema["$defs"]["job"]["properties"]["timeout"];
+        assert_eq!(timeout["type"], json!(["string", "integer"]));
+        assert_eq!(timeout["minimum"], 1);
+        assert_eq!(timeout["pattern"], json!("^[0-9]+(ms|s|m)?$"));
     }
 
     #[test]

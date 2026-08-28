@@ -138,6 +138,7 @@ pub fn job_duration_rows(tasks: &[crate::executor::TaskSnapshot]) -> Vec<String>
             crate::executor::TaskState::Passed => "passed",
             crate::executor::TaskState::Failed => "failed",
             crate::executor::TaskState::Cancelled => "cancelled",
+            crate::executor::TaskState::TimedOut => "timedout",
         })
         .collect();
     let name_width = identities
