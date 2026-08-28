@@ -1022,9 +1022,19 @@ mod tests {
 
     #[test]
     fn it_explains_merged_group_rules_from_nested_groups() {
-        let content =
-            std::fs::read_to_string("examples/nested-job-groups.yml").expect("read example");
-        let watches = Watches::new(config::from_yaml(&content).expect("Error parsing yaml"));
+        // Keep this provenance test on the legacy nested-group input: the
+        // shipped catalog is intentionally flattened to V2 `jobs:` by
+        // TASK-0146, while compatibility parsing still reports inherited
+        // patterns as originating from the group.
+        let content = r#"
+- on:
+    change: "src/frontend/**"
+    ignore: "**/*.log"
+  tasks:
+    - name: frontend-build
+      run: echo build
+"#;
+        let watches = Watches::new(config::from_yaml(content).expect("Error parsing yaml"));
 
         // frontend-build inherits the group change patterns; the effective
         // rule origin must be reported as the group, not the task.
