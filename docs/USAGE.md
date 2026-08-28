@@ -147,6 +147,8 @@ jobs:
     change: "src/**"      # per-job triggers
     ignore: "target/**"   # per-job ignores (strongest precedence)
     run_on_init: true     # run when the watcher starts
+    trigger: manual       # explicit run only: never matches events or init
+                             # (see ADVANCED-GUIDE §8)
 
   - name: format-check
     run: cargo fmt --all -- --check
@@ -156,6 +158,10 @@ jobs:
 - **Matching**: a job runs when a change glob matches and no ignore glob wins.
   Explicit config `ignore` beats gitignore; gitignore applies only with
   `respect_gitignore: true` (GITIGNORE-CONTRACT).
+- **Manual trigger**: `trigger: manual` removes a job from every automatic
+  surface — no init run, no filesystem matching, no root `on.change`
+  inheritance; it starts only via `fzz run TARGET` or `fzz ctl run TARGET`
+  (MANUAL-TRIGGER-CONTRACT, ADVANCED-GUIDE §8).
 - **Templates**: `{{filepath}}` (trigger path, backward compatible),
   `{{paths}}` (whole batch, shell-escaped), `{{relative_filepath}}`.
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may

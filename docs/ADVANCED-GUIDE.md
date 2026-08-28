@@ -232,3 +232,85 @@ Additional rules:
   group identity (RUN-EVENTS-CONTRACT).
 - Never teach polling-based freshness reconstruction or deprecated
   compatibility paths in these recipes.
+
+## 8. Integration-agnostic command observation
+
+Any external result — a remote CI run, a deploy, a long query — can be
+observed as one finite, explicitly requested job, without coupling Funzzy to
+any provider. A blocking user script represents the external system; Funzzy
+observes process lifetime and exit status. This is a documented recipe over
+existing capabilities, not a provider API (TASK-0137).
+
+### 8.1 The recipe
+
+```yaml
+on:
+  socket: .tmp/funzzy/control.sock
+
+jobs:
+  - name: await-remote
+    trigger: manual
+    run: ./scripts/await-remote.sh
+```
+
+`trigger: manual` (MANUAL-TRIGGER-CONTRACT) means explicit invocation only:
+the job never runs at watcher init, never matches filesystem events — even
+when a root `on.change` would select every other job — and never inherits
+root patterns. It starts only through explicit selection:
+
+```sh
+# Foreground composition (local, one-shot process):
+git push && fzz run await-remote
+
+# Running-watcher composition (the watcher owns the work):
+git push && fzz ctl run await-remote --wait --timeout 31m --format toon
+```
+
+`fzz run` exits with the job's combined outcome, so `&&` chains stop on
+failure and never start the target after a failed predecessor. `fzz ctl run`
+schedules an exact generation on the running watcher; `--wait` returns its
+terminal observation in one round trip.
+
+### 8.2 The script boundary
+
+- **The script owns** authentication, provider polling, correlation,
+  retries, and every provider semantic. It blocks while the external work is
+  pending and exits once: `0` for success, non-zero for failure.
+- **Funzzy owns** configured command execution and observation: exact
+  generation identity, alive-means-running status, bounded stdout/stderr
+  retention, process-group cancellation, and reload isolation.
+- **Opaque exit caveat:** a non-zero exit cannot distinguish remote failure
+  from script/API failure. The script's stdout/stderr must carry actionable
+  evidence (`fzz control output --generation N` retrieves it, bounded).
+
+### 8.3 Synchronous and asynchronous flows
+
+- **Synchronous:** `ctl run TARGET --wait --timeout D` — one round trip,
+  terminal observation included. Use `--format toon|json` for
+  machine-readable composition (§7).
+- **Asynchronous:** take the returned generation (`runId`), then follow up
+  with exact-generation APIs — `control await --generation N --timeout D`,
+  `control output --generation N [--task T]`, and
+  `control cancel --generation N --wait` (a stale cancel is a safe no-op;
+  later generations are never affected).
+
+Control `--timeout` bounds **waiting only**; it never terminates the
+observed process. Until job execution timeouts land, the script itself owns
+its execution deadline (exit non-zero when the deadline passes).
+
+### 8.4 Why not `service: true`
+
+A managed service is the wrong primitive for one finite observation:
+zero exit means *deliberate stop*, non-zero exits are auto-retried (bounded),
+and the service is generation-owned — reaped on supersession and restarted
+only by re-inclusion (SERVICE-LIFECYCLE-CONTRACT). A blocking observation
+needs exactly one invocation with one terminal result: `trigger: manual` on
+a normal finite job.
+
+### 8.5 Proof
+
+The recipe is proven black-box in `tests/manual_observation_recipe.rs`:
+silent at init and on matching changes (with root `on.change` present),
+alive→running, exit 0→passed once, non-zero→failed once with bounded
+evidence, exact-generation await/output/cancel with stale-cancel isolation,
+TOON output, and foreground exit-code composition.
