@@ -1,7 +1,7 @@
 ---
 id: TASK-0141
 title: Define the project-scoped watcher surface contract
-status: todo
+status: done
 depends_on: []
 priority: normal
 tags: [pi-watcher, extension, registration, tdd]
