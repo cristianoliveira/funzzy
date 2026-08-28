@@ -3314,6 +3314,65 @@ mod tests {
         assert_eq!(clock.elapsed(started), Duration::from_millis(15));
     }
 
+    /// §3 precedence #1 (QA coverage gap): the cancellation guard at the top
+    /// of `advance()` outranks the deadline — with the budget already spent,
+    /// a cancelled generation reports Cancelled, never TimedOut, and the
+    /// timed-out path never evaluates.
+    #[test]
+    fn cancellation_wins_over_an_elapsed_deadline() {
+        let runner = FakeRunner::default();
+        let clock = Arc::new(ManualClock::new());
+        let executor = executor_with(runner.clone(), clock.clone(), false);
+        let mut run = executor.start(
+            RunMetadata::new(109, "test"),
+            RunPlan::from_rules(vec![timed_task("blocked", 5, &["stuck"])]),
+        );
+        executor.advance(&mut run); // spawns "stuck" at t=0
+
+        // Cancellation is requested FIRST, then the deadline elapses.
+        run.cancellation_token().cancel();
+        clock.advance_ms(50); // deadline (5ms) is spent
+
+        // The guard holds: advance never takes the timeout path.
+        assert!(matches!(executor.advance(&mut run), Step::Running));
+        executor.cancel(&mut run, None); // the worker's token reap
+        let finished = executor.finish(run);
+        assert_eq!(
+            finished.tasks[0].state,
+            TaskState::Cancelled,
+            "cancellation must outrank the elapsed deadline"
+        );
+        assert!(
+            !finished
+                .results
+                .iter()
+                .any(|r| r.as_ref().is_err_and(|e| e.contains("timed out"))),
+            "no timeout failure may be recorded for a cancelled run"
+        );
+    }
+
+    /// §3 single ordering rule (QA coverage gap): the deadline check
+    /// precedes try_wait in the same iteration — a child that already exited
+    /// but was not yet reaped when the budget elapsed is a timeout outcome
+    /// (outcome indeterminism bounded by one poll interval, accepted).
+    #[test]
+    fn elapsed_deadline_wins_over_an_unreaped_exit() {
+        let runner = FakeRunner::default();
+        // The fake child HAS exited — but the poll loop's sleep crosses the
+        // deadline before try_wait reaps it.
+        runner.complete("quick", true);
+        let executor = executor_with(runner.clone(), Arc::new(ManualClock::new()), false);
+        let completed = executor.run_to_completion(
+            RunMetadata::new(110, "test"),
+            RunPlan::from_rules(vec![timed_task("quick", 1, &["quick"])]),
+        );
+        assert_eq!(
+            completed.tasks[0].state,
+            TaskState::TimedOut,
+            "deadline check runs before try_wait in the same iteration"
+        );
+    }
+
     /// §3 sequential recheck (QA defect): the ORIGINAL deadline is rechecked
     /// BEFORE a continuation spawn — an already-expired job budget must not
     /// start the next command at all (it would be born dead and killed one
