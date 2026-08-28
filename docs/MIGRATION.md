@@ -3,7 +3,8 @@
 Every V1 command/flag/config shape, its exact V2 replacement, behavior
 change, and exit-code impact. Historical V1 documentation stays valid via
 tags (`https://github.com/cristianoliveira/funzzy/tree/v1`); this is the live
-migration reference.
+migration reference. For the checked-in example catalog, see the
+[shipped examples V2 migration contract](EXAMPLES-V2-MIGRATION-CONTRACT.md).
 
 ## Command/flag migration
 

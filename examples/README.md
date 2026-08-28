@@ -1,7 +1,18 @@
 ### Examples
 
-Here you find several examples of workflows that you can use with Funzzy.
-To use one of these examples run `fzz -c <example>` from the root of the repository.
+Here you find the shipped workflow catalog used by Funzzy documentation and
+integration tests. The migration target for valid examples is the canonical
+`on`/`execution`/`hooks`/`jobs` vocabulary. The complete inventory, approved
+filename map, and before/after behavior contract are in
+[`docs/EXAMPLES-V2-MIGRATION-CONTRACT.md`](../docs/EXAMPLES-V2-MIGRATION-CONTRACT.md).
+
+To inspect or run one of these examples from the repository root:
+
+```bash
+fzz -c examples/simple-case.yml check
+fzz -c examples/simple-case.yml list
+fzz -c examples/simple-case.yml watch
+```
 
 Example: Run `fzz -c examples/simple-case.yml` and then change files in `examples/workdir/` to check the output.
 
