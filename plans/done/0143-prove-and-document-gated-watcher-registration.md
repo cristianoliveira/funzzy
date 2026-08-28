@@ -1,7 +1,7 @@
 ---
 id: TASK-0143
 title: Prove and document gated watcher registration
-status: todo
+status: done
 depends_on: [TASK-0142]
 priority: normal
 tags: [pi-watcher, extension, registration, tdd]
