@@ -225,7 +225,7 @@ fn migrated_config_with_cwd_env_and_init_runs_identically() {
 fn shipped_nested_groups_migrate_and_check() {
     let directory = fixture("shipped-nested-groups");
     let config = directory.join("nested-groups.yml");
-    std::fs::copy("examples/nested-groups.yml", &config).expect("copy shipped fixture");
+    std::fs::copy("examples/nested-job-groups.yml", &config).expect("copy shipped fixture");
 
     let migrate = cargo::cargo_bin_cmd!("fzz")
         .current_dir(&directory)

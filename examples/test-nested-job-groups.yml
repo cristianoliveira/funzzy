@@ -1,0 +1,21 @@
+# Test configuration for nested groups integration test
+# This is a simplified version for testing purposes
+# Group 1: Frontend tasks
+# Group 2: Backend tasks
+# Regular task (not in a group)
+jobs:
+  - name: frontend-task
+    run: "echo 'frontend task executed'"
+    change:
+      - examples/workdir/frontend/**
+    ignore:
+      - "**/*.log"
+  - name: backend-task
+    run: "echo 'backend task executed'"
+    change:
+      - examples/workdir/backend/**
+    ignore:
+      - "**/*.tmp"
+  - name: regular-task
+    run: "echo 'regular task executed'"
+    change: examples/workdir/regular/**

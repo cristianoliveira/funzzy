@@ -11,7 +11,7 @@ fn test_it_cancel_current_running_task_when_something_change() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_cancel_current_running_task_when_something_change.log",
-            example_file: "examples/tasks-with-long-running-commands.yaml",
+            example_file: "examples/jobs-with-long-running-commands.yaml",
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
@@ -114,7 +114,7 @@ fn test_it_cancel_current_running_task_when_something_change_with_env() {
                 setup::Options {
                     output_file:
                         "test_it_cancel_current_running_task_when_something_change_with_env.log",
-                    example_file: "examples/tasks-with-long-running-commands.yaml",
+                    example_file: "examples/jobs-with-long-running-commands.yaml",
                 },
                 |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd.spawn().expect("failed to spawn child");

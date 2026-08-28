@@ -418,7 +418,7 @@ client timeout owns caller patience. See the full provider-neutral recipe in
 
 This might be due to different causes, the most common issue when using VIM is because of its default backup setting
 which causes changes to multiple files on save. (See [Why does Vim save files with a ~ extension?](https://stackoverflow.com/questions/607435/why-does-vim-save-files-with-a-extension/607474#607474)).
-For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/main/examples/tasks-with-long-running-commands.yaml#L5).
+For such cases either disable the backup or [ignore them in your watch rules](https://github.com/cristianoliveira/funzzy/blob/main/examples/jobs-with-long-running-commands.yaml#L5).
 
 For other cases use the verbose `fzz -V | grep 'Triggered by'` to understand what is triggering a task to be executed.
 

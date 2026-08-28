@@ -1,16 +1,17 @@
-- name: run a list of commands
-  run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
-  change: "examples/workdir/trigger-watcher.txt"
+jobs:
+  - name: run a list of commands
+    run: ["echo first", "echo second", "echo complex | sed s/complex/third/g"]
+    change: "examples/workdir/trigger-watcher.txt"
 
-- name: run if anything inside workdir changes
-  run: "echo 'something changed in workdir!'"
-  change: "examples/workdir/**/*"
+  - name: run if anything inside workdir changes
+    run: "echo 'something changed in workdir!'"
+    change: "examples/workdir/**/*"
 
-- name: task with ignoring rules
-  run: 
-    - "echo 'should not trigger when modifying files listed in ignore'"
-  change: "examples/workdir/**/*"
-  ignore: 
-    - "examples/workdir/trigger-watcher.txt"
-    - "examples/workdir/ignored/**/*.txt"
-    - "examples/workdir/another_ignored_file.foo"
+  - name: task with ignoring rules
+    run:
+      - "echo 'should not trigger when modifying files listed in ignore'"
+    change: "examples/workdir/**/*"
+    ignore:
+      - "examples/workdir/trigger-watcher.txt"
+      - "examples/workdir/ignored/**/*.txt"
+      - "examples/workdir/another_ignored_file.foo"

@@ -4,25 +4,26 @@
 # I don't want to give ideas, but one can create some pretty crazy workflows
 # maybe even turing complete.
 #
-- name: task runs on init (1)
-  run: 
-    - echo 'run me first'
-    - touch examples/reload-config-example.yml
-    - echo 1 > examples/workdir/trigger-first-task.txt
-    # LOL! To setup a LOOP uncomment this line
-    # - examples/workdir/trigger-start.txt
-  run_on_init: true
+jobs:
+  - name: task runs on init (1)
+    run:
+      - echo 'run me first'
+      - touch examples/reload-config-example.yml
+      - echo 1 > examples/workdir/trigger-first-task.txt
+      # LOL! To setup a LOOP uncomment this line
+      # - examples/workdir/trigger-start.txt
+    run_on_init: true
 
-- name: task that run at the end (3)
-  run: 
-    - echo 'then me in third'
-    - cat examples/reload-config-example.yml
-    - echo 1 > examples/workdir/trigger-start.txt
-  change: "examples/workdir/trigger-second-task.txt"
+  - name: task that run at the end (3)
+    run:
+      - echo 'then me in third'
+      - cat examples/reload-config-example.yml
+      - echo 1 > examples/workdir/trigger-start.txt
+    change: "examples/workdir/trigger-second-task.txt"
 
-- name: this task runs after on init (2) 
-  run: 
-    - echo 'then me in second'
-    - touch examples/reload-config-example.yml
-    - echo 1 > examples/workdir/trigger-second-task.txt
-  change: "examples/workdir/trigger-first-task.txt"
+  - name: this task runs after on init (2)
+    run:
+      - echo 'then me in second'
+      - touch examples/reload-config-example.yml
+      - echo 1 > examples/workdir/trigger-second-task.txt
+    change: "examples/workdir/trigger-first-task.txt"

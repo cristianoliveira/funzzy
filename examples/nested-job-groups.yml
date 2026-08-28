@@ -1,0 +1,141 @@
+# Example: Nested Groups with Different Common Rules
+#
+# This example demonstrates nested groups format where you can define multiple
+# groups, each with their own set of common rules (on:) and tasks.
+#
+# Benefits:
+# - Organize tasks by domain/feature area (frontend, backend, docs, etc.)
+# - Each group can watch different file patterns
+# - Reduces duplication within each group
+# - Better separation of concerns
+# - Individual tasks extend the group-level rules
+#
+# Use this format when:
+# - You have distinct areas of your project that watch different files
+# - You want to organize related tasks together
+# - Different task groups need different ignore patterns
+# Frontend tasks - watch frontend-specific files
+# This task inherits the frontend watch patterns
+# This task also inherits frontend patterns
+# This task runs on startup to ensure initial build
+# This task extends the group watch patterns with additional files
+# Backend tasks - watch backend-specific files
+# These tasks inherit backend watch patterns
+# This task extends the group change patterns with Rust files
+# Documentation tasks - watch docs-specific files
+# Configuration tasks - watch config files
+jobs:
+  - name: frontend-build
+    run: npm run build
+    change:
+      - src/frontend/**
+      - src/components/**
+      - public/**
+      - index.html
+    ignore:
+      - "**/*.log"
+      - "**/*.tmp"
+      - "**/node_modules/"
+  - name: frontend-test
+    run: npm test
+    change:
+      - src/frontend/**
+      - src/components/**
+      - public/**
+      - index.html
+    ignore:
+      - "**/*.log"
+      - "**/*.tmp"
+      - "**/node_modules/"
+  - name: frontend-typecheck
+    run: npm run typecheck
+    run_on_init: true
+    change:
+      - src/frontend/**
+      - src/components/**
+      - public/**
+      - index.html
+    ignore:
+      - "**/*.log"
+      - "**/*.tmp"
+      - "**/node_modules/"
+  - name: frontend-lint-styles
+    run: "npm run lint:css"
+    change:
+      - src/frontend/**
+      - src/components/**
+      - public/**
+      - index.html
+      - src/**/*.css
+    ignore:
+      - "**/*.log"
+      - "**/*.tmp"
+      - "**/node_modules/"
+  - name: backend-build
+    run: cargo build
+    change:
+      - src/backend/**
+      - src/api/**
+      - Cargo.toml
+    ignore:
+      - "**/*.log"
+      - target/**
+      - "**/*.bak"
+  - name: backend-test
+    run: cargo test
+    change:
+      - src/backend/**
+      - src/api/**
+      - Cargo.toml
+    ignore:
+      - "**/*.log"
+      - target/**
+      - "**/*.bak"
+  - name: backend-clippy
+    run: cargo clippy
+    change:
+      - src/backend/**
+      - src/api/**
+      - Cargo.toml
+    ignore:
+      - "**/*.log"
+      - target/**
+      - "**/*.bak"
+  - name: backend-format-check
+    run: cargo fmt -- --check
+    change:
+      - src/backend/**
+      - src/api/**
+      - Cargo.toml
+      - src/**/*.rs
+    ignore:
+      - "**/*.log"
+      - target/**
+      - "**/*.bak"
+  - name: docs-build
+    run: "echo \"Building documentation...\""
+    change:
+      - docs/**
+      - "*.md"
+      - README.md
+      - CHANGELOG.md
+    ignore:
+      - "**/*.tmp"
+  - name: docs-lint
+    run: "echo \"Linting markdown files...\""
+    change:
+      - docs/**
+      - "*.md"
+      - README.md
+      - CHANGELOG.md
+    ignore:
+      - "**/*.tmp"
+  - name: config-validate
+    run: "echo \"Validating configuration files...\""
+    change:
+      - "*.yml"
+      - "*.yaml"
+      - "*.toml"
+      - ".github/**"
+    ignore:
+      - ".watch.yaml"

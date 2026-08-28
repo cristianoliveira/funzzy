@@ -9,7 +9,7 @@ mod setup;
 fn test_when_using_fail_fast_exit_before() {
     setup::with_example(
         setup::Options {
-            example_file: "examples/list-of-failing-commands.yml",
+            example_file: "examples/jobs-with-failing-commands.yml",
             output_file: "test_when_using_fail_fast_exit_before.log",
         },
         |fzz_cmd, mut output_file, fixture| {
@@ -110,7 +110,7 @@ fn test_when_using_fail_fast_exit_before_with_env() {
         || {
             setup::with_example(
                 setup::Options {
-                    example_file: "examples/list-of-failing-commands.yml",
+                    example_file: "examples/jobs-with-failing-commands.yml",
                     output_file: "test_when_using_fail_fast_exit_before_with_env.log",
                 },
                 |fzz_cmd, mut output_file, fixture| {
@@ -210,7 +210,7 @@ Failure; Completed: 2; Failed: 1; Duration: 0.0000s",
 fn test_fail_fast_with_non_block() {
     setup::with_example(
         setup::Options {
-            example_file: "examples/list-of-failing-commands.yml",
+            example_file: "examples/jobs-with-failing-commands.yml",
             output_file: "test_fail_fast_with_non_block.log",
         },
         |fzz_cmd, mut output_file, fixture| {

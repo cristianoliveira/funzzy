@@ -11,7 +11,7 @@ fn test_it_filter_tasks_with_watch_target() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_filter_tasks_with_watch_target.log",
-            example_file: "examples/tasks-with-tags-to-filter.yml",
+            example_file: "examples/jobs-with-tags-to-filter.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
@@ -83,7 +83,7 @@ fn test_it_list_the_available_tasks_when_nothing_matches() {
     let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
         .arg("-c")
-        .arg("examples/tasks-with-tags-to-filter.yml")
+        .arg("examples/jobs-with-tags-to-filter.yml")
         .args(["watch", "unknown_task_name"])
         .assert()
         .failure()
@@ -105,7 +105,7 @@ fn test_list_subcommand_lists_available_tasks() {
     let mut cmd = cargo::cargo_bin_cmd!("fzz");
     cmd.env("FUNZZY_COLORED", "false")
         .arg("-c")
-        .arg("examples/tasks-with-tags-to-filter.yml")
+        .arg("examples/jobs-with-tags-to-filter.yml")
         .arg("list")
         .assert()
         .success()

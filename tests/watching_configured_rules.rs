@@ -185,7 +185,7 @@ fn accepts_full_or_relativepaths() {
     // (watcher generation, CI, manual) never clobber each other's watch
     // roots or trigger files.
     let (scratch, config_path, scratch_str) =
-        scratch_config("examples/tasks-with-absolute-paths.yml", "valid");
+        scratch_config("examples/jobs-with-absolute-paths.yml", "valid");
     defer!({
         let _ = std::fs::remove_dir_all(&scratch);
     });

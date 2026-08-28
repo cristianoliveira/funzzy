@@ -8,7 +8,7 @@ fn test_it_replaces_filepath_template_with_changed_file() {
     setup::with_example(
         setup::Options {
             output_file: "test_it_replaces_filepath_template_with_changed_file.log",
-            example_file: "examples/tasks-with-filepath-template.yml",
+            example_file: "examples/jobs-with-filepath-template.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd
@@ -73,7 +73,7 @@ fn it_replaces_relative_path_relative_to_the_cunrrent_dir() {
     setup::with_example(
         setup::Options {
             output_file: "it_replaces_relative_path_relative_to_the_cunrrent_dir.log",
-            example_file: "examples/tasks-with-filepath-template.yml",
+            example_file: "examples/jobs-with-filepath-template.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             let mut child = fzz_cmd

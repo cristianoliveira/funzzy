@@ -1,0 +1,30 @@
+# run_on_init: Boolean
+#
+# Allows you to define a task that will run everytime you 
+# start a given workflow. I usually use to clean up, update deps,
+# anything to ensure the workflow starts in a clean state
+#
+jobs:
+  - name: run on init first
+    run: "echo 'running on init first'"
+    change: 
+      - "src/**"
+      - "tests/**"
+      - "examples/workdir/*.txt"
+    ignore: "examples/workdir/ignored/**/*.txt"
+    run_on_init: true
+
+  - name: do not run on init
+    run: 'echo "should not run on init but on change"'
+    change: "examples/workdir/*.txt"
+    ignore: "examples/workdir/ignored/**/*.txt"
+
+  - name: run on init second
+    run: 'echo "run on init sencod"'
+    change: "examples/workdir/*.txt"
+    ignore: "examples/workdir/ignored/**/*.txt"
+    run_on_init: true
+
+  - name: allows only run_on_init
+    run: 'echo "only run on init"'
+    run_on_init: true

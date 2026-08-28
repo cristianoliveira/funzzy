@@ -27,7 +27,7 @@ use std::process::{Child, Command as StdCommand, Stdio};
 #[path = "./common/lib.rs"]
 mod setup;
 
-const FILTER_EXAMPLE: &str = "examples/tasks-with-tags-to-filter.yml";
+const FILTER_EXAMPLE: &str = "examples/jobs-with-tags-to-filter.yml";
 
 fn fzz() -> assert_cmd::Command {
     let mut cmd = cargo::cargo_bin_cmd!("fzz");

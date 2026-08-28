@@ -35,7 +35,7 @@ fn test_nested_groups_watch_different_patterns() {
     setup::with_example(
         setup::Options {
             output_file: "test_nested_groups_watch_different_patterns.log",
-            example_file: "examples/test-nested-groups.yml",
+            example_file: "examples/test-nested-job-groups.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             // Create directories for test
@@ -167,7 +167,7 @@ fn test_nested_groups_respect_ignore_patterns() {
     setup::with_example(
         setup::Options {
             output_file: "test_nested_groups_respect_ignore_patterns.log",
-            example_file: "examples/test-nested-groups.yml",
+            example_file: "examples/test-nested-job-groups.yml",
         },
         |fzz_cmd, mut output_log, fixture| {
             // Create directories for test

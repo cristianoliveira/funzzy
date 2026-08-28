@@ -9,7 +9,7 @@
 # - Individual tasks extend the common rules
 #
 # Note: For organizing tasks into multiple groups with different common rules,
-# see examples/nested-groups.yml
+# see examples/nested-job-groups.yml
 
 # Common rules shared by all tasks
 on:
@@ -22,7 +22,7 @@ on:
     - "**/node_modules/"
 
 # Individual tasks inherit and extend the common rules
-tasks:
+jobs:
   # This task inherits all common rules
   - name: build
     run: cargo build

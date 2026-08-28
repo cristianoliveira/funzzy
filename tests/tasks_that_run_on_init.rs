@@ -14,7 +14,7 @@ fn test_it_executes_tasks_on_init_when_configured() {
             setup::with_example(
                 setup::Options {
                     output_file: "test_it_executes_tasks_on_init_when_configured.log",
-                    example_file: "examples/list-of-tasks-run-on-init.yml",
+                    example_file: "examples/jobs-run-on-init.yml",
                 },
                 |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd
@@ -97,7 +97,7 @@ fn test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag() {
                 setup::Options {
                     output_file:
                         "test_it_does_not_executes_tasks_on_init_when_no_run_on_init_flag.log",
-                    example_file: "examples/list-of-tasks-run-on-init.yml",
+                    example_file: "examples/jobs-run-on-init.yml",
                 },
                 |fzz_cmd, mut output_log, fixture| {
                     let mut child = fzz_cmd
