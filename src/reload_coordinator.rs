@@ -826,4 +826,222 @@ mod tests {
         );
         assert_eq!(runtime.plan().task_names(), vec!["build"]);
     }
+
+    /// MANUAL-TRIGGER-CONTRACT §7 + QA gate (TASK-0136): a REAL trigger
+    /// flip (`trigger: manual` → absent) must travel the actual reload path —
+    /// old/new configs, real semantic hashes, `ReloadCoordinator::commit` —
+    /// while a live manual generation keeps its frozen revision and a
+    /// post-reload explicit run binds the new one. Complements the worker-
+    /// level freeze proof in `workers.rs`, which swaps revisions directly.
+    #[test]
+    fn trigger_flip_reload_commits_new_revision_and_freezes_running_manual_generation() {
+        use crate::config::RecoveryPolicy;
+        use crate::config::SessionHooks;
+        use crate::config_revision::semantic_hash;
+        use crate::executor::Event as WorkerEvent;
+        use crate::plan::RunPlan;
+        use crate::rules::TriggerMode;
+        use std::sync::mpsc::{channel, Receiver};
+
+        fn semantic_hash_for(rule: &crate::rules::Rules) -> String {
+            let config = RuntimeConfig::capture(
+                std::path::PathBuf::from("/workspace"),
+                vec![rule.clone()],
+                2,
+                Duration::from_millis(1000),
+                WatchBackend::Native,
+                false,
+                RecoveryPolicy::Prompt,
+                Duration::from_secs(60),
+                GenerationHooks::default(),
+                SessionHooks::default(),
+                None,
+            );
+            semantic_hash(&config)
+        }
+
+        let root = std::env::temp_dir().join(format!("fzz-manual-rel-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        // Old config: valid manual shape (no change patterns allowed).
+        let manual_old = crate::rules::Rules::new(
+            "await-remote".to_owned(),
+            vec!["sleep 30".to_owned()],
+            vec![],
+            vec![],
+            false,
+        )
+        .with_trigger(Some(TriggerMode::Manual));
+        // New config: the natural inverse edit — trigger removed, change
+        // patterns added (a non-manual job requires a trigger surface).
+        let change_new = crate::rules::Rules::new(
+            "await-remote".to_owned(),
+            vec!["sleep 30".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+
+        let hash_old = semantic_hash_for(&manual_old);
+        let hash_new = semantic_hash_for(&change_new);
+        assert_ne!(hash_old, hash_new, "trigger flip must change identity");
+
+        let (tx, rx) = channel();
+        let worker_arc = Arc::new(crate::workers::Worker::with_root_and_concurrency(
+            false,
+            false,
+            root.clone(),
+            2,
+            move |event: WorkerEvent| {
+                let _ = tx.send(event);
+            },
+        ));
+        let shared = Arc::new(Mutex::new(Watches::with_root_and_concurrency(
+            vec![manual_old.clone()],
+            root.clone(),
+            2,
+        )));
+        let coordinator = ReloadCoordinator::new(Arc::clone(&shared));
+        coordinator.install_worker(Arc::clone(&worker_arc));
+
+        let wait_for_event =
+            |what: &str, rx: &Receiver<WorkerEvent>, matches: &dyn Fn(&WorkerEvent) -> bool| {
+                let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                loop {
+                    let timeout = deadline.saturating_duration_since(std::time::Instant::now());
+                    match rx.recv_timeout(timeout) {
+                        Ok(event) if matches(&event) => break event,
+                        Ok(_) => continue,
+                        Err(_) => panic!("timed out waiting for {what}"),
+                    }
+                }
+            };
+
+        // Commit the old revision through the reload path first, so the
+        // worker's bound revision is production-wired (not set directly).
+        let noop = |_: &str| {};
+        let transaction_old = coordinator
+            .begin(
+                ConfigRevision {
+                    number: 4,
+                    hash: hash_old.clone(),
+                },
+                Watches::with_root_and_concurrency(vec![manual_old.clone()], root.clone(), 2),
+                &noop,
+                None,
+            )
+            .expect("begin old revision");
+        coordinator
+            .commit(&transaction_old)
+            .expect("commit old revision");
+
+        // Explicit manual run under revision 4 (control-style selection
+        // with no caller revision: the worker's bound revision applies).
+        let run_n = worker_arc
+            .schedule_target(
+                RunPlan::from_rules(vec![manual_old.clone()]),
+                "await-remote",
+                false,
+                None,
+            )
+            .expect("manual target schedules under revision 4");
+        let started = wait_for_event("Started under revision 4", &rx, &|event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        match started {
+            WorkerEvent::Started {
+                run_id,
+                revision,
+                revision_hash,
+                ..
+            } => {
+                assert_eq!(run_id, run_n);
+                assert_eq!(revision, Some(4), "generation freezes committed revision 4");
+                assert_eq!(revision_hash.as_deref(), Some(hash_old.as_str()));
+            }
+            other => panic!("expected Started, got {other:?}"),
+        }
+
+        // The trigger flip commits through the REAL reload path while the
+        // manual generation is live: coordinator.commit rebinds the worker.
+        let transaction_new = coordinator
+            .begin(
+                ConfigRevision {
+                    number: 5,
+                    hash: hash_new.clone(),
+                },
+                Watches::with_root_and_concurrency(vec![change_new.clone()], root.clone(), 2),
+                &noop,
+                None,
+            )
+            .expect("begin trigger-flip revision");
+        coordinator
+            .commit(&transaction_new)
+            .expect("commit trigger-flip revision");
+
+        // The LIVE generation still reports revision 4: terminal
+        // attribution retains the frozen revision across the commit.
+        let cancelled = worker_arc
+            .cancel_generation(run_n)
+            .expect("cancel the frozen manual generation");
+        match cancelled {
+            crate::workers::CancelResult::Cancelled {
+                revision,
+                revision_hash,
+                ..
+            } => {
+                assert_eq!(
+                    revision,
+                    Some(4),
+                    "terminal attribution keeps frozen revision 4"
+                );
+                assert_eq!(revision_hash.as_deref(), Some(hash_old.as_str()));
+            }
+            other => panic!("expected Cancelled, got {other:?}"),
+        }
+        let terminal = wait_for_event("terminal of frozen generation", &rx, &|event| {
+            matches!(
+                event,
+                WorkerEvent::Cancelled { .. } | WorkerEvent::Finished { .. }
+            )
+        });
+        match terminal {
+            WorkerEvent::Cancelled { run_id, .. } => assert_eq!(run_id, run_n),
+            WorkerEvent::Finished { run_id, .. } => assert_eq!(run_id, run_n),
+            other => panic!("expected terminal event, got {other:?}"),
+        }
+
+        // Post-reload explicit run binds revision 5 through the same
+        // production selection path.
+        let run_next = worker_arc
+            .schedule_target(
+                RunPlan::from_rules(vec![change_new.clone()]),
+                "await-remote",
+                false,
+                None,
+            )
+            .expect("post-reload target schedules");
+        let started_next = wait_for_event("Started under revision 5", &rx, &|event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        match started_next {
+            WorkerEvent::Started {
+                run_id,
+                revision,
+                revision_hash,
+                ..
+            } => {
+                assert_eq!(run_id, run_next);
+                assert_eq!(revision, Some(5), "post-reload run binds revision 5");
+                assert_eq!(revision_hash.as_deref(), Some(hash_new.as_str()));
+            }
+            other => panic!("expected Started, got {other:?}"),
+        }
+        let _ = worker_arc.cancel_generation(run_next);
+
+        drop(coordinator);
+        drop(shared);
+        drop(worker_arc);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

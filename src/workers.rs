@@ -2057,3 +2057,163 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp);
     }
 }
+
+#[cfg(test)]
+mod manual_frozen_reload_tests {
+    use super::*;
+    use crate::executor::Event as WorkerEvent;
+    use crate::plan::RunPlan;
+    use crate::rules::{Rules, TriggerMode};
+    use std::sync::mpsc::{channel, Receiver};
+    use std::time::Duration;
+
+    /// MANUAL-TRIGGER-CONTRACT §7/§11 (Kely's real-reload requirement): a
+    /// manual target scheduled under revision N keeps N after a reload
+    /// commits trigger-only revision N+1, while a post-reload explicit
+    /// manual run binds N+1.
+    #[test]
+    fn manual_generation_keeps_frozen_revision_across_reload_commit() {
+        let manual = Rules::new(
+            "await-remote".to_owned(),
+            vec!["sleep 30".to_owned()],
+            vec![],
+            vec![],
+            false,
+        )
+        .with_trigger(Some(TriggerMode::Manual));
+        let (worker, rx) = worker_with_events(false, false);
+
+        // Generation under revision N.
+        worker.set_revision(crate::config_revision::ConfigRevision {
+            number: 4,
+            hash: "hash-4".to_owned(),
+        });
+        let revision_n = crate::config_revision::ConfigRevision {
+            number: 4,
+            hash: "hash-4".to_owned(),
+        };
+        let plan = RunPlan::from_rules(vec![manual]);
+        let run_n = worker
+            .schedule_target(plan, "await-remote", false, Some(revision_n))
+            .expect("manual target schedules under revision N");
+
+        let started = expect_event(&rx, "started under N", |event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        let frozen = if let WorkerEvent::Started {
+            run_id,
+            revision,
+            revision_hash,
+            ..
+        } = started
+        {
+            assert_eq!(run_id, run_n);
+            (revision, revision_hash)
+        } else {
+            panic!("expected Started");
+        };
+        assert_eq!(frozen.0, Some(4), "generation freezes revision N");
+        assert_eq!(frozen.1.as_deref(), Some("hash-4"));
+
+        // Reload commits trigger-only revision N+1 while the manual run is
+        // live (sleep 30 keeps it running).
+        worker.set_revision(crate::config_revision::ConfigRevision {
+            number: 5,
+            hash: "hash-5".to_owned(),
+        });
+
+        // The LIVE generation still reports N: cancel it and the terminal
+        // event/snapshot attribution retains the frozen revision.
+        let cancelled = worker.cancel_generation(run_n).expect("cancel frozen run");
+        let crate::workers::CancelResult::Cancelled {
+            revision,
+            revision_hash,
+            ..
+        } = cancelled
+        else {
+            panic!("frozen generation must have been active (matched cancel)");
+        };
+        assert_eq!(
+            revision,
+            Some(4),
+            "terminal attribution keeps frozen revision N"
+        );
+        assert_eq!(revision_hash.as_deref(), Some("hash-4"));
+        let terminal = expect_event(&rx, "terminal retains frozen revision", |event| {
+            matches!(
+                event,
+                WorkerEvent::Cancelled { .. } | WorkerEvent::Finished { .. }
+            )
+        });
+        if let WorkerEvent::Cancelled { run_id, .. } = terminal {
+            assert_eq!(run_id, run_n, "the frozen generation itself terminated");
+        }
+
+        // Post-reload explicit manual run binds N+1.
+        let manual_next = Rules::new(
+            "await-remote".to_owned(),
+            vec!["echo done".to_owned()],
+            vec![],
+            vec![],
+            false,
+        )
+        .with_trigger(Some(TriggerMode::Manual));
+        let revision_n1 = crate::config_revision::ConfigRevision {
+            number: 5,
+            hash: "hash-5".to_owned(),
+        };
+        let run_n1 = worker
+            .schedule_target(
+                RunPlan::from_rules(vec![manual_next]),
+                "await-remote",
+                false,
+                Some(revision_n1),
+            )
+            .expect("post-reload manual target schedules");
+        assert_ne!(run_n, run_n1);
+        let started_next = expect_event(&rx, "started under N+1", |event| {
+            matches!(event, WorkerEvent::Started { .. })
+        });
+        if let WorkerEvent::Started {
+            run_id,
+            revision,
+            revision_hash,
+            ..
+        } = started_next
+        {
+            assert_eq!(run_id, run_n1);
+            assert_eq!(revision, Some(5), "post-reload run binds N+1");
+            assert_eq!(revision_hash.as_deref(), Some("hash-5"));
+        } else {
+            panic!("expected Started");
+        }
+        expect_event(&rx, "drain terminal", |event| {
+            matches!(event, WorkerEvent::Finished { .. })
+        });
+    }
+
+    fn worker_with_events(verbose: bool, fail_fast: bool) -> (Worker, Receiver<WorkerEvent>) {
+        let (tx, rx) = channel();
+        (
+            Worker::new(verbose, fail_fast, move |event| {
+                let _ = tx.send(event);
+            }),
+            rx,
+        )
+    }
+
+    fn expect_event(
+        rx: &Receiver<WorkerEvent>,
+        description: &str,
+        mut matches: impl FnMut(&WorkerEvent) -> bool,
+    ) -> WorkerEvent {
+        loop {
+            let event = rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("timed out waiting for: {description}"));
+            if matches(&event) {
+                return event;
+            }
+        }
+    }
+}

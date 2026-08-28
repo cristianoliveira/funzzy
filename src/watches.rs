@@ -31,6 +31,9 @@ pub struct ExplainResult {
     pub matched: Vec<ExplainRule>,
     /// Rules whose change pattern matched but an ignore pattern won.
     pub ignored: Vec<ExplainRule>,
+    /// Manual-only job names (MANUAL-TRIGGER-CONTRACT §6): they never match
+    /// any path, so explain names them instead of implying unavailability.
+    pub manual: Vec<String>,
     /// The filtered execution topology (stages + named group occurrences)
     /// after path filtering — the actual run plan preview, same planner as
     /// execution (TASK-0034). Empty when nothing matches.
@@ -428,6 +431,11 @@ impl Watches {
         let (absolute_path, relative_path) = self.normalize_paths(path);
         let absolute_path_str = absolute_path.to_str().unwrap_or_default();
         let plan = self.topology.clone().filter(|rule| {
+            // MANUAL-TRIGGER-CONTRACT §3.2: manual jobs never match filesystem
+            // events — no path can select them (this also covers `emit`).
+            if rule.is_manual() {
+                return false;
+            }
             let ignored_by_absolute = rule.ignore_absolute(absolute_path_str);
             let ignored_by_relative = relative_path
                 .as_ref()
@@ -490,6 +498,11 @@ impl Watches {
             .rules
             .iter()
             .filter(|&r| {
+                // MANUAL-TRIGGER-CONTRACT §3.2: manual jobs never match
+                // filesystem events.
+                if r.is_manual() {
+                    return false;
+                }
                 let ignored_by_absolute = r.ignore_absolute(absolute_path_str);
                 let ignored_by_relative = relative_path
                     .as_ref()
@@ -518,9 +531,18 @@ impl Watches {
         }
     }
 
+    /// All configured rules (declaration order), including manual-only jobs.
+    pub fn all_rules(&self) -> &[Rules] {
+        &self.rules
+    }
+
     /// Selects init tasks while retaining original stage occurrences.
+    /// Manual jobs never run at init (MANUAL-TRIGGER-CONTRACT §3.3).
     pub fn run_on_init_plan(&self) -> Option<RunPlan> {
-        let plan = self.topology.clone().filter(Rules::run_on_init);
+        let plan = self
+            .topology
+            .clone()
+            .filter(|rule| rule.run_on_init() && !rule.is_manual());
         if plan.is_empty() {
             return None;
         }
@@ -533,7 +555,7 @@ impl Watches {
         let cmds = self
             .rules
             .iter()
-            .filter(|&r| r.run_on_init())
+            .filter(|&r| r.run_on_init() && !r.is_manual())
             .cloned()
             .collect::<Vec<Rules>>();
 
@@ -556,8 +578,15 @@ impl Watches {
 
         let mut matched = vec![];
         let mut ignored = vec![];
+        let mut manual = vec![];
 
         for rule in &self.rules {
+            // MANUAL-TRIGGER-CONTRACT §6: manual jobs never match paths, but
+            // `explain` names them so the absence of a match is explained.
+            if rule.is_manual() {
+                manual.push(rule.name.clone());
+                continue;
+            }
             // Mirror Watches::watch exactly: absolute patterns match the
             // absolute path; relative patterns match the root-relative path.
             let mut change_patterns = rule.watch_absolute_patterns(absolute_path_str);
@@ -621,6 +650,7 @@ impl Watches {
         ExplainResult {
             matched,
             ignored,
+            manual,
             // TASK-0034: the filtered execution topology uses the exact same
             // planner as execution (watch_plan), so the preview can never
             // drift from what would actually run.
@@ -1864,5 +1894,137 @@ mod explain_plan_tests {
         let result = watches.explain("docs/x.md");
         assert!(result.matched.is_empty());
         assert!(result.plan_stages.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::*;
+    use crate::config;
+    use crate::rules::{Rules, TriggerMode};
+
+    fn manual_rules() -> Vec<Rules> {
+        config::from_yaml(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n  - name: build\n    run: cargo build\n",
+        )
+        .expect("config parses")
+    }
+
+    fn watches_with_rules(rules: Vec<Rules>) -> Watches {
+        Watches::new(rules)
+    }
+
+    fn watches() -> Watches {
+        Watches::new(manual_rules())
+    }
+
+    #[test]
+    fn manual_jobs_never_match_filesystem_events_even_with_root_on() {
+        let watches = watches();
+        assert!(
+            watches.watch_plan("src/main.rs").is_none()
+                || !watches
+                    .watch_plan("src/main.rs")
+                    .map(|plan| plan.commands().is_empty())
+                    .unwrap_or(true),
+            "manual job must not be selected by a path"
+        );
+        let matched = watches
+            .watch("src/main.rs")
+            .expect("change job still matches");
+        assert!(!matched.iter().any(|r| r.is_manual()));
+        assert!(matched.iter().any(|r| r.name == "build"));
+    }
+
+    #[test]
+    fn manual_jobs_never_enter_subscription_roots() {
+        // Only manual jobs => no watch patterns at all => no roots.
+        let rules = vec![Rules::new(
+            "await-remote".to_owned(),
+            vec!["./await.sh".to_owned()],
+            vec![],
+            vec![],
+            false,
+        )
+        .with_trigger(Some(TriggerMode::Manual))];
+        let watches = watches_with_rules(rules);
+        assert!(
+            watches.subscription_roots().is_empty(),
+            "only the manual job has patterns, so no roots are registered"
+        );
+        assert!(watches.paths_to_watch().is_none());
+    }
+
+    #[test]
+    fn manual_jobs_excluded_from_both_init_apis() {
+        // Kely's note: cover run_on_init_plan AND run_on_init.
+        let rules = vec![Rules::new(
+            "manual-init".to_owned(),
+            vec!["echo m".to_owned()],
+            vec![],
+            vec![],
+            true, // run_on_init set (invalid combo, but model defense)
+        )
+        .with_trigger(Some(TriggerMode::Manual))];
+        let watches = Watches::new(rules.clone());
+        assert!(watches.run_on_init_plan().is_none(), "plan API excludes");
+        assert!(watches.run_on_init().is_none(), "rules API excludes");
+    }
+
+    #[test]
+    fn manual_jobs_selectable_through_local_target_semantics() {
+        let watcher = watches();
+        let plan = watcher
+            .run_target_plan("await-remote")
+            .expect("exact name selects the manual job");
+        assert!(!plan.is_empty());
+
+        // 'await' uniquely selects the manual job among both names.
+        let unique = watcher.run_target_plan("await");
+        assert!(unique.is_ok_and(|plan| !plan.is_empty()));
+        // 'a' matches BOTH 'await-remote' and 'build'? no — only 'await-remote'
+        // contains 'a'... 'build' does not. Use names sharing a substring.
+        let watcher = Watches::new(
+            config::from_yaml(
+                "jobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n  - name: await-local\n    run: ./local.sh\n",
+            )
+            .expect("config parses"),
+        );
+        let ambiguous = watcher.run_target_plan("await");
+        assert!(
+            matches!(ambiguous, Err(super::RunTargetError::Ambiguous { .. })),
+            "substring with multiple matches stays ambiguous (manual included)"
+        );
+    }
+
+    #[test]
+    fn manual_jobs_selectable_through_control_target_semantics() {
+        let watcher = Watches::new(
+            config::from_yaml(
+                "jobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n  - name: await-local\n    run: ./local.sh\n",
+            )
+            .expect("config parses"),
+        );
+        let plan = watcher
+            .target_plan("await-remote")
+            .expect("control selection includes manual jobs");
+        assert!(!plan.is_empty());
+        // Recorded asymmetry (contract §5): control path has no ambiguity
+        // guard — a substring selects every match — manual jobs included.
+        let sweep = watcher
+            .target_plan("await")
+            .expect("substring sweeps matches");
+        assert!(sweep.commands().len() >= 2);
+    }
+
+    #[test]
+    fn explain_names_manual_jobs_instead_of_implying_unavailability() {
+        let result = watches().explain("docs/readme.md");
+        assert!(result.matched.is_empty());
+        assert_eq!(result.manual, vec!["await-remote".to_string()]);
+        assert!(
+            result.plan_stages.is_empty(),
+            "manual never enters path plans"
+        );
     }
 }

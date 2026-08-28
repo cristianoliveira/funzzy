@@ -129,6 +129,12 @@ jobs:
     recovery: "cargo fmt --"
     change: "src/**"
     run_on_init: true
+
+  # MANUAL-TRIGGER-CONTRACT: explicit invocation only (`fzz run` /
+  # `fzz ctl run`); never matches filesystem events, never runs at init.
+  - name: await-remote
+    trigger: manual
+    run: "./scripts/await-remote.sh"
 "#
 }
 

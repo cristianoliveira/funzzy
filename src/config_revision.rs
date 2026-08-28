@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 2;
+pub const REVISION_SCHEMA_VERSION: u64 = 3;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -151,6 +151,10 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
 fn encode_rule(canonical: &mut CanonicalEncoder, rule: &Rules) {
     canonical.string(&rule.name);
     canonical.bool(rule.run_on_init());
+    // MANUAL-TRIGGER-CONTRACT §7: trigger mode is semantic; absence is a
+    // distinct canonical value from `manual` so a trigger-only reload never
+    // hashes as a no-op.
+    canonical.optional_string(rule.trigger().map(|mode| mode.as_str().to_owned()));
     canonical.optional_string(rule.parallel().map(str::to_owned));
     canonical.bool(rule.service());
     canonical.string(&output_policy_tag(&rule.output()));
@@ -381,6 +385,8 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
+        // Schema version 3 (MANUAL-TRIGGER-CONTRACT §7): trigger mode is
+        // encoded; this fixture was regenerated for the new canonical form.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
             rules("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"),
@@ -396,7 +402,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "d624fc3e4a0674488d328b93d26f55d37737d695f0f13f4bfc258dcff936b266"
+            "fd211349f06dcfb517901ded2e69720f99febb91c524f416db9fb46b92f92f25"
         );
     }
 
@@ -725,5 +731,81 @@ mod history_tests {
             v1.plan().execution_signature(2, false),
             v2.plan().execution_signature(2, false)
         );
+    }
+}
+
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::*;
+    use crate::config::GenerationHooks;
+    use crate::rules::Rules;
+    use std::time::Duration;
+
+    fn manual_rule(trigger: bool) -> Rules {
+        Rules::new(
+            "build".to_owned(),
+            vec!["cargo build".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+        .with_trigger(trigger.then_some(crate::rules::TriggerMode::Manual))
+    }
+
+    fn hash_for(rule: Rules) -> String {
+        let config = RuntimeConfig::capture(
+            PathBuf::from("/workspace"),
+            vec![rule],
+            2,
+            Duration::from_millis(1000),
+            WatchBackend::Native,
+            false,
+            crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
+            GenerationHooks::default(),
+            SessionHooks::default(),
+            None,
+        );
+        semantic_hash(&config)
+    }
+
+    #[test]
+    fn trigger_mode_changes_the_semantic_hash() {
+        // MANUAL-TRIGGER-CONTRACT §7: a trigger-only reload must not hash as
+        // a no-op; absence is a distinct canonical value from `manual`.
+        // This is also the TASK-0136 regression pin: the same rules,
+        // commands, patterns, and policies — only trigger differs — must
+        // produce different hashes (Kely's blocking-defect assertion).
+        assert_ne!(hash_for(manual_rule(false)), hash_for(manual_rule(true)));
+    }
+
+    /// TASK-0136 regression pin: the schema version is 3 — the bump that
+    /// makes trigger encoding part of the canonical form and invalidates
+    // pre-trigger revision hashes.
+    #[test]
+    fn revision_schema_version_is_pinned_at_three() {
+        assert_eq!(REVISION_SCHEMA_VERSION, 3);
+    }
+
+    /// TASK-0136: a manual generation freezes its revision — a reload that
+    /// edits ONLY the trigger mints a new revision (different hash), so the
+    /// frozen generation can be attributed to the exact revision it ran
+    /// under; formatting-only rewrites keep the same identity.
+    #[test]
+    fn trigger_only_edit_freezes_as_a_distinct_revision_for_running_generations() {
+        let before = hash_for(manual_rule(true));
+        let after = hash_for(manual_rule(false));
+        assert_ne!(
+            before, after,
+            "a trigger-only reload is a semantic revision change, never a no-op"
+        );
+        // The frozen identity is deterministic: same config, same hash, so
+        // attribution of an in-flight manual generation stays exact.
+        assert_eq!(before, hash_for(manual_rule(true)));
+    }
+
+    #[test]
+    fn formatting_only_rewrite_keeps_hash_and_trigger_is_deterministic() {
+        assert_eq!(hash_for(manual_rule(true)), hash_for(manual_rule(true)));
     }
 }

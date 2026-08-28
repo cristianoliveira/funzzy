@@ -292,6 +292,16 @@ const JOB_SPECS: &[OptionSpec] = &[
         kind: SpecKind::StringMap,
     },
     OptionSpec {
+        name: "trigger",
+        owner: Owner::Job,
+        required: false,
+        default: None,
+        help: "Explicit run only (`fzz run TARGET` / `fzz ctl run TARGET`); never matches filesystem events or runs at init.",
+        values: Some("manual"),
+        example: &["trigger: manual"],
+        kind: SpecKind::Enum(&["manual"]),
+    },
+    OptionSpec {
         name: "service",
         owner: Owner::Job,
         required: false,
@@ -440,6 +450,7 @@ mod tests {
             "parallel",
             "cwd",
             "env",
+            "trigger",
             "service",
             "output",
         ];

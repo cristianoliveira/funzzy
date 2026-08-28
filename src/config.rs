@@ -26,6 +26,16 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
             Some("Move this task into a `jobs:` configuration before adding recovery.".to_owned()),
         ));
     }
+    // MANUAL-TRIGGER-CONTRACT §4: the trigger mode is preferred-V2 only;
+    // both legacy parse sites reject it with the same actionable shape as
+    // `recovery`.
+    if yaml["trigger"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'trigger' is supported only in preferred V2 jobs".to_owned(),
+            None,
+            Some("Rename 'tasks' to 'jobs' before declaring a trigger mode.".to_owned()),
+        ));
+    }
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns = ensure_glob_only(
@@ -341,6 +351,15 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
                 Some("Rename 'tasks' to 'jobs' before declaring a recovery.".to_owned()),
             ));
         }
+        // MANUAL-TRIGGER-CONTRACT §4: grouped legacy `tasks:` entries reject
+        // `trigger` like `recovery` (second legacy parse site).
+        if has_tasks && task_yaml["trigger"] != Yaml::BadValue {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'trigger' is supported only in preferred V2 jobs".to_owned(),
+                None,
+                Some("Rename 'tasks' to 'jobs' before declaring a trigger mode.".to_owned()),
+            ));
+        }
         let rule = rule_from_with_common(task_yaml, &common_rules)?;
         if !seen.insert(rule.name.clone()) {
             return Err(errors::FzzError::InvalidConfigError(
@@ -427,11 +446,70 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     // common patterns, so root-level scope and safety rails always apply.
     let task_change = yaml::extract_list(yaml, "change").unwrap_or_default();
     let task_ignore = yaml::extract_list(yaml, "ignore").unwrap_or_default();
+    let manual = match &yaml["trigger"] {
+        Yaml::BadValue => false,
+        Yaml::String(raw) if raw == "manual" => true,
+        Yaml::String(_) => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Invalid 'trigger' value for job '{}': must be one of: manual",
+                    name
+                ),
+                None,
+                Some(
+                    "Use `trigger: manual` for explicit-run-only jobs, or remove 'trigger'."
+                        .to_owned(),
+                ),
+            ));
+        }
+        _ => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Invalid 'trigger' value for job '{}': must be the string 'manual'",
+                    name
+                ),
+                None,
+                None,
+            ));
+        }
+    };
+    // MANUAL-TRIGGER-CONTRACT §4: ambiguous combinations are actionable
+    // errors, never silent precedence.
+    if manual {
+        if !task_change.is_empty() {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Job '{}' declares both 'trigger: manual' and 'change'", name),
+                None,
+                Some("Manual jobs never match filesystem events; remove 'change' or 'trigger: manual'.".to_owned()),
+            ));
+        }
+        if !task_ignore.is_empty() {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Job '{}' declares both 'trigger: manual' and 'ignore'",
+                    name
+                ),
+                None,
+                Some(
+                    "'ignore' is inert on a manual job; remove 'ignore' or 'trigger: manual'."
+                        .to_owned(),
+                ),
+            ));
+        }
+    }
 
-    let watch_patterns = ensure_glob_only(merge_patterns(&common.change, task_change), "change")?;
-    let ignore_patterns = ensure_glob_only(merge_patterns(&common.ignore, task_ignore), "ignore")?;
-
+    let (watch_patterns, ignore_patterns) = if manual {
+        // MANUAL-TRIGGER-CONTRACT §3.1: root `on` scope never applies to a
+        // manual job — its effective watch/ignore surface is empty.
+        (vec![], vec![])
+    } else {
+        (
+            ensure_glob_only(merge_patterns(&common.change, task_change), "change")?,
+            ensure_glob_only(merge_patterns(&common.ignore, task_ignore), "ignore")?,
+        )
+    };
     let run_on_init = yaml::extract_bool(yaml, "run_on_init");
+    let trigger = manual.then_some(crate::rules::TriggerMode::Manual);
     let parallel = yaml::extract_optional_string(yaml, "parallel")?;
     let cwd = yaml::extract_optional_string(yaml, "cwd")?;
     let environment = yaml::extract_optional_string_map(yaml, "env")?;
@@ -465,6 +543,34 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ),
         ));
     }
+    // MANUAL-TRIGGER-CONTRACT §4: reject ambiguous manual combinations with
+    // actionable errors rather than inventing precedence.
+    if trigger.is_some() && run_on_init {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' cannot declare both 'trigger: manual' and 'run_on_init'",
+                name
+            ),
+            None,
+            Some(
+                "Manual jobs never run at watcher initialization; remove 'run_on_init' or 'trigger: manual'."
+                    .to_owned(),
+            ),
+        ));
+    }
+    if trigger.is_some() && service {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' cannot declare both 'trigger: manual' and 'service: true'",
+                name
+            ),
+            None,
+            Some(
+                "Services start on init and restart on change; that contradicts 'trigger: manual'. Remove one."
+                    .to_owned(),
+            ),
+        ));
+    }
 
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => common.output_policy,
@@ -490,7 +596,8 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         .with_execution_context(cwd, environment)
         .with_inherited_patterns(inherited_patterns(common))
         .with_output(output)
-        .with_service(service);
+        .with_service(service)
+        .with_trigger(trigger);
     let rule = match recovery {
         Some(commands) => rule.with_recovery(commands),
         None => rule,
@@ -980,6 +1087,12 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
     if let Some(recovery) = rule.recovery_commands() {
         lines.push(render_scalar_or_list("recovery", &recovery));
     }
+    if let Some(trigger) = rule.trigger() {
+        // MANUAL-TRIGGER-CONTRACT §6/QA P2: a rendered manual job has no
+        // change/init surface; dropping `trigger` would make the render an
+        // invalid config (silent trigger loss).
+        lines.push(format!("trigger: {}", trigger.as_str()));
+    }
     if !rule.watch_patterns().is_empty() {
         lines.push(render_scalar_or_list("change", &rule.watch_patterns()));
     }
@@ -1196,6 +1309,50 @@ tasks:
             .join("\n"),
             "Failed to format rule as string {}",
             rule_as_yaml(&rules[0])
+        );
+    }
+
+    #[test]
+    fn it_formats_manual_rule_as_yaml_with_trigger() {
+        // MANUAL-TRIGGER-CONTRACT §6 + QA P2: verbose render must keep
+        // `trigger: manual` — a rendered manual job has no change/init
+        // surface, so dropping the property yields an invalid config.
+        let file_content = "
+        jobs:
+          - name: await-remote
+            run: ./scripts/await-remote.sh
+            trigger: manual
+        ";
+
+        let rules = from_yaml(file_content).expect("Failed to parse yaml");
+
+        let rendered = rule_as_yaml(&rules[0]);
+        assert_eq!(
+            rendered,
+            [
+                "name: await-remote",
+                "run: ./scripts/await-remote.sh",
+                "trigger: manual",
+            ]
+            .join("\n"),
+            "Failed to format manual rule as string {}",
+            rendered
+        );
+
+        // Round-trip: the rendered form parses back and validates (the P2
+        // failure mode — silent trigger loss — must be impossible).
+        let round_tripped = from_yaml(&format!(
+            "jobs:\n{}\n",
+            rendered
+                .replace("name: ", "  - name: ")
+                .replace("\nrun: ", "\n    run: ")
+                .replace("\ntrigger: ", "\n    trigger: ")
+        ))
+        .expect("rendered config must re-parse");
+        assert!(round_tripped[0].validate().is_ok());
+        assert_eq!(
+            round_tripped[0].trigger(),
+            Some(crate::rules::TriggerMode::Manual)
         );
     }
 
@@ -2810,5 +2967,115 @@ mod catalog_allowlist_tests {
                 "{name} must be allowed in job"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::from_yaml;
+
+    fn parse(yaml: &str) -> Result<Vec<crate::rules::Rules>, crate::errors::FzzError> {
+        from_yaml(yaml)
+    }
+
+    #[test]
+    fn manual_job_parses_with_empty_effective_surface() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n",
+        )
+        .expect("manual job is valid");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_manual());
+        assert!(rules[0].watch_patterns().is_empty(), "no root inheritance");
+        assert!(rules[0].ignore_glob_patterns().is_empty());
+        assert!(!rules[0].run_on_init());
+    }
+
+    #[test]
+    fn manual_rejects_own_change() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    change: \"a/**\"\n")
+                .expect_err("manual+change must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'change'"));
+    }
+
+    #[test]
+    fn manual_rejects_own_ignore() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    ignore: \"a/**\"\n")
+                .expect_err("manual+ignore must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'ignore'"));
+    }
+
+    #[test]
+    fn manual_rejects_run_on_init() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    run_on_init: true\n")
+                .expect_err("manual+run_on_init must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'run_on_init'"));
+    }
+
+    #[test]
+    fn manual_rejects_service() {
+        let err = parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    service: true\n")
+            .expect_err("manual+service must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'service: true'"));
+    }
+
+    #[test]
+    fn manual_allows_recovery_parallel_and_root_on() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: a\n    trigger: manual\n    run: x\n    parallel: checks\n    recovery: \"echo fix\"\n",
+        )
+        .expect("recovery/parallel/root-on are valid with manual");
+        assert!(rules[0].recovery_commands().is_some());
+        assert_eq!(rules[0].parallel(), Some("checks"));
+    }
+
+    #[test]
+    fn manual_rejects_unknown_value_and_non_string() {
+        let err = parse("jobs:\n  - name: a\n    trigger: cron\n    run: x\n")
+            .expect_err("unknown value rejected");
+        assert!(err.to_string().contains("must be one of: manual"));
+        let err = parse("jobs:\n  - name: a\n    trigger: 5\n    run: x\n")
+            .expect_err("non-string rejected");
+        assert!(err.to_string().contains("must be the string 'manual'"));
+    }
+
+    #[test]
+    fn manual_rejected_in_root_list_form() {
+        let err = parse("- name: a\n  trigger: manual\n  run: x\n  change: \"a/**\"\n")
+            .expect_err("legacy root-list form rejects trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn manual_rejected_in_grouped_legacy_tasks() {
+        let err = parse(
+            "on:\n  change: [\"src/**\"]\ntasks:\n  - name: a\n    trigger: manual\n    run: x\n",
+        )
+        .expect_err("grouped legacy tasks reject trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn non_manual_jobs_keep_root_inheritance_byte_identically() {
+        let rules =
+            parse("on:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build\n")
+                .expect("unchanged config parses");
+        assert!(!rules[0].is_manual());
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
     }
 }

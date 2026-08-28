@@ -370,8 +370,11 @@ fn explain_output(
                 covering.join(", ")
             ));
         }
+        append_manual_section(&mut output, result);
         return output;
     }
+
+    append_manual_section(&mut output, result);
 
     if !result.matched.is_empty() {
         output.push_str("  matched:\n");
@@ -438,6 +441,18 @@ fn explain_output(
     output.push_str(&format!("  debounce: {:?}\n", facts.debounce));
 
     output
+}
+
+/// MANUAL-TRIGGER-CONTRACT §6: name manual jobs so a no-match is explained
+/// rather than mysterious — they never match paths by design.
+fn append_manual_section(output: &mut String, result: &crate::watches::ExplainResult) {
+    if result.manual.is_empty() {
+        return;
+    }
+    output.push_str("  manual (never match filesystem events; explicit run only):\n");
+    for name in &result.manual {
+        output.push_str(&format!("    - {}\n", name));
+    }
 }
 
 fn load_rules(config: &Option<String>) -> Vec<rules::Rules> {
@@ -756,6 +771,23 @@ fn execute_watch_command(
     mut args: Arguments,
     event_stream: Option<Arc<crate::event_stream::EventStream>>,
 ) {
+    // MANUAL-TRIGGER-CONTRACT §3.5: a watch selection containing only manual
+    // jobs is a usage error unless the control socket is enabled (a
+    // control-only watcher serving `fzz ctl run` is valid).
+    if !watches.all_rules().iter().any(|rule| !rule.is_manual()) {
+        let workspace_root = watches.root().to_path_buf();
+        let socket = args
+            .control_socket
+            .clone()
+            .or_else(|| config_control_socket(&args.config, &workspace_root));
+        if socket.is_none() {
+            stdout::failure(
+                "Nothing to watch: every selected job is 'trigger: manual'.",
+                "Manual jobs run only via `fzz run TARGET` / `fzz ctl run TARGET`. Enable the control socket (`on.socket`) to keep a control-only watcher, or select change-triggered jobs.".to_string(),
+            );
+        }
+    }
+
     let possible_config_paths = match args.config.as_deref() {
         None => {
             let dir = watches.root();

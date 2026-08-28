@@ -53,6 +53,26 @@ pub struct Rules {
     output: OutputPolicy,
     /// Managed long-running service task (TASK-0035); opt-in, default false.
     service: bool,
+    /// Explicit trigger mode (MANUAL-TRIGGER-CONTRACT): `manual` jobs are
+    /// scheduled only by explicit run selection (`fzz run` / `fzz ctl run`);
+    /// they never match filesystem events, never run at init, and never
+    /// inherit root `on.change`. None = change-triggered (today's model).
+    trigger: Option<TriggerMode>,
+}
+
+/// Configured trigger mode for a job (MANUAL-TRIGGER-CONTRACT §2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerMode {
+    /// Explicit invocation only: `fzz run TARGET` / `fzz ctl run TARGET`.
+    Manual,
+}
+
+impl TriggerMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TriggerMode::Manual => "manual",
+        }
+    }
 }
 
 impl Rules {
@@ -77,6 +97,7 @@ impl Rules {
             inherited: vec![],
             output: OutputPolicy::Inherit,
             service: false,
+            trigger: None,
         }
     }
 
@@ -104,6 +125,7 @@ impl Rules {
             inherited: vec![],
             output: OutputPolicy::Inherit,
             service: false,
+            trigger: None,
         }
     }
 
@@ -167,6 +189,23 @@ impl Rules {
     /// True when the job is a managed long-running service.
     pub fn service(&self) -> bool {
         self.service
+    }
+
+    /// Sets the explicit trigger mode (MANUAL-TRIGGER-CONTRACT).
+    pub fn with_trigger(mut self, trigger: Option<TriggerMode>) -> Self {
+        self.trigger = trigger;
+        self
+    }
+
+    /// The configured trigger mode; `None` = change-triggered (default).
+    pub fn trigger(&self) -> Option<TriggerMode> {
+        self.trigger
+    }
+
+    /// Manual-only jobs are scheduled exclusively by explicit run
+    /// selection (MANUAL-TRIGGER-CONTRACT §3).
+    pub fn is_manual(&self) -> bool {
+        matches!(self.trigger, Some(TriggerMode::Manual))
     }
 
     pub fn with_parallel(mut self, group: String) -> Self {
@@ -370,7 +409,11 @@ impl Rules {
             ));
         }
 
-        if self.watch_patterns().is_empty() && !self.run_on_init() {
+        // MANUAL-TRIGGER-CONTRACT §4: a manual job has neither `change` nor
+        // `run_on_init` by contract, so it is the explicit exception to the
+        // change-and/or-init invariant; the invariant is unchanged for every
+        // other job.
+        if self.watch_patterns().is_empty() && !self.run_on_init() && !self.is_manual() {
             return Err(format!(
                 "job '{}' must contain a `change` and/or `run_on_init` property.",
                 name
@@ -508,7 +551,12 @@ pub fn available_targets(rules: &[Rules]) -> String {
 
     for rule in rules {
         output.push_str(&format!("  - {}\n", rule.name));
-        if !rule.watch_patterns.is_empty() {
+        if rule.is_manual() {
+            // MANUAL-TRIGGER-CONTRACT §6: discovery shows the trigger mode in
+            // place of change patterns, which a manual job cannot have.
+            output.push_str("    trigger: manual (explicit run only)\n");
+        }
+        if !rule.is_manual() && !rule.watch_patterns.is_empty() {
             output.push_str(&format!("    change: {}\n", rule.watch_patterns.join(", ")));
         }
         if rule.run_on_init {
