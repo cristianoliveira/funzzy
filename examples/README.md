@@ -16,7 +16,11 @@ fzz -c examples/simple-case.yml watch
 
 Example: Run `fzz -c examples/simple-case.yml` and then change files in `examples/workdir/` to check the output.
 
-Those examples are all valid and used in [the integration tests](https://github.com/cristianoliveira/funzzy/tree/main/tests).
+Those runnable examples are used in [the integration tests](https://github.com/cristianoliveira/funzzy/tree/main/tests).
+The files under `examples/invalid/` are intentionally invalid V2 fixtures:
+use them with `check` to inspect validation errors, but do not run them as
+workflows. The recursive catalog gate checks both `.yml` and `.yaml` files and
+keeps these invalid fixtures separate from runnable examples.
 
 - `recovery-format.yml` demonstrates a bounded, explicitly approved formatting
   recovery. Use `--recovery-policy skip` for headless or CI execution.

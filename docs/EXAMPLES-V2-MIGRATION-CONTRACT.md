@@ -142,7 +142,7 @@ in-place rewrite as if they were accepted public examples.
 | Fixture | V2-invalid shape | Expected failure reason |
 | --- | --- | --- |
 | `invalid/invalid-value.yml` | `jobs:` wrapping the current items, retaining unquoted `change: **/hello/*` | YAML loader rejects the unknown anchor before config validation. This fixture must not be “fixed” by quoting the glob. |
-| `invalid/missing-required-property.yml` | `jobs:` wrapping the current items, retaining the final `{foo, run}` item | Production parser reports missing required `name`; it must not silently infer a name. |
+| `invalid/missing-required-property.yml` | `jobs:` wrapping the current items, retaining the final `{run}` item without `name` | Production parser reports missing required `name`; it must not silently infer a name. |
 | `invalid/non-list.yaml` | V2 `jobs:` plus `on:` as a sequence instead of an object | Production parser reports that `on` must be a Hash/Object; the `.yaml` extension remains covered. |
 
 For each invalid fixture, `fzz check` must fail for the named reason and

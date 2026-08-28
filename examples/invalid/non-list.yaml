@@ -2,3 +2,6 @@ on:
   - name: foobar
     run: echo hello
     change: hello/*
+jobs:
+  - name: build
+    run: cargo build

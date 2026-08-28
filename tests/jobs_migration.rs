@@ -8,6 +8,7 @@
 use assert_cmd::cargo;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
+use yaml_rust2::{Yaml, YamlLoader};
 
 fn fixture(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join(format!(
@@ -268,30 +269,166 @@ fn shipped_nested_groups_migrate_and_check() {
     std::fs::remove_dir_all(&directory).unwrap();
 }
 
-#[test]
-fn every_example_passes_fzz_check() {
-    // TASK-0068: every valid example fixture must pass `fzz check`; docs and
-    // examples can never drift from the parser. Intentionally-invalid
-    // fixtures would be labeled and asserted separately.
-    let examples = std::fs::read_dir("examples")
+fn yaml_examples(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let mut entries = std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries.into_iter().rev() {
+            if entry
+                .file_type()
+                .map(|file_type| file_type.is_symlink())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yml" | "yaml")
+            ) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn run_fzz(path: &Path, action: &str) -> std::process::Output {
+    assert_cmd::cargo::cargo_bin_cmd!("fzz")
+        .arg("-c")
+        .arg(path)
+        .arg(action)
+        .output()
         .unwrap()
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().map(|x| x == "yml").unwrap_or(false))
+}
+
+fn scratch_copy(source: &Path, label: &str) -> (PathBuf, Vec<u8>) {
+    let directory = fixture(label);
+    let config = directory.join(source.file_name().expect("config filename"));
+    let original = std::fs::read(source).unwrap();
+    std::fs::copy(source, &config).expect("copy config to scratch");
+    (config, original)
+}
+
+#[test]
+fn every_valid_example_recursively_passes_check_and_is_migration_noop() {
+    let examples = yaml_examples(Path::new("examples"))
+        .into_iter()
+        .filter(|path| {
+            !path
+                .components()
+                .any(|component| component.as_os_str() == "invalid")
+        })
         .collect::<Vec<_>>();
-    assert!(!examples.is_empty());
+    assert_eq!(examples.len(), 14);
     for example in examples {
-        let output = assert_cmd::cargo::cargo_bin_cmd!("fzz")
-            .arg("-c")
-            .arg(&example)
-            .arg("check")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "example {} must pass fzz check: {}",
-            example.display(),
-            String::from_utf8_lossy(&output.stdout)
+        let source = std::fs::read_to_string(&example).unwrap();
+        let documents = YamlLoader::load_from_str(&source).unwrap();
+        assert_eq!(
+            documents.len(),
+            1,
+            "{} has one YAML document",
+            example.display()
         );
+        let Yaml::Hash(root) = &documents[0] else {
+            panic!("{} must use a V2 mapping root", example.display());
+        };
+        assert!(root.get(&Yaml::String("jobs".to_owned())).is_some());
+        assert!(root.get(&Yaml::String("tasks".to_owned())).is_none());
+
+        let label = format!(
+            "catalog-valid-{}",
+            example.file_name().unwrap().to_string_lossy()
+        );
+        let (scratch, original) = scratch_copy(&example, &label);
+        assert!(
+            run_fzz(&scratch, "check").status.success(),
+            "{}",
+            example.display()
+        );
+        assert!(
+            run_fzz(&scratch, "migrate").status.success(),
+            "{}",
+            example.display()
+        );
+        assert_eq!(
+            std::fs::read(&scratch).unwrap(),
+            original,
+            "{} must be a no-op",
+            example.display()
+        );
+        assert_eq!(
+            std::fs::read(&example).unwrap(),
+            original,
+            "original {} must not be mutated",
+            example.display()
+        );
+        std::fs::remove_dir_all(scratch.parent().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn invalid_examples_fail_for_documented_reasons_and_migrate_preserves_bytes() {
+    let cases = [
+        ("examples/invalid/invalid-value.yml", "unknown anchor"),
+        (
+            "examples/invalid/missing-required-property.yml",
+            "Missing 'name'",
+        ),
+        (
+            "examples/invalid/non-list.yaml",
+            "Property 'on' must be an object",
+        ),
+    ];
+    for (path, reason) in cases {
+        let path = Path::new(path);
+        let label = format!(
+            "catalog-invalid-{}",
+            path.file_name().unwrap().to_string_lossy()
+        );
+        let (scratch, original) = scratch_copy(path, &label);
+        let check = run_fzz(&scratch, "check");
+        let check_text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&check.stdout),
+            String::from_utf8_lossy(&check.stderr)
+        );
+        assert!(
+            !check.status.success(),
+            "{} unexpectedly passed",
+            path.display()
+        );
+        assert!(
+            check_text.contains(reason),
+            "{}: expected {reason}, got {check_text}",
+            path.display()
+        );
+        let migrate = run_fzz(&scratch, "migrate");
+        assert!(
+            !migrate.status.success(),
+            "{} migration unexpectedly passed",
+            path.display()
+        );
+        assert_eq!(
+            std::fs::read(&scratch).unwrap(),
+            original,
+            "{} scratch copy must remain unchanged",
+            path.display()
+        );
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            original,
+            "original {} must remain unchanged",
+            path.display()
+        );
+        std::fs::remove_dir_all(scratch.parent().unwrap()).unwrap();
     }
 }
