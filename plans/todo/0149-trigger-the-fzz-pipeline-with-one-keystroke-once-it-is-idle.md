@@ -43,5 +43,7 @@ As a user, when the fzz watcher has finished its current run and is idle, I pres
 
 ## Notes
 
+- **Lead decision (Mony, 28-08):** sequenced after TASK-0148 (watcher observation UX). Assumptions accepted provisionally; lead validates against pi-watcher patterns/docs before assigning implementation. Sequencing is a priority choice, not a hard dependency — `depends_on` stays empty.
+
 - Feasibility evidence: pi extensions support `pi.registerShortcut(shortcut, { description, handler(ctx) })`; pi-watcher already owns the trigger path via the control socket (`run`) and freshness proof (`watcher_verify`).
 - Related but independent: TASK-0148 (exclusive observation feedback) — no dependency.
