@@ -1,5 +1,5 @@
 ---
-id: TASK-0149
+id: TASK-0150
 title: Trigger the fzz pipeline with one keystroke once it is idle
 status: todo
 depends_on: []
@@ -19,8 +19,8 @@ As a user running `fzz` watch, when the current generation finished and the loop
 
 ## Assumptions (bounded, challenge via lead if wrong)
 
-- Scope is the **fzz loop itself** (Rust CLI), NOT pi-watcher — the pi-watcher/keybinding interpretation of this intake was rejected by the requester.
-- "The fzz pipeline" = the full configured workflow (every job eligible to run), routed through the same scheduler path as control-socket runs (`control run` semantics, generation-correlated, TASK-0022 synthetic-trigger path) — not a bespoke bypass.
+- Scope is the **fzz loop itself** (Rust CLI), NOT pi-watcher — confirmed by requester.
+- "The fzz pipeline" = the full configured workflow (every job eligible to run), routed through the same scheduler path as control-socket runs (`control run` semantics, generation-correlated, synthetic-trigger path) — not a bespoke bypass.
 - "Shortcut" = a single keystroke read from the watcher terminal's stdin. Exact key is dev's choice: must not collide with existing terminal behavior (Ctrl-C/SIGINT stays intact), must be documented.
 - "Once it's finished and is idle" = effective only when no generation is running; a press during a run waits for terminal, then triggers once. No queue beyond a single outstanding press, no auto-re-run loops.
 - Applies to the watch modes that own the terminal stdin; if a mode structurally cannot (documented reason), that exclusion is stated in docs and tests.
@@ -45,5 +45,5 @@ As a user running `fzz` watch, when the current generation finished and the loop
 
 ## Notes
 
+- Supersedes TASK-0149: that intake was initially shaped as a pi TUI keybinding and implemented in pi-watcher (historical, kept, not extended). Requester clarified the intent was always the fzz watch loop itself; this task carries the corrected scope. QA: independent verification assigned to Kely (lead decision).
 - Feasibility: `src/watch_loop.rs` currently has no stdin handling — this adds a stdin reader alongside the filesystem event stream; trigger routing already exists (control-socket `run`, synthetic path events).
-- Rejected alternative (recorded for provenance): pi TUI keybinding via pi-watcher `pi.registerShortcut` — explicitly not what the requester meant.
