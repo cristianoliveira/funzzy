@@ -10,7 +10,7 @@ tags: []
 # Prove shortcut safety for background terminal process groups
 
 ## Problem
-The TASK-0150 stdin shortcut reader stopped an entire cargo test process group with SIGTTIN when a spawned fzz inherited a controlling terminal but was not its foreground process group. The production guard landed without a deterministic regression test, so the hang can silently return.
+The TASK-0150 stdin shortcut reader stopped an entire cargo test process group with a terminal job-control signal when a spawned fzz inherited a controlling terminal but was not its foreground process group. Reading can raise SIGTTIN, while raw-mode terminal changes can raise SIGTTOU first. The production guard landed without a deterministic regression test, so the hang can silently return.
 
 ## Context
 
@@ -18,7 +18,7 @@ TASK-0150 added Ctrl-G shortcut input. Commit `fd5d45f` prevents reads when a TT
 
 ## Acceptance criteria
 
-- [ ] A deterministic Unix integration test uses a PTY and a real background process group to reproduce the former SIGTTIN stop.
+- [ ] A deterministic Unix integration test uses a controlling PTY and a real background process group to reproduce the former SIGTTIN/SIGTTOU stop.
 - [ ] The test fails when the foreground-process-group guard is removed and passes with it.
 - [ ] The test uses bounded polling, cleans up all child processes, and cannot hang the test runner.
 - [ ] Existing piped blocking, non-blocking, busy-latch, Ctrl-C, status, and output behavior remains passing.
