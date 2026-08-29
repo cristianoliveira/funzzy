@@ -1,7 +1,7 @@
 ---
 id: TASK-0150
 title: Trigger the fzz pipeline with one keystroke once it is idle
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [rust, cli, watch-loop, ux, stdin, tdd]
