@@ -79,8 +79,8 @@ fn stdin_readable() -> bool {
 pub fn start_reader(shutdown: Option<Arc<AtomicBool>>) -> Receiver<KeyDecode> {
     let (sender, receiver) = mpsc::channel();
     // A TTY inherited by a background process group is not safe to read:
-    // the kernel sends SIGTTIN and stops the whole process group. This is
-    // common when tests (or supervisors) spawn fzz with the parent's TTY.
+    // terminal reads and mode changes can stop the whole process group.
+    // This is common when tests or supervisors spawn fzz with a parent's TTY.
     if !stdin_readable() {
         return receiver;
     }
