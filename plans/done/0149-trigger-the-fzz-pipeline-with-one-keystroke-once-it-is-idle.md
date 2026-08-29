@@ -1,13 +1,15 @@
 ---
 id: TASK-0149
 title: Trigger the fzz pipeline with one keystroke once it is idle
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [pi-watcher, ux, shortcut, feedback-loop]
 ---
 
 # Trigger the fzz pipeline with one keystroke once it is idle
+
+> Historical: this task was shaped and implemented as a pi-watcher TUI keybinding. The requester later clarified the intent was the fzz watch loop itself; the corrected scope lives in **TASK-0150**. This implementation is kept as historical, not extended.
 
 ## Problem
 
