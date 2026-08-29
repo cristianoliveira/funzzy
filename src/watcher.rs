@@ -7,7 +7,7 @@ use crate::diagnostics;
 use crate::identity::AtomicSequence;
 use crate::stdout;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
 
 /// One debounced filesystem event forwarded to the watch loop: the raw path
@@ -36,6 +36,8 @@ pub struct RootSwap {
 /// Receiver side of the root-swap channel fed by the config-reload
 /// transaction (TASK-0090).
 pub type RootSwapReceiver = std::sync::mpsc::Receiver<RootSwap>;
+type ShortcutCallback<'a> = Box<dyn FnMut(Option<crate::shortcut::KeyDecode>) + 'a>;
+type ShortcutInput<'a> = (Receiver<crate::shortcut::KeyDecode>, ShortcutCallback<'a>);
 
 /// Publishes the complete new root set to the running backend. A no-op when
 /// the backend was started without reload support (legacy callers).
@@ -94,6 +96,34 @@ pub fn events(
     swap_rx: Option<RootSwapReceiver>,
     shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(), String> {
+    events_with_shortcut(
+        watch_path_list,
+        on_ready,
+        handler,
+        debounce,
+        backend,
+        verbose,
+        swap_rx,
+        shutdown,
+        None,
+    )
+}
+
+/// Runs a backend while draining an optional stdin shortcut stream. The
+/// callback is also invoked on backend wake-ups with `None`, allowing the
+/// watch loop to release a latched request after a running generation ends.
+#[allow(clippy::too_many_arguments)]
+pub fn events_with_shortcut<'a>(
+    watch_path_list: Vec<String>,
+    on_ready: impl FnOnce(),
+    handler: impl Fn(u64, &[FileEvent]),
+    debounce: Duration,
+    backend: WatchBackend,
+    verbose: bool,
+    swap_rx: Option<RootSwapReceiver>,
+    shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    shortcut: Option<ShortcutInput<'a>>,
+) -> Result<(), String> {
     match backend {
         WatchBackend::Native => run_native(
             watch_path_list,
@@ -103,6 +133,7 @@ pub fn events(
             verbose,
             swap_rx,
             shutdown,
+            shortcut,
         ),
         WatchBackend::Poll { interval } => run_poll(
             watch_path_list,
@@ -111,37 +142,35 @@ pub fn events(
             interval,
             swap_rx,
             shutdown,
+            shortcut,
         ),
-        WatchBackend::Auto => {
-            // Try native first; on failure warn once and fall back to
-            // deterministic polling (TASK-0037). The probe registers the
-            // roots without consuming on_ready, so exactly one backend runs.
-            match native_available(&watch_path_list) {
-                Ok(()) => run_native(
+        WatchBackend::Auto => match native_available(&watch_path_list) {
+            Ok(()) => run_native(
+                watch_path_list,
+                on_ready,
+                handler,
+                debounce,
+                verbose,
+                swap_rx,
+                shutdown,
+                shortcut,
+            ),
+            Err(native_err) => {
+                stdout::warn(&format!(
+                    "native filesystem backend unavailable ({}); falling back to polling",
+                    native_err
+                ));
+                run_poll(
                     watch_path_list,
                     on_ready,
                     handler,
-                    debounce,
-                    verbose,
+                    Duration::from_millis(500),
                     swap_rx,
                     shutdown,
-                ),
-                Err(native_err) => {
-                    stdout::warn(&format!(
-                        "native filesystem backend unavailable ({}); falling back to polling",
-                        native_err
-                    ));
-                    run_poll(
-                        watch_path_list,
-                        on_ready,
-                        handler,
-                        Duration::from_millis(500),
-                        swap_rx,
-                        shutdown,
-                    )
-                }
+                    shortcut,
+                )
             }
-        }
+        },
     }
 }
 
@@ -160,10 +189,28 @@ fn native_available(watch_path_list: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn drain_shortcut<'a>(shortcut: &mut Option<ShortcutInput<'a>>) {
+    let Some((receiver, callback)) = shortcut.as_mut() else {
+        return;
+    };
+    let mut trigger_seen = false;
+    while let Ok(key) = receiver.try_recv() {
+        if key == crate::shortcut::KeyDecode::Trigger {
+            if trigger_seen {
+                continue;
+            }
+            trigger_seen = true;
+        }
+        callback(Some(key));
+    }
+    callback(None);
+}
+
 /// Runs the native notify backend: one normalized batch per debounce window.
 /// With `swap_rx`, each live root swap is diffed and applied (unwatch/watch)
 /// without stopping the backend (TASK-0090).
-fn run_native(
+#[allow(clippy::too_many_arguments)]
+fn run_native<'a>(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
@@ -171,6 +218,7 @@ fn run_native(
     verbose: bool,
     swap_rx: Option<RootSwapReceiver>,
     shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    mut shortcut: Option<ShortcutInput<'a>>,
 ) -> Result<(), String> {
     let (tx, rx) = channel();
     let mut debouncer = new_debouncer(debounce, tx)
@@ -229,6 +277,7 @@ fn run_native(
     let mut swap_rx = swap_rx;
 
     loop {
+        drain_shortcut(&mut shortcut);
         if shutdown
             .as_ref()
             .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
@@ -321,13 +370,14 @@ fn run_native(
 /// roots on a fixed interval and feeds the same normalized batch + handler
 /// path as the native backend. Removals and renames appear as path changes
 /// that the shared matching handles identically.
-fn run_poll(
+fn run_poll<'a>(
     watch_path_list: Vec<String>,
     on_ready: impl FnOnce(),
     handler: impl Fn(u64, &[FileEvent]),
     interval: Duration,
     swap_rx: Option<RootSwapReceiver>,
     shutdown: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    mut shortcut: Option<ShortcutInput<'a>>,
 ) -> Result<(), String> {
     let batch_sequence = AtomicSequence::new();
     let mut scanner = PollScanner::new(watch_path_list);
@@ -340,6 +390,7 @@ fn run_poll(
     }
     on_ready();
     loop {
+        drain_shortcut(&mut shortcut);
         if shutdown
             .as_ref()
             .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))

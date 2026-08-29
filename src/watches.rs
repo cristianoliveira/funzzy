@@ -549,6 +549,18 @@ impl Watches {
         Some(plan)
     }
 
+    /// Returns the complete configured workflow for an explicit keyboard
+    /// trigger. Unlike filesystem/init routing, an explicit trigger is
+    /// allowed to run manual jobs too.
+    pub fn manual_trigger_plan(&self) -> Option<RunPlan> {
+        let plan = self.topology.clone();
+        if plan.is_empty() {
+            None
+        } else {
+            Some(plan)
+        }
+    }
+
     /// Returns the commands for the rules that should run on init
     ///
     pub fn run_on_init(&self) -> Option<Vec<Rules>> {

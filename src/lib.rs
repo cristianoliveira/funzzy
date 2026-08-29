@@ -30,6 +30,7 @@ pub mod reload;
 pub mod reload_coordinator;
 pub mod reload_session;
 pub mod rules;
+pub mod shortcut;
 pub mod shutdown;
 pub mod snapshot;
 pub mod stdout;
