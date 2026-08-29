@@ -76,6 +76,12 @@ pub struct WatcherState {
     revision_hash: Option<String>,
 }
 
+impl WatcherState {
+    pub fn is_running(&self) -> bool {
+        self.state == WatcherExecutionState::Running
+    }
+}
+
 impl Default for WatcherState {
     fn default() -> Self {
         Self {

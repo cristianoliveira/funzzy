@@ -195,6 +195,7 @@ fzz check                      # validate (same parser as the watcher)
 fzz list                       # see the configured targets
 fzz run build                  # run the exact target once, no watcher
 fzz                            # zero-argument configured watch
+# While watching, press Ctrl-G (0x07) to run the complete pipeline once.
 ```
 
 The file `fzz init` writes is a **comprehensive commented starter**: a small
@@ -236,6 +237,16 @@ fzz list
 fzz watch "@quick"
 # Assuming one or more tasks contain `@quick`, only those tasks are watched.
 ```
+
+### Keyboard trigger
+
+While `fzz` is watching, press **Ctrl-G** once to run the complete configured
+pipeline through the same scheduler used by normal watcher triggers. A press
+while a generation is running is latched and fires once after it finishes;
+additional presses are ignored. Ctrl-C remains SIGINT shutdown. This shortcut
+is available in both blocking and non-block watch modes. Piped stdin is also
+supported (the same Ctrl-G byte triggers the run); closed stdin is consumed
+safely and produces no shortcut.
 
 Validate the configuration without starting a watcher:
 

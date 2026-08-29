@@ -86,6 +86,22 @@ pub trait RunStrategy {
 
     /// Called after the batch finished routing (scheduled or explicit no-op).
     fn on_batch_complete(&self) {}
+
+    /// Schedules the complete configured workflow for an explicit keyboard
+    /// trigger. Returns a generation for asynchronous strategies.
+    fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64>;
+
+    /// Whether the strategy currently has an in-flight generation.
+    fn is_running(&self) -> bool {
+        false
+    }
+
+    /// Whether a generation returned by `run_manual` has reached a terminal
+    /// state. Pending scheduler requests are not complete even before the
+    /// worker publishes their first `started` event.
+    fn is_generation_complete(&self, _generation: u64) -> bool {
+        true
+    }
 }
 
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
@@ -208,7 +224,40 @@ pub fn watch_loop(
         .collect::<Vec<_>>();
     gate.borrow_mut().seed(&baseline_paths);
 
-    watcher::events(
+    let shortcut_rx = crate::shortcut::start_reader(shutdown_flag.clone());
+    let mut trigger_latch = crate::shortcut::TriggerLatch::default();
+    let mut trigger_phase = ManualTriggerPhase::Idle;
+    let handle_shortcut = move |key: Option<crate::shortcut::KeyDecode>| {
+        let Some(key) = key else {
+            if let ManualTriggerPhase::Active(generation) = trigger_phase {
+                if strategy.is_generation_complete(generation) {
+                    trigger_phase = ManualTriggerPhase::Idle;
+                    trigger_latch.reset();
+                }
+            }
+            if matches!(trigger_phase, ManualTriggerPhase::Waiting) && !strategy.is_running() {
+                trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
+            }
+            return;
+        };
+        if key == crate::shortcut::KeyDecode::Eof {
+            return;
+        }
+        if !trigger_latch.accept(key) {
+            if key == crate::shortcut::KeyDecode::Trigger {
+                stdout::info("Shortcut already latched; waiting for the current run to finish.");
+            }
+            return;
+        }
+        if strategy.is_running() {
+            trigger_phase = ManualTriggerPhase::Waiting;
+            stdout::info("Shortcut latched; waiting for the current run to finish.");
+        } else {
+            trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
+        }
+    };
+
+    watcher::events_with_shortcut(
         list_of_watched_paths,
         || {
             if let Some(ready) = &reload_ready {
@@ -291,8 +340,41 @@ pub fn watch_loop(
         verbose,
         swap_rx,
         shutdown_flag,
+        Some((shortcut_rx, Box::new(handle_shortcut))),
     )
     .map_err(FzzError::GenericError)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManualTriggerPhase {
+    Idle,
+    Waiting,
+    Active(u64),
+}
+
+fn trigger_manual_run(
+    strategy: &dyn RunStrategy,
+    watches: &Arc<Mutex<Watches>>,
+    latch: &mut crate::shortcut::TriggerLatch,
+    phase: &mut ManualTriggerPhase,
+) {
+    let (plan, revision) = {
+        let watches = watches.lock().unwrap();
+        (watches.manual_trigger_plan(), watches.revision().cloned())
+    };
+    let Some(plan) = plan else {
+        stdout::warn("Shortcut ignored: no configured jobs to run.");
+        latch.reset();
+        *phase = ManualTriggerPhase::Idle;
+        return;
+    };
+    stdout::info("Running full pipeline from keyboard shortcut.");
+    if let Some(generation) = strategy.run_manual(plan, revision) {
+        *phase = ManualTriggerPhase::Active(generation);
+    } else {
+        latch.reset();
+        *phase = ManualTriggerPhase::Idle;
+    }
 }
 
 /// Emits one `matched` decision record per task responsible for the trigger
@@ -437,6 +519,22 @@ impl BlockingStrategy {
 impl RunStrategy for BlockingStrategy {
     fn policy(&self) -> &'static str {
         "wait"
+    }
+
+    fn run_manual(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
+        match self
+            .workflow
+            .run(plan, RunMetadata::new(0, "keyboard"), None)
+        {
+            Ok(completed) => stdout::present_results(
+                completed.results,
+                completed.elapsed,
+                Some(&completed.outcome),
+                &completed.tasks,
+            ),
+            Err(error) => stdout::error(&error),
+        }
+        None
     }
 
     fn run_init(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
@@ -932,6 +1030,28 @@ impl RunStrategy for NonBlockStrategy {
                 None
             }
         }
+    }
+
+    fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        match self
+            .worker
+            .schedule_plan_correlated(plan, "keyboard", None, None, vec![], revision)
+        {
+            Ok(run_id) => Some(run_id),
+            Err(error) => {
+                stdout::error(&format!("failed to initiate keyboard run: {:?}", error));
+                None
+            }
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.control_state.lock().unwrap().is_running()
+    }
+
+    fn is_generation_complete(&self, generation: u64) -> bool {
+        let state = self.control_state.lock().unwrap();
+        state.generation() >= generation && !state.is_running()
     }
 }
 

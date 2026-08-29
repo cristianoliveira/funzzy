@@ -109,6 +109,7 @@ fn agent_yaml() -> &'static str {
 #   fzz list           # see the targets
 #   fzz run verify     # run once locally
 #   fzz watch          # start the watcher + control socket
+#   Ctrl-G             # run the complete pipeline once while watching
 on:
   change: "**/*"
   socket: .tmp/funzzy/control.sock
