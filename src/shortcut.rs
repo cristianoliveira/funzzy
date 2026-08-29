@@ -54,12 +54,36 @@ impl TriggerLatch {
     }
 }
 
+fn stdin_readable() -> bool {
+    #[cfg(unix)]
+    {
+        use std::io::IsTerminal;
+        let stdin = std::io::stdin();
+        if !stdin.is_terminal() {
+            return true;
+        }
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&stdin);
+        // Reading a terminal from a background process group causes SIGTTIN.
+        unsafe { nix::libc::tcgetpgrp(fd) == nix::libc::getpgrp() }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
 /// Starts a detached stdin reader. TTY input is put in noncanonical mode so
 /// the key is delivered immediately; piped input is read normally. Ctrl-C is
 /// left as SIGINT (`ISIG` remains enabled), and the original TTY settings are
 /// restored when the reader exits.
 pub fn start_reader(shutdown: Option<Arc<AtomicBool>>) -> Receiver<KeyDecode> {
     let (sender, receiver) = mpsc::channel();
+    // A TTY inherited by a background process group is not safe to read:
+    // the kernel sends SIGTTIN and stops the whole process group. This is
+    // common when tests (or supervisors) spawn fzz with the parent's TTY.
+    if !stdin_readable() {
+        return receiver;
+    }
     std::thread::spawn(move || {
         let terminal = RawTerminal::enter();
         let stdin = std::io::stdin();
