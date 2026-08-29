@@ -1,7 +1,7 @@
 ---
 id: TASK-0152
 title: Define settled failure hook contract
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [design, config, hooks, watcher, agents, determinism]
