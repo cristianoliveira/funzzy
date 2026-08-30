@@ -1601,6 +1601,33 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_receive_empty_returns_timeout_at_zero_wait() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        assert!(matches!(
+            scheduler.receive_until_deadline(Duration::ZERO),
+            SchedulerWake::Timeout
+        ));
+    }
+
+    #[test]
+    fn scheduler_receive_zero_due_beats_timeout() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 10,
+                command: "x".into(),
+                settle: Duration::ZERO,
+                revision: 1,
+                revision_hash: "h".into(),
+            },
+            Instant::now(),
+        );
+        assert!(
+            matches!(scheduler.receive_until_deadline(Duration::ZERO), SchedulerWake::SettlementDue(spec, _) if spec.run_id == 10)
+        );
+    }
+
+    #[test]
     fn scheduler_receive_prioritizes_queued_command_over_future_settlement() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let now = Instant::now();
