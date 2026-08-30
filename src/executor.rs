@@ -1773,17 +1773,17 @@ impl Executor {
     }
 
     pub fn poll_settled_hook(run: &mut SettledHookRun) -> Result<Option<ExitStatus>, String> {
-        run.child
-            .try_wait()
-            .map_err(|err| format!("hook wait failed: {err}"))
+        run.child.try_wait().map_err(|err| {
+            format!(
+                "settled hook generation {} revision {} ({}) wait failed: {}",
+                run.spec.run_id, run.spec.revision, run.spec.revision_hash, err
+            )
+        })
     }
 
     pub fn cancel_settled_hook(&self, run: &mut SettledHookRun) -> ShutdownOutcome {
-        run.child.shutdown(
-            nix::sys::signal::Signal::SIGTERM,
-            Duration::from_millis(5000),
-            self.verbose,
-        )
+        let (signal, grace) = crate::process_owner::shutdown_policy();
+        run.child.shutdown(signal, grace, self.verbose)
     }
 
     pub fn finish(&self, mut run: Run) -> CompletedRun {
