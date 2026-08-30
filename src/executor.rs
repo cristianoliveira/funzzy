@@ -2599,6 +2599,7 @@ mod tests {
         started: Vec<(String, String)>,
         completed: HashMap<String, bool>,
         shutdown: HashSet<String>,
+        shutdown_count: usize,
     }
 
     #[derive(Clone, Default)]
@@ -2671,11 +2672,10 @@ mod tests {
             _grace: Duration,
             _verbose: bool,
         ) -> ShutdownOutcome {
-            self.state
-                .lock()
-                .unwrap()
-                .shutdown
-                .insert(self.command.clone());
+            let mut state = self.state.lock().unwrap();
+            state.shutdown.insert(self.command.clone());
+            state.shutdown_count += 1;
+            drop(state);
             ShutdownOutcome::Terminated(self.terminal_status(true))
         }
     }
@@ -2805,6 +2805,24 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn settled_hook_cancel_shuts_down_once() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 44,
+            command: "notify".into(),
+            settle: Duration::from_secs(1),
+            revision: 1,
+            revision_hash: "r".into(),
+        };
+        let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
+        let outcome = executor.cancel_settled_hook(&mut run);
+        assert!(matches!(outcome, ShutdownOutcome::Terminated(_)));
+        assert_eq!(runner.state.lock().unwrap().shutdown_count, 1);
     }
 
     #[test]
