@@ -2667,6 +2667,43 @@ mod tests {
     }
 
     #[test]
+    fn settled_failure_returns_pending_spec_without_spawning_hook() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let metadata = RunMetadata::new(1, "test")
+            .with_hooks(crate::config::GenerationHooks {
+                success: None,
+                failure: Some("notify".into()),
+                failure_settle: Some(Duration::from_secs(30)),
+            });
+        runner.complete("false", false);
+        let completed = executor.run_to_completion(metadata, RunPlan::from_rules(vec![
+            task("fail", None, &["false"]),
+        ]));
+        let pending = completed.pending_settled_hook.expect("pending hook");
+        assert_eq!(pending.command, "notify");
+        assert_eq!(pending.settle, Duration::from_secs(30));
+        assert!(runner.started_commands().iter().all(|command| command != "notify"));
+    }
+
+    #[test]
+    fn scalar_failure_hook_still_runs_inline_once() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let metadata = RunMetadata::new(1, "test").with_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some("notify".into()),
+            failure_settle: None,
+        });
+        runner.complete("false", false);
+        runner.complete("notify", true);
+        let _ = executor.run_to_completion(metadata, RunPlan::from_rules(vec![
+            task("fail", None, &["false"]),
+        ]));
+        assert_eq!(runner.started_commands().iter().filter(|command| command.as_str() == "notify").count(), 1);
+    }
+
+    #[test]
     fn parallel_stage_overlaps_only_up_to_the_configured_bound_without_sleeps() {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner.clone(), 2, false);
