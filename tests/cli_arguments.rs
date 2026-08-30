@@ -80,18 +80,37 @@ fn check_rejects_invalid_generation_hooks_without_valid_message() {
 }
 
 #[test]
-fn check_rejects_invalid_settled_hook_object() {
-    with_tmp_dir("hook-object-invalid", |dir| {
-        std::fs::write(dir.join(".watch.yaml"), "hooks:\n  failure:\n    run: echo fail\n    settle: 0s\n    extra: nope\njobs:\n  - name: a\n    run: [true]\n    change: '**/*'\n").unwrap();
-        fzz()
-            .arg("check")
-            .current_dir(dir)
-            .assert()
-            .code(1)
-            .stdout(predicate::str::contains("Invalid hooks config"))
-            .stdout(predicate::str::contains("settle").or(predicate::str::contains("Unknown")))
-            .stdout(predicate::str::contains("config valid").not());
-    });
+fn check_rejects_invalid_settled_hook_objects() {
+    let cases = [
+        ("missing-run", "settle: 1s", "hooks.failure.run"),
+        ("numeric-run", "run: 1\n    settle: 1s", "hooks.failure.run"),
+        ("missing-settle", "run: echo fail", "hooks.failure.settle"),
+        ("zero-settle", "run: echo fail\n    settle: 0s", "positive"),
+        (
+            "invalid-settle",
+            "run: echo fail\n    settle: later",
+            "expected <number>",
+        ),
+        (
+            "unknown-property",
+            "run: echo fail\n    settle: 1s\n    extra: nope",
+            "Unknown property 'hooks.failure.extra'",
+        ),
+    ];
+    for (suffix, hook, reason) in cases {
+        with_tmp_dir(suffix, |dir| {
+            let yaml = format!("hooks:\n  failure:\n    {hook}\njobs:\n  - name: a\n    run: [true]\n    change: '**/*'\n");
+            std::fs::write(dir.join(".watch.yaml"), yaml).unwrap();
+            fzz()
+                .arg("check")
+                .current_dir(dir)
+                .assert()
+                .code(1)
+                .stdout(predicate::str::contains("Invalid hooks config"))
+                .stdout(predicate::str::contains(reason))
+                .stdout(predicate::str::contains("config valid").not());
+        });
+    }
 }
 
 #[test]
