@@ -352,6 +352,8 @@ impl Scheduler {
     }
 
     fn receive_until_deadline(&self, maximum_wait: Duration) -> SchedulerWake {
+        let started = Instant::now();
+        let budget_deadline = started + maximum_wait;
         let mut state = self.state.lock().unwrap();
         loop {
             if let Some(command) = state.queue.pop_front() {
@@ -361,9 +363,18 @@ impl Scheduler {
                 return SchedulerWake::Closed;
             }
             if let Some(deadline) = state.settlement.deadline() {
+                let now = Instant::now();
+                if now >= deadline {
+                    if let Some(claim) = state.settlement.claim_due(now) {
+                        return SchedulerWake::SettlementDue(claim.0, claim.1);
+                    }
+                }
+                if now >= budget_deadline {
+                    return SchedulerWake::Timeout;
+                }
                 let wait = deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(maximum_wait);
+                    .saturating_duration_since(now)
+                    .min(budget_deadline.saturating_duration_since(now));
                 let (next, timeout) = self.ready.wait_timeout(state, wait).unwrap();
                 state = next;
                 if timeout.timed_out() {
@@ -373,7 +384,14 @@ impl Scheduler {
                     return SchedulerWake::Timeout;
                 }
             } else {
-                let (next, timeout) = self.ready.wait_timeout(state, maximum_wait).unwrap();
+                let now = Instant::now();
+                if now >= budget_deadline {
+                    return SchedulerWake::Timeout;
+                }
+                let (next, timeout) = self
+                    .ready
+                    .wait_timeout(state, budget_deadline.saturating_duration_since(now))
+                    .unwrap();
                 state = next;
                 if timeout.timed_out() {
                     return SchedulerWake::Timeout;
