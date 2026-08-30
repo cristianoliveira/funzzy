@@ -1559,6 +1559,42 @@ mod tests {
     }
 
     #[test]
+    fn finished_settled_failure_registers_exact_pending_spec() {
+        let (worker, rx) = worker_with_events(false, false);
+        worker.set_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some("notify".into()),
+            failure_settle: Some(Duration::from_secs(9)),
+        });
+        worker.set_revision(crate::config_revision::ConfigRevision {
+            number: 12,
+            hash: "rev12".into(),
+        });
+        let run_id = worker
+            .schedule(vec![rule(vec!["false"])], "fail.rs")
+            .unwrap();
+        let _ = expect_event(
+            &rx,
+            "finished",
+            |e| matches!(e, WorkerEvent::Finished { run_id: id, .. } if *id == run_id),
+        );
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        let state = scheduler.state.lock().unwrap();
+        match &state.settlement {
+            SettlementState::Pending { spec, .. } => {
+                assert_eq!(spec.run_id, run_id);
+                assert_eq!(spec.command, "notify");
+                assert_eq!(spec.settle, Duration::from_secs(9));
+                assert_eq!(spec.revision, 12);
+                assert_eq!(spec.revision_hash, "rev12");
+            }
+            _ => panic!("expected pending settled hook"),
+        }
+        drop(state);
+        drop(worker);
+    }
+
+    #[test]
     fn schedule_cancels_claimed_settlement() {
         let (worker, rx) = worker_with_events(false, false);
         let scheduler = worker.scheduler.as_ref().unwrap().clone();
