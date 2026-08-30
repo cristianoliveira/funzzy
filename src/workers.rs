@@ -73,6 +73,12 @@ impl SettlementState {
     fn shutdown(&mut self) {
         self.newer_generation();
     }
+    fn deadline(&self) -> Option<Instant> {
+        match self {
+            Self::Pending { deadline, .. } => Some(*deadline),
+            _ => None,
+        }
+    }
 }
 
 /// A run requested through the worker's command stream.
@@ -169,6 +175,15 @@ struct SchedulerState {
 /// Scheduler that reports discarded queued work (contract §1): every
 /// generation superseded before spawn gets a terminal Cancelled event with its
 /// successor identity, so exact-generation awaits never hang.
+enum SchedulerWake {
+    Command(WorkerCommand),
+    SettlementDue(
+        crate::executor::PendingSettledHook,
+        crate::executor::CancellationToken,
+    ),
+    Closed,
+}
+
 struct Scheduler {
     state: Mutex<SchedulerState>,
     ready: Condvar,
@@ -188,6 +203,7 @@ impl Scheduler {
 
     fn register_settlement(&self, spec: crate::executor::PendingSettledHook, now: Instant) {
         self.state.lock().unwrap().settlement.register(spec, now);
+        self.ready.notify_all();
     }
 
     fn claim_settlement(
@@ -332,6 +348,30 @@ impl Scheduler {
 
     fn try_recv(&self) -> Option<WorkerCommand> {
         self.state.lock().unwrap().queue.pop_front()
+    }
+
+    fn receive_until_deadline(&self) -> SchedulerWake {
+        let mut state = self.state.lock().unwrap();
+        loop {
+            if let Some(command) = state.queue.pop_front() {
+                return SchedulerWake::Command(command);
+            }
+            if state.closed {
+                return SchedulerWake::Closed;
+            }
+            if let Some(deadline) = state.settlement.deadline() {
+                let wait = deadline.saturating_duration_since(Instant::now());
+                let (next, timeout) = self.ready.wait_timeout(state, wait).unwrap();
+                state = next;
+                if timeout.timed_out() {
+                    if let Some(claim) = state.settlement.claim_due(Instant::now()) {
+                        return SchedulerWake::SettlementDue(claim.0, claim.1);
+                    }
+                }
+            } else {
+                state = self.ready.wait(state).unwrap();
+            }
+        }
     }
 
     fn receive(&self) -> Option<WorkerCommand> {
@@ -1550,6 +1590,29 @@ mod tests {
             SettlementState::Idle
         ));
         drop(worker);
+    }
+
+    #[test]
+    fn scheduler_receive_claims_due_settlement_once() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        let now = Instant::now();
+        let spec = crate::executor::PendingSettledHook {
+            run_id: 8,
+            command: "x".into(),
+            settle: Duration::ZERO,
+            revision: 1,
+            revision_hash: "h".into(),
+        };
+        scheduler.register_settlement(spec.clone(), now);
+        let wake = scheduler.receive_until_deadline();
+        match wake {
+            SchedulerWake::SettlementDue(claimed, token) => {
+                assert_eq!(claimed, spec);
+                assert!(!token.is_cancelled());
+            }
+            _ => panic!("expected settlement due"),
+        }
+        assert!(scheduler.claim_settlement(now).is_none());
     }
 
     #[test]
