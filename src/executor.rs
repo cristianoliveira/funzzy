@@ -2800,6 +2800,43 @@ mod tests {
     }
 
     #[test]
+    fn settled_hook_pre_cancel_does_not_spawn() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        token.cancel();
+        let spec = PendingSettledHook {
+            run_id: 41,
+            command: "notify".into(),
+            settle: Duration::from_secs(1),
+            revision: 3,
+            revision_hash: "rev".into(),
+        };
+        assert!(executor.start_settled_hook(spec, &token).unwrap().is_none());
+        assert!(runner.started_commands().is_empty());
+    }
+
+    #[test]
+    fn settled_hook_spawn_error_preserves_generation_spec() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner, 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 42,
+            command: "spawn-error".into(),
+            settle: Duration::from_secs(1),
+            revision: 4,
+            revision_hash: "rev4".into(),
+        };
+        let error = match executor.start_settled_hook(spec, &token) {
+            Err(error) => error,
+            Ok(_) => panic!("expected spawn error"),
+        };
+        assert!(error.contains("synthetic spawn failure"));
+        assert!(error.contains("synthetic"));
+    }
+
+    #[test]
     fn parallel_stage_overlaps_only_up_to_the_configured_bound_without_sleeps() {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner.clone(), 2, false);
