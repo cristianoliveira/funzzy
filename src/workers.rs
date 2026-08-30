@@ -227,16 +227,14 @@ impl Scheduler {
 
     fn send(&self, command: WorkerCommand) {
         match &command {
-            WorkerCommand::Run(_) => {
-                self.cancel_active(None);
-                self.state.lock().unwrap().settlement.newer_generation();
-            }
+            WorkerCommand::Run(_) => self.cancel_active(None),
             WorkerCommand::Cancel { generation, .. } => self.cancel_active(*generation),
             _ => {}
         }
         let mut state = self.state.lock().unwrap();
         match command {
             WorkerCommand::Run(new_req) => {
+                state.settlement.newer_generation();
                 let new_id = new_req.run_id;
                 // A Run subsumes any immediately-preceding cancel-whatever:
                 // the run itself replaces active work, so the bare cancel is
