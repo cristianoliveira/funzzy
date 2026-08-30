@@ -819,6 +819,9 @@ impl Worker {
                         let completed_run = active.take().expect("active run");
                         consumer_scheduler.unregister_active(completed_run.run_id());
                         let completed = executor.finish(completed_run);
+                        if let Some(spec) = completed.pending_settled_hook.clone() {
+                            consumer_scheduler.register_settlement(spec, Instant::now());
+                        }
                         stdout::present_results(
                             completed.results,
                             completed.elapsed,
