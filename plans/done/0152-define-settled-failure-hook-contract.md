@@ -1,7 +1,7 @@
 ---
 id: TASK-0152
 title: Define settled failure hook contract
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: [design, config, hooks, watcher, agents, determinism]
@@ -34,15 +34,15 @@ hooks:
 
 ## Acceptance criteria
 
-- [ ] Define `settle` as a positive bounded duration during which the failed generation must remain the latest outcome.
-- [ ] Define when the settle clock starts and what counts as newer work.
-- [ ] Any newer accepted generation cancels the pending settled hook; a newer failure starts its own settle period and a newer pass leaves no failure hook pending.
-- [ ] The settle wait does not block scheduling, starting, or publishing the outcome of a newer generation.
-- [ ] Define deterministic ordering when settle expiry races a new generation, including cancellation and reaping when the custom command has started.
-- [ ] Preserve immutable generation correlation: the pending command and configuration revision belong to the generation that failed.
-- [ ] Define finite `run`, watched run, control await, reload, cancellation, supersession, shutdown, and hook-failure behavior.
-- [ ] Preserve current scalar `hooks.failure` behavior byte-for-behavior and reject malformed objects with actionable errors.
-- [ ] State whether the object form is failure-only or shared by success hooks; avoid accidental scope expansion.
+- [x] Define `settle` as a positive bounded duration during which the failed generation must remain the latest outcome.
+- [x] Define when the settle clock starts and what counts as newer work.
+- [x] Any newer accepted generation cancels the pending settled hook; a newer failure starts its own settle period and a newer pass leaves no failure hook pending.
+- [x] The settle wait does not block scheduling, starting, or publishing the outcome of a newer generation.
+- [x] Define deterministic ordering when settle expiry races a new generation, including cancellation and reaping when the custom command has started.
+- [x] Preserve immutable generation correlation: the pending command and configuration revision belong to the generation that failed.
+- [x] Define finite `run`, watched run, control await, reload, cancellation, supersession, shutdown, and hook-failure behavior.
+- [x] Preserve current scalar `hooks.failure` behavior byte-for-behavior and reject malformed objects with actionable errors.
+- [x] State whether the object form is failure-only or shared by success hooks; avoid accidental scope expansion.
 
 ## Non-goals
 

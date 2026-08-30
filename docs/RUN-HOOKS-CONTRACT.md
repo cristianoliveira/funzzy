@@ -38,8 +38,14 @@ jobs:
 
 - `hooks.close` is a sibling of `hooks.success` and `hooks.failure`; `on_close` is rejected as an unknown property.
 - Preferred `jobs:` configuration accepts hooks only under `hooks:`. Grouped legacy `tasks:` retains its historical `on:` hook placement as a compatibility input; a legacy root task list cannot declare hooks. Unsupported root/mixed shapes remain errors; migration does not change hook semantics.
-- Value type is one non-empty shell-command string. Lists, mappings, null,
-  empty strings, and unknown sibling properties are actionable config errors.
+- `hooks.success` and `hooks.close` values are one non-empty shell-command
+  string. `hooks.failure` accepts either that scalar (immediate behavior) or
+  the failure-only object `{ run: <non-empty string>, settle: <positive
+  bounded duration> }`. Lists, null, empty strings, unknown properties, and
+  objects on `success`/`close` are actionable config errors. A failure object
+  must contain exactly `run` and `settle`; `settle` must use the normal
+  duration syntax and be greater than zero and no greater than the configured
+  maximum (default 24h).
 - The command must be finite. A service/daemon belongs in a `service: true`
   job, not a close hook.
 - Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and generated init comments must agree that `close` is an optional `hooks` string.
@@ -59,7 +65,55 @@ jobs:
 - Generation hooks expand `{{filepath}}`/`{{paths}}`, carry generation
   identity, and produce generation-correlated hook events.
 
-## 4. Watcher close lifecycle and exact ordering
+## 4. Settled failure hooks
+
+The scalar `hooks.failure: COMMAND` remains immediate and is unchanged. The
+object form is deliberately failure-only; it does not alter success hooks or
+introduce a shared hook policy.
+
+For `hooks.failure: {run: COMMAND, settle: DURATION}`, a failed generation is
+published as terminal immediately, then a settle timer starts at the instant
+that terminal failure is committed. The timer is owned by that generation and
+its immutable committed configuration revision. Settlement means that this
+failure remains the latest accepted generation outcome for the entire duration;
+knowledge of editor or agent activity is not involved.
+
+Scheduling a newer generation is the supersession boundary: once accepted by
+the watcher (including a control-triggered run), it invalidates the pending
+settled hook before replacement work starts. A newer failure gets its own
+snapshot and timer. A newer pass, cancellation, or supersession leaves no
+failure hook pending. The wait is asynchronous and never blocks scheduling,
+starting, terminal publication, or control responses for newer work.
+
+Timer expiry and acceptance of a newer generation are serialized by the
+watcher's generation coordinator. If acceptance wins, the pending hook is
+cancelled and reaped and does not start. If expiry wins, the command is
+atomically claimed and starts once; a generation accepted afterward cancels
+only the already-running command using the normal process-group cancellation
+and grace/reaping policy. A command that has begun cannot have external side
+effects recalled. In either order, no settled hook runs twice and no stale
+pending timer remains.
+
+The settled command receives the same generation correlation, template
+expansion, working directory, environment, output handling, and hook-failure
+semantics as an immediate failure hook. Its command and configuration revision
+are snapshots from the failed generation, so reloads do not rewrite a pending
+or running hook. A valid reload may affect later generations; malformed
+reloads do not. Hook failure (spawn error, nonzero exit, signal, or timeout)
+never changes the generation result or schedules another hook.
+
+Finite `run` commands use immediate failure hooks only and never start a settle
+timer. In watched mode, each accepted generation follows the rules above;
+control `run`/await observes terminal publication without waiting for the
+settle timer. Reload, cancellation, supersession, and shutdown cancel pending
+settled timers. Shutdown first quiesces scheduling, then cancels and reaps
+pending/running settled hooks alongside other owned work; it does not run a
+new settled hook after the close gate. A failure committed before shutdown may
+run only if its timer was already claimed before quiescence, and is then reaped
+by shutdown. These rules apply equally to normal return, control await,
+reload, and graceful shutdown.
+
+## 5. Watcher close lifecycle and exact ordering
 
 A close hook is eligible only after the watcher reaches **ready**: filesystem
 watches are registered and any configured control socket is accepting
