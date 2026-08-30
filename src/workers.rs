@@ -177,6 +177,7 @@ struct SchedulerState {
 /// successor identity, so exact-generation awaits never hang.
 enum SchedulerWake {
     Command(WorkerCommand),
+    Timeout,
     SettlementDue(
         crate::executor::PendingSettledHook,
         crate::executor::CancellationToken,
@@ -350,7 +351,7 @@ impl Scheduler {
         self.state.lock().unwrap().queue.pop_front()
     }
 
-    fn receive_until_deadline(&self) -> SchedulerWake {
+    fn receive_until_deadline(&self, maximum_wait: Duration) -> SchedulerWake {
         let mut state = self.state.lock().unwrap();
         loop {
             if let Some(command) = state.queue.pop_front() {
@@ -360,16 +361,23 @@ impl Scheduler {
                 return SchedulerWake::Closed;
             }
             if let Some(deadline) = state.settlement.deadline() {
-                let wait = deadline.saturating_duration_since(Instant::now());
+                let wait = deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(maximum_wait);
                 let (next, timeout) = self.ready.wait_timeout(state, wait).unwrap();
                 state = next;
                 if timeout.timed_out() {
                     if let Some(claim) = state.settlement.claim_due(Instant::now()) {
                         return SchedulerWake::SettlementDue(claim.0, claim.1);
                     }
+                    return SchedulerWake::Timeout;
                 }
             } else {
-                state = self.ready.wait(state).unwrap();
+                let (next, timeout) = self.ready.wait_timeout(state, maximum_wait).unwrap();
+                state = next;
+                if timeout.timed_out() {
+                    return SchedulerWake::Timeout;
+                }
             }
         }
     }
@@ -1612,7 +1620,7 @@ mod tests {
             reply: tx,
         });
         assert!(matches!(
-            scheduler.receive_until_deadline(),
+            scheduler.receive_until_deadline(Duration::from_secs(60)),
             SchedulerWake::Command(WorkerCommand::ReconcileServices { .. })
         ));
         assert!(matches!(
@@ -1626,7 +1634,7 @@ mod tests {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         scheduler.close();
         assert!(matches!(
-            scheduler.receive_until_deadline(),
+            scheduler.receive_until_deadline(Duration::from_secs(60)),
             SchedulerWake::Closed
         ));
     }
@@ -1643,7 +1651,7 @@ mod tests {
             revision_hash: "h".into(),
         };
         scheduler.register_settlement(spec.clone(), now);
-        let wake = scheduler.receive_until_deadline();
+        let wake = scheduler.receive_until_deadline(Duration::from_secs(1));
         match wake {
             SchedulerWake::SettlementDue(claimed, token) => {
                 assert_eq!(claimed, spec);
