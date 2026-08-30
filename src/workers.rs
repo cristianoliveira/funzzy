@@ -1523,6 +1523,36 @@ mod tests {
     }
 
     #[test]
+    fn schedule_cancels_pending_settlement() {
+        let (worker, rx) = worker_with_events(false, false);
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        let now = Instant::now();
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 6,
+                command: "x".into(),
+                settle: Duration::from_secs(10),
+                revision: 1,
+                revision_hash: "h".into(),
+            },
+            now,
+        );
+        let run_id = worker
+            .schedule(vec![rule(vec!["true"])], "next.rs")
+            .unwrap();
+        let _ = expect_event(
+            &rx,
+            "run started",
+            |e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == run_id),
+        );
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Idle
+        ));
+        drop(worker);
+    }
+
+    #[test]
     fn scheduler_registration_keeps_newest_generation() {
         let (worker, _) = worker_with_events(false, false);
         let scheduler = worker.scheduler.as_ref().unwrap().clone();
