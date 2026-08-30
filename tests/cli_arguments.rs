@@ -80,6 +80,34 @@ fn check_rejects_invalid_generation_hooks_without_valid_message() {
 }
 
 #[test]
+fn check_rejects_invalid_settled_hook_object() {
+    with_tmp_dir("hook-object-invalid", |dir| {
+        std::fs::write(dir.join(".watch.yaml"), "hooks:\n  failure:\n    run: echo fail\n    settle: 0s\n    extra: nope\njobs:\n  - name: a\n    run: [true]\n    change: '**/*'\n").unwrap();
+        fzz()
+            .arg("check")
+            .current_dir(dir)
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid hooks config"))
+            .stdout(predicate::str::contains("settle").or(predicate::str::contains("Unknown")))
+            .stdout(predicate::str::contains("config valid").not());
+    });
+}
+
+#[test]
+fn check_accepts_legacy_generation_hooks() {
+    with_tmp_dir("hook-legacy", |dir| {
+        std::fs::write(dir.join(".watch.yaml"), "on:\n  success: echo ok\n  failure: echo fail\ntasks:\n  - name: a\n    run: echo a\n    run_on_init: true\n").unwrap();
+        fzz()
+            .arg("check")
+            .current_dir(dir)
+            .assert()
+            .code(0)
+            .stdout(predicate::str::contains("config valid"));
+    });
+}
+
+#[test]
 fn check_accepts_scalar_and_settled_generation_hooks() {
     for (name, hooks) in [
         (
