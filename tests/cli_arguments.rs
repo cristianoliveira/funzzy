@@ -56,6 +56,62 @@ fn with_tmp_dir<F: FnOnce(&std::path::Path)>(suffix: &str, f: F) {
 }
 
 // ---------------------------------------------------------------------------
+// TASK-0156 generation-hook validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn check_rejects_invalid_generation_hooks_without_valid_message() {
+    with_tmp_dir("hook-validation", |dir| {
+        std::fs::write(
+            dir.join(".watch.yaml"),
+            "hooks:\n  failure: 1\njobs:\n  - name: a\n    run: [true]\n    change: '**/*'\n",
+        )
+        .unwrap();
+        fzz()
+            .arg("check")
+            .current_dir(dir)
+            .assert()
+            .code(1)
+            .stdout(predicate::str::contains("Invalid hooks config"))
+            .stdout(predicate::str::contains("command string"))
+            .stdout(predicate::str::contains("config valid").not());
+        assert!(!dir.join(".watch.sock").exists());
+    });
+}
+
+#[test]
+fn check_accepts_scalar_and_settled_generation_hooks() {
+    for (name, hooks) in [
+        (
+            "scalar",
+            "hooks:\n  success: echo ok\n  failure: echo fail\n",
+        ),
+        (
+            "settled",
+            "hooks:\n  failure:\n    run: echo fail\n    settle: 2s\n",
+        ),
+    ] {
+        with_tmp_dir(name, |dir| {
+            std::fs::write(
+                dir.join(".watch.yaml"),
+                format!(
+                    "{}on:\n  socket: .watch.sock\njobs:\n  - name: a\n    run: [true]\n    change: '**/*'\n",
+                    hooks
+                ),
+            )
+            .unwrap();
+            fzz()
+                .arg("check")
+                .current_dir(dir)
+                .assert()
+                .code(0)
+                .stdout(predicate::str::contains("config valid"));
+            assert!(!dir.join(".watch.sock").exists());
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Help, version, and both binaries
 // ---------------------------------------------------------------------------
 
