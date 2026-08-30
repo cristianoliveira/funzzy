@@ -17,6 +17,14 @@ execution:
   concurrency: 2
   recovery_policy: prompt
 
+# Notify the crew only when a failure remains settled for two minutes.
+hooks:
+  failure:
+    run: >-
+      pi-bebop send --crew .pi/bebop/crew.json --from funzzy
+      --message "Funzzy pipeline failed; inspect the latest verification output and fix it."
+    settle: 2m
+
 jobs:
   # These two contiguous tasks overlap. Formatting is cheap while the test
   # task owns all compilation, avoiding the previous build/test duplication.
