@@ -1668,7 +1668,11 @@ impl Executor {
     /// pass, failure hook on fail. Hook failure never changes the run
     /// outcome; it is surfaced via a warning for loop diagnosis. The hook is
     /// spawned with the same process runner and reaped to completion.
-    fn run_terminal_hook(&self, metadata: &RunMetadata, outcome: &RunOutcome) -> Option<PendingSettledHook> {
+    fn run_terminal_hook(
+        &self,
+        metadata: &RunMetadata,
+        outcome: &RunOutcome,
+    ) -> Option<PendingSettledHook> {
         let command = if outcome.is_success() {
             metadata.hooks.success.as_deref()
         } else {
@@ -2673,20 +2677,25 @@ mod tests {
     fn settled_failure_returns_pending_spec_without_spawning_hook() {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner.clone(), 1, false);
-        let metadata = RunMetadata::new(1, "test")
-            .with_hooks(crate::config::GenerationHooks {
-                success: None,
-                failure: Some("notify".into()),
-                failure_settle: Some(Duration::from_secs(30)),
-            });
+        let metadata = RunMetadata::new(1, "test").with_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some("notify".into()),
+            failure_settle: Some(Duration::from_secs(30)),
+        });
         runner.complete("false", false);
-        let mut run = executor.start(metadata, RunPlan::from_rules(vec![task("fail", None, &["false"])]));
+        let mut run = executor.start(
+            metadata,
+            RunPlan::from_rules(vec![task("fail", None, &["false"])]),
+        );
         while matches!(executor.advance(&mut run), Step::Running) {}
         let completed = executor.finish(run);
         let pending = completed.pending_settled_hook.expect("pending hook");
         assert_eq!(pending.command, "notify");
         assert_eq!(pending.settle, Duration::from_secs(30));
-        assert!(runner.started_commands().iter().all(|command| command != "notify"));
+        assert!(runner
+            .started_commands()
+            .iter()
+            .all(|command| command != "notify"));
     }
 
     #[test]
@@ -2694,15 +2703,37 @@ mod tests {
         let runner = FakeRunner::default();
         let events = Arc::new(Mutex::new(Vec::<Event>::new()));
         let sink = Arc::clone(&events);
-        let executor = Executor::new(Arc::new(runner.clone()), Arc::new(FixedClock), 1, Arc::new(move |event| sink.lock().unwrap().push(event)), false, false).unwrap();
+        let executor = Executor::new(
+            Arc::new(runner.clone()),
+            Arc::new(FixedClock),
+            1,
+            Arc::new(move |event| sink.lock().unwrap().push(event)),
+            false,
+            false,
+        )
+        .unwrap();
         runner.complete("false", false);
-        let metadata = RunMetadata::new(7, "watch").with_hooks(crate::config::GenerationHooks { success: None, failure: Some("notify".into()), failure_settle: Some(Duration::from_secs(1)) });
-        let mut run = executor.start(metadata, RunPlan::from_rules(vec![task("fail", None, &["false"])]));
+        let metadata = RunMetadata::new(7, "watch").with_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some("notify".into()),
+            failure_settle: Some(Duration::from_secs(1)),
+        });
+        let mut run = executor.start(
+            metadata,
+            RunPlan::from_rules(vec![task("fail", None, &["false"])]),
+        );
         while matches!(executor.advance(&mut run), Step::Running) {}
         let completed = executor.finish(run);
         assert!(completed.pending_settled_hook.is_some());
-        assert!(events.lock().unwrap().iter().any(|event| matches!(event, Event::Finished { run_id: 7, .. })));
-        assert!(runner.started_commands().iter().all(|command| command != "notify"));
+        assert!(events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, Event::Finished { run_id: 7, .. })));
+        assert!(runner
+            .started_commands()
+            .iter()
+            .all(|command| command != "notify"));
     }
 
     #[test]
@@ -2716,10 +2747,18 @@ mod tests {
         });
         runner.complete("false", false);
         runner.complete("notify", true);
-        let _ = executor.run_to_completion(metadata, RunPlan::from_rules(vec![
-            task("fail", None, &["false"]),
-        ]));
-        assert_eq!(runner.started_commands().iter().filter(|command| command.as_str() == "notify").count(), 1);
+        let _ = executor.run_to_completion(
+            metadata,
+            RunPlan::from_rules(vec![task("fail", None, &["false"])]),
+        );
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|command| command.as_str() == "notify")
+                .count(),
+            1
+        );
     }
 
     #[test]

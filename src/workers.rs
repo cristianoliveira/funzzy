@@ -14,44 +14,56 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SettlementState {
-    pending: Option<crate::executor::PendingSettledHook>,
-    deadline: Option<Instant>,
-    claimed: bool,
-    cancelled: bool,
+enum SettlementState {
+    Idle,
+    Pending {
+        spec: crate::executor::PendingSettledHook,
+        deadline: Instant,
+    },
+    Claimed {
+        spec: crate::executor::PendingSettledHook,
+        token: crate::executor::CancellationToken,
+    },
 }
 impl SettlementState {
     fn new() -> Self {
-        Self {
-            pending: None,
-            deadline: None,
-            claimed: false,
-            cancelled: false,
-        }
+        Self::Idle
     }
     fn register(&mut self, spec: crate::executor::PendingSettledHook, now: Instant) {
-        self.deadline = Some(now + spec.settle);
-        self.pending = Some(spec);
-        self.claimed = false;
-        self.cancelled = false;
+        *self = Self::Pending {
+            deadline: now + spec.settle,
+            spec,
+        };
     }
     fn newer_generation(&mut self) {
-        self.pending = None;
-        self.deadline = None;
-        self.cancelled = true;
-    }
-    fn claim_due(&mut self, now: Instant) -> Option<crate::executor::PendingSettledHook> {
-        if !self.claimed && !self.cancelled && self.deadline.is_some_and(|d| now >= d) {
-            self.claimed = true;
-            return self.pending.clone();
+        if let Self::Claimed { token, .. } = self {
+            token.cancel();
         }
-        None
+        *self = Self::Idle;
+    }
+    fn claim_due(
+        &mut self,
+        now: Instant,
+    ) -> Option<(
+        crate::executor::PendingSettledHook,
+        crate::executor::CancellationToken,
+    )> {
+        let Self::Pending { spec, deadline } = self else {
+            return None;
+        };
+        if now < *deadline {
+            return None;
+        }
+        let token = crate::executor::CancellationToken::new();
+        let claim = (spec.clone(), token.clone());
+        *self = Self::Claimed {
+            spec: spec.clone(),
+            token,
+        };
+        Some(claim)
     }
     fn shutdown(&mut self) {
-        self.pending = None;
-        self.deadline = None;
-        self.cancelled = true;
+        self.newer_generation();
     }
 }
 
@@ -2276,16 +2288,15 @@ mod manual_frozen_reload_tests {
         let mut state = SettlementState::new();
         state.register(spec.clone(), now);
         assert!(state.claim_due(now + Duration::from_secs(4)).is_none());
-        assert_eq!(
-            state.claim_due(now + Duration::from_secs(5)),
-            Some(spec.clone())
-        );
+        let (claimed, token) = state.claim_due(now + Duration::from_secs(5)).unwrap();
+        assert_eq!(claimed, spec.clone());
+        assert!(!token.is_cancelled());
         assert!(state.claim_due(now + Duration::from_secs(6)).is_none());
         state.register(spec.clone(), now);
         state.newer_generation();
         assert!(state.claim_due(now + Duration::from_secs(5)).is_none());
         state.register(spec, now);
         state.shutdown();
-        assert!(state.pending.is_none());
+        assert!(matches!(state, SettlementState::Idle));
     }
 }

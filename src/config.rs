@@ -2749,11 +2749,19 @@ mod hooks_tests {
     fn hooks_reject_non_string_values() {
         assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
         assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
-        let settled = generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n").unwrap();
+        let settled =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n")
+                .unwrap();
         assert_eq!(settled.failure.as_deref(), Some("notify"));
         assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
-        assert!(generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 0s\n").is_err());
-        assert!(generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n").is_err());
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
+        )
+        .is_err());
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
+        )
+        .is_err());
     }
 
     #[test]
@@ -2827,7 +2835,10 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
     let read_hook = |key: &str| -> Result<Option<String>, String> {
         match &hooks[key] {
             Yaml::BadValue => Ok(None),
-            Yaml::String(value) if value.trim().is_empty() => Err(format!("Property 'hooks.{}' must be a non-empty command string", key)),
+            Yaml::String(value) if value.trim().is_empty() => Err(format!(
+                "Property 'hooks.{}' must be a non-empty command string",
+                key
+            )),
             Yaml::String(value) => Ok(Some(value.clone())),
             _ => Err(format!("Property 'hooks.{}' must be a command string", key)),
         }
@@ -2837,19 +2848,35 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
         Yaml::Hash(map) => {
             let run = match map.get(&Yaml::String("run".into())) {
                 Some(Yaml::String(value)) if !value.trim().is_empty() => value.clone(),
-                _ => return Err("Property 'hooks.failure.run' must be a non-empty command string".into()),
+                _ => {
+                    return Err(
+                        "Property 'hooks.failure.run' must be a non-empty command string".into(),
+                    )
+                }
             };
             let settle = match map.get(&Yaml::String("settle".into())) {
                 Some(Yaml::String(value)) => parse_duration("hooks.failure.settle", value)?,
-                Some(Yaml::Integer(value)) => parse_duration("hooks.failure.settle", &format!("{value}s"))?,
-                _ => return Err("Property 'hooks.failure.settle' must be a positive duration".into()),
+                Some(Yaml::Integer(value)) => {
+                    parse_duration("hooks.failure.settle", &format!("{value}s"))?
+                }
+                _ => {
+                    return Err(
+                        "Property 'hooks.failure.settle' must be a positive duration".into(),
+                    )
+                }
             };
-            let settle = settle.ok_or_else(|| "Property 'hooks.failure.settle' must be greater than zero".to_owned())?;
-            if settle.is_zero() { return Err("Property 'hooks.failure.settle' must be greater than zero".into()); }
+            let settle = settle.ok_or_else(|| {
+                "Property 'hooks.failure.settle' must be greater than zero".to_owned()
+            })?;
+            if settle.is_zero() {
+                return Err("Property 'hooks.failure.settle' must be greater than zero".into());
+            }
             for key in map.keys() {
                 if let Yaml::String(key) = key {
                     if key != "run" && key != "settle" {
-                        return Err(format!("Unknown property 'hooks.failure.{key}' (expected run or settle)"));
+                        return Err(format!(
+                            "Unknown property 'hooks.failure.{key}' (expected run or settle)"
+                        ));
                     }
                 }
             }
@@ -2858,7 +2885,7 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
         _ => (read_hook("failure")?, None),
     };
     Ok(GenerationHooks {
-    // failure_settle defaults to None for legacy callers
+        // failure_settle defaults to None for legacy callers
         success: read_hook("success")?,
         failure,
         failure_settle,
