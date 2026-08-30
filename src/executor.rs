@@ -1961,7 +1961,10 @@ impl Executor {
         still_running
     }
 
-    pub fn run_to_completion(&self, metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+    pub fn run_to_completion(&self, mut metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+        // Finite commands have no future generation to settle against; their
+        // failure hook is always immediate.
+        metadata.hooks.failure_settle = None;
         let mut run = self.start(metadata, plan);
         loop {
             match self.advance(&mut run) {
@@ -2677,9 +2680,9 @@ mod tests {
                 failure_settle: Some(Duration::from_secs(30)),
             });
         runner.complete("false", false);
-        let completed = executor.run_to_completion(metadata, RunPlan::from_rules(vec![
-            task("fail", None, &["false"]),
-        ]));
+        let mut run = executor.start(metadata, RunPlan::from_rules(vec![task("fail", None, &["false"])]));
+        while matches!(executor.advance(&mut run), Step::Running) {}
+        let completed = executor.finish(run);
         let pending = completed.pending_settled_hook.expect("pending hook");
         assert_eq!(pending.command, "notify");
         assert_eq!(pending.settle, Duration::from_secs(30));
