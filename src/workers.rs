@@ -25,6 +25,11 @@ enum SettlementState {
         token: crate::executor::CancellationToken,
     },
 }
+impl Default for SettlementState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl SettlementState {
     fn new() -> Self {
         Self::Idle
@@ -158,6 +163,7 @@ enum WorkerCommand {
 struct SchedulerState {
     queue: VecDeque<WorkerCommand>,
     closed: bool,
+    settlement: SettlementState,
 }
 
 /// Scheduler that reports discarded queued work (contract §1): every
@@ -178,6 +184,26 @@ impl Scheduler {
             events,
             active_cancellations: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn register_settlement(&self, completed: &crate::executor::CompletedRun, now: Instant) {
+        if let Some(spec) = completed.pending_settled_hook.clone() {
+            self.state.lock().unwrap().settlement.register(spec, now);
+        }
+    }
+
+    fn claim_settlement(
+        &self,
+        now: Instant,
+    ) -> Option<(
+        crate::executor::PendingSettledHook,
+        crate::executor::CancellationToken,
+    )> {
+        self.state.lock().unwrap().settlement.claim_due(now)
+    }
+
+    fn cancel_settlement(&self) {
+        self.state.lock().unwrap().settlement.newer_generation();
     }
 
     fn register_active(&self, run_id: u64, token: crate::executor::CancellationToken) {
@@ -201,7 +227,10 @@ impl Scheduler {
 
     fn send(&self, command: WorkerCommand) {
         match &command {
-            WorkerCommand::Run(_) => self.cancel_active(None),
+            WorkerCommand::Run(_) => {
+                self.cancel_active(None);
+                self.state.lock().unwrap().settlement.newer_generation();
+            }
             WorkerCommand::Cancel { generation, .. } => self.cancel_active(*generation),
             _ => {}
         }
