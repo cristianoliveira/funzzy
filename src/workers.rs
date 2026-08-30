@@ -12,7 +12,17 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SettlementState { pending: Option<crate::executor::PendingSettledHook>, deadline: Option<Instant>, claimed: bool, cancelled: bool }
+impl SettlementState {
+    fn new() -> Self { Self { pending: None, deadline: None, claimed: false, cancelled: false } }
+    fn register(&mut self, spec: crate::executor::PendingSettledHook, now: Instant) { self.deadline = Some(now + spec.settle); self.pending = Some(spec); self.claimed = false; self.cancelled = false; }
+    fn newer_generation(&mut self) { if self.pending.is_some() { self.cancelled = true; } }
+    fn claim_due(&mut self, now: Instant) -> Option<crate::executor::PendingSettledHook> { if !self.claimed && !self.cancelled && self.deadline.is_some_and(|d| now >= d) { self.claimed = true; return self.pending.clone(); } None }
+    fn shutdown(&mut self) { self.pending = None; self.deadline = None; self.cancelled = true; }
+}
 
 /// A run requested through the worker's command stream.
 struct RunRequest {
