@@ -2598,6 +2598,7 @@ mod tests {
         max_active: usize,
         started: Vec<(String, String)>,
         completed: HashMap<String, bool>,
+        wait_error: HashMap<String, String>,
         shutdown: HashSet<String>,
         shutdown_count: usize,
     }
@@ -2608,6 +2609,14 @@ mod tests {
     }
 
     impl FakeRunner {
+        fn fail_wait(&self, command: &str, error: &str) {
+            self.state
+                .lock()
+                .unwrap()
+                .wait_error
+                .insert(command.into(), error.into());
+        }
+
         fn complete(&self, command: &str, success: bool) {
             self.state
                 .lock()
@@ -2656,13 +2665,12 @@ mod tests {
 
     impl ChildProcess for FakeChild {
         fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
-            let completed = self
-                .state
-                .lock()
-                .unwrap()
-                .completed
-                .get(&self.command)
-                .copied();
+            let state = self.state.lock().unwrap();
+            if let Some(error) = state.wait_error.get(&self.command) {
+                return Err(io::Error::new(io::ErrorKind::Other, error.clone()));
+            }
+            let completed = state.completed.get(&self.command).copied();
+            drop(state);
             Ok(completed.map(|success| self.terminal_status(success)))
         }
 
@@ -2804,6 +2812,29 @@ mod tests {
                 .filter(|command| command.as_str() == "notify")
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn settled_hook_poll_error_is_correlated() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 47,
+            command: "notify".into(),
+            settle: Duration::from_secs(1),
+            revision: 6,
+            revision_hash: "rev6".into(),
+        };
+        let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
+        runner.fail_wait("notify", "broken wait");
+        let error = Executor::poll_settled_hook(&mut run).unwrap_err();
+        assert!(
+            error.contains("generation 47")
+                && error.contains("revision 6")
+                && error.contains("rev6")
+                && error.contains("broken wait")
         );
     }
 
