@@ -15,13 +15,44 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SettlementState { pending: Option<crate::executor::PendingSettledHook>, deadline: Option<Instant>, claimed: bool, cancelled: bool }
+struct SettlementState {
+    pending: Option<crate::executor::PendingSettledHook>,
+    deadline: Option<Instant>,
+    claimed: bool,
+    cancelled: bool,
+}
 impl SettlementState {
-    fn new() -> Self { Self { pending: None, deadline: None, claimed: false, cancelled: false } }
-    fn register(&mut self, spec: crate::executor::PendingSettledHook, now: Instant) { self.deadline = Some(now + spec.settle); self.pending = Some(spec); self.claimed = false; self.cancelled = false; }
-    fn newer_generation(&mut self) { if self.pending.is_some() { self.cancelled = true; } }
-    fn claim_due(&mut self, now: Instant) -> Option<crate::executor::PendingSettledHook> { if !self.claimed && !self.cancelled && self.deadline.is_some_and(|d| now >= d) { self.claimed = true; return self.pending.clone(); } None }
-    fn shutdown(&mut self) { self.pending = None; self.deadline = None; self.cancelled = true; }
+    fn new() -> Self {
+        Self {
+            pending: None,
+            deadline: None,
+            claimed: false,
+            cancelled: false,
+        }
+    }
+    fn register(&mut self, spec: crate::executor::PendingSettledHook, now: Instant) {
+        self.deadline = Some(now + spec.settle);
+        self.pending = Some(spec);
+        self.claimed = false;
+        self.cancelled = false;
+    }
+    fn newer_generation(&mut self) {
+        self.pending = None;
+        self.deadline = None;
+        self.cancelled = true;
+    }
+    fn claim_due(&mut self, now: Instant) -> Option<crate::executor::PendingSettledHook> {
+        if !self.claimed && !self.cancelled && self.deadline.is_some_and(|d| now >= d) {
+            self.claimed = true;
+            return self.pending.clone();
+        }
+        None
+    }
+    fn shutdown(&mut self) {
+        self.pending = None;
+        self.deadline = None;
+        self.cancelled = true;
+    }
 }
 
 /// A run requested through the worker's command stream.
@@ -1248,7 +1279,7 @@ mod tests {
             Arc::new(ApprovingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
-    // failure_settle defaults to None for legacy callers
+            // failure_settle defaults to None for legacy callers
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
             failure_settle: None,
@@ -1309,7 +1340,7 @@ mod tests {
             Arc::new(ApprovingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
-    // failure_settle defaults to None for legacy callers
+            // failure_settle defaults to None for legacy callers
             success: Some(format!("touch '{}'", hook.display())),
             failure: Some(format!("touch '{}'", hook.display())),
             failure_settle: None,
@@ -1363,7 +1394,7 @@ mod tests {
             Arc::new(BlockingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
-    // failure_settle defaults to None for legacy callers
+            // failure_settle defaults to None for legacy callers
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
             failure_settle: None,
@@ -2231,5 +2262,30 @@ mod manual_frozen_reload_tests {
                 return event;
             }
         }
+    }
+    #[test]
+    fn settlement_transitions_are_deterministic() {
+        let now = Instant::now();
+        let spec = crate::executor::PendingSettledHook {
+            run_id: 7,
+            command: "x".into(),
+            settle: Duration::from_secs(5),
+            revision: 2,
+            revision_hash: "h".into(),
+        };
+        let mut state = SettlementState::new();
+        state.register(spec.clone(), now);
+        assert!(state.claim_due(now + Duration::from_secs(4)).is_none());
+        assert_eq!(
+            state.claim_due(now + Duration::from_secs(5)),
+            Some(spec.clone())
+        );
+        assert!(state.claim_due(now + Duration::from_secs(6)).is_none());
+        state.register(spec.clone(), now);
+        state.newer_generation();
+        assert!(state.claim_due(now + Duration::from_secs(5)).is_none());
+        state.register(spec, now);
+        state.shutdown();
+        assert!(state.pending.is_none());
     }
 }
