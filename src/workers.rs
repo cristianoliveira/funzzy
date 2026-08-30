@@ -1238,8 +1238,10 @@ mod tests {
             Arc::new(ApprovingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
+    // failure_settle defaults to None for legacy callers
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
+            failure_settle: None,
         });
         let run_id = worker
             .schedule_with_trigger(
@@ -1297,8 +1299,10 @@ mod tests {
             Arc::new(ApprovingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
+    // failure_settle defaults to None for legacy callers
             success: Some(format!("touch '{}'", hook.display())),
             failure: Some(format!("touch '{}'", hook.display())),
+            failure_settle: None,
         });
         let run_id = worker
             .schedule_with_trigger(
@@ -1349,8 +1353,10 @@ mod tests {
             Arc::new(BlockingApproval),
         )
         .with_hooks(crate::config::GenerationHooks {
+    // failure_settle defaults to None for legacy callers
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
+            failure_settle: None,
         });
         let run_id = worker
             .schedule_with_trigger(
