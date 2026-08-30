@@ -36,6 +36,15 @@ Implement the accepted TASK-0152 contract through tests first while preserving i
 - Do not introduce an agent, notification, or platform dependency.
 - Do not preserve a second deprecated configuration path.
 
+## Delivery slices
+
+1. **Separate terminal publication from settled-hook execution.** Preserve immediate scalar hooks; make settled failure completion return an immutable pending-hook specification after publishing the generation result. Prove ordering and finite-run behavior.
+2. **Coordinate pending and claimed hooks.** Add Worker-owned settlement state and deterministic deadline/new-generation arbitration through the existing scheduler lock.
+3. **Own running-hook cancellation.** Retain the hook child through Executor lifecycle primitives and cover replacement, explicit cancellation, reload, and shutdown reaping.
+4. **Close integration acceptance.** Run focused tests, resolve regressions, and transition TASK-0153 only after every criterion above passes.
+
+Each slice may land as its own traceable commit. Partial slices leave this task `doing`.
+
 ## Notes
 
 Follow the contract produced by TASK-0152; do not infer unresolved lifecycle semantics during implementation.
