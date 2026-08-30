@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 4;
+pub const REVISION_SCHEMA_VERSION: u64 = 5;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -401,8 +401,8 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
-        // Schema version 4 (MANUAL-TRIGGER-CONTRACT §7 + FINITE-JOB-TIMEOUT-
-        // CONTRACT §7): trigger and timeout are encoded; fixture regenerated.
+        // Schema version 5 (settled failure hooks + prior trigger/timeout
+        // contracts): the semantic encoding changed; fixture regenerated.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
             rules("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"),
@@ -418,7 +418,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "af2582489f83464e35f5292f5bc87269df8c5d0486cd5fd85701328cd1660a7a"
+            "d097b0e93820cf4836bdc9bbc0c94ea26c6d783946bd01c494b06f0686189d8e"
         );
     }
 
@@ -796,11 +796,11 @@ mod manual_trigger_tests {
     }
 
     /// TASK-0136 regression pin: schema version 3 introduced trigger
-    /// encoding; TASK-0139 bumps to 4 for timeout encoding (both invalidate
-    /// prior revision hashes by design).
+    /// encoding; TASK-0139 bumped to 4 for timeout encoding; settled failure
+    /// hooks bump it to 5. Each invalidates prior revision hashes by design.
     #[test]
     fn revision_schema_version_is_pinned() {
-        assert_eq!(REVISION_SCHEMA_VERSION, 4);
+        assert_eq!(REVISION_SCHEMA_VERSION, 5);
     }
     /// TASK-0136: a manual generation freezes its revision — a reload that
     /// edits ONLY the trigger mints a new revision (different hash), so the
