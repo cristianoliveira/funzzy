@@ -345,7 +345,9 @@ impl Scheduler {
     }
 
     fn close(&self) {
-        self.state.lock().unwrap().closed = true;
+        let mut state = self.state.lock().unwrap();
+        state.settlement.shutdown();
+        state.closed = true;
         self.ready.notify_all();
     }
 }
@@ -2339,5 +2341,30 @@ mod manual_frozen_reload_tests {
         state.shutdown();
         assert!(new_token.is_cancelled());
         assert!(matches!(state, SettlementState::Idle));
+    }
+    #[test]
+    fn scheduler_close_cancels_claimed_settlement() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        let now = Instant::now();
+        let spec = crate::executor::PendingSettledHook {
+            run_id: 9,
+            command: "x".into(),
+            settle: Duration::from_secs(1),
+            revision: 1,
+            revision_hash: "h".into(),
+        };
+        {
+            let mut state = scheduler.state.lock().unwrap();
+            state.settlement.register(spec, now);
+        }
+        let (_, token) = scheduler
+            .claim_settlement(now + Duration::from_secs(1))
+            .unwrap();
+        scheduler.close();
+        assert!(token.is_cancelled());
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Idle
+        ));
     }
 }
