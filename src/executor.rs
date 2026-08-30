@@ -2690,6 +2690,22 @@ mod tests {
     }
 
     #[test]
+    fn settled_failure_publishes_finished_event_before_returning_pending_spec() {
+        let runner = FakeRunner::default();
+        let events = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let sink = Arc::clone(&events);
+        let executor = Executor::new(Arc::new(runner.clone()), Arc::new(FixedClock), 1, Arc::new(move |event| sink.lock().unwrap().push(event)), false, false).unwrap();
+        runner.complete("false", false);
+        let metadata = RunMetadata::new(7, "watch").with_hooks(crate::config::GenerationHooks { success: None, failure: Some("notify".into()), failure_settle: Some(Duration::from_secs(1)) });
+        let mut run = executor.start(metadata, RunPlan::from_rules(vec![task("fail", None, &["false"])]));
+        while matches!(executor.advance(&mut run), Step::Running) {}
+        let completed = executor.finish(run);
+        assert!(completed.pending_settled_hook.is_some());
+        assert!(events.lock().unwrap().iter().any(|event| matches!(event, Event::Finished { run_id: 7, .. })));
+        assert!(runner.started_commands().iter().all(|command| command != "notify"));
+    }
+
+    #[test]
     fn scalar_failure_hook_still_runs_inline_once() {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner.clone(), 1, false);
