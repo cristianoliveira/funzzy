@@ -14,6 +14,35 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+struct SettledHookOwner {
+    running: Option<(
+        crate::executor::SettledHookRun,
+        crate::executor::CancellationToken,
+    )>,
+}
+impl SettledHookOwner {
+    fn new() -> Self {
+        Self { running: None }
+    }
+    fn start(
+        &mut self,
+        executor: &crate::executor::Executor,
+        spec: crate::executor::PendingSettledHook,
+        token: crate::executor::CancellationToken,
+    ) -> Result<bool, String> {
+        let Some(run) = executor.start_settled_hook(spec, &token)? else {
+            return Ok(false);
+        };
+        self.running = Some((run, token));
+        Ok(true)
+    }
+    fn shutdown(&mut self, executor: &crate::executor::Executor) {
+        if let Some((mut run, _)) = self.running.take() {
+            let _ = executor.cancel_settled_hook(&mut run);
+        }
+    }
+}
+
 enum SettlementState {
     Idle,
     Pending {
