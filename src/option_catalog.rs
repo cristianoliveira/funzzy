@@ -78,7 +78,7 @@ const ON_SPECS: &[OptionSpec] = &[
         default: None,
         help: "Control socket path; enables the control surface (`fzz control`).",
         values: None,
-        example: &["socket: .tmp/funzzy/control.sock"],
+        example: &["socket: .watch.sock"],
         kind: SpecKind::String,
     },
     OptionSpec {

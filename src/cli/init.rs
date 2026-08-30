@@ -71,7 +71,7 @@ pub fn render_init_template() -> String {
         out.push_str(&comment_for(spec, "  "));
         out.push('\n');
         if spec.name == "socket" {
-            out.push_str("  socket: .tmp/funzzy/control.sock\n");
+            out.push_str("  socket: .watch.sock\n");
         } else {
             for line in spec.example {
                 out.push_str(&format!("  # {line}\n"));
@@ -258,8 +258,8 @@ mod renderer_tests {
         assert!(content.contains("**/*.txt"));
         assert!(content.contains("**/*.log"));
         // Socket line is active, not commented.
-        assert!(content.contains("  socket: .tmp/funzzy/control.sock"));
-        assert!(!content.contains("# socket: .tmp/funzzy/control.sock"));
+        assert!(content.contains("  socket: .watch.sock"));
+        assert!(!content.contains("# socket: .watch.sock"));
     }
 
     /// Every optional catalog property is documented as a comment near its

@@ -112,7 +112,7 @@ fn agent_yaml() -> &'static str {
 #   Ctrl-G             # run the complete pipeline once while watching
 on:
   change: "**/*"
-  socket: .tmp/funzzy/control.sock
+  socket: .watch.sock
 
 execution:
   concurrency: 2
