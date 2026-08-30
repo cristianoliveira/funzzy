@@ -1753,14 +1753,22 @@ impl Executor {
         if token.is_cancelled() {
             return Ok(None);
         }
-        let child = self.runner.spawn(
-            "hook",
-            &CommandLine::Shell(spec.command.clone()),
-            &TaskContext::default(),
-            None,
-            None,
-            false,
-        )?;
+        let child = self
+            .runner
+            .spawn(
+                "hook",
+                &CommandLine::Shell(spec.command.clone()),
+                &TaskContext::default(),
+                None,
+                None,
+                false,
+            )
+            .map_err(|error| {
+                format!(
+                    "settled hook generation {} revision {} ({}) failed to spawn: {}",
+                    spec.run_id, spec.revision, spec.revision_hash, error
+                )
+            })?;
         Ok(Some(SettledHookRun { spec, child }))
     }
 
@@ -2832,8 +2840,37 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("expected spawn error"),
         };
+        assert!(error.contains("generation 42"));
+        assert!(error.contains("revision 4"));
+        assert!(error.contains("rev4"));
         assert!(error.contains("synthetic spawn failure"));
-        assert!(error.contains("synthetic"));
+    }
+
+    #[test]
+    fn settled_hook_start_retains_spec_and_spawns_once() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 43,
+            command: "notify".into(),
+            settle: Duration::from_secs(2),
+            revision: 5,
+            revision_hash: "rev5".into(),
+        };
+        let run = executor
+            .start_settled_hook(spec.clone(), &token)
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.spec, spec);
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| c.as_str() == "notify")
+                .count(),
+            1
+        );
     }
 
     #[test]
