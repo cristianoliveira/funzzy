@@ -186,10 +186,8 @@ impl Scheduler {
         }
     }
 
-    fn register_settlement(&self, completed: &crate::executor::CompletedRun, now: Instant) {
-        if let Some(spec) = completed.pending_settled_hook.clone() {
-            self.state.lock().unwrap().settlement.register(spec, now);
-        }
+    fn register_settlement(&self, spec: crate::executor::PendingSettledHook, now: Instant) {
+        self.state.lock().unwrap().settlement.register(spec, now);
     }
 
     fn claim_settlement(
@@ -1489,6 +1487,74 @@ mod tests {
             vec![],
             false,
         )
+    }
+
+    #[test]
+    fn schedule_cancels_claimed_settlement() {
+        let (worker, rx) = worker_with_events(false, false);
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        let now = Instant::now();
+        let spec = crate::executor::PendingSettledHook {
+            run_id: 7,
+            command: "x".into(),
+            settle: Duration::from_secs(1),
+            revision: 1,
+            revision_hash: "h".into(),
+        };
+        scheduler.register_settlement(spec, now);
+        let (_, token) = scheduler
+            .claim_settlement(now + Duration::from_secs(1))
+            .unwrap();
+        let run_id = worker
+            .schedule(vec![rule(vec!["true"])], "next.rs")
+            .unwrap();
+        assert!(token.is_cancelled());
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Idle
+        ));
+        let event = expect_event(
+            &rx,
+            "run started",
+            |e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == run_id),
+        );
+        assert!(matches!(event, WorkerEvent::Started { .. }));
+        drop(worker);
+    }
+
+    #[test]
+    fn scheduler_registration_keeps_newest_generation() {
+        let (worker, _) = worker_with_events(false, false);
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        let now = Instant::now();
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 7,
+                command: "a".into(),
+                settle: Duration::from_secs(5),
+                revision: 1,
+                revision_hash: "a".into(),
+            },
+            now,
+        );
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 8,
+                command: "b".into(),
+                settle: Duration::from_secs(10),
+                revision: 2,
+                revision_hash: "b".into(),
+            },
+            now,
+        );
+        assert!(scheduler
+            .claim_settlement(now + Duration::from_secs(5))
+            .is_none());
+        let (claimed, _) = scheduler
+            .claim_settlement(now + Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(claimed.run_id, 8);
+        drop(worker);
     }
 
     fn expect_event<F>(rx: &Receiver<WorkerEvent>, what: &str, pred: F) -> WorkerEvent
