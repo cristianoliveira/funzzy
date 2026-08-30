@@ -72,6 +72,10 @@ fn init_is_deterministic_single_file_and_refuses_overwrite() {
         "exactly one .watch.yaml expected"
     );
     let bytes = std::fs::read(&yaml_path).expect("read .watch.yaml");
+    let generated = String::from_utf8_lossy(&bytes);
+    assert!(generated.contains("  socket: .watch.sock"));
+    assert!(!generated.contains(".tmp/funzzy/control.sock"));
+    assert!(!dir.join(".watch.sock").exists(), "init writes config only");
 
     // Deterministic across runs in a different directory.
     let dir2 = empty_dir("init-contract-2");
