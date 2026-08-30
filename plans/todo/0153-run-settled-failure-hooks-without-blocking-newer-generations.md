@@ -1,7 +1,7 @@
 ---
 id: TASK-0153
 title: Run settled failure hooks without blocking newer generations
-status: todo
+status: doing
 depends_on: [TASK-0152]
 priority: high
 tags: [rust, config, hooks, scheduler, process, tdd]
