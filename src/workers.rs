@@ -30,6 +30,9 @@ impl SettlementState {
         Self::Idle
     }
     fn register(&mut self, spec: crate::executor::PendingSettledHook, now: Instant) {
+        if let Self::Claimed { token, .. } = self {
+            token.cancel();
+        }
         *self = Self::Pending {
             deadline: now + spec.settle,
             spec,
@@ -2293,10 +2296,21 @@ mod manual_frozen_reload_tests {
         assert!(!token.is_cancelled());
         assert!(state.claim_due(now + Duration::from_secs(6)).is_none());
         state.register(spec.clone(), now);
+        let (_, old_token) = state.claim_due(now + Duration::from_secs(5)).unwrap();
         state.newer_generation();
+        assert!(old_token.is_cancelled());
+        assert!(matches!(state, SettlementState::Idle));
+        let newer = crate::executor::PendingSettledHook {
+            run_id: 8,
+            settle: Duration::from_secs(10),
+            ..spec
+        };
+        state.register(newer.clone(), now);
         assert!(state.claim_due(now + Duration::from_secs(5)).is_none());
-        state.register(spec, now);
+        let (claimed_new, new_token) = state.claim_due(now + Duration::from_secs(10)).unwrap();
+        assert_eq!(claimed_new.run_id, 8);
         state.shutdown();
+        assert!(new_token.is_cancelled());
         assert!(matches!(state, SettlementState::Idle));
     }
 }
