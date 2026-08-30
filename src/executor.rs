@@ -2808,6 +2808,47 @@ mod tests {
     }
 
     #[test]
+    fn settled_hook_poll_active_then_success() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 45,
+            command: "notify".into(),
+            settle: Duration::from_secs(1),
+            revision: 1,
+            revision_hash: "r".into(),
+        };
+        let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
+        assert!(Executor::poll_settled_hook(&mut run).unwrap().is_none());
+        runner.complete("notify", true);
+        assert!(Executor::poll_settled_hook(&mut run)
+            .unwrap()
+            .unwrap()
+            .success());
+    }
+
+    #[test]
+    fn settled_hook_poll_nonzero_is_observable() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner.clone(), 1, false);
+        let token = CancellationToken::new();
+        let spec = PendingSettledHook {
+            run_id: 46,
+            command: "notify".into(),
+            settle: Duration::from_secs(1),
+            revision: 1,
+            revision_hash: "r".into(),
+        };
+        let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
+        runner.complete("notify", false);
+        assert!(!Executor::poll_settled_hook(&mut run)
+            .unwrap()
+            .unwrap()
+            .success());
+    }
+
+    #[test]
     fn settled_hook_cancel_shuts_down_once() {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner.clone(), 1, false);
