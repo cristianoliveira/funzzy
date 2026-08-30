@@ -421,10 +421,21 @@ impl RunMetadata {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingSettledHook {
+    pub run_id: u64,
+    pub command: String,
+    pub settle: Duration,
+    pub revision: u64,
+    pub revision_hash: String,
+}
+
 pub struct CompletedRun {
     pub results: Vec<Result<(), String>>,
     pub elapsed: Duration,
     pub outcome: RunOutcome,
+    /// Settled failure hook to be coordinated by the worker after publication.
+    pub pending_settled_hook: Option<PendingSettledHook>,
     /// Terminal job snapshots in configured declaration order. These carry
     /// the executor's only per-job monotonic duration measurements.
     pub tasks: Vec<TaskSnapshot>,
@@ -1657,13 +1668,24 @@ impl Executor {
     /// pass, failure hook on fail. Hook failure never changes the run
     /// outcome; it is surfaced via a warning for loop diagnosis. The hook is
     /// spawned with the same process runner and reaped to completion.
-    fn run_terminal_hook(&self, metadata: &RunMetadata, outcome: &RunOutcome) {
+    fn run_terminal_hook(&self, metadata: &RunMetadata, outcome: &RunOutcome) -> Option<PendingSettledHook> {
         let command = if outcome.is_success() {
             metadata.hooks.success.as_deref()
         } else {
             metadata.hooks.failure.as_deref()
         };
-        let Some(command) = command else { return };
+        let Some(command) = command else { return None };
+        if !outcome.is_success() {
+            if let Some(settle) = metadata.hooks.failure_settle {
+                return Some(PendingSettledHook {
+                    run_id: metadata.run_id,
+                    command: command.to_owned(),
+                    settle,
+                    revision: metadata.revision.unwrap_or(0),
+                    revision_hash: metadata.revision_hash.clone().unwrap_or_default(),
+                });
+            }
+        }
         let label = if outcome.is_success() {
             "success"
         } else {
@@ -1711,6 +1733,7 @@ impl Executor {
                 label, metadata.run_id, err
             )),
         }
+        None
     }
 
     pub fn finish(&self, mut run: Run) -> CompletedRun {
@@ -1735,11 +1758,7 @@ impl Executor {
                 ..Default::default()
             });
         }
-        // TASK-0040: run the applicable terminal hook (success/failure) once,
-        // after the generation's tasks reached terminal. Hook failure never
-        // changes the combined outcome or exit code; it is surfaced for
-        // diagnosis only. Superseded/cancelled generations never reach here.
-        self.run_terminal_hook(&run.metadata, &outcome);
+        let pending_settled_hook = self.run_terminal_hook(&run.metadata, &outcome);
         self.events.emit(Event::Finished {
             run_id: run.metadata.run_id,
             superseded_by: run.superseded_by,
@@ -1752,6 +1771,7 @@ impl Executor {
             elapsed,
             outcome,
             tasks: run.task_snapshots,
+            pending_settled_hook,
         }
     }
 
