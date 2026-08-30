@@ -1593,6 +1593,45 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_receive_prioritizes_queued_command_over_future_settlement() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        let now = Instant::now();
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 8,
+                command: "x".into(),
+                settle: Duration::from_secs(60),
+                revision: 1,
+                revision_hash: "h".into(),
+            },
+            now,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ReconcileServices {
+            stop_names: vec![],
+            reply: tx,
+        });
+        assert!(matches!(
+            scheduler.receive_until_deadline(),
+            SchedulerWake::Command(WorkerCommand::ReconcileServices { .. })
+        ));
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Pending { .. }
+        ));
+    }
+
+    #[test]
+    fn scheduler_receive_returns_closed_after_close() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        scheduler.close();
+        assert!(matches!(
+            scheduler.receive_until_deadline(),
+            SchedulerWake::Closed
+        ));
+    }
+
+    #[test]
     fn scheduler_receive_claims_due_settlement_once() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let now = Instant::now();
