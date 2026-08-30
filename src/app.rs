@@ -492,6 +492,9 @@ fn check_config(config_file: &Option<String>) {
     if let Err(err) = rules::validate_rules(&rules) {
         stdout::failure("Invalid config file.", err);
     }
+    if let Err(err) = config::generation_hooks_from_file(&config_path) {
+        stdout::failure("Invalid hooks config", err);
+    }
     if let Err(err) = config::session_hooks_from_file(&config_path) {
         stdout::failure("Invalid watcher close hook.", err);
     }
@@ -617,6 +620,7 @@ fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBack
 
 /// The run-level terminal hooks from `on.success`/`on.failure` (TASK-0040).
 fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
+    // failure_settle defaults to None for legacy callers
     let path = match config_file.as_deref() {
         Some(path) => Some(path.to_owned()),
         None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
