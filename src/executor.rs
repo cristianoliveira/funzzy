@@ -421,6 +421,11 @@ impl RunMetadata {
     }
 }
 
+pub struct SettledHookRun {
+    pub spec: PendingSettledHook,
+    child: Box<dyn ChildProcess>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingSettledHook {
     pub run_id: u64,
@@ -1738,6 +1743,39 @@ impl Executor {
             )),
         }
         None
+    }
+
+    pub fn start_settled_hook(
+        &self,
+        spec: PendingSettledHook,
+        token: &CancellationToken,
+    ) -> Result<Option<SettledHookRun>, String> {
+        if token.is_cancelled() {
+            return Ok(None);
+        }
+        let child = self.runner.spawn(
+            "hook",
+            &CommandLine::Shell(spec.command.clone()),
+            &TaskContext::default(),
+            None,
+            None,
+            false,
+        )?;
+        Ok(Some(SettledHookRun { spec, child }))
+    }
+
+    pub fn poll_settled_hook(run: &mut SettledHookRun) -> Result<Option<ExitStatus>, String> {
+        run.child
+            .try_wait()
+            .map_err(|err| format!("hook wait failed: {err}"))
+    }
+
+    pub fn cancel_settled_hook(&self, run: &mut SettledHookRun) -> ShutdownOutcome {
+        run.child.shutdown(
+            nix::sys::signal::Signal::SIGTERM,
+            Duration::from_millis(5000),
+            self.verbose,
+        )
     }
 
     pub fn finish(&self, mut run: Run) -> CompletedRun {
