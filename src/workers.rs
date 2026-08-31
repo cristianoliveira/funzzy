@@ -633,10 +633,12 @@ impl Worker {
 
                     match consumer_scheduler.receive_until_deadline(Duration::from_millis(200)) {
                         SchedulerWake::Command(command) => {
-                            settled_hook_owner.shutdown(&executor);
-                            consumer_scheduler.cancel_settlement();
                             match command {
                                 WorkerCommand::Run(req) => {
+                                    // A new generation supersedes any settled hook;
+                                    // service-only reconciliation does not.
+                                    settled_hook_owner.shutdown(&executor);
+                                    consumer_scheduler.cancel_settlement();
                                     active = Some(
                                         executor.start(
                                             RunMetadata::correlated(
@@ -670,6 +672,10 @@ impl Worker {
                                     }
                                 }
                                 WorkerCommand::Cancel { generation, reply } => {
+                                    if generation.is_none() {
+                                        settled_hook_owner.shutdown(&executor);
+                                        consumer_scheduler.cancel_settlement();
+                                    }
                                     // No active run: an exact cancel is a no-op unless
                                     // a matching queued Run was already handled by
                                     // `send`. reply is only present for exact cancels.
