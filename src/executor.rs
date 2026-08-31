@@ -1683,7 +1683,7 @@ impl Executor {
         } else {
             metadata.hooks.failure.as_deref()
         };
-        let Some(command) = command else { return None };
+        let command = command?;
         if !outcome.is_success() {
             if let Some(settle) = metadata.hooks.failure_settle {
                 return Some(PendingSettledHook {
@@ -2667,7 +2667,7 @@ mod tests {
         fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
             let state = self.state.lock().unwrap();
             if let Some(error) = state.wait_error.get(&self.command) {
-                return Err(io::Error::new(io::ErrorKind::Other, error.clone()));
+                return Err(io::Error::other(error.clone()));
             }
             let completed = state.completed.get(&self.command).copied();
             drop(state);
