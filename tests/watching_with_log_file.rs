@@ -188,7 +188,7 @@ fn test_it_truncates_log_on_config_change() {
 
             // A real semantic change commits a reload and then truncates.
             let semantic_config = format!(
-                "{}\n- name: reload-proof\n  run: echo reloaded\n  change: 'examples/workdir/reload-*.txt'\n",
+                "{}\n  - name: reload-proof\n    run: echo reloaded\n    change: 'examples/workdir/reload-*.txt'\n",
                 original_config
             );
             std::fs::write(&config_path, semantic_config).expect("failed to mutate config file");

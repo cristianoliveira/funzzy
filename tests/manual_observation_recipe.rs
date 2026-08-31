@@ -164,6 +164,24 @@ fn manual_silent(directory: &std::path::Path) -> bool {
     !directory.join("script-starts").exists()
 }
 
+fn run_shell_with_fzz(directory: &std::path::Path, command: &str) -> Output {
+    let fzz_directory = std::path::Path::new(env!("CARGO_BIN_EXE_fzz"))
+        .parent()
+        .expect("fzz binary must have a parent directory");
+    let path = std::env::join_paths(std::iter::once(fzz_directory.to_path_buf()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .expect("fzz path must be valid");
+
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(directory)
+        .env("PATH", path)
+        .output()
+        .expect("shell composition should run")
+}
+
 #[test]
 fn manual_target_stays_silent_at_init_and_on_matching_changes() {
     let directory = setup_directory("silent");
@@ -408,12 +426,7 @@ fn local_foreground_composition_exits_with_the_script_result() {
     let directory = setup_directory("foreground");
 
     // A failed preceding command never starts the target (&& composition).
-    let not_started = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("false && fzz run await-remote")
-        .current_dir(&directory)
-        .output()
-        .unwrap();
+    let not_started = run_shell_with_fzz(&directory, "false && fzz run await-remote");
     assert!(
         !not_started.status.success(),
         "failed predecessor must fail the composition"
@@ -426,12 +439,8 @@ fn local_foreground_composition_exits_with_the_script_result() {
     // Non-zero script exit fails the composition and stops the chain.
     std::fs::write(directory.join("fail"), "fail").unwrap();
     std::fs::write(directory.join("release"), "fail").unwrap();
-    let failed_chain = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("fzz run await-remote && echo chain-continued")
-        .current_dir(&directory)
-        .output()
-        .unwrap();
+    let failed_chain =
+        run_shell_with_fzz(&directory, "fzz run await-remote && echo chain-continued");
     let failed_text = format!(
         "{}{}",
         String::from_utf8_lossy(&failed_chain.stdout),
@@ -454,12 +463,8 @@ fn local_foreground_composition_exits_with_the_script_result() {
     std::fs::remove_file(directory.join("fail")).unwrap();
     std::fs::remove_file(directory.join("release")).unwrap();
     std::fs::write(directory.join("release"), "pass").unwrap();
-    let passed_chain = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("fzz run await-remote && echo chain-continued")
-        .current_dir(&directory)
-        .output()
-        .unwrap();
+    let passed_chain =
+        run_shell_with_fzz(&directory, "fzz run await-remote && echo chain-continued");
     let passed_text = format!(
         "{}{}",
         String::from_utf8_lossy(&passed_chain.stdout),
