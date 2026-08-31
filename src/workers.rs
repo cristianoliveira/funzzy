@@ -50,7 +50,6 @@ enum SettlementState {
         deadline: Instant,
     },
     Claimed {
-        spec: crate::executor::PendingSettledHook,
         token: crate::executor::CancellationToken,
     },
 }
@@ -78,6 +77,13 @@ impl SettlementState {
         }
         *self = Self::Idle;
     }
+
+    fn complete(&mut self) {
+        if matches!(self, Self::Claimed { .. }) {
+            *self = Self::Idle;
+        }
+    }
+
     fn claim_due(
         &mut self,
         now: Instant,
@@ -93,10 +99,7 @@ impl SettlementState {
         }
         let token = crate::executor::CancellationToken::new();
         let claim = (spec.clone(), token.clone());
-        *self = Self::Claimed {
-            spec: spec.clone(),
-            token,
-        };
+        *self = Self::Claimed { token };
         Some(claim)
     }
     fn shutdown(&mut self) {
@@ -204,6 +207,7 @@ struct SchedulerState {
 /// Scheduler that reports discarded queued work (contract §1): every
 /// generation superseded before spawn gets a terminal Cancelled event with its
 /// successor identity, so exact-generation awaits never hang.
+#[allow(clippy::large_enum_variant)]
 enum SchedulerWake {
     Command(WorkerCommand),
     Timeout,
@@ -236,6 +240,7 @@ impl Scheduler {
         self.ready.notify_all();
     }
 
+    #[cfg(test)]
     fn claim_settlement(
         &self,
         now: Instant,
@@ -248,6 +253,10 @@ impl Scheduler {
 
     fn cancel_settlement(&self) {
         self.state.lock().unwrap().settlement.newer_generation();
+    }
+
+    fn complete_settlement(&self) {
+        self.state.lock().unwrap().settlement.complete();
     }
 
     fn register_active(&self, run_id: u64, token: crate::executor::CancellationToken) {
@@ -429,14 +438,6 @@ impl Scheduler {
         }
     }
 
-    fn receive(&self) -> Option<WorkerCommand> {
-        let mut state = self.state.lock().unwrap();
-        while state.queue.is_empty() && !state.closed {
-            state = self.ready.wait(state).unwrap();
-        }
-        state.queue.pop_front()
-    }
-
     fn close(&self) {
         let mut state = self.state.lock().unwrap();
         state.settlement.shutdown();
@@ -583,6 +584,7 @@ impl Worker {
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
             let mut pending: Option<RunRequest> = None;
+            let mut settled_hook_owner = SettledHookOwner::new();
 
             loop {
                 if active.is_none() {
@@ -621,88 +623,133 @@ impl Worker {
                         continue;
                     }
 
-                    match consumer_scheduler.receive() {
-                        Some(WorkerCommand::Run(req)) => {
-                            active = Some(
-                                executor.start(
-                                    RunMetadata::correlated(
-                                        req.run_id,
-                                        req.trigger.clone(),
-                                        req.batch,
-                                        req.predecessor,
-                                        req.changed.clone(),
-                                    )
-                                    .with_duration_profile(
-                                        req.target.clone(),
-                                        req.execution_signature.clone(),
-                                    )
-                                    .with_effective_concurrency(req.effective_concurrency)
-                                    .with_concurrency_source(req.concurrency_source)
-                                    .with_hooks(req.hooks.clone())
-                                    .with_recovery_policy(req.recovery_policy)
-                                    .with_recovery_timeout(req.recovery_timeout)
-                                    .with_revision(
-                                        req.revision.unwrap_or(0),
-                                        req.revision_hash.clone().unwrap_or_default(),
-                                    ),
-                                    req.plan,
-                                ),
-                            );
-                            if let Some(run) = active.as_ref() {
-                                consumer_scheduler
-                                    .register_active(run.run_id(), run.cancellation_token());
-                            }
-                        }
-                        Some(WorkerCommand::Cancel { generation, reply }) => {
-                            // No active run: an exact cancel is a no-op unless
-                            // a matching queued Run was already handled by
-                            // `send`. reply is only present for exact cancels.
-                            if generation.is_some() {
-                                if let Some(reply) = reply {
-                                    let _ = reply.send(CancelResult::Noop);
+                    match consumer_scheduler.receive_until_deadline(Duration::from_millis(200)) {
+                        SchedulerWake::Command(command) => {
+                            settled_hook_owner.shutdown(&executor);
+                            consumer_scheduler.cancel_settlement();
+                            match command {
+                                WorkerCommand::Run(req) => {
+                                    active = Some(
+                                        executor.start(
+                                            RunMetadata::correlated(
+                                                req.run_id,
+                                                req.trigger.clone(),
+                                                req.batch,
+                                                req.predecessor,
+                                                req.changed.clone(),
+                                            )
+                                            .with_duration_profile(
+                                                req.target.clone(),
+                                                req.execution_signature.clone(),
+                                            )
+                                            .with_effective_concurrency(req.effective_concurrency)
+                                            .with_concurrency_source(req.concurrency_source)
+                                            .with_hooks(req.hooks.clone())
+                                            .with_recovery_policy(req.recovery_policy)
+                                            .with_recovery_timeout(req.recovery_timeout)
+                                            .with_revision(
+                                                req.revision.unwrap_or(0),
+                                                req.revision_hash.clone().unwrap_or_default(),
+                                            ),
+                                            req.plan,
+                                        ),
+                                    );
+                                    if let Some(run) = active.as_ref() {
+                                        consumer_scheduler.register_active(
+                                            run.run_id(),
+                                            run.cancellation_token(),
+                                        );
+                                    }
+                                }
+                                WorkerCommand::Cancel { generation, reply } => {
+                                    // No active run: an exact cancel is a no-op unless
+                                    // a matching queued Run was already handled by
+                                    // `send`. reply is only present for exact cancels.
+                                    if generation.is_some() {
+                                        if let Some(reply) = reply {
+                                            let _ = reply.send(CancelResult::Noop);
+                                        }
+                                    }
+                                }
+                                WorkerCommand::ReconcileServices {
+                                    stop_names: _,
+                                    reply,
+                                } => {
+                                    // No active generation: nothing to stop; every
+                                    // desired service still needs starting.
+                                    let _ = reply.send(vec![]);
+                                }
+                                WorkerCommand::StartServices {
+                                    run_id,
+                                    plan,
+                                    revision,
+                                } => {
+                                    // No active generation: start the service plan as
+                                    // its own generation (services keep it alive).
+                                    active = Some(
+                                        executor.start(
+                                            RunMetadata::correlated(
+                                                run_id,
+                                                "reload:services".to_owned(),
+                                                None,
+                                                None,
+                                                vec![],
+                                            )
+                                            .with_revision(
+                                                revision.as_ref().map(|r| r.number).unwrap_or(0),
+                                                revision
+                                                    .as_ref()
+                                                    .map(|r| r.hash.clone())
+                                                    .unwrap_or_default(),
+                                            ),
+                                            plan,
+                                        ),
+                                    );
+                                    if let Some(run) = active.as_ref() {
+                                        consumer_scheduler.register_active(
+                                            run.run_id(),
+                                            run.cancellation_token(),
+                                        );
+                                    }
                                 }
                             }
                         }
-                        Some(WorkerCommand::ReconcileServices {
-                            stop_names: _,
-                            reply,
-                        }) => {
-                            // No active generation: nothing to stop; every
-                            // desired service still needs starting.
-                            let _ = reply.send(vec![]);
-                        }
-                        Some(WorkerCommand::StartServices {
-                            run_id,
-                            plan,
-                            revision,
-                        }) => {
-                            // No active generation: start the service plan as
-                            // its own generation (services keep it alive).
-                            active = Some(
-                                executor.start(
-                                    RunMetadata::correlated(
-                                        run_id,
-                                        "reload:services".to_owned(),
-                                        None,
-                                        None,
-                                        vec![],
-                                    )
-                                    .with_revision(
-                                        revision.as_ref().map(|r| r.number).unwrap_or(0),
-                                        revision
-                                            .as_ref()
-                                            .map(|r| r.hash.clone())
-                                            .unwrap_or_default(),
-                                    ),
-                                    plan,
-                                ),
-                            );
-                            if let Some(run) = active.as_ref() {
-                                consumer_scheduler
-                                    .register_active(run.run_id(), run.cancellation_token());
+                        SchedulerWake::SettlementDue(spec, token) => {
+                            match settled_hook_owner.start(&executor, spec, token) {
+                                Ok(true) => {}
+                                Ok(false) => consumer_scheduler.complete_settlement(),
+                                Err(error) => {
+                                    stdout::warn(&error);
+                                    consumer_scheduler.complete_settlement();
+                                }
                             }
                         }
-                        None => break,
+                        SchedulerWake::Timeout => {
+                            if let Some((mut run, token)) = settled_hook_owner.running.take() {
+                                match Executor::poll_settled_hook(&mut run) {
+                                    Ok(Some(status)) => {
+                                        if !status.success() {
+                                            stdout::warn(&format!(
+                                                "settled failure hook for generation {} failed with {}",
+                                                run.spec.run_id, status
+                                            ));
+                                        }
+                                        consumer_scheduler.complete_settlement();
+                                    }
+                                    Ok(None) => {
+                                        settled_hook_owner.running = Some((run, token));
+                                    }
+                                    Err(error) => {
+                                        stdout::warn(&error);
+                                        consumer_scheduler.complete_settlement();
+                                    }
+                                }
+                            }
+                        }
+                        SchedulerWake::Closed => {
+                            settled_hook_owner.shutdown(&executor);
+                            break;
+                        }
                     }
                     continue;
                 }
@@ -1620,6 +1667,33 @@ mod tests {
             _ => panic!("expected pending settled hook"),
         }
         drop(state);
+        drop(worker);
+    }
+
+    #[test]
+    fn settled_failure_hook_runs_after_its_settlement_window() {
+        let marker = output_file("settled-failure-hook");
+        let (worker, rx) = worker_with_events(false, false);
+        worker.set_hooks(crate::config::GenerationHooks {
+            success: None,
+            failure: Some(format!("touch '{}'", marker.display())),
+            failure_settle: Some(Duration::ZERO),
+        });
+        let run_id = worker
+            .schedule(vec![rule(vec!["false"])], "fail.rs")
+            .unwrap();
+        let _ = expect_event(
+            &rx,
+            "finished",
+            |e| matches!(e, WorkerEvent::Finished { run_id: id, .. } if *id == run_id),
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !marker.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists(), "settled failure hook should run once due");
+        let _ = std::fs::remove_file(marker);
         drop(worker);
     }
 
