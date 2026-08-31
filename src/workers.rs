@@ -1714,6 +1714,31 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_services_preserves_pending_settlement() {
+        let (worker, _rx) = worker_with_events(false, false);
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 8,
+                command: "x".into(),
+                settle: Duration::from_secs(10),
+                revision: 1,
+                revision_hash: "h".into(),
+            },
+            Instant::now(),
+        );
+        assert_eq!(
+            worker.reconcile_services(vec![]).unwrap(),
+            Vec::<String>::new()
+        );
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Pending { .. }
+        ));
+        drop(worker);
+    }
+
+    #[test]
     fn schedule_cancels_claimed_settlement() {
         let (worker, rx) = worker_with_events(false, false);
         let scheduler = worker.scheduler.as_ref().unwrap().clone();
