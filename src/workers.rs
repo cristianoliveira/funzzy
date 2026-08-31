@@ -698,6 +698,10 @@ impl Worker {
                                     plan,
                                     revision,
                                 } => {
+                                    // A service-only generation also supersedes
+                                    // any settled hook when the worker is idle.
+                                    settled_hook_owner.shutdown(&executor);
+                                    consumer_scheduler.cancel_settlement();
                                     // No active generation: start the service plan as
                                     // its own generation (services keep it alive).
                                     active = Some(
