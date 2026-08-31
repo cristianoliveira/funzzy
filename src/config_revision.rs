@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 5;
+pub const REVISION_SCHEMA_VERSION: u64 = 6;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
-        // Schema version 5 (settled failure hooks + prior trigger/timeout
+        // Schema version 6 (explicit canonical hook fields + settled failure hooks;
         // contracts): the semantic encoding changed; fixture regenerated.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
@@ -423,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "b319bf8f07f27224aa4ff82180c0c3e842100b0d6e0d7f6a28a4a2b7f85a6af8"
+            "37e0833a166590461868991ce60af5e86d8d9dee246aab6a1691baf52a50b8a0"
         );
     }
 
@@ -805,7 +805,7 @@ mod manual_trigger_tests {
     /// hooks bump it to 5. Each invalidates prior revision hashes by design.
     #[test]
     fn revision_schema_version_is_pinned() {
-        assert_eq!(REVISION_SCHEMA_VERSION, 5);
+        assert_eq!(REVISION_SCHEMA_VERSION, 6);
     }
 
     #[test]
