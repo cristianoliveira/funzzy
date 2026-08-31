@@ -1743,6 +1743,38 @@ mod tests {
     }
 
     #[test]
+    fn start_services_cancels_pending_settlement() {
+        let (worker, _rx) = worker_with_events(false, false);
+        let scheduler = worker.scheduler.as_ref().unwrap().clone();
+        scheduler.register_settlement(
+            crate::executor::PendingSettledHook {
+                run_id: 9,
+                command: "x".into(),
+                settle: Duration::from_secs(10),
+                revision: 1,
+                revision_hash: "h".into(),
+            },
+            Instant::now(),
+        );
+        worker
+            .start_services(RunPlan::from_rules(vec![rule(vec!["true"])]))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Idle
+        ) && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(matches!(
+            scheduler.state.lock().unwrap().settlement,
+            SettlementState::Idle
+        ));
+        drop(worker);
+    }
+
+    #[test]
     fn schedule_cancels_claimed_settlement() {
         let (worker, rx) = worker_with_events(false, false);
         let scheduler = worker.scheduler.as_ref().unwrap().clone();
