@@ -53,7 +53,7 @@ fn valid_config_change_hot_reloads_without_process_exit() {
                 .open(fixture.join("examples/reload-config-example.yml"))
                 .expect("failed to open fixture config")
                 .write_all(
-                    b"\n- name: hot reload proof\n  run: echo hot-reloaded\n  run_on_init: true\n",
+                    b"\n  - name: hot reload proof\n    run: echo hot-reloaded\n    run_on_init: true\n",
                 )
                 .expect("failed to append semantic change");
 
