@@ -1786,7 +1786,14 @@ impl Executor {
         run.child.shutdown(signal, grace, self.verbose)
     }
 
-    pub fn finish(&self, mut run: Run) -> CompletedRun {
+    pub fn finish(&self, run: Run) -> CompletedRun {
+        self.finish_with_callback(run, |_| {})
+    }
+
+    pub(crate) fn finish_with_callback<F>(&self, mut run: Run, before_publish: F) -> CompletedRun
+    where
+        F: FnOnce(Option<&PendingSettledHook>),
+    {
         let elapsed = self.clock.elapsed(run.started);
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
@@ -1809,6 +1816,7 @@ impl Executor {
             });
         }
         let pending_settled_hook = self.run_terminal_hook(&run.metadata, &outcome);
+        before_publish(pending_settled_hook.as_ref());
         self.events.emit(Event::Finished {
             run_id: run.metadata.run_id,
             superseded_by: run.superseded_by,
