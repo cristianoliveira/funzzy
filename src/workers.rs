@@ -236,7 +236,15 @@ impl Scheduler {
     }
 
     fn register_settlement(&self, spec: crate::executor::PendingSettledHook, now: Instant) {
-        self.state.lock().unwrap().settlement.register(spec, now);
+        let mut state = self.state.lock().unwrap();
+        if state
+            .queue
+            .iter()
+            .any(|command| matches!(command, WorkerCommand::Run(_)))
+        {
+            return;
+        }
+        state.settlement.register(spec, now);
         self.ready.notify_all();
     }
 
@@ -894,10 +902,12 @@ impl Worker {
                     Step::Finished => {
                         let completed_run = active.take().expect("active run");
                         consumer_scheduler.unregister_active(completed_run.run_id());
-                        let completed = executor.finish(completed_run);
-                        if let Some(spec) = completed.pending_settled_hook.clone() {
-                            consumer_scheduler.register_settlement(spec, Instant::now());
-                        }
+                        let completed = executor.finish_with_callback(completed_run, |pending| {
+                            if let Some(spec) = pending {
+                                consumer_scheduler
+                                    .register_settlement(spec.clone(), Instant::now());
+                            }
+                        });
                         stdout::present_results(
                             completed.results,
                             completed.elapsed,
