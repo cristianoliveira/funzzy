@@ -1,7 +1,7 @@
 ---
 id: TASK-0151
 title: Prove shortcut safety for background terminal process groups
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: []
@@ -18,11 +18,11 @@ TASK-0150 added Ctrl-G shortcut input. Commit `fd5d45f` prevents reads when a TT
 
 ## Acceptance criteria
 
-- [ ] A deterministic Unix integration test uses a controlling PTY and a real background process group to reproduce the former SIGTTIN/SIGTTOU stop.
-- [ ] The test fails when the foreground-process-group guard is removed and passes with it.
-- [ ] The test uses bounded polling, cleans up all child processes, and cannot hang the test runner.
-- [ ] Existing piped blocking, non-blocking, busy-latch, Ctrl-C, status, and output behavior remains passing.
-- [ ] Independent QA accepts the evidence; final watcher gate passes with an unchanged worktree fingerprint.
+- [x] A deterministic Unix integration test uses a controlling PTY and a real background process group to reproduce the former SIGTTIN/SIGTTOU stop.
+- [x] The test fails when the foreground-process-group guard is removed and passes with it.
+- [x] The test uses bounded polling, cleans up all child processes, and cannot hang the test runner.
+- [x] Existing piped blocking, non-blocking, busy-latch, Ctrl-C, status, and output behavior remains passing.
+- [x] Independent QA accepts the evidence; final watcher gate passes with an unchanged worktree fingerprint.
 
 ## Notes
 
