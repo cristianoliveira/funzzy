@@ -1,16 +1,26 @@
 # funzzy (fzz) [![Crate version](https://img.shields.io/crates/v/funzzy.svg?)](https://crates.io/crates/funzzy) [![Building package with nix](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml) [![CI integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml) [![CI Checks](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push.yml)
 
-**Run checks on every edit. Give coding agents results they can trust.**
+**Funzzy gives developers and coding agents one reliable edit loop:** define checks once, run them on every change, and inspect exact, fresh results.
 
-Funzzy (`fzz`) is a fast Rust watcher for the agentic coding era. It runs local workflows as code changes and exposes exact runs, fresh results, cancellation, and bounded failure output—no log scraping, no stale green.
+Funzzy (`fzz`) is a fast Rust watcher for the agentic coding era. It runs local workflows as code changes and exposes cancellation and bounded failure output—without log scraping or stale green results.
+
+One YAML workflow works for local development, CI, editors, and coding agents. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
+
+## The short version
+
+Funzzy is a good fit when your checks need to be both fast for humans and trustworthy for automation:
+
+- **Reuse one workflow.** Define checks once and watch, run, or inspect them with the same configuration.
+- **Trust each result.** Debouncing, ordered concurrency, exact generations, cancellation, and bounded evidence make outcomes reproducible and actionable.
+- **Discover the contract.** The installed binary generates the schema and examples, so configuration does not depend on stale documentation.
+
+Start with [Quick start](#quick-start), then use the [advanced guide](docs/ADVANCED-GUIDE.md) for control-socket and agent workflows.
 
 ```bash
 fzz init    # create .watch.yaml
 fzz check   # validate it
 fzz         # watch, run, repeat
 ```
-
-One YAML workflow works for developers and coding agents. Use `fzz run TARGET` for finite execution or control a running watcher through a deterministic, machine-readable API.
 
 > [!WARNING]
 > V2 (2.0.0) is the current line. v1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1); see [docs/MIGRATION.md](docs/MIGRATION.md) for the flag and config mapping.
@@ -57,23 +67,24 @@ jobs:
 
 Declaration order is semantic. Only consecutive jobs with same `parallel` name overlap; ordinary jobs create serial barriers. Legacy root task lists and grouped `tasks:` configs remain accepted and can be rewritten with `fzz migrate`.
 
-## Capabilities
+## Why Funzzy works for humans and agents
 
-- **Watch or run once:** use the same workflow locally, in CI, or in an editor feedback loop.
-- **Precise matching:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
-- **Deterministic batches:** debounce and deduplicate filesystem events before creating one generation.
-- **Ordered concurrency:** run consecutive named parallel groups behind explicit serial barriers; force `--sequential` for comparison.
-- **Managed processes:** cancel and reap complete process groups; opt into long-running jobs with `service: true`.
-- **Finite execution deadlines:** `jobs[].timeout` terminates timed-out process trees and records the typed `timedout` outcome; control `--timeout` only bounds the caller's wait.
-- **Workflow automation:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result.
-- **Approved recovery:** optionally run a declared `jobs[].recovery` once after an approved failure, then verify the original job once; unanswered approval defaults to failure after `execution.recovery_timeout` (60s by default); use `--recovery-policy skip` in CI.
-- **Live configuration:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
-- **Agent-ready control:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
-- **Observable execution:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
-- **Self-describing config:** generate schema and examples from installed binary, then validate with same parser watcher uses.
-- **Lifecycle hooks:** `hooks.success`/`hooks.failure` observe generation outcomes; `hooks.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
+Funzzy earns trust by combining a simple edit loop with explicit execution semantics:
 
-Learn more:
+- **Reuse one workflow:** use the same workflow locally, in CI, or in an editor feedback loop.
+- **Match changes precisely:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
+- **Batch deterministically:** debounce and deduplicate filesystem events before creating one generation.
+- **Control execution:** run consecutive named parallel groups behind explicit serial barriers; use `--sequential` for comparison; cancel and reap complete process groups; opt into long-running jobs with `service: true`.
+- **Bound finite work:** `jobs[].timeout` terminates timed-out process trees and records the typed `timedout` outcome; control `--timeout` only bounds the caller's wait.
+- **Automate safely:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result; optionally run a declared recovery once after an approved failure, then verify the original job; unanswered approval fails after `execution.recovery_timeout` (60s by default), while CI can use `--recovery-policy skip`.
+- **Reload visibly:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
+- **Inspect exact evidence:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
+- **Keep execution observable:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
+- **Keep configuration discoverable:** generate schema and examples from the installed binary, then validate with the same parser the watcher uses.
+- **Close cleanly:** `hooks.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
+
+## Learn more
+
 
 - [Getting started and daily workflows](docs/USAGE.md)
 - [Advanced control and agent workflows](docs/ADVANCED-GUIDE.md)
@@ -93,7 +104,7 @@ Funzzy pairs well with these tools:
 
  - [nrr](https://github.com/ryanccn/nrr) - For JS/TS projects, since Funzzy runs commands on change, a faster task runner makes a difference
 
-## Motivation
+## Why it exists
 
 Traditional watchers are optimized for human watching terminal output. Agentic coding also needs exact run identity, freshness, cancellation, structured state, and bounded evidence—without replacing the fast local workflow developers already use.
 
@@ -101,7 +112,7 @@ Funzzy brings GitHub Actions-like checks into the local edit loop and makes that
 
 Funzzy is inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr).
 
-## Installing
+## Install Funzzy
 
 ### OSX:
 
