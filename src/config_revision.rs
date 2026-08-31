@@ -126,8 +126,8 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
         crate::config::RecoveryPolicy::Skip => "skip",
     });
     canonical.u64(config.recovery_timeout.as_millis() as u64);
-    canonical.string(&hooks_tag(&config.hooks));
-    canonical.string(&format!("{:?}", config.session_hooks));
+    encode_generation_hooks(&mut canonical, &config.hooks);
+    canonical.optional_string(config.session_hooks.close.clone());
     // AC8: the control socket path is part of the semantic surface.
     canonical.optional_string(
         config
@@ -257,11 +257,16 @@ fn output_policy_tag(policy: &crate::rules::OutputPolicy) -> String {
     .to_owned()
 }
 
-/// Stable hooks tag for hashing: which hooks are configured (command content
-/// is hashed as part of the rule commands surface; here only presence and the
-/// exact command strings matter semantically).
-fn hooks_tag(hooks: &GenerationHooks) -> String {
-    format!("{:?}", hooks)
+/// Encode hook fields explicitly so hash identity is stable across Debug
+/// formatting changes and each field remains independently semantic.
+fn encode_generation_hooks(canonical: &mut CanonicalEncoder, hooks: &GenerationHooks) {
+    canonical.optional_string(hooks.success.clone());
+    canonical.optional_string(hooks.failure.clone());
+    canonical.optional_u64(
+        hooks
+            .failure_settle
+            .map(|duration| duration.as_millis() as u64),
+    );
 }
 
 /// Tracks revisions monotonically: the first observed config is revision 1;
@@ -418,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "d097b0e93820cf4836bdc9bbc0c94ea26c6d783946bd01c494b06f0686189d8e"
+            "b319bf8f07f27224aa4ff82180c0c3e842100b0d6e0d7f6a28a4a2b7f85a6af8"
         );
     }
 
@@ -801,6 +806,37 @@ mod manual_trigger_tests {
     #[test]
     fn revision_schema_version_is_pinned() {
         assert_eq!(REVISION_SCHEMA_VERSION, 5);
+    }
+
+    #[test]
+    fn failure_settle_only_edit_is_a_new_revision() {
+        let mut before = RuntimeConfig::capture(
+            PathBuf::from("/workspace"),
+            vec![manual_rule(false)],
+            2,
+            Duration::from_millis(1000),
+            WatchBackend::Native,
+            false,
+            crate::config::RecoveryPolicy::Prompt,
+            Duration::from_secs(60),
+            GenerationHooks {
+                success: None,
+                failure: Some("notify".into()),
+                failure_settle: Some(Duration::from_secs(1)),
+            },
+            SessionHooks::default(),
+            None,
+        );
+        let mut tracker = RevisionTracker::new();
+        let first_hash = semantic_hash(&before);
+        let first = tracker.observe(&before);
+        before.hooks.failure_settle = Some(Duration::from_secs(2));
+        let second_hash = semantic_hash(&before);
+        let second = tracker.observe(&before);
+        assert!(matches!(first, RevisionDecision::New(_)));
+        assert!(matches!(second, RevisionDecision::New(_)));
+        assert_ne!(first_hash, second_hash);
+        assert_eq!(second_hash, tracker.current().unwrap().hash);
     }
     /// TASK-0136: a manual generation freezes its revision — a reload that
     /// edits ONLY the trigger mints a new revision (different hash), so the
