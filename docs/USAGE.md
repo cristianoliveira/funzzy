@@ -131,7 +131,7 @@ on:
 execution:
   concurrency: 2          # scheduler bound (default: available parallelism)
   output: show-on-failure # default job output policy
-  recovery_policy: prompt # prompt | skip; default prompt
+  timeout: 10m           # default finite-job timeout # prompt | skip; default prompt
 
 hooks:
   success: echo "checks passed"
@@ -153,6 +153,7 @@ jobs:
                              # fails the generation (not a client wait bound)
 
   - name: format-check
+    timeout: 30m          # job override wins
     run: cargo fmt --all -- --check
     recovery: cargo fmt --all # offered only after an explicit failure approval
 ```

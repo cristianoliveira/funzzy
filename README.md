@@ -415,10 +415,14 @@ jobs:
 Use `execution.timeout` to set a default for finite jobs; an individual `jobs[].timeout` overrides it. Managed services remain unbounded. To bound a finite job's complete invocation:
 
 ```yaml
+execution:
+  timeout: 10m          # default for finite jobs
 jobs:
+  - name: lint
+    run: cargo clippy    # inherits 10m
   - name: await-remote
     trigger: manual
-    timeout: 30m
+    timeout: 30m          # job override wins
     run: ./scripts/await-remote.sh
 ```
 

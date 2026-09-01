@@ -247,18 +247,21 @@ existing capabilities, not a provider API (TASK-0137).
 on:
   socket: .tmp/funzzy/control.sock
 
+execution:
+  timeout: 10m          # default for finite jobs
 jobs:
+  - name: lint
+    run: cargo clippy    # inherits 10m
   - name: await-remote
     trigger: manual
-    timeout: 30m
+    timeout: 30m          # job override wins
     run: ./scripts/await-remote.sh
 ```
 
 `trigger: manual` (MANUAL-TRIGGER-CONTRACT) means explicit invocation only:
 the job never runs at watcher init, never matches filesystem events — even
 when a root `on.change` would select every other job — and never inherits
-root patterns. It starts only through explicit selection. `timeout:`
-(optionally) bounds the job's execution (FINITE-JOB-TIMEOUT-CONTRACT):
+root patterns. It starts only through explicit selection. `timeout:` (optionally) bounds the job's execution (FINITE-JOB-TIMEOUT-CONTRACT):
 on elapse the whole process tree is terminated and the generation fails
 with the typed `timedout` task state — bounded observation without the
 script implementing its own deadline.
