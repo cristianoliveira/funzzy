@@ -145,6 +145,16 @@ const EXECUTION_SPECS: &[OptionSpec] = &[
         kind: SpecKind::Enum(OUTPUT_VALUES),
     },
     OptionSpec {
+        name: "timeout",
+        owner: Owner::Execution,
+        required: false,
+        default: None,
+        help: "Default finite-job execution timeout; job timeout overrides it. Services remain unbounded.",
+        values: None,
+        example: &["timeout: 10m"],
+        kind: SpecKind::Duration,
+    },
+    OptionSpec {
         name: "recovery_policy",
         owner: Owner::Execution,
         required: false,
