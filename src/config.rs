@@ -286,7 +286,9 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
 
     if has_tasks && yaml["execution"]["timeout"] != Yaml::BadValue {
         return Err(errors::FzzError::InvalidConfigError(
-            "Property 'execution.timeout' is supported only in preferred V2 jobs".to_owned(), None, None,
+            "Property 'execution.timeout' is supported only in preferred V2 jobs".to_owned(),
+            None,
+            None,
         ));
     }
     if has_tasks && yaml["execution"]["recovery_policy"] != Yaml::BadValue {
@@ -689,13 +691,23 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
 
 fn execution_timeout_from_root(root: &Yaml) -> errors::Result<Option<Duration>> {
     let execution = &root["execution"];
-    if execution == &Yaml::BadValue || execution["timeout"] == Yaml::BadValue { return Ok(None); }
+    if execution == &Yaml::BadValue || execution["timeout"] == Yaml::BadValue {
+        return Ok(None);
+    }
     let raw = match &execution["timeout"] {
         Yaml::String(value) => value.clone(),
         Yaml::Integer(seconds) => format!("{seconds}s"),
-        _ => return Err(errors::FzzError::InvalidConfigError("Property 'execution.timeout' must be a positive duration string or number".to_owned(), None, None)),
+        _ => {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'execution.timeout' must be a positive duration string or number"
+                    .to_owned(),
+                None,
+                None,
+            ))
+        }
     };
-    parse_duration("execution.timeout", &raw).map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))
+    parse_duration("execution.timeout", &raw)
+        .map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))
 }
 
 fn recovery_commands_from_yaml(yaml: &Yaml, name: &str) -> errors::Result<Option<Vec<String>>> {
@@ -3305,8 +3317,8 @@ mod manual_trigger_tests {
 
 #[cfg(test)]
 mod timeout_config_tests {
-    use std::time::Duration;
     use super::from_yaml;
+    use std::time::Duration;
 
     #[test]
     fn timeout_parses_ms_s_m_and_bare_seconds() {
@@ -3395,9 +3407,28 @@ mod timeout_config_tests {
     }
 
     #[test]
+    fn execution_timeout_does_not_bound_services() {
+        let rules = from_yaml(
+            "execution:\n  timeout: 10m\njobs:\n  - name: svc\n    service: true\n    run: x\n",
+        )
+        .unwrap();
+        assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
     fn execution_timeout_rejects_legacy_and_invalid_values() {
         assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
-        assert!(from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err());
-        assert!(from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err());
+        assert!(
+            from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err()
+        );
+        for sentinel in ["inherit", "unbounded"] {
+            assert!(from_yaml(&format!(
+                "execution:\n  timeout: {sentinel}\njobs:\n  - name: a\n    run: x\n"
+            ))
+            .is_err());
+        }
+        assert!(
+            from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err()
+        );
     }
 }
