@@ -168,6 +168,7 @@ struct CommonRules {
     /// Execution-level default output policy, applied to jobs without their
     /// own `output:`.
     output_policy: OutputPolicy,
+    timeout: Option<Duration>,
 }
 
 fn validate_section(
@@ -283,6 +284,11 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     }
     let key = if has_jobs { "jobs" } else { "tasks" };
 
+    if has_tasks && yaml["execution"]["timeout"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'execution.timeout' is supported only in preferred V2 jobs".to_owned(), None, None,
+        ));
+    }
     if has_tasks && yaml["execution"]["recovery_policy"] != Yaml::BadValue {
         return Err(errors::FzzError::InvalidConfigError(
             "Property 'execution.recovery_policy' is supported only in preferred V2 jobs"
@@ -347,6 +353,7 @@ fn parse_hash_format(yaml: &Yaml, allow_empty: bool) -> errors::Result<Vec<Rules
     // has its own V2 owner and is inherited by jobs that omit `output`.
     let mut common_rules = extract_common_rules(&yaml["on"])?;
     common_rules.output_policy = output_policy_from_root(yaml)?;
+    common_rules.timeout = execution_timeout_from_root(yaml)?;
 
     // Parse each task and merge with common rules; duplicate names are a
     // config bug (TASK-0075/0076), never a silent merge or reorder.
@@ -405,6 +412,7 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                 change: vec![],
                 ignore: vec![],
                 output_policy: OutputPolicy::Inherit,
+                timeout: None,
             })
         }
         Yaml::Hash(_) => {
@@ -415,6 +423,7 @@ fn extract_common_rules(yaml: &Yaml) -> errors::Result<CommonRules> {
                 change: ensure_glob_only(change, "on.change")?,
                 ignore: ensure_glob_only(ignore, "on.ignore")?,
                 output_policy: OutputPolicy::Inherit,
+                timeout: None,
             })
         }
         _ => Err(errors::FzzError::InvalidConfigError(
@@ -592,6 +601,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     // FINITE-JOB-TIMEOUT-CONTRACT §7: a managed service is intentionally
     // unbounded; a finite deadline contradicts the service contract.
     let timeout = match &yaml["timeout"] {
+        Yaml::BadValue if common.timeout.is_some() => common.timeout,
         Yaml::BadValue => None,
         Yaml::String(raw) => parse_duration("timeout", raw).map_err(|error| {
             errors::FzzError::InvalidConfigError(
@@ -628,7 +638,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ));
         }
     };
-    if timeout.is_some() && service {
+    if yaml["timeout"] != Yaml::BadValue && timeout.is_some() && service {
         return Err(errors::FzzError::InvalidConfigError(
             format!(
                 "Job '{}' cannot declare both 'timeout' and 'service: true'",
@@ -638,6 +648,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             Some("A service is intentionally unbounded; remove 'timeout' or 'service'.".to_owned()),
         ));
     }
+    let timeout = if service { None } else { timeout };
 
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => common.output_policy,
@@ -674,6 +685,17 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         Some(group) => rule.with_parallel(group),
         None => rule,
     })
+}
+
+fn execution_timeout_from_root(root: &Yaml) -> errors::Result<Option<Duration>> {
+    let execution = &root["execution"];
+    if execution == &Yaml::BadValue || execution["timeout"] == Yaml::BadValue { return Ok(None); }
+    let raw = match &execution["timeout"] {
+        Yaml::String(value) => value.clone(),
+        Yaml::Integer(seconds) => format!("{seconds}s"),
+        _ => return Err(errors::FzzError::InvalidConfigError("Property 'execution.timeout' must be a positive duration string or number".to_owned(), None, None)),
+    };
+    parse_duration("execution.timeout", &raw).map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))
 }
 
 fn recovery_commands_from_yaml(yaml: &Yaml, name: &str) -> errors::Result<Option<Vec<String>>> {
@@ -3283,6 +3305,7 @@ mod manual_trigger_tests {
 
 #[cfg(test)]
 mod timeout_config_tests {
+    use std::time::Duration;
     use super::from_yaml;
 
     #[test]
@@ -3362,5 +3385,19 @@ mod timeout_config_tests {
     fn absent_timeout_means_unbounded() {
         let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
         assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
+    fn execution_timeout_is_inherited_and_job_override_wins() {
+        let rules = from_yaml("execution:\n  timeout: 10m\njobs:\n  - name: a\n    run: x\n  - name: b\n    timeout: 30s\n    run: y\n").unwrap();
+        assert_eq!(rules[0].timeout(), Some(Duration::from_secs(600)));
+        assert_eq!(rules[1].timeout(), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn execution_timeout_rejects_legacy_and_invalid_values() {
+        assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
+        assert!(from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err());
+        assert!(from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err());
     }
 }
