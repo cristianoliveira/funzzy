@@ -10,7 +10,7 @@ tags: [integration-tests, docs, hooks, config, watcher, reliability]
 # Prove and document settled failure hook behavior
 
 ## Problem
-Delayed failure-hook behavior crosses scheduling, cancellation, finite runs, reloads, and compatibility; without black-box proof and documentation agents may act on stale failures.
+Delayed failure-hook behavior crosses scheduling, cancellation, finite runs, reloads, compatibility, and external evidence forwarding. Today users can discover `hooks.failure.run` and `settle`, but cannot discover whether the hook receives an exact generation ID, failed job names, retained evidence, or output through argv, environment, or stdin. Without black-box proof and a complete invocation contract, integrations must inspect implementation logs and may forward stale or miscorrelated failures.
 
 ## Outcome
 
@@ -25,6 +25,11 @@ Prove the accepted contract at the CLI and watcher boundaries and teach users wh
 - [ ] Existing immediate scalar success/failure hook tests remain green and demonstrate compatibility.
 - [ ] Schema, generated config example, `fzz check`, README/USAGE, and `docs/RUN-HOOKS-CONTRACT.md` agree on syntax and lifecycle.
 - [ ] Documentation says settlement is based on watcher generations, not knowledge of agent activity.
+- [ ] Document the complete hook invocation contract: shell/argv behavior, workspace or configured working directory, stdin, inherited and Funzzy-provided environment, output capture, exit handling, and process lifetime.
+- [ ] State exactly how the hook correlates to the immutable failed generation and its failed jobs/evidence. Do not claim the command receives generation identity when it exists only in internal diagnostics or events.
+- [ ] Either prove the hook receives an exact immutable generation identifier suitable for `fzz control output --generation`, or explicitly document that it does not and label any `control status` latest-generation lookup limitation/race.
+- [ ] Document output-retention guarantees and the difference between latest `control status` and exact `control output --generation N` retrieval.
+- [ ] Add a self-contained evidence-forwarding recipe: wait for a settled failure, obtain the exact retained result, and invoke a user-owned transport. Include a Pi Bebop socket example using `pi-bebop send --socket .pi/bebop/sockets/dev.sock --mode steer --wait accepted` without making Pi a Funzzy dependency.
 - [ ] Documentation warns that external side effects cannot be recalled once command execution begins.
 - [ ] Verification includes focused tests plus configured final watcher gates; failure evidence is retained in the task notes.
 
@@ -37,3 +42,4 @@ Prove the accepted contract at the CLI and watcher boundaries and teach users wh
 
 QA should challenge boundary races rather than treating elapsed wall time alone as proof.
 
+Feedback captured 2026-09-01: a user configured `failure.settle: 3m` and had to infer a `control status` → `control output --generation` → Pi Bebop forwarding flow from logs and binary strings because the hook payload and working-directory contract were undiscoverable. Treat this as a documentation defect and a possible exact-correlation capability gap, not as a request for built-in Pi integration.
