@@ -384,6 +384,72 @@ fn timeout_terminates_the_process_tree_with_typed_outcome_and_evidence() {
 }
 
 #[test]
+fn job_timeout_overrides_execution_default_and_cancel_reaps_tree() {
+    let directory = setup_directory("override", "on:\n  socket: sock\nexecution:\n  timeout: 500ms\njobs:\n  - name: tree\n    run: ./tree.sh\n    change: 'src/**'\n    timeout: 60s\n");
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let run = run_cli(&directory, &["control", "run", "tree"]);
+    let generation = scheduled_generation(&run);
+    wait_until(
+        || directory.join("tree.pid").exists() && directory.join("descendant.pid").exists(),
+        "override tree pids",
+    );
+    let waited = run_cli(
+        &directory,
+        &[
+            "control",
+            "await",
+            "--generation",
+            &generation.to_string(),
+            "--timeout",
+            "1500ms",
+        ],
+    );
+    assert!(
+        combined(&waited).contains("terminal reason: timeout"),
+        "client wait: {}",
+        combined(&waited)
+    );
+    let current = status(&directory.join("sock"));
+    assert_eq!(
+        current["result"]["state"].as_str(),
+        Some("running"),
+        "override remains running: {current}"
+    );
+    let parent: u32 = std::fs::read_to_string(directory.join("tree.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let descendant: u32 = std::fs::read_to_string(directory.join("descendant.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let cancel = run_cli(
+        &directory,
+        &[
+            "control",
+            "cancel",
+            "--generation",
+            &generation.to_string(),
+            "--wait",
+            "--timeout",
+            "30s",
+        ],
+    );
+    assert!(
+        combined(&cancel).contains("terminal reason: cancelled"),
+        "cancel: {}",
+        combined(&cancel)
+    );
+    wait_until(
+        || !process_alive(parent) && !process_alive(descendant),
+        "override tree reaped",
+    );
+}
+
+#[test]
 fn natural_success_and_failure_before_deadline_keep_ordinary_outcomes() {
     let directory = setup_directory(
         "natural",
