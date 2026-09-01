@@ -448,6 +448,7 @@ mod tests {
             [
                 "concurrency",
                 "output",
+                "timeout",
                 "recovery_policy",
                 "recovery_timeout"
             ]
