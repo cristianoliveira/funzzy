@@ -1,7 +1,7 @@
 ---
 id: TASK-0159
 title: Prove and document default finite-job timeouts
-status: todo
+status: doing
 depends_on: [TASK-0158]
 priority: high
 tags: [integration-tests, docs, timeout, jobs, reliability]
