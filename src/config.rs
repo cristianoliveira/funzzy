@@ -2803,10 +2803,15 @@ mod hooks_tests {
             "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
         )
         .is_err());
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 1441m\n"
+        let over_bound =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1441m\n")
+                .expect_err("settle over 24h must be rejected");
+        assert!(over_bound.contains("must not exceed 24h"));
+        let non_string_key = generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    ? [bad]\n    : nope\n",
         )
-        .is_err());
+        .expect_err("non-string key must be rejected");
+        assert!(non_string_key.contains("keys must be run or settle"));
     }
 
     #[test]
@@ -2922,12 +2927,15 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
                 return Err("Property 'hooks.failure.settle' must not exceed 24h".into());
             }
             for key in map.keys() {
-                if let Yaml::String(key) = key {
-                    if key != "run" && key != "settle" {
-                        return Err(format!(
-                            "Unknown property 'hooks.failure.{key}' (expected run or settle)"
-                        ));
-                    }
+                let Yaml::String(key) = key else {
+                    return Err(
+                        "Unknown property 'hooks.failure' (keys must be run or settle)".into(),
+                    );
+                };
+                if key != "run" && key != "settle" {
+                    return Err(format!(
+                        "Unknown property 'hooks.failure.{key}' (expected run or settle)"
+                    ));
                 }
             }
             (Some(run), Some(settle))
