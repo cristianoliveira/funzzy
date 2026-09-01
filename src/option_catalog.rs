@@ -460,6 +460,14 @@ mod tests {
     }
 
     #[test]
+    fn execution_timeout_is_discoverable_from_catalog() {
+        let spec = find("timeout").expect("execution timeout catalog entry");
+        assert_eq!(spec.owner, Owner::Execution);
+        assert_eq!(spec.example, &["timeout: 10m"]);
+        assert!(property_names(Owner::Execution).contains(&"timeout"));
+    }
+
+    #[test]
     fn job_inventory_matches_contract_section_3_3() {
         let expected = [
             "name",
