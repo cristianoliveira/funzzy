@@ -47,7 +47,7 @@ Each slice may land as its own traceable commit. Partial slices leave this task 
 
 ## Notes
 
-Verification: `cargo fmt --all -- --check`; `cargo test hooks_tests --lib` (6 passed); `cargo test settled --lib` (11 passed); `cargo test settlement --lib` (9 passed). Parser validation is covered by `hooks_reject_non_string_values`; executor tests cover immediate publication and hook outcomes; workers tests cover deterministic settlement arbitration, coalescing, cancellation, reload, and shutdown. Revision tests cover immutable snapshots and semantic identity.
+Verification: `cargo fmt --all -- --check`; `cargo test hooks_tests --lib` (6 passed); `cargo test settled --lib` (11 passed); `cargo test settlement --lib` (9 passed). Parser validation is covered by `hooks_reject_non_string_values`; executor tests cover immediate publication and hook outcomes; workers tests cover deterministic settlement arbitration, coalescing, cancellation, reload, and shutdown. Revision tests cover immutable snapshots and semantic identity. Watcher generation 12 passed formatting and the full unit suite; generation 13 passed the full feature-gated integration target.
 
 Follow the contract produced by TASK-0152; do not infer unresolved lifecycle semantics during implementation.
 
