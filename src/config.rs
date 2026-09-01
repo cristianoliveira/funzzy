@@ -2796,6 +2796,10 @@ mod hooks_tests {
             "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
         )
         .is_err());
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1441m\n"
+        )
+        .is_err());
     }
 
     #[test]
@@ -2849,6 +2853,8 @@ pub struct SessionHooks {
 
 /// Parses `on.success` / `on.failure` hook commands; absent = None,
 /// non-string values are rejected loudly.
+const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
+
 pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
     let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
     let root = documents
@@ -2904,6 +2910,9 @@ pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, Stri
             })?;
             if settle.is_zero() {
                 return Err("Property 'hooks.failure.settle' must be greater than zero".into());
+            }
+            if settle > MAX_FAILURE_SETTLE {
+                return Err("Property 'hooks.failure.settle' must not exceed 24h".into());
             }
             for key in map.keys() {
                 if let Yaml::String(key) = key {
