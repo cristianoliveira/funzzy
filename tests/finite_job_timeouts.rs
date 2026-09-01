@@ -217,6 +217,26 @@ jobs:
     change: 'src/**'
 "#;
 
+#[test]
+fn execution_default_allows_services_but_direct_timeout_does_not() {
+    let directory = setup_directory("service-config", "execution:\n  timeout: 500ms\njobs:\n  - name: svc\n    service: true\n    run: ./tree.sh\n    change: 'src/**'\n");
+    let accepted = run_cli(&directory, &["check"]);
+    assert!(
+        accepted.status.success(),
+        "default service config: {accepted:?}"
+    );
+    std::fs::write(
+        directory.join(".watch.yaml"),
+        "jobs:\n  - name: svc\n    service: true\n    timeout: 1s\n    run: ./tree.sh\n    change: 'src/**'\n",
+    )
+    .unwrap();
+    let rejected = run_cli(&directory, &["check"]);
+    assert!(
+        !rejected.status.success(),
+        "direct service timeout must fail: {rejected:?}"
+    );
+}
+
 const STUBBORN_TREE: &str = r#"
 on:
   socket: sock
