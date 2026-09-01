@@ -261,7 +261,8 @@ jobs:
 `trigger: manual` (MANUAL-TRIGGER-CONTRACT) means explicit invocation only:
 the job never runs at watcher init, never matches filesystem events — even
 when a root `on.change` would select every other job — and never inherits
-root patterns. It starts only through explicit selection. `timeout:` (optionally) bounds the job's execution (FINITE-JOB-TIMEOUT-CONTRACT):
+root patterns. It starts only through explicit selection. `timeout:`
+(optionally) bounds the job's execution (FINITE-JOB-TIMEOUT-CONTRACT):
 on elapse the whole process tree is terminated and the generation fails
 with the typed `timedout` task state — bounded observation without the
 script implementing its own deadline.
