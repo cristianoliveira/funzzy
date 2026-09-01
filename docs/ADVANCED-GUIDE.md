@@ -316,7 +316,7 @@ a normal finite job.
 
 Two independent deadlines — never conflate them:
 
-- **`jobs[].timeout: <duration>`** owns the **child's lifetime** (`30m`,
+- **`execution.timeout: <duration>`** sets the default child lifetime for finite jobs; **`jobs[].timeout`** overrides it. Services remain unbounded. Both use (`30m`,
   `500ms`, `90s`; a bare number means seconds). It starts at the job's
   first successful spawn, covers the job's whole invocation (including
   multi-command sequences), and on elapse terminates the complete process
