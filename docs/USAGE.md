@@ -131,7 +131,8 @@ on:
 execution:
   concurrency: 2          # scheduler bound (default: available parallelism)
   output: show-on-failure # default job output policy
-  timeout: 10m           # default finite-job timeout # prompt | skip; default prompt
+  recovery_policy: prompt # prompt | skip; default prompt
+  timeout: 10m           # default finite-job timeout
 
 hooks:
   success: echo "checks passed"
