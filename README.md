@@ -412,7 +412,7 @@ jobs:
 
 ## Finite job execution deadlines
 
-Use `jobs[].timeout` to bound a finite job's complete invocation:
+Use `execution.timeout` to set a default for finite jobs; an individual `jobs[].timeout` overrides it. Managed services remain unbounded. To bound a finite job's complete invocation:
 
 ```yaml
 jobs:

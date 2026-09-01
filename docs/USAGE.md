@@ -164,7 +164,7 @@ jobs:
   surface — no init run, no filesystem matching, no root `on.change`
   inheritance; it starts only via `fzz run TARGET` or `fzz ctl run TARGET`
   (MANUAL-TRIGGER-CONTRACT, ADVANCED-GUIDE §8).
-- **Execution timeout**: `timeout: <duration>` (`30m`, `90s`, `500ms`; a
+- **Execution timeout**: `execution.timeout: <duration>` sets the default for finite jobs; a job's `timeout:` overrides it. Services remain unbounded. `timeout: <duration>` (`30m`, `90s`, `500ms`; a
   bare number means seconds) bounds the job's whole invocation. On elapse
   the complete process group is terminated, the job records the typed
   `timedout` state, the generation fails, and pre-kill output stays

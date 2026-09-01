@@ -18,6 +18,25 @@ legacy guards), `event_stream.rs` (NDJSON `TaskTerminal`), MANUAL-TRIGGER-CONTRA
 
 ## 1. Syntax, bounds, absence
 
+`execution.timeout` optionally provides the default finite-job budget:
+
+```yaml
+execution:
+  timeout: 10m
+jobs:
+  - name: lint                 # inherits 10m
+    run: cargo clippy
+  - name: integration
+    timeout: 30m               # job override wins
+    run: cargo test
+```
+
+The precedence is `jobs[].timeout` > `execution.timeout` > unbounded. The
+execution default applies only to finite jobs; managed services remain
+unbounded. `null`, zero, and sentinel strings (`inherit`, `unbounded`) are
+invalid. The default is distinct from the control client's `--timeout`.
+
+
 ```yaml
 jobs:
   - name: await-remote
