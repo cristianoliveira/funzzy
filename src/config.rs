@@ -2788,6 +2788,13 @@ mod hooks_tests {
                 .unwrap();
         assert_eq!(settled.failure.as_deref(), Some("notify"));
         assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
+        let boundary =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1440m\n")
+                .unwrap();
+        assert_eq!(
+            boundary.failure_settle,
+            Some(Duration::from_secs(24 * 60 * 60))
+        );
         assert!(generation_hooks_from_yaml(
             "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
         )

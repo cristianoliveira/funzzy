@@ -44,8 +44,7 @@ jobs:
   bounded duration> }`. Lists, null, empty strings, unknown properties, and
   objects on `success`/`close` are actionable config errors. A failure object
   must contain exactly `run` and `settle`; `settle` must use the normal
-  duration syntax and be greater than zero and no greater than the configured
-  maximum (default 24h).
+  duration syntax and be greater than zero and no greater than the fixed maximum of 24h in this revision.
 - The command must be finite. A service/daemon belongs in a `service: true`
   job, not a close hook.
 - Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and generated init comments must agree that `close` is an optional `hooks` string.
