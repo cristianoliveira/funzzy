@@ -896,6 +896,20 @@ mod timeout_revision_tests {
         semantic_hash(&config)
     }
 
+    #[test]
+    fn parsed_execution_default_changes_semantic_revision() {
+        let without =
+            crate::config::from_yaml("jobs:\n  - name: build\n    run: cargo build\n").unwrap();
+        let with_default = crate::config::from_yaml(
+            "execution:\n  timeout: 10m\njobs:\n  - name: build\n    run: cargo build\n",
+        )
+        .unwrap();
+        assert_ne!(
+            hash_for(without[0].clone()),
+            hash_for(with_default[0].clone())
+        );
+    }
+
     /// FINITE-JOB-TIMEOUT-CONTRACT §7: a timeout-only reload never hashes as
     /// a no-op; absence, 200ms, and 30m are three distinct identities.
     #[test]
