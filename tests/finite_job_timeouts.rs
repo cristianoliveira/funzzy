@@ -209,11 +209,12 @@ fn await_json(directory: &std::path::Path, generation: u64) -> serde_json::Value
 const TIMED_TREE: &str = r#"
 on:
   socket: sock
+execution:
+  timeout: 1s
 jobs:
   - name: tree
     run: ./tree.sh
     change: 'src/**'
-    timeout: 1s
 "#;
 
 const STUBBORN_TREE: &str = r#"
