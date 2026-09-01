@@ -1,7 +1,7 @@
 ---
 id: TASK-0158
 title: Implement default finite-job timeouts
-status: doing
+status: done
 depends_on: [TASK-0157]
 priority: high
 tags: [rust, timeout, jobs, config, tdd]
