@@ -3414,6 +3414,83 @@ mod tests {
         rule
     }
 
+    fn readiness_service(name: &str) -> Rules {
+        service_rule(name, &["serve"], true).with_readiness(Some(
+            crate::rules::Readiness::new(
+                "probe".to_owned(),
+                Duration::from_secs(30),
+                Duration::from_millis(500),
+            ),
+        ))
+    }
+
+    #[test]
+    fn readiness_service_settles_once_probe_passes_while_service_stays_alive() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(201, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        let mut settled = false;
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "ready service must settle its generation");
+        assert!(runner.started_commands().contains(&"serve".to_owned()));
+        assert!(runner.started_commands().contains(&"probe".to_owned()));
+        let completed = executor.finish(run);
+        assert!(completed.outcome.is_success());
+    }
+
+    #[test]
+    fn service_exit_before_readiness_fails_without_restart() {
+        let runner = FakeRunner::default();
+        runner.complete("serve", false);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(202, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        let mut finished = false;
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                finished = true;
+                break;
+            }
+        }
+        assert!(finished, "pre-readiness exit must terminate the generation");
+        assert_eq!(runner.started_commands().iter().filter(|c| *c == "serve").count(), 1);
+        let completed = executor.finish(run);
+        assert!(!completed.outcome.is_success());
+    }
+
+    #[test]
+    fn readiness_probe_failure_retries_after_the_attempt_finishes() {
+        let runner = FakeRunner::default();
+        let clock = Arc::new(ManualClock::new());
+        let executor = executor_with(runner.clone(), clock.clone(), false);
+        let mut run = executor.start(
+            RunMetadata::new(203, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        executor.advance(&mut run); // spawn service
+        executor.advance(&mut run); // spawn probe
+        runner.complete("probe", false);
+        executor.advance(&mut run); // consume failed probe
+        assert_eq!(runner.started_commands().iter().filter(|c| *c == "probe").count(), 1);
+        runner.complete("probe", true);
+        // The retry is due only after the configured interval.
+        assert_eq!(runner.started_commands().iter().filter(|c| *c == "probe").count(), 1);
+        clock.advance_ms(500);
+        let _ = executor.advance(&mut run);
+        assert!(runner.started_commands().iter().filter(|c| *c == "probe").count() >= 2);
+    }
+
     #[test]
     fn finite_task_exits_are_failures_not_restarts() {
         let runner = FakeRunner::default();
