@@ -813,6 +813,21 @@ impl Executor {
                             && (run.active[index].readiness.is_none()
                                 || run.active[index].readiness_ready)
                         {
+                            if run.active[index].readiness.is_some() {
+                                let (position, name, group, started, capture) = {
+                                    let task = &run.active[index];
+                                    (
+                                        task.position,
+                                        task.name.clone(),
+                                        task.group_occurrence.clone(),
+                                        task.started,
+                                        task.capture.clone(),
+                                    )
+                                };
+                                self.record_promoted_service(
+                                    run, position, &name, group.as_deref(), started, capture,
+                                );
+                            }
                             let service = run.active.remove(index);
                             run.services.push(service);
                             continue;
@@ -919,17 +934,8 @@ impl Executor {
                 fail_fast,
             );
         }
-        if task.readiness_deadline.is_some_and(|deadline| now >= deadline) {
-            return self.fail_starting_service(
-                task,
-                results,
-                format!("Service {} readiness timed out", task.name),
-                fail_fast,
-            );
-        }
-
-        // Service exit wins over every probe observation in this cycle.
-        match task.child.as_mut().expect("starting service child") .try_wait() {
+        // Service exit wins over every other observation in this cycle.
+        match task.child.as_mut().expect("starting service child").try_wait() {
             Ok(Some(status)) => {
                 task.child = None;
                 return self.fail_starting_service(
@@ -949,6 +955,14 @@ impl Executor {
                 );
             }
             Ok(None) => {}
+        }
+        if task.readiness_deadline.is_some_and(|deadline| now >= deadline) {
+            return self.fail_starting_service(
+                task,
+                results,
+                format!("Service {} readiness timed out", task.name),
+                fail_fast,
+            );
         }
 
         if let Some(probe) = task.readiness_child.as_mut() {
@@ -1595,6 +1609,36 @@ impl Executor {
         false
     }
 
+    /// Records readiness promotion as the service task's immutable startup
+    /// outcome while retaining the live child in the managed set.
+    fn record_promoted_service(
+        &self,
+        run: &mut Run,
+        position: usize,
+        name: &str,
+        group: Option<&str>,
+        started: Option<Instant>,
+        capture: Option<Arc<CaptureHandle>>,
+    ) {
+        if let (Some(outputs), Some(capture)) = (&self.outputs, &capture) {
+            outputs.record(
+                run.metadata.run_id,
+                name.to_owned(),
+                capture.finish(),
+                run.metadata.revision,
+                run.metadata.revision_hash.clone(),
+            );
+        }
+        let duration_ms = started.map(|started| self.clock.elapsed(started).as_millis() as u64);
+        self.record_task_snapshot(run, position, name, group, TaskState::Passed, duration_ms);
+        run.outcomes.push((
+            position,
+            name.to_owned(),
+            group.map(str::to_owned),
+            TaskOutcome::Passed,
+        ));
+    }
+
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
         self.reveal_on_failure(&task, &task.failures);
         if let (Some(outputs), Some(capture)) = (&self.outputs, &task.capture) {
@@ -1768,8 +1812,14 @@ impl Executor {
                 ) {
                     Ok(child) => {
                         service.child = Some(child);
+                        let spawned_at = self.clock.now();
                         if service.started.is_none() {
-                            service.started = Some(self.clock.now());
+                            service.started = Some(spawned_at);
+                        }
+                        if let Some(readiness) = &service.readiness {
+                            service.readiness_ready = false;
+                            service.readiness_deadline = Some(spawned_at + readiness.timeout());
+                            service.readiness_next_attempt = Some(spawned_at);
                         }
                         if self.verbose {
                             diagnostics::debug(&diagnostics::Record {
@@ -1811,6 +1861,28 @@ impl Executor {
                 index += 1;
                 continue;
             }
+            if service.readiness.is_some() && !service.readiness_ready {
+                let mut probe_results: Vec<Result<(), String>> = vec![];
+                match self.advance_starting_service(
+                    service,
+                    &mut probe_results,
+                    run.metadata.run_id,
+                    false,
+                ) {
+                    TaskStep::Running => {
+                        index += 1;
+                        continue;
+                    }
+                    TaskStep::Finished | TaskStep::FailedFast => {
+                        if let Some(Err(failure)) = probe_results.pop() {
+                            stdout::warn(&failure);
+                        }
+                        run.services.remove(index);
+                        continue;
+                    }
+                    TaskStep::TimedOut => unreachable!("service readiness has no finite timeout"),
+                }
+            }
             let child = service.child.as_mut().expect("child present");
             match child.try_wait() {
                 Ok(None) => index += 1,
@@ -1819,29 +1891,39 @@ impl Executor {
                     let command = service.current_command.clone();
                     service.current_command = None;
                     if status.success() {
-                        // Deliberate stop: remove from background.
+                        // Deliberate stop: remove from background. A
+                        // readiness-enabled service already contributed its
+                        // immutable startup outcome at promotion; its later
+                        // lifecycle is telemetry and never rewrites history.
                         let done = run.services.remove(index);
-                        let duration_ms = done
-                            .started
-                            .map(|started| self.clock.elapsed(started).as_millis() as u64);
-                        self.record_task_snapshot(
-                            run,
-                            done.position,
-                            &done.name,
-                            done.group_occurrence.as_deref(),
-                            TaskState::Passed,
-                            duration_ms,
-                        );
-                        run.outcomes.push((
-                            done.position,
-                            done.name.clone(),
-                            done.group_occurrence.clone(),
-                            TaskOutcome::Passed,
-                        ));
+                        if done.readiness.is_none() {
+                            let duration_ms = done
+                                .started
+                                .map(|started| self.clock.elapsed(started).as_millis() as u64);
+                            self.record_task_snapshot(
+                                run,
+                                done.position,
+                                &done.name,
+                                done.group_occurrence.as_deref(),
+                                TaskState::Passed,
+                                duration_ms,
+                            );
+                            run.outcomes.push((
+                                done.position,
+                                done.name.clone(),
+                                done.group_occurrence.clone(),
+                                TaskOutcome::Passed,
+                            ));
+                        }
                         continue;
                     }
                     if service.service_restarts_left > 0 {
                         service.service_restarts_left -= 1;
+                        if service.readiness.is_some() {
+                            service.readiness_ready = false;
+                            service.readiness_deadline = None;
+                            service.readiness_next_attempt = None;
+                        }
                         stdout::warn(&format!(
                             "service '{}' exited with {}; restarting ({} left)",
                             service.name, status, service.service_restarts_left
@@ -1857,27 +1939,32 @@ impl Executor {
                         service.name, SERVICE_MAX_RESTARTS
                     );
                     service.failures.push(failure.clone());
-                    run.results.push(Err(failure));
+                    let readiness_managed = service.readiness.is_some();
+                    if !readiness_managed {
+                        run.results.push(Err(failure));
+                    }
                     let done = run.services.remove(index);
-                    let duration_ms = done
-                        .started
-                        .map(|started| self.clock.elapsed(started).as_millis() as u64);
-                    self.record_task_snapshot(
-                        run,
-                        done.position,
-                        &done.name,
-                        done.group_occurrence.as_deref(),
-                        TaskState::Failed,
-                        duration_ms,
-                    );
-                    run.outcomes.push((
-                        done.position,
-                        done.name.clone(),
-                        done.group_occurrence.clone(),
-                        TaskOutcome::Failed {
-                            failures: done.failures.clone(),
-                        },
-                    ));
+                    if !readiness_managed {
+                        let duration_ms = done
+                            .started
+                            .map(|started| self.clock.elapsed(started).as_millis() as u64);
+                        self.record_task_snapshot(
+                            run,
+                            done.position,
+                            &done.name,
+                            done.group_occurrence.as_deref(),
+                            TaskState::Failed,
+                            duration_ms,
+                        );
+                        run.outcomes.push((
+                            done.position,
+                            done.name.clone(),
+                            done.group_occurrence.clone(),
+                            TaskOutcome::Failed {
+                                failures: done.failures.clone(),
+                            },
+                        ));
+                    }
                     continue;
                 }
                 Err(_) => index += 1,
@@ -2887,6 +2974,10 @@ mod tests {
                 .insert(command.to_owned(), success);
         }
 
+        fn clear_completion(&self, command: &str) {
+            self.state.lock().unwrap().completed.remove(command);
+        }
+
         fn started_commands(&self) -> Vec<String> {
             self.state
                 .lock()
@@ -3657,6 +3748,8 @@ mod tests {
         assert!(runner.started_commands().contains(&"probe".to_owned()));
         let completed = executor.finish(run);
         assert!(completed.outcome.is_success());
+        assert_eq!(completed.tasks.len(), 1);
+        assert_eq!(completed.tasks[0].state, TaskState::Passed);
     }
 
     #[test]
@@ -3701,6 +3794,32 @@ mod tests {
         clock.advance_ms(500);
         let _ = executor.advance(&mut run);
         assert!(runner.started_commands().iter().filter(|c| *c == "probe").count() >= 2);
+    }
+
+    #[test]
+    fn ready_service_reprobes_after_an_unexpected_restart() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(204, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        runner.complete("serve", false);
+        executor.advance(&mut run); // old service exits and is queued
+        runner.clear_completion("serve");
+        executor.advance(&mut run); // replacement service spawns
+        executor.advance(&mut run); // replacement probe spawns
+        assert_eq!(
+            runner.started_commands().iter().filter(|c| *c == "probe").count(),
+            2,
+            "a restarted service must pass readiness again"
+        );
     }
 
     #[test]
