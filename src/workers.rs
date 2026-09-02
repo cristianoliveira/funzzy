@@ -334,7 +334,7 @@ impl ManagedServiceCoordinator {
     }
 
     fn poll(&mut self, executor: &Executor) -> Vec<crate::executor::ManagedServiceEvent> {
-        let events = executor.poll_service_handoff(&mut self.handoff);
+        let events = executor.advance_service_handoff(&mut self.handoff);
         for event in &events {
             let info = event.info();
             let instance_id = self.pool.get(&info.name).map(|entry| entry.instance_id);
@@ -3253,6 +3253,75 @@ mod manual_frozen_reload_tests {
         coordinator.cancel_replacement("api", 1);
         assert!(coordinator.stopped("api", 1).is_none());
         assert!(coordinator.state().get("api").is_none());
+    }
+
+    #[test]
+    fn worker_coordinator_maps_restart_and_reprobe_events_to_pool_state() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        let spec = crate::service_pool::ServiceSpec {
+            name: "api".into(),
+            revision: 1,
+            signature: "sha256:a".into(),
+            origin_generation: Some(1),
+        };
+        coordinator.promote(spec.clone(), ServiceHandoff::default());
+        let info = crate::executor::ManagedServiceInfo {
+            name: "api".into(),
+            revision: 1,
+            signature: "sha256:a".into(),
+            origin_generation: Some(1),
+            readiness_ready: true,
+        };
+        coordinator.apply_event(
+            1,
+            crate::executor::ManagedServiceEvent::restarting(info.clone(), 2),
+        );
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Restarting
+        );
+        coordinator.apply_event(
+            1,
+            crate::executor::ManagedServiceEvent::stopped(info),
+        );
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Stopped
+        );
+    }
+
+    #[test]
+    fn worker_coordinator_ignores_stale_event_for_replaced_instance() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        let stop = coordinator.select_generation(&[crate::service_pool::ServiceSpec {
+            name: "api".into(),
+            revision: 2,
+            signature: "sha256:b".into(),
+            origin_generation: Some(2),
+        }]);
+        assert_eq!(stop.len(), 1);
+        let _ = coordinator.stopped("api", 1);
+        let info = crate::executor::ManagedServiceInfo {
+            name: "api".into(),
+            revision: 1,
+            signature: "sha256:a".into(),
+            origin_generation: Some(1),
+            readiness_ready: true,
+        };
+        coordinator.apply_event(1, crate::executor::ManagedServiceEvent::stopped(info));
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Starting
+        );
     }
 
     #[test]
