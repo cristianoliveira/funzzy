@@ -17,9 +17,30 @@ A generation containing a healthy `service: true` job stays `running` for the se
 
 A generation can report terminal success once its finite jobs pass and its included services reach a defined ready state. Those services may remain managed in the background, with their current health and lifecycle reported separately from the immutable generation result.
 
+## Accepted direction
+
+Readiness is an explicit, bounded startup health check. Successful process spawn alone does not prove application health, and Funzzy must not infer readiness from an arbitrary stabilization sleep.
+
+Preferred configuration to finalize:
+
+```yaml
+jobs:
+  - name: api
+    service: true
+    run: cargo run
+    readiness:
+      run: curl --fail http://localhost:8080/health
+      timeout: 30s
+      interval: 500ms
+```
+
+The readiness command succeeds on exit code zero and is retried at the configured interval until success, service exit, cancellation, or timeout. A service without `readiness` preserves current generation-running behavior for compatibility; users opt into settled generations by declaring the health check.
+
 ## Acceptance criteria
 
-- [ ] Define a deterministic service readiness boundary; explicitly decide whether successful spawn is sufficient, a stabilization check is required, or users may configure an explicit readiness signal.
+- [ ] Finalize `jobs[].readiness` syntax, positive timeout/interval bounds, defaults, validation, canonical schema/help representation, and shell versus argv support.
+- [ ] Define readiness as the first zero exit from the configured check; nonzero checks retry until the bounded timeout, while spawn failure or service exit before readiness fails the generation.
+- [ ] Define the readiness command's working directory, environment, output attribution/retention, process ownership, and access to service/job context.
 - [ ] Define generation success and failure when finite jobs and services start sequentially or in parallel, including a service that exits before readiness.
 - [ ] Define post-readiness service exit and restart semantics without retroactively changing an already-terminal generation.
 - [ ] Define watcher ownership for ready services after their starting generation settles, including unrelated generations, service re-inclusion, config reload, replacement, cancellation, and watcher shutdown.
@@ -32,7 +53,9 @@ A generation can report terminal success once its finite jobs pass and its inclu
 
 ## Non-goals
 
-- Treating a merely spawned process as healthy without an explicit contract decision.
+- Treating a merely spawned process or elapsed stabilization sleep as application health.
+- Adding implicit network, HTTP, container, or platform-specific probes.
+- Changing behavior for services that omit `readiness`.
 - Retroactively changing terminal generation history.
 - Hot-reload behavior inside the service process.
 - Provider-specific health integrations.
