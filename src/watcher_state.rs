@@ -372,6 +372,42 @@ mod tests {
     }
 
     #[test]
+    fn managed_service_event_updates_live_services_without_rewriting_generation() {
+        let mut state = WatcherState::default();
+        state.apply(started(42, None, None));
+        state.apply(Event::ServiceLifecycle {
+            sequence: 1,
+            ts_ms: 100,
+            service: crate::service_pool::ManagedServiceSnapshot {
+                name: "api".to_owned(),
+                instance_id: 7,
+                state: crate::service_pool::ServiceState::Ready,
+                origin_generation: Some(42),
+                revision: 3,
+                signature: "api-v3".to_owned(),
+                restart_attempts_used: 0,
+                restart_attempts_remaining: 3,
+                started_at_epoch_ms: Some(90),
+                ready_at_epoch_ms: Some(100),
+                uptime_ms: Some(10),
+                latest_error: None,
+            },
+        });
+
+        assert_eq!(state.generation(), 42);
+        assert_eq!(state.state(), &WatcherExecutionState::Running);
+        assert_eq!(state.services()[0].name, "api");
+        assert_eq!(state.services()[0].state, crate::service_pool::ServiceState::Ready);
+        assert_eq!(serde_json::to_value(&state).unwrap()["services"][0]["instanceId"], 7);
+    }
+
+    #[test]
+    fn default_status_always_contains_an_empty_services_array() {
+        let value = serde_json::to_value(WatcherState::default()).unwrap();
+        assert_eq!(value["services"], serde_json::json!([]));
+    }
+
+    #[test]
     fn legacy_fields_serialize_verbatim_with_additive_correlation_keys() {
         let mut state = WatcherState::default();
         state.apply(started(42, Some(7), None));
