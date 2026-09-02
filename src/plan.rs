@@ -142,6 +142,32 @@ impl TaskPlan {
         });
         (expanded, recovery, unknown)
     }
+
+    /// Expands the frozen readiness shell command with the same path and cwd
+    /// context as the service task. Unknown variables are reported alongside
+    /// ordinary task commands by the caller.
+    pub fn expanded_readiness(
+        &self,
+        opts: &TemplateOptions,
+        unknown: &mut Vec<String>,
+    ) -> Option<crate::rules::Readiness> {
+        let readiness = self.readiness.as_ref()?;
+        let mut task_options = opts.clone();
+        if let Some(cwd) = &self.context.cwd {
+            task_options.current_dir = cwd.display().to_string();
+        }
+        let output =
+            template::template_line(CommandLine::Shell(readiness.run().to_owned()), task_options);
+        unknown.extend(output.unknown_variables);
+        let CommandLine::Shell(run) = output.command else {
+            unreachable!("readiness policies always use shell commands");
+        };
+        Some(crate::rules::Readiness::new(
+            run,
+            readiness.timeout(),
+            readiness.interval(),
+        ))
+    }
 }
 
 impl RunPlan {
@@ -337,6 +363,7 @@ impl RunPlan {
                     let mut expanded = task.clone();
                     expanded.commands = commands;
                     expanded.recovery_commands = recovery_commands;
+                    expanded.readiness = task.expanded_readiness(opts, &mut unknown);
                     Stage::Serial(expanded)
                 }
                 Stage::Parallel { group, tasks } => {
@@ -348,6 +375,7 @@ impl RunPlan {
                             let mut expanded = task.clone();
                             expanded.commands = commands;
                             expanded.recovery_commands = recovery_commands;
+                            expanded.readiness = task.expanded_readiness(opts, &mut unknown);
                             expanded
                         })
                         .collect();

@@ -481,10 +481,7 @@ impl Rules {
         }
 
         if self.readiness.is_some() && !self.service {
-            return Err(format!(
-                "job '{}' readiness requires service: true",
-                name
-            ));
+            return Err(format!("job '{}' readiness requires service: true", name));
         }
         if let Some(readiness) = &self.readiness {
             if readiness.run.trim().is_empty() {
@@ -493,7 +490,8 @@ impl Rules {
                     name
                 ));
             }
-            if readiness.timeout.is_zero() || readiness.timeout > Duration::from_secs(24 * 60 * 60) {
+            if readiness.timeout.is_zero() || readiness.timeout > Duration::from_secs(24 * 60 * 60)
+            {
                 return Err(format!(
                     "job '{}' readiness.timeout must be positive and no greater than 24h",
                     name

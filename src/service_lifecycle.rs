@@ -50,7 +50,10 @@ impl ReadinessArbiter {
         for (command, decision) in [
             (ArbitrationCommand::Shutdown, ArbitrationDecision::Shutdown),
             (ArbitrationCommand::Cancel, ArbitrationDecision::Cancelled),
-            (ArbitrationCommand::Supersede, ArbitrationDecision::Superseded),
+            (
+                ArbitrationCommand::Supersede,
+                ArbitrationDecision::Superseded,
+            ),
             (
                 ArbitrationCommand::ReloadReplacement,
                 ArbitrationDecision::ReloadReplacement,
@@ -66,16 +69,20 @@ impl ReadinessArbiter {
         if observations.contains(&ChildObservation::ReadinessTimeout) {
             return ArbitrationDecision::ReadinessTimedOut;
         }
-        if observations
-            .iter()
-            .any(|observation| matches!(observation, ChildObservation::ReadinessExit { success: true }))
-        {
+        if observations.iter().any(|observation| {
+            matches!(
+                observation,
+                ChildObservation::ReadinessExit { success: true }
+            )
+        }) {
             return ArbitrationDecision::ReadinessPassed;
         }
-        if observations
-            .iter()
-            .any(|observation| matches!(observation, ChildObservation::ReadinessExit { success: false }))
-        {
+        if observations.iter().any(|observation| {
+            matches!(
+                observation,
+                ChildObservation::ReadinessExit { success: false }
+            )
+        }) {
             return ArbitrationDecision::RetryReadiness;
         }
         ArbitrationDecision::Noop
@@ -146,7 +153,10 @@ mod tests {
         );
         assert_eq!(
             ReadinessArbiter::resolve(
-                &[ArbitrationCommand::ReloadReplacement, ArbitrationCommand::Cancel],
+                &[
+                    ArbitrationCommand::ReloadReplacement,
+                    ArbitrationCommand::Cancel
+                ],
                 &[],
             ),
             ArbitrationDecision::Cancelled
@@ -156,10 +166,7 @@ mod tests {
     #[test]
     fn failed_probe_is_retryable_and_not_a_terminal_generation_failure() {
         assert_eq!(
-            ReadinessArbiter::resolve(
-                &[],
-                &[ChildObservation::ReadinessExit { success: false }],
-            ),
+            ReadinessArbiter::resolve(&[], &[ChildObservation::ReadinessExit { success: false }],),
             ArbitrationDecision::RetryReadiness
         );
     }

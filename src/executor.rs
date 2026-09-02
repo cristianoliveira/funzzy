@@ -234,6 +234,20 @@ pub trait ProcessRunner: Send + Sync {
         label: Option<String>,
         quiet: bool,
     ) -> Result<Box<dyn ChildProcess>, String>;
+
+    /// Spawn a readiness probe with stdin disconnected. Test runners inherit
+    /// the ordinary spawn seam unless they need to assert this boundary.
+    fn spawn_readiness(
+        &self,
+        task: &str,
+        command: &CommandLine,
+        context: &TaskContext,
+        capture: Option<Arc<CaptureHandle>>,
+        label: Option<String>,
+        quiet: bool,
+    ) -> Result<Box<dyn ChildProcess>, String> {
+        self.spawn(task, command, context, capture, label, quiet)
+    }
 }
 
 pub struct SystemProcessRunner;
@@ -251,6 +265,24 @@ impl ProcessRunner for SystemProcessRunner {
         let child = match command {
             CommandLine::Shell(command) => {
                 cmd::spawn_in_with_capture_quiet(command, context, capture, label, quiet)
+            }
+            CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
+        }?;
+        Ok(Box::new(child))
+    }
+
+    fn spawn_readiness(
+        &self,
+        _task: &str,
+        command: &CommandLine,
+        context: &TaskContext,
+        capture: Option<Arc<CaptureHandle>>,
+        label: Option<String>,
+        quiet: bool,
+    ) -> Result<Box<dyn ChildProcess>, String> {
+        let child = match command {
+            CommandLine::Shell(command) => {
+                cmd::spawn_readiness_in_with_capture_quiet(command, context, capture, label, quiet)
             }
             CommandLine::Argv(argv) => cmd::spawn_argv_in(argv, context),
         }?;
@@ -553,6 +585,8 @@ struct ActiveTask {
     service_signature: String,
     /// Frozen application-level service health policy and probe state.
     readiness: Option<crate::rules::Readiness>,
+    /// Distinct retained channel for synthetic `<service>:readiness` output.
+    readiness_capture: Option<Arc<CaptureHandle>>,
     readiness_child: Option<Box<dyn ChildProcess>>,
     readiness_deadline: Option<Instant>,
     readiness_next_attempt: Option<Instant>,
@@ -586,6 +620,7 @@ impl From<TaskPlan> for ActiveTask {
             timeout: task.timeout,
             service_signature: crate::config_revision::service_signature(&task.rule),
             readiness: task.readiness,
+            readiness_capture: None,
             readiness_child: None,
             readiness_deadline: None,
             readiness_next_attempt: None,
@@ -809,9 +844,11 @@ impl Executor {
                     // alive (polled for restart/failure) until reaped.
                     if !run.services.is_empty() {
                         self.advance_services(run);
-                        if run.services.iter().all(|service| {
-                            service.readiness.is_some() && service.readiness_ready
-                        }) {
+                        if run
+                            .services
+                            .iter()
+                            .all(|service| service.readiness.is_some() && service.readiness_ready)
+                        {
                             return Step::Finished;
                         }
                         return Step::Running;
@@ -856,7 +893,7 @@ impl Executor {
                                 || run.active[index].readiness_ready)
                         {
                             if run.active[index].readiness.is_some() {
-                                let (position, name, group, started, capture) = {
+                                let (position, name, group, started, capture, readiness_capture) = {
                                     let task = &run.active[index];
                                     (
                                         task.position,
@@ -864,10 +901,17 @@ impl Executor {
                                         task.group_occurrence.clone(),
                                         task.started,
                                         task.capture.clone(),
+                                        task.readiness_capture.clone(),
                                     )
                                 };
                                 self.record_promoted_service(
-                                    run, position, &name, group.as_deref(), started, capture,
+                                    run,
+                                    position,
+                                    &name,
+                                    group.as_deref(),
+                                    started,
+                                    capture,
+                                    readiness_capture,
                                 );
                             }
                             let service = run.active.remove(index);
@@ -929,9 +973,11 @@ impl Executor {
                 if run.services.is_empty() {
                     continue;
                 }
-                if run.services.iter().all(|service| {
-                    service.readiness.is_some() && service.readiness_ready
-                }) {
+                if run
+                    .services
+                    .iter()
+                    .all(|service| service.readiness.is_some() && service.readiness_ready)
+                {
                     return Step::Finished;
                 }
                 return Step::Running;
@@ -977,7 +1023,12 @@ impl Executor {
             );
         }
         // Service exit wins over every other observation in this cycle.
-        match task.child.as_mut().expect("starting service child").try_wait() {
+        match task
+            .child
+            .as_mut()
+            .expect("starting service child")
+            .try_wait()
+        {
             Ok(Some(status)) => {
                 task.child = None;
                 return self.fail_starting_service(
@@ -992,13 +1043,19 @@ impl Executor {
                 return self.fail_starting_service(
                     task,
                     results,
-                    format!("Service {} could not be observed before readiness: {error}", task.name),
+                    format!(
+                        "Service {} could not be observed before readiness: {error}",
+                        task.name
+                    ),
                     fail_fast,
                 );
             }
             Ok(None) => {}
         }
-        if task.readiness_deadline.is_some_and(|deadline| now >= deadline) {
+        if task
+            .readiness_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
             return self.fail_starting_service(
                 task,
                 results,
@@ -1022,7 +1079,12 @@ impl Executor {
                     }
                     // Probe success is committed only if the service remains
                     // alive at the promotion boundary.
-                    match task.child.as_mut().expect("starting service child").try_wait() {
+                    match task
+                        .child
+                        .as_mut()
+                        .expect("starting service child")
+                        .try_wait()
+                    {
                         Ok(None) => {
                             task.readiness_ready = true;
                             task.readiness_child = None;
@@ -1048,7 +1110,10 @@ impl Executor {
                             return self.fail_starting_service(
                                 task,
                                 results,
-                                format!("Service {} could not be observed before readiness: {error}", task.name),
+                                format!(
+                                    "Service {} could not be observed before readiness: {error}",
+                                    task.name
+                                ),
                                 fail_fast,
                             );
                         }
@@ -1070,8 +1135,13 @@ impl Executor {
             return TaskStep::Running;
         }
         let command = CommandLine::Shell(readiness.run().to_owned());
-        let capture = task.capture.clone();
-        match self.runner.spawn(
+        if task.readiness_capture.is_none()
+            && (self.outputs.is_some() || task.output != crate::rules::OutputPolicy::Inherit)
+        {
+            task.readiness_capture = Some(Arc::new(CaptureHandle::new()));
+        }
+        let capture = task.readiness_capture.clone();
+        match self.runner.spawn_readiness(
             &task.name,
             &command,
             &task.context,
@@ -1095,7 +1165,10 @@ impl Executor {
             Err(error) => self.fail_starting_service(
                 task,
                 results,
-                format!("Service {} readiness check failed to start: {error}", task.name),
+                format!(
+                    "Service {} readiness check failed to start: {error}",
+                    task.name
+                ),
                 fail_fast,
             ),
         }
@@ -1149,10 +1222,7 @@ impl Executor {
             }
         }
 
-        if task.service
-            && task.child.is_some()
-            && task.readiness.is_some()
-            && !task.readiness_ready
+        if task.service && task.child.is_some() && task.readiness.is_some() && !task.readiness_ready
         {
             return self.advance_starting_service(task, results, run_id, fail_fast);
         }
@@ -1661,11 +1731,21 @@ impl Executor {
         group: Option<&str>,
         started: Option<Instant>,
         capture: Option<Arc<CaptureHandle>>,
+        readiness_capture: Option<Arc<CaptureHandle>>,
     ) {
         if let (Some(outputs), Some(capture)) = (&self.outputs, &capture) {
             outputs.record(
                 run.metadata.run_id,
                 name.to_owned(),
+                capture.finish(),
+                run.metadata.revision,
+                run.metadata.revision_hash.clone(),
+            );
+        }
+        if let (Some(outputs), Some(capture)) = (&self.outputs, &readiness_capture) {
+            outputs.record(
+                run.metadata.run_id,
+                format!("{name}:readiness"),
                 capture.finish(),
                 run.metadata.revision,
                 run.metadata.revision_hash.clone(),
@@ -2167,9 +2247,11 @@ impl Executor {
     pub fn finish(&self, run: Run) -> CompletedRun {
         // Local one-shot execution has no worker pool: stop and reap every
         // promoted service before publishing the frozen terminal result.
-        self.finish_with_service_handoff(run, |_| {}, |mut handoff| {
-            self.shutdown_service_handoff(&mut handoff)
-        })
+        self.finish_with_service_handoff(
+            run,
+            |_| {},
+            |mut handoff| self.shutdown_service_handoff(&mut handoff),
+        )
     }
 
     /// Finalizes a generation while atomically detaching promoted services to
@@ -3790,13 +3872,11 @@ mod tests {
     }
 
     fn readiness_service(name: &str) -> Rules {
-        service_rule(name, &["serve"], true).with_readiness(Some(
-            crate::rules::Readiness::new(
-                "probe".to_owned(),
-                Duration::from_secs(30),
-                Duration::from_millis(500),
-            ),
-        ))
+        service_rule(name, &["serve"], true).with_readiness(Some(crate::rules::Readiness::new(
+            "probe".to_owned(),
+            Duration::from_secs(30),
+            Duration::from_millis(500),
+        )))
     }
 
     #[test]
@@ -3847,14 +3927,14 @@ mod tests {
             }
         }
         let mut handoff = None;
-        let _completed = executor.finish_with_service_handoff(
-            run,
-            |_| {},
-            |services| handoff = Some(services),
-        );
+        let _completed =
+            executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
         assert_eq!(handoff.as_ref().unwrap().services.len(), 1);
         assert_eq!(handoff.as_ref().unwrap().specs()[0].name, "api");
-        assert_eq!(handoff.as_ref().unwrap().specs()[0].origin_generation, Some(205));
+        assert_eq!(
+            handoff.as_ref().unwrap().specs()[0].origin_generation,
+            Some(205)
+        );
         assert!(runner.shutdown_commands().is_empty());
         let mut handoff = handoff.take().unwrap();
         executor.shutdown_service_handoff(&mut handoff);
@@ -3878,7 +3958,14 @@ mod tests {
             }
         }
         assert!(finished, "pre-readiness exit must terminate the generation");
-        assert_eq!(runner.started_commands().iter().filter(|c| *c == "serve").count(), 1);
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "serve")
+                .count(),
+            1
+        );
         let completed = executor.finish(run);
         assert!(!completed.outcome.is_success());
     }
@@ -3896,13 +3983,34 @@ mod tests {
         executor.advance(&mut run); // spawn probe
         runner.complete("probe", false);
         executor.advance(&mut run); // consume failed probe
-        assert_eq!(runner.started_commands().iter().filter(|c| *c == "probe").count(), 1);
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "probe")
+                .count(),
+            1
+        );
         runner.complete("probe", true);
         // The retry is due only after the configured interval.
-        assert_eq!(runner.started_commands().iter().filter(|c| *c == "probe").count(), 1);
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "probe")
+                .count(),
+            1
+        );
         clock.advance_ms(500);
         let _ = executor.advance(&mut run);
-        assert!(runner.started_commands().iter().filter(|c| *c == "probe").count() >= 2);
+        assert!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "probe")
+                .count()
+                >= 2
+        );
     }
 
     #[test]
@@ -3925,7 +4033,11 @@ mod tests {
         executor.advance(&mut run); // replacement service spawns
         executor.advance(&mut run); // replacement probe spawns
         assert_eq!(
-            runner.started_commands().iter().filter(|c| *c == "probe").count(),
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "probe")
+                .count(),
             2,
             "a restarted service must pass readiness again"
         );

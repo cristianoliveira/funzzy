@@ -799,7 +799,8 @@ impl Worker {
                                     }
                                 }
                                 WorkerCommand::ReconcileServices { stop_names, reply } => {
-                                    let stopped = managed_services.stop_named(&executor, &stop_names);
+                                    let stopped =
+                                        managed_services.stop_named(&executor, &stop_names);
                                     let _ = reply.send(stopped);
                                 }
                                 WorkerCommand::StartServices {
@@ -2961,7 +2962,10 @@ mod manual_frozen_reload_tests {
             ServiceHandoff::default(),
         );
         assert!(coordinator.select_generation(&[]).is_empty());
-        assert_eq!(coordinator.state().get("api").unwrap().state, crate::service_pool::ServiceState::Ready);
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Ready
+        );
         assert_eq!(
             coordinator.select_generation(&[crate::service_pool::ServiceSpec {
                 name: "api".into(),
@@ -2969,7 +2973,10 @@ mod manual_frozen_reload_tests {
                 signature: "sha256:a".into(),
                 origin_generation: Some(2),
             }]),
-            vec![crate::service_pool::PoolAction::Stop { name: "api".into(), instance_id: 1 }]
+            vec![crate::service_pool::PoolAction::Stop {
+                name: "api".into(),
+                instance_id: 1
+            }]
         );
     }
 
@@ -2993,16 +3000,28 @@ mod manual_frozen_reload_tests {
                 origin_generation: None,
             }]),
             vec![
-                crate::service_pool::PoolAction::Stop { name: "api".into(), instance_id: 1 },
-                crate::service_pool::PoolAction::Start { name: "db".into(), instance_id: 2 },
+                crate::service_pool::PoolAction::Stop {
+                    name: "api".into(),
+                    instance_id: 1
+                },
+                crate::service_pool::PoolAction::Start {
+                    name: "db".into(),
+                    instance_id: 2
+                },
             ]
         );
         assert_eq!(
             coordinator.exited("db", 2, false),
-            Some(crate::service_pool::PoolAction::Probe { name: "db".into(), instance_id: 2 })
+            Some(crate::service_pool::PoolAction::Probe {
+                name: "db".into(),
+                instance_id: 2
+            })
         );
         coordinator.probed("db", 2, true);
-        assert_eq!(coordinator.state().get("db").unwrap().state, crate::service_pool::ServiceState::Ready);
+        assert_eq!(
+            coordinator.state().get("db").unwrap().state,
+            crate::service_pool::ServiceState::Ready
+        );
     }
 
     #[test]

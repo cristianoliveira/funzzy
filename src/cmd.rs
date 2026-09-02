@@ -407,7 +407,7 @@ pub fn spawn_in_with_capture_quiet(
     let mut cmd = prepare_command(command);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, command, capture, label, quiet)
+    spawn_configured(&mut cmd, command, capture, label, quiet, false)
 }
 
 /// Spawns with an optional bounded output capture (TASK-0045, contract §6).
@@ -415,6 +415,25 @@ pub fn spawn_in_with_capture_quiet(
 /// file keep working exactly as before, with one read, multiple sinks.
 /// `label` (TASK-0028) prefixes every live line with `[label] ` so parallel
 /// tasks keep task identity; raw capture bytes are never prefixed.
+/// Spawns a readiness probe with stdin disconnected so health checks cannot
+/// consume watcher input. The process group and output handling remain the
+/// same as ordinary task children.
+pub fn spawn_readiness_in_with_capture_quiet(
+    command: &String,
+    context: &TaskContext,
+    capture: Option<Arc<CaptureHandle>>,
+    label: Option<String>,
+    quiet: bool,
+) -> Result<LoggedChild, String> {
+    println!();
+    logging::log_line("");
+    stdout::info(&format!("{} \n", String::from(command)));
+
+    let mut cmd = prepare_command(command);
+    apply_context(&mut cmd, context);
+    spawn_configured(&mut cmd, command, capture, label, quiet, true)
+}
+
 pub fn spawn_in_with_capture(
     command: &String,
     context: &TaskContext,
@@ -428,7 +447,7 @@ pub fn spawn_in_with_capture(
     let mut cmd = prepare_command(command);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, command, capture, label, false)
+    spawn_configured(&mut cmd, command, capture, label, false, false)
 }
 
 /// Spawns an exact argv (program plus arguments) directly, without a shell.
@@ -446,7 +465,7 @@ pub fn spawn_argv_in(argv: &[String], context: &TaskContext) -> Result<LoggedChi
     let mut cmd = prepare_argv_command(argv);
     apply_context(&mut cmd, context);
 
-    spawn_configured(&mut cmd, &display, None, None, false)
+    spawn_configured(&mut cmd, &display, None, None, false, false)
 }
 
 fn apply_context(command: &mut Command, context: &TaskContext) {
@@ -462,6 +481,7 @@ fn spawn_configured(
     capture: Option<Arc<CaptureHandle>>,
     label: Option<String>,
     quiet: bool,
+    stdin_null: bool,
 ) -> Result<LoggedChild, String> {
     // Pipe child output whenever we need to forward it: logging, bounded
     // capture, quiet suppression (TASK-0041), or live task attribution
@@ -471,6 +491,9 @@ fn spawn_configured(
     if logging::is_enabled() || capture.is_some() || label.is_some() || quiet {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+    }
+    if stdin_null {
+        cmd.stdin(Stdio::null());
     }
 
     // Each task leads its own process group so cancellation can signal the

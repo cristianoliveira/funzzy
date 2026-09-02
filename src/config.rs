@@ -702,7 +702,11 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
 
 /// Parse the explicit service readiness policy. The object is intentionally
 /// strict: a typo or null value must not silently disable health checking.
-fn readiness_from_yaml(yaml: &Yaml, name: &str, service: bool) -> errors::Result<Option<Readiness>> {
+fn readiness_from_yaml(
+    yaml: &Yaml,
+    name: &str,
+    service: bool,
+) -> errors::Result<Option<Readiness>> {
     let value = &yaml["readiness"];
     if value == &Yaml::BadValue {
         return Ok(None);
@@ -787,9 +791,13 @@ fn readiness_from_yaml(yaml: &Yaml, name: &str, service: bool) -> errors::Result
         };
         parse_duration(&format!("readiness.{field}"), &raw)
             .map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))?
-            .ok_or_else(|| errors::FzzError::InvalidConfigError(
-                format!("Job '{name}' readiness.{field} is required"), None, None,
-            ))
+            .ok_or_else(|| {
+                errors::FzzError::InvalidConfigError(
+                    format!("Job '{name}' readiness.{field} is required"),
+                    None,
+                    None,
+                )
+            })
     };
     let timeout = parse_field("timeout", true)?;
     let interval = parse_field("interval", false)?;
@@ -1331,8 +1339,14 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
         lines.push("service: true".to_owned());
         lines.push("readiness:".to_owned());
         lines.push(format!("  run: {}", readiness.run()));
-        lines.push(format!("  timeout: {}", render_duration(readiness.timeout())));
-        lines.push(format!("  interval: {}", render_duration(readiness.interval())));
+        lines.push(format!(
+            "  timeout: {}",
+            render_duration(readiness.timeout())
+        ));
+        lines.push(format!(
+            "  interval: {}",
+            render_duration(readiness.interval())
+        ));
     }
     if !rule.watch_patterns().is_empty() {
         lines.push(render_scalar_or_list("change", &rule.watch_patterns()));
@@ -3247,7 +3261,10 @@ mod service_tests {
             let config = format!(
                 "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    {readiness}\n"
             );
-            assert!(from_yaml(&config).is_err(), "expected rejection: {readiness}");
+            assert!(
+                from_yaml(&config).is_err(),
+                "expected rejection: {readiness}"
+            );
         }
     }
 

@@ -57,7 +57,10 @@ impl ManagedServicePool {
     }
 
     pub(crate) fn instance_ids(&self) -> Vec<u64> {
-        self.entries.values().map(|entry| entry.instance_id).collect()
+        self.entries
+            .values()
+            .map(|entry| entry.instance_id)
+            .collect()
     }
 
     pub(crate) fn promote_ready(&mut self, spec: ServiceSpec) -> ServiceEntry {
@@ -306,7 +309,10 @@ impl PoolCycle {
             (PoolCommand::Shutdown, PoolDecision::Shutdown),
             (PoolCommand::Cancel, PoolDecision::Cancelled),
             (PoolCommand::Supersede, PoolDecision::Superseded),
-            (PoolCommand::ReloadReplacement, PoolDecision::ReloadReplacement),
+            (
+                PoolCommand::ReloadReplacement,
+                PoolDecision::ReloadReplacement,
+            ),
         ] {
             if self.commands.contains(&command) {
                 return decision;
@@ -364,11 +370,25 @@ mod tests {
         pool.promote_ready(spec("api", 1, "sha256:a"));
         // Selection replaces even when the frozen signature is unchanged.
         let actions = pool.select_generation(&[spec("api", 1, "sha256:a")]);
-        assert_eq!(actions, vec![PoolAction::Stop { name: "api".into(), instance_id: 1 }]);
+        assert_eq!(
+            actions,
+            vec![PoolAction::Stop {
+                name: "api".into(),
+                instance_id: 1
+            }]
+        );
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Stopping);
 
-        let action = pool.stopped("api", 1).expect("replacement starts after reap");
-        assert_eq!(action, PoolAction::Start { name: "api".into(), instance_id: 2 });
+        let action = pool
+            .stopped("api", 1)
+            .expect("replacement starts after reap");
+        assert_eq!(
+            action,
+            PoolAction::Start {
+                name: "api".into(),
+                instance_id: 2
+            }
+        );
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Starting);
         assert_eq!(pool.instance_ids(), vec![2]);
     }
@@ -377,12 +397,19 @@ mod tests {
     fn reload_add_change_remove_has_deterministic_actions() {
         let mut pool = ManagedServicePool::new();
         pool.promote_ready(spec("api", 1, "sha256:a"));
-        let actions = pool.reconcile_reload(&[spec("db", 1, "sha256:d"), spec("api", 2, "sha256:b")]);
+        let actions =
+            pool.reconcile_reload(&[spec("db", 1, "sha256:d"), spec("api", 2, "sha256:b")]);
         assert_eq!(
             actions,
             vec![
-                PoolAction::Stop { name: "api".into(), instance_id: 1 },
-                PoolAction::Start { name: "db".into(), instance_id: 2 },
+                PoolAction::Stop {
+                    name: "api".into(),
+                    instance_id: 1
+                },
+                PoolAction::Start {
+                    name: "db".into(),
+                    instance_id: 2
+                },
             ]
         );
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Stopping);
@@ -410,9 +437,16 @@ mod tests {
     fn post_settlement_exit_enters_restart_and_probe_success_returns_ready() {
         let mut pool = ManagedServicePool::new();
         pool.promote_ready(spec("api", 1, "sha256:a"));
-        assert_eq!(pool.exited("api", 1, false), Some(PoolAction::Probe { name: "api".into(), instance_id: 1 }));
+        assert_eq!(
+            pool.exited("api", 1, false),
+            Some(PoolAction::Probe {
+                name: "api".into(),
+                instance_id: 1
+            })
+        );
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Restarting);
-        pool.probed("api", 1, true).expect("probe belongs to restart");
+        pool.probed("api", 1, true)
+            .expect("probe belongs to restart");
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Ready);
     }
 
