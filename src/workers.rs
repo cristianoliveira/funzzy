@@ -2998,6 +2998,36 @@ mod manual_frozen_reload_tests {
     }
 
     #[test]
+    fn worker_coordinator_cancellation_after_reservation_suppresses_spawn() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        let actions = coordinator.select_generation(&[crate::service_pool::ServiceSpec {
+            name: "api".into(),
+            revision: 1,
+            signature: "sha256:a".into(),
+            origin_generation: Some(2),
+        }]);
+        assert_eq!(
+            actions,
+            vec![crate::service_pool::PoolAction::Stop {
+                name: "api".into(),
+                instance_id: 1,
+            }]
+        );
+        coordinator.cancel_replacement("api", 1);
+        assert!(coordinator.stopped("api", 1).is_none());
+        assert!(coordinator.state().get("api").is_none());
+    }
+
+    #[test]
     fn scheduler_close_cancels_claimed_settlement() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let now = Instant::now();
