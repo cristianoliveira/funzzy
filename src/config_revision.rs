@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
-        // Schema version 6 (explicit canonical hook fields + settled failure hooks;
+        // Schema version 7 (explicit readiness policy in canonical encoding;
         // contracts): the semantic encoding changed; fixture regenerated.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
