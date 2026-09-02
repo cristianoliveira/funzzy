@@ -296,7 +296,7 @@ mod unix {
         assert_eq!(response["jsonrpc"], "2.0");
         let result = &response["result"];
         assert_eq!(result["protocolVersion"], "1.0");
-        assert_eq!(result["schemaVersion"], 2);
+        assert_eq!(result["schemaVersion"], 1);
         let token = result["instance"]["token"]
             .as_str()
             .expect("instance token");

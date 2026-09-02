@@ -187,8 +187,6 @@ pub enum Event {
     /// Live managed-service telemetry. This never changes generation outcome;
     /// it is projected separately by `WatcherState` and control snapshots.
     ServiceLifecycle {
-        sequence: u64,
-        ts_ms: u64,
         service: crate::service_pool::ManagedServiceSnapshot,
     },
 }
@@ -554,22 +552,6 @@ impl ManagedServiceEvent {
 
     pub(crate) fn is_failed(&self) -> bool {
         matches!(self, Self::Failed { .. })
-    }
-
-    pub(crate) fn restart_attempts_remaining(&self) -> Option<usize> {
-        match self {
-            Self::Restarting {
-                attempts_remaining, ..
-            } => Some(*attempts_remaining),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn error(&self) -> Option<&str> {
-        match self {
-            Self::Failed { error, .. } => Some(error),
-            _ => None,
-        }
     }
 }
 

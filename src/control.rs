@@ -808,7 +808,7 @@ fn capabilities_result(
     }
     serde_json::json!({
         "protocolVersion": "1.0",
-        "schemaVersion": 2,
+        "schemaVersion": 1,
         "watcherVersion": env!("CARGO_PKG_VERSION"),
         "instance": {
             "token": instance.token,
@@ -821,8 +821,7 @@ fn capabilities_result(
             "predecessor",
             "supersededBy",
             "failureEvidence",
-            "estimate",
-            "services"
+            "estimate"
         ],
         "outputFormats": ["toon", "json"],
         "limits": limits,
@@ -834,7 +833,6 @@ fn capabilities_result(
             "pendingWork": false,
             "durationEstimates": duration_estimates,
             "sequentialOverride": sequential_override,
-            "managedServices": true,
         },
     })
 }
@@ -905,9 +903,6 @@ fn status_result(
             Some(serde_json::json!("status serialization failed")),
         )
     })?;
-    // Schema 2 requires live managed-service telemetry on every status read;
-    // the explicit marker lets strict clients distinguish it from schema 1.
-    value["schemaVersion"] = serde_json::json!(2);
     if snapshot.state() == &WatcherExecutionState::Failed {
         let failed_tasks: Vec<String> = snapshot
             .tasks()
