@@ -3942,6 +3942,56 @@ mod tests {
     }
 
     #[test]
+    fn service_handoff_exposes_immutable_info_without_child_internals() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner, 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(206, "test").with_revision(7, "rev".into()),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let info = executor.service_handoff_info(handoff.as_ref().unwrap());
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "api");
+        assert_eq!(info[0].revision, 7);
+        assert_eq!(info[0].origin_generation, Some(206));
+        assert_eq!(info[0].readiness_ready, true);
+        assert!(!info[0].signature.is_empty());
+    }
+
+    #[test]
+    fn polling_handoff_reports_deliberate_exit_and_detaches_handle() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(207, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        runner.complete("serve", true);
+        let mut handoff = handoff.take().unwrap();
+        let events = executor.poll_service_handoff(&mut handoff);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].info().name, "api");
+        assert!(events[0].is_stopped());
+        assert_eq!(executor.service_handoff_info(&handoff).len(), 0);
+    }
+
+    #[test]
     fn service_exit_before_readiness_fails_without_restart() {
         let runner = FakeRunner::default();
         runner.complete("serve", false);
