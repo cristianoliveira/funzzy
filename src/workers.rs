@@ -1,6 +1,6 @@
 use crate::executor::{
-    CancelDisposition, Event, EventSink, Executor, Run, RunMetadata, Step, SystemClock,
-    SystemProcessRunner,
+    CancelDisposition, Event, EventSink, Executor, ManagedService, Run, RunMetadata, Step,
+    SystemClock, SystemProcessRunner,
 };
 use crate::output::OutputRegistry;
 use crate::plan::{ExecutionSignature, RunPlan};
@@ -602,6 +602,9 @@ impl Worker {
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
             let mut pending: Option<RunRequest> = None;
+            // Readiness services outlive their settled generation and are
+            // owned by this worker until reconciliation or shutdown.
+            let mut managed_services: Vec<ManagedService> = vec![];
             let mut settled_hook_owner = SettledHookOwner::new(hook_context.clone());
 
             loop {
@@ -779,6 +782,7 @@ impl Worker {
                         }
                         SchedulerWake::Closed => {
                             settled_hook_owner.shutdown(&executor);
+                            executor.shutdown_managed_services(&mut managed_services);
                             break;
                         }
                     }
@@ -932,6 +936,7 @@ impl Worker {
                                     .register_settlement(spec.clone(), Instant::now());
                             }
                         });
+                        managed_services.extend(completed.managed_services);
                         stdout::present_results(
                             completed.results,
                             completed.elapsed,

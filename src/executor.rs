@@ -447,6 +447,23 @@ pub struct PendingSettledHook {
     pub revision_hash: String,
 }
 
+/// A readiness-enabled service transferred to worker ownership when its
+/// generation settles. The child handle is deliberately not dropped by the
+/// executor's generation finalization path.
+pub struct ManagedService {
+    task: ActiveTask,
+}
+
+impl ManagedService {
+    pub fn name(&self) -> &str {
+        &self.task.name
+    }
+
+    pub fn readiness_ready(&self) -> bool {
+        self.task.readiness_ready
+    }
+}
+
 pub struct CompletedRun {
     pub results: Vec<Result<(), String>>,
     pub elapsed: Duration,
@@ -456,6 +473,8 @@ pub struct CompletedRun {
     /// Terminal job snapshots in configured declaration order. These carry
     /// the executor's only per-job monotonic duration measurements.
     pub tasks: Vec<TaskSnapshot>,
+    /// Readiness-enabled services handed to the worker-owned pool.
+    pub managed_services: Vec<ManagedService>,
 }
 
 /// How a run cancellation ended (TASK-0046): graceful when every active child
@@ -2131,6 +2150,13 @@ impl Executor {
         F: FnOnce(Option<&PendingSettledHook>),
     {
         let elapsed = self.clock.elapsed(run.started);
+        // Transfer promoted readiness services before the run is consumed.
+        // The worker-owned pool becomes their sole owner after this point.
+        let managed_services = run
+            .services
+            .drain(..)
+            .map(|task| ManagedService { task })
+            .collect();
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
             run.outcomes
@@ -2166,6 +2192,7 @@ impl Executor {
             outcome,
             tasks: run.task_snapshots,
             pending_settled_hook,
+            managed_services,
         }
     }
 
@@ -2324,6 +2351,15 @@ impl Executor {
         for stage in plan.stages {
             run.stages.push_back(stage);
         }
+    }
+
+    /// Reaps every service transferred to the worker-owned pool during
+    /// watcher shutdown or replacement.
+    pub fn shutdown_managed_services(&self, services: &mut Vec<ManagedService>) {
+        for service in services.iter_mut() {
+            self.shutdown_task(&mut service.task);
+        }
+        services.clear();
     }
 
     /// Reconciles the background services of one generation by name
