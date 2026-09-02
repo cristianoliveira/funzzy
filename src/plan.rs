@@ -66,6 +66,8 @@ pub struct TaskPlan {
     pub output: OutputPolicy,
     /// Managed long-running service (TASK-0035); opt-in.
     pub service: bool,
+    /// Frozen application-level health policy for readiness-enabled services.
+    pub readiness: Option<crate::rules::Readiness>,
     /// Finite execution deadline frozen at plan build from the rule
     /// (FINITE-JOB-TIMEOUT-CONTRACT §7: frozen into the plan at schedule
     /// time so a reload mid-generation cannot change it).
@@ -247,6 +249,7 @@ impl RunPlan {
         for (position, rule) in rules.into_iter().enumerate() {
             let output = rule.output();
             let service = rule.service();
+            let readiness = rule.readiness().cloned();
             let timeout = rule.timeout();
             let plan = TaskPlan {
                 name: rule.name.clone(),
@@ -262,6 +265,7 @@ impl RunPlan {
                 rule,
                 output,
                 service,
+                readiness,
                 timeout,
             };
 

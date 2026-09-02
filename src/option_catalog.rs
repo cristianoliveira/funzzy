@@ -338,6 +338,16 @@ const JOB_SPECS: &[OptionSpec] = &[
         kind: SpecKind::Bool,
     },
     OptionSpec {
+        name: "readiness",
+        owner: Owner::Job,
+        required: false,
+        default: None,
+        help: "Application health command for a managed service; successful readiness settles the generation while the service remains managed.",
+        values: None,
+        example: &["readiness:", "  run: curl --fail http://localhost/health", "  timeout: 30s"],
+        kind: SpecKind::StringMap,
+    },
+    OptionSpec {
         name: "output",
         owner: Owner::Job,
         required: false,

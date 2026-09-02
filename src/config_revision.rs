@@ -161,6 +161,7 @@ fn encode_rule(canonical: &mut CanonicalEncoder, rule: &Rules) {
     canonical.optional_u64(rule.timeout().map(|timeout| timeout.as_millis() as u64));
     canonical.optional_string(rule.parallel().map(str::to_owned));
     canonical.bool(rule.service());
+    encode_readiness(canonical, rule.readiness());
     canonical.string(&output_policy_tag(&rule.output()));
     canonical.optional_string(rule.cwd().map(str::to_owned));
 
@@ -226,6 +227,9 @@ pub fn service_signature(rule: &Rules) -> String {
     canonical.bool(true); // service rule tag
     canonical.string(&rule.name);
     canonical.bool(rule.service());
+    // Preserve the absent encoding for legacy services; an explicit readiness
+    // policy contributes its complete command/timing surface.
+    encode_readiness(&mut canonical, rule.readiness());
     canonical.string(&output_policy_tag(&rule.output()));
     canonical.optional_string(rule.cwd().map(str::to_owned));
 
@@ -244,6 +248,18 @@ pub fn service_signature(rule: &Rules) -> String {
     }
 
     hex(&Sha256::digest(&canonical.bytes))
+}
+
+fn encode_readiness(canonical: &mut CanonicalEncoder, readiness: Option<&crate::rules::Readiness>) {
+    match readiness {
+        None => canonical.byte(0),
+        Some(readiness) => {
+            canonical.byte(1);
+            canonical.string(readiness.run());
+            canonical.u64(readiness.timeout().as_millis() as u64);
+            canonical.u64(readiness.interval().as_millis() as u64);
+        }
+    }
 }
 
 /// Stable output-policy tag for hashing.

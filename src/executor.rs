@@ -2166,6 +2166,7 @@ mod tests {
                 context: crate::plan::TaskContext::default(),
                 output: crate::rules::OutputPolicy::Inherit,
                 service: false,
+                readiness: None,
                 timeout: None,
             })],
         };

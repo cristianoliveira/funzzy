@@ -23,6 +23,38 @@ pub enum OutputPolicy {
     ShowOnFailure,
 }
 
+/// Application-level health check for a managed service. Readiness is
+/// deliberately opt-in: services without this policy retain their legacy
+/// generation-owned lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Readiness {
+    run: String,
+    timeout: Duration,
+    interval: Duration,
+}
+
+impl Readiness {
+    pub fn new(run: String, timeout: Duration, interval: Duration) -> Self {
+        Self {
+            run,
+            timeout,
+            interval,
+        }
+    }
+
+    pub fn run(&self) -> &str {
+        &self.run
+    }
+
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rules {
     pub name: String,
@@ -62,6 +94,8 @@ pub struct Rules {
     /// Finite execution deadline (FINITE-JOB-TIMEOUT-CONTRACT): job-wide
     /// budget from the job's first successful spawn; None = unbounded.
     timeout: Option<Duration>,
+    /// Optional application-level health check for managed services.
+    readiness: Option<Readiness>,
 }
 
 /// Configured trigger mode for a job (MANUAL-TRIGGER-CONTRACT §2).
@@ -103,6 +137,7 @@ impl Rules {
             service: false,
             trigger: None,
             timeout: None,
+            readiness: None,
         }
     }
 
@@ -132,6 +167,7 @@ impl Rules {
             service: false,
             trigger: None,
             timeout: None,
+            readiness: None,
         }
     }
 
@@ -218,6 +254,17 @@ impl Rules {
     pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    /// Sets the optional application-level service readiness policy.
+    pub fn with_readiness(mut self, readiness: Option<Readiness>) -> Self {
+        self.readiness = readiness;
+        self
+    }
+
+    /// The configured readiness policy, if this is a readiness-enabled service.
+    pub fn readiness(&self) -> Option<&Readiness> {
+        self.readiness.as_ref()
     }
 
     /// The configured finite deadline; `None` = unbounded (§1 absence).
@@ -431,6 +478,33 @@ impl Rules {
                 "job '{}' cannot declare recovery when service is true",
                 name
             ));
+        }
+
+        if self.readiness.is_some() && !self.service {
+            return Err(format!(
+                "job '{}' readiness requires service: true",
+                name
+            ));
+        }
+        if let Some(readiness) = &self.readiness {
+            if readiness.run.trim().is_empty() {
+                return Err(format!(
+                    "job '{}' readiness.run must be a non-empty command",
+                    name
+                ));
+            }
+            if readiness.timeout.is_zero() || readiness.timeout > Duration::from_secs(24 * 60 * 60) {
+                return Err(format!(
+                    "job '{}' readiness.timeout must be positive and no greater than 24h",
+                    name
+                ));
+            }
+            if readiness.interval.is_zero() || readiness.interval > readiness.timeout {
+                return Err(format!(
+                    "job '{}' readiness.interval must be positive and no greater than timeout",
+                    name
+                ));
+            }
         }
 
         // MANUAL-TRIGGER-CONTRACT §4: a manual job has neither `change` nor

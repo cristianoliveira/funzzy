@@ -10,7 +10,7 @@ extern crate yaml_rust2;
 
 use crate::cli;
 use crate::errors;
-use crate::rules::{OutputPolicy, Rules};
+use crate::rules::{OutputPolicy, Readiness, Rules};
 use crate::yaml;
 
 use self::yaml_rust2::Yaml;
@@ -559,6 +559,7 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ))
         }
     };
+    let readiness = readiness_from_yaml(yaml, &name, service)?;
     if service && recovery.is_some() {
         return Err(errors::FzzError::InvalidConfigError(
             format!(
@@ -678,7 +679,8 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         .with_output(output)
         .with_service(service)
         .with_trigger(trigger)
-        .with_timeout(timeout);
+        .with_timeout(timeout)
+        .with_readiness(readiness);
     let rule = match recovery {
         Some(commands) => rule.with_recovery(commands),
         None => rule,
@@ -687,6 +689,116 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         Some(group) => rule.with_parallel(group),
         None => rule,
     })
+}
+
+/// Parse the explicit service readiness policy. The object is intentionally
+/// strict: a typo or null value must not silently disable health checking.
+fn readiness_from_yaml(yaml: &Yaml, name: &str, service: bool) -> errors::Result<Option<Readiness>> {
+    let value = &yaml["readiness"];
+    if value == &Yaml::BadValue {
+        return Ok(None);
+    }
+    if !service {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Job '{name}' readiness requires service: true"),
+            None,
+            Some("Add `service: true` or remove the `readiness` policy.".to_owned()),
+        ));
+    }
+    let Yaml::Hash(fields) = value else {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Invalid 'readiness' value for job '{name}': must be an object"),
+            None,
+            Some("Configure readiness with `run`, `timeout`, and optional `interval`.".to_owned()),
+        ));
+    };
+    for key in fields.keys() {
+        let Some(key) = key.as_str() else {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Invalid readiness field for job '{name}': field names must be strings"),
+                None,
+                None,
+            ));
+        };
+        if !matches!(key, "run" | "timeout" | "interval") {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Invalid property 'readiness.{key}' in job '{name}'"),
+                None,
+                Some("Only `run`, `timeout`, and `interval` are allowed.".to_owned()),
+            ));
+        }
+    }
+
+    let run = match fields.get(&Yaml::String("run".to_owned())) {
+        Some(Yaml::String(run)) if !run.trim().is_empty() => run.clone(),
+        Some(Yaml::String(_)) => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Job '{name}' readiness.run must be a non-empty command"),
+                None,
+                None,
+            ));
+        }
+        Some(_) => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Job '{name}' readiness.run must be a string"),
+                None,
+                None,
+            ));
+        }
+        None => {
+            return Err(errors::FzzError::InvalidConfigError(
+                format!("Job '{name}' readiness.run is required"),
+                None,
+                None,
+            ));
+        }
+    };
+
+    let parse_field = |field: &str, required: bool| -> errors::Result<Duration> {
+        let Some(value) = fields.get(&Yaml::String(field.to_owned())) else {
+            if required {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!("Job '{name}' readiness.{field} is required"),
+                    None,
+                    None,
+                ));
+            }
+            return Ok(Duration::from_millis(500));
+        };
+        let raw = match value {
+            Yaml::String(raw) => raw.clone(),
+            Yaml::Integer(seconds) => format!("{seconds}s"),
+            _ => {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!("Job '{name}' readiness.{field} must be a duration string or number"),
+                    None,
+                    None,
+                ));
+            }
+        };
+        parse_duration(&format!("readiness.{field}"), &raw)
+            .map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))?
+            .ok_or_else(|| errors::FzzError::InvalidConfigError(
+                format!("Job '{name}' readiness.{field} is required"), None, None,
+            ))
+    };
+    let timeout = parse_field("timeout", true)?;
+    let interval = parse_field("interval", false)?;
+    if timeout > Duration::from_secs(24 * 60 * 60) {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Job '{name}' readiness.timeout cannot exceed 24h"),
+            None,
+            None,
+        ));
+    }
+    if interval > timeout {
+        return Err(errors::FzzError::InvalidConfigError(
+            format!("Job '{name}' readiness.interval cannot exceed timeout"),
+            None,
+            None,
+        ));
+    }
+    Ok(Some(Readiness::new(run, timeout, interval)))
 }
 
 fn execution_timeout_from_root(root: &Yaml) -> errors::Result<Option<Duration>> {
@@ -1205,6 +1317,12 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
         // FINITE-JOB-TIMEOUT-CONTRACT §1/QA P2: a rendered bounded job must
         // stay bounded — dropping `timeout` would silently unbound it.
         lines.push(format!("timeout: {}", render_duration(timeout)));
+    }
+    if let Some(readiness) = rule.readiness() {
+        lines.push("readiness:".to_owned());
+        lines.push(format!("  run: {}", readiness.run()));
+        lines.push(format!("  timeout: {}", render_duration(readiness.timeout())));
+        lines.push(format!("  interval: {}", render_duration(readiness.interval())));
     }
     if !rule.watch_patterns().is_empty() {
         lines.push(render_scalar_or_list("change", &rule.watch_patterns()));
