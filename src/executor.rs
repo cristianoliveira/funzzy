@@ -317,6 +317,9 @@ pub struct RunMetadata {
     pub revision: Option<u64>,
     /// Non-secret semantic hash of the frozen config revision (TASK-0089).
     pub revision_hash: Option<String>,
+    /// Immutable watcher/workspace context for generation hooks. This is
+    /// separate from each job's context so hooks never inherit a job cwd.
+    pub hook_context: TaskContext,
 }
 
 impl RunMetadata {
@@ -337,6 +340,7 @@ impl RunMetadata {
             recovery_timeout: Duration::from_secs(60),
             revision: None,
             revision_hash: None,
+            hook_context: TaskContext::default(),
         }
     }
 
@@ -365,7 +369,15 @@ impl RunMetadata {
             recovery_timeout: Duration::from_secs(60),
             revision: None,
             revision_hash: None,
+            hook_context: TaskContext::default(),
         }
+    }
+
+    /// Attaches the immutable watcher/workspace context used by generation
+    /// hooks, independent of any selected job's context.
+    pub fn with_hook_context(mut self, context: TaskContext) -> Self {
+        self.hook_context = context;
+        self
     }
 
     /// Attaches the exact target name and its stable execution signature
@@ -1672,8 +1684,8 @@ impl Executor {
     /// Adds the reserved correlation inputs shared by immediate and settled
     /// generation hooks. Declared environment values cannot shadow these
     /// exact immutable identifiers.
-    fn hook_context(run_id: u64, outcome: &str) -> TaskContext {
-        let mut context = TaskContext::default();
+    fn hook_context(base: &TaskContext, run_id: u64, outcome: &str) -> TaskContext {
+        let mut context = base.clone();
         context
             .environment
             .insert("FUNZZY_GENERATION_ID".to_owned(), run_id.to_string());
@@ -1724,6 +1736,7 @@ impl Executor {
             });
         }
         let context = Self::hook_context(
+            &metadata.hook_context,
             metadata.run_id,
             if outcome.is_success() {
                 "passed"
@@ -1772,10 +1785,19 @@ impl Executor {
         spec: PendingSettledHook,
         token: &CancellationToken,
     ) -> Result<Option<SettledHookRun>, String> {
+        self.start_settled_hook_with_context(spec, token, &TaskContext::default())
+    }
+
+    pub fn start_settled_hook_with_context(
+        &self,
+        spec: PendingSettledHook,
+        token: &CancellationToken,
+        base_context: &TaskContext,
+    ) -> Result<Option<SettledHookRun>, String> {
         if token.is_cancelled() {
             return Ok(None);
         }
-        let context = Self::hook_context(spec.run_id, "failed");
+        let context = Self::hook_context(base_context, spec.run_id, "failed");
         let child = self
             .runner
             .spawn(
