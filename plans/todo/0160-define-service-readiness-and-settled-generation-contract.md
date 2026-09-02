@@ -1,7 +1,7 @@
 ---
 id: TASK-0160
 title: Define service readiness and settled-generation contract
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [design, services, readiness, generations, control-socket, determinism]
