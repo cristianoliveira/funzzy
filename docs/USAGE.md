@@ -63,6 +63,31 @@ fzz run "@quick"    # target can be a name, @tag, or unambiguous substring
 
 `run` exits with the combined outcome (0 all pass, 1 any fail).
 
+### Readiness-enabled services
+
+A service without `readiness` remains a legacy generation-owned service: it is
+unbounded and keeps its generation running while alive. Add an explicit
+readiness command when the watcher should settle the generation after health
+is proven:
+
+```yaml
+jobs:
+  - name: api
+    service: true
+    run: cargo run -- --port 8080
+    readiness:
+      run: curl --fail http://127.0.0.1:8080/health
+      timeout: 30s
+      interval: 500ms
+```
+
+A successful readiness probe transfers `api` to the worker-owned pool. The
+exact generation becomes `passed`, while control status reports the separate
+secondary view `services: [{name: api, state: ready}]`. A later service
+restart or failure does not rewrite that generation result. A failed probe or
+timeout fails the generation and reaps the service. Readiness configuration
+is strict and frozen when the generation is scheduled.
+
 ### Current-run job durations
 
 Finite runs render one declaration-ordered `JOB / RESULT / DURATION` row for
@@ -72,10 +97,11 @@ measurement, valid whether jobs are serial or parallel. The generation
 job rows.
 
 Started cancellations retain a partial duration; skipped or never-started jobs
-render `-` and structured snapshots/events expose `durationMs: null`. A
-recovered job appears once with its final state and a duration through final
-verification. For exact integer milliseconds, inspect `tasks[].durationMs` in
-a control snapshot or a `task_terminal` NDJSON event.
+render `-` and structured snapshots/events expose `durationMs: null`. A recovered job appears once with its final state and a duration through final
+verification. Readiness-enabled services record duration through readiness
+promotion; their later uptime is pool state. Legacy live services have no
+finite duration while alive. For exact integer milliseconds, inspect
+`tasks[].durationMs` in a control snapshot or a `task_terminal` NDJSON event.
 
 ### 1.4 Inspect before executing
 
@@ -153,6 +179,14 @@ jobs:
     timeout: 30m          # bound execution; elapse terminates the job and
                              # fails the generation (not a client wait bound)
 
+  - name: api
+    service: true
+    run: cargo run -- --port 8080
+    readiness:
+      run: curl --fail http://127.0.0.1:8080/health
+      timeout: 30s
+      interval: 500ms
+
   - name: format-check
     timeout: 30m          # job override wins
     run: cargo fmt --all -- --check
@@ -166,7 +200,7 @@ jobs:
   surface — no init run, no filesystem matching, no root `on.change`
   inheritance; it starts only via `fzz run TARGET` or `fzz ctl run TARGET`
   (MANUAL-TRIGGER-CONTRACT, ADVANCED-GUIDE §8).
-- **Execution timeout**: `execution.timeout: <duration>` sets the default for finite jobs; a job's `timeout:` overrides it. Services remain unbounded. `timeout: <duration>` (`30m`, `90s`, `500ms`; a
+- **Execution timeout**: `execution.timeout: <duration>` sets the default for finite jobs; a job's `timeout:` overrides it. Services remain unbounded by this finite-job timeout; `readiness.timeout` only bounds startup health probing. `timeout: <duration>` (`30m`, `90s`, `500ms`; a
   bare number means seconds) bounds the job's whole invocation. On elapse
   the complete process group is terminated, the job records the typed
   `timedout` state, the generation fails, and pre-kill output stays

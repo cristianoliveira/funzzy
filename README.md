@@ -74,12 +74,12 @@ Funzzy earns trust by combining a simple edit loop with explicit execution seman
 - **Reuse one workflow:** use the same workflow locally, in CI, or in an editor feedback loop.
 - **Match changes precisely:** combine change and ignore globs, optional gitignore rules, path templates, and future-file discovery.
 - **Batch deterministically:** debounce and deduplicate filesystem events before creating one generation.
-- **Control execution:** run consecutive named parallel groups behind explicit serial barriers; use `--sequential` for comparison; cancel and reap complete process groups; opt into long-running jobs with `service: true`.
+- **Control execution:** run consecutive named parallel groups behind explicit serial barriers; use `--sequential` for comparison; cancel and reap complete process groups; use readiness-enabled `service: true` jobs when startup health should settle a generation, while services without readiness retain legacy unbounded behavior.
 - **Bound finite work:** `jobs[].timeout` terminates timed-out process trees and records the typed `timedout` outcome; control `--timeout` only bounds the caller's wait.
 - **Automate safely:** run generation-level `hooks.success` and `hooks.failure` without changing the workflow result; optionally run a declared recovery once after an approved failure, then verify the original job; unanswered approval fails after `execution.recovery_timeout` (60s by default), while CI can use `--recovery-policy skip`.
 - **Reload visibly:** valid config changes hot-reload without replacing watcher identity; invalid changes fail visibly instead of leaving stale behavior running.
-- **Inspect exact evidence:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket.
-- **Keep execution observable:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, services, and hooks.
+- **Inspect exact evidence:** query capabilities, status, targets, exact generations, retained output, duration estimates, cancellation, and fresh terminal results over a permission-restricted Unix socket; status keeps terminal generation outcome primary and exposes pooled services as secondary `{name,state}` entries.
+- **Keep execution observable:** mirror logs and append schema-versioned NDJSON events for runs, tasks, groups, and hooks; managed-service state is intentionally read through control status/await/subscription in the MVP.
 - **Keep configuration discoverable:** generate schema and examples from the installed binary, then validate with the same parser the watcher uses.
 - **Close cleanly:** `hooks.close` runs one finite cleanup command when a ready watcher shuts down gracefully.
 
@@ -285,8 +285,10 @@ runtime; it remains meaningful for both serial and parallel jobs. The final
 A cancelled job that started reports its partial duration. A skipped or
 never-started job prints `-` (`durationMs: null` in structured snapshots). A
 recovered job has one final row whose duration includes recovery and
-verification. Use the control snapshot or NDJSON `task_terminal` event when an
-exact integer `durationMs` is needed.
+verification. A readiness-enabled service records duration through readiness
+promotion; later uptime belongs to its pooled service state. Use the control
+snapshot or NDJSON `task_terminal` event when an exact integer `durationMs` is
+needed.
 
 Inspect or control a watcher configured with `on.socket`:
 

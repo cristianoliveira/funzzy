@@ -207,8 +207,10 @@ Additional rules:
 
 - **Managed services** (`service: true`) are reconciled at the commit
   boundary: an unchanged service stays owned; a changed/removed one is
-  gracefully replaced/stopped — a config edit never leaks a second server
-  on the same port.
+  gracefully stopped and replaced without overlapping same-name instances.
+  Services with `readiness` settle their generation after the probe succeeds;
+  services without it retain legacy generation-owned, unbounded behavior. A
+  config edit never leaks a second server on the same port.
 - **A config save never kills an active finite run**: the running generation
   completes under its original revision; later events route under the new
   one (output references carry each generation's frozen revision).
@@ -227,9 +229,11 @@ Additional rules:
 ## 7. Machine-readable output
 
 - Control: `--format toon|json|human` (one document, deterministic).
-- Run events: `--events FILE` appends NDJSON (`started`/`tick`/
-  `task_terminal`/`finished`/`cancelled`), schema-versioned, with run/task/
-  group identity (RUN-EVENTS-CONTRACT).
+- Run events: `--events FILE` appends schema-versioned NDJSON
+  (`started`/`tick`/`task_terminal`/`finished`/`cancelled`) with run/task/group
+  identity (RUN-EVENTS-CONTRACT). Managed-service lifecycle is intentionally
+  omitted from this MVP stream; inspect its secondary `name,state` view through
+  control status/await/subscription.
 - Never teach polling-based freshness reconstruction or deprecated
   compatibility paths in these recipes.
 
@@ -307,20 +311,25 @@ Control `--timeout` bounds **waiting only**; it never terminates the
 observed process. The job's own lifetime is bounded separately by
 `jobs[].timeout` (§8.5) — the two deadlines are independent surfaces.
 
-### 8.4 Why not `service: true`
+### 8.4 Choosing a finite job or a readiness-enabled service
 
-A managed service is the wrong primitive for one finite observation:
-zero exit means *deliberate stop*, non-zero exits are auto-retried (bounded),
-and the service is generation-owned — reaped on supersession and restarted
-only by re-inclusion (SERVICE-LIFECYCLE-CONTRACT). A blocking observation
-needs exactly one invocation with one terminal result: `trigger: manual` on
-a normal finite job.
+A legacy managed service without `readiness` is the wrong primitive for one
+finite observation: it is generation-owned, unbounded, and keeps the
+generation running while alive. It is reaped on supersession and restarted
+only by re-inclusion (SERVICE-LIFECYCLE-CONTRACT).
+
+Use a readiness-enabled service when the goal is a long-lived process whose
+startup health should produce a truthful terminal generation result. Its
+readiness probe must pass before the generation settles; the service then
+remains in the worker-owned pool and status reports `services: [{name,state}]`.
+A blocking observation still needs exactly one invocation with one terminal
+result, so use `trigger: manual` on a normal finite job.
 
 ### 8.5 Bounded observation: `jobs[].timeout` vs control `--timeout`
 
 Two independent deadlines — never conflate them:
 
-- **`execution.timeout: <duration>`** sets the default child lifetime for finite jobs; **`jobs[].timeout`** overrides it. Services remain unbounded. Both use (`30m`,
+- **`execution.timeout: <duration>`** sets the default child lifetime for finite jobs; **`jobs[].timeout`** overrides it. Services remain unbounded by this finite-job timeout; a readiness service's `readiness.timeout` bounds health probing, not service uptime. Both use (`30m`,
   `500ms`, `90s`; a bare number means seconds). It starts at the job's
   first successful spawn, covers the job's whole invocation (including
   multi-command sequences), and on elapse terminates the complete process

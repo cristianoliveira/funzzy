@@ -1,223 +1,194 @@
-# Funzzy Service Lifecycle Contract (TASK-0133)
+# Funzzy Service Lifecycle Contract
 
-Status: documentation of implemented behavior (TASK-0035 service management,
-TASK-0083/0090 generation scheduling and reload reconcile). Two follow-up
-changes are specified here and dispatched separately (§6): an actionable
-`fzz check` warning and option-catalog help alignment.
-Amended after Kely's verification (evidence:
-/Users/cristianoliveira/.agents/reports/26-08-26/task-0133-service-lifecycle-contract-verification.md):
-local `fzz run` path corrected (§3), service zero-exit terminal semantics
-corrected (§2.3), restart-path claim narrowed (§3), reload exception added
-to the footgun (§5), warning/help wording refined (§6).
+Status: readiness settlement and worker-owned pooling are implemented by
+TASK-0161. External black-box proof is in
+`tests/control_await.rs` (`30f5ff4`). This document supersedes the older
+TASK-0133 description that treated every live service as generation-owned.
 
-Evidence base (all cited symbols verified in-tree): `executor.rs` (`Run`,
-`ActiveTask`, `advance`, `advance_task`, `advance_services`, `cancel`,
-`append_plan`, `SERVICE_MAX_RESTARTS`, `SERVICE_RESTART_BACKOFF_MS`),
-`workers.rs` (`WorkerCommand::Run` supersede path, `StartServices`,
-`ReconcileServices`), `reload_coordinator.rs` (`reconcile_services`),
-`watches.rs` (`watch_plan`, `watch_plan_batch`, `target_plan`,
-`run_on_init_plan`), `config.rs` (`rule_from_with_common`, `merge_patterns`),
-`app.rs` (`check_config`), `option_catalog.rs` (`service` spec).
-Reproduction trace: `.tmp/reports/26-08-26/gh-actions-watch-design-a.md`.
+## 1. Service modes
 
-## 1. Purpose
+A `service: true` job has one of two modes:
 
-A `service: true` job's lifetime is not watcher-owned; it is owned by the
-run **generation** that spawned it. Users cannot predict a managed service's
-lifetime from the current help text ("started on init, restarted on change,
-stopped on exit", `option_catalog.rs`), because "restarted on change"
-conflates two different mechanisms: path selection into a *replacement
-generation* (re-inclusion) versus an actual watcher-owned restart. This
-contract states the real model, derives the init-only service footgun from
-it, and records the `fzz check` decision that follows.
+- **Legacy service:** no `readiness` block. It keeps the existing behavior: the
+  service belongs to its generation, remains unbounded while alive, and keeps
+  that generation running. It is still stopped/reaped by cancellation,
+  supersession, reload replacement, or watcher shutdown according to the
+  existing process-ownership rules.
+- **Readiness-enabled service:** includes a readiness command. Once the
+  service is healthy, Funzzy transfers it to the worker-owned managed-service
+  pool. The generation can then settle while the service remains alive.
 
-## 2. The model: generation ownership
+Readiness is opt-in. A readiness block is valid only on `service: true` jobs.
+Configurations without it retain legacy semantics.
 
-A managed service is a job (`service: true`) that the executor treats as a
-background member of one generation:
+## 2. Configuration
 
-1. **Membership.** When a service task spawns successfully and is still
-   running, `advance` moves it from `run.active` into `run.services`
-   (`executor.rs`, TASK-0035). It executes no further generation barrier —
-   it is polled, not awaited, by `advance_services`.
-2. **Lifetime.** While `run.services` is non-empty the generation never
-   reaches `Finished` (`advance` checks `run.services.is_empty()` before
-   completing). A generation containing a live service remains running until
-   one of exactly three ends:
-   - **shutdown** — the watcher exits and reaps everything;
-   - **supersession** — a newer generation arrives (§3);
-   - **terminal service failure** — the service exhausts its bounded
-     restarts and the generation fails (§2.3).
-3. **Exit semantics within a generation.** A service's exit is not itself
-   a barrier result, but it does carry an outcome:
-   - **zero exit = deliberate stop.** The service is removed from the live
-     set and records `Passed` (`advance_services`: `TaskState::Passed`,
-     `TaskOutcome::Passed`); the generation may then finish successfully
-     once no live services remain. It does **not** silently return in a
-     later generation.
-   - **non-zero exit = unexpected.** Automatic bounded retry:
-     `SERVICE_MAX_RESTARTS` (3) attempts with `SERVICE_RESTART_BACKOFF_MS`
-     (500ms) backoff; when attempts are exhausted, the service records
-     failure and the generation fails with "Service {name} has failed after
-     {n} restarts".
+```yaml
+on:
+  socket: .tmp/funzzy/control.sock
 
-## 3. Supersession: restart by re-inclusion
-
-When a new generation arrives while one is active — a filesystem event
-batch (`watch_plan_batch`), or a control-socket run selection (`fzz ctl
-run TARGET`; only the control path enqueues `WorkerCommand::Run` — local
-`fzz run TARGET` executes its own one-shot `RunCommand` process
-(`app.rs::Action::Run`) and never supersedes a running watcher) — the
-worker cancels and **reaps** the active
-generation: `cancel()` shuts down every task in `run.services` and records
-each as `Cancelled`. There is no survival of services across a supersede
-and no watcher-level service registry.
-
-The replacement generation then runs whatever its **plan selection**
-includes. A service continues existing only by being **re-included** in that
-plan — i.e. by being selected again from scratch:
-
-- **Path-selected generations** (`watch_plan(path)`): a job joins iff a
-  changed path matches its **effective change patterns** (and is not
-  ignored, not gitignored, and it is not manual).
-- **Run-selected generations** (`target_plan(target)`): a job joins iff its
-  name matches the target substring — so `fzz ctl run <service-name>` does
-  re-include a named service (and local `fzz run <service-name>` runs it
-  once in its own process).
-- **Init generations** (`run_on_init_plan`): only at watcher startup, and
-  only jobs with `run_on_init: true` (manual jobs never).
-
-There is no other **plan/re-inclusion** restart path beyond watch, target,
-and init planning. The service's own **automatic bounded non-zero retry**
-(§2.3) is a separate in-place restart mechanism and always preserved. The
-only lifecycle that *moves* a live service without a full re-spawn is
-**config reload**
-(`reload_coordinator.rs::reconcile_services` → `StartServices` /
-`ReconcileServices` → `append_plan`, TASK-0090): on a committed valid
-reload, removed or signature-changed services are stopped, and added or
-signature-changed services are appended into the *active* generation —
-by name and signature, regardless of change patterns. Reload never
-crosses a supersede.
-
-## 4. Effective change patterns
-
-Whether a service is re-includable by events is decided by config merge, at
-parse time (`config.rs::rule_from_with_common`):
-
-```text
-effective change = merge_patterns(root on.change, job change)
+jobs:
+  - name: api
+    service: true
+    run: cargo run -- --port 8080
+    change: "src/**"
+    readiness:
+      run: curl --fail http://127.0.0.1:8080/health
+      timeout: 30s
+      interval: 500ms
 ```
 
-- A service **with** its own `change:` (or with a root `on.change` it
-  matches) is re-included into every generation whose triggering path
-  matches — it is restarted on those events.
-- A service with **empty** effective change patterns is **init-only**: it
-  joins only the init generation and explicit run selections naming it.
-  Config parsing deliberately allows this shape (a job with
-  `run_on_init: true` and no `change` is legal).
+Readiness fields are strict:
 
-## 5. The init-only service footgun
+- `run` is one non-empty shell command. It runs with the service job's
+  resolved shell, working directory, environment, and path-template context.
+- `timeout` is required, positive, and no greater than 24 hours.
+- `interval` is optional and defaults to `500ms`; it must be positive and no
+  greater than `timeout`.
+- Unknown, missing, null, or wrongly typed readiness fields are configuration
+  errors. Readiness on a non-service job is also rejected.
 
-An init-only service (`service: true`, `run_on_init: true`, empty effective
-change) is not automatically re-included by unrelated replacement
-generations:
+The complete effective readiness policy contributes to revision identity and
+readiness-enabled service signatures. The policy is frozen when a generation
+is scheduled; a later reload cannot change an in-flight probe decision.
 
-1. Watcher starts → init generation owns the service; it runs.
-2. Any event (or `ctl run`) that forms a new generation → the active
-   generation is cancelled; the service is reaped as `Cancelled`.
-3. The replacement plan is path/target-selected; the service matches no
-   path → it is absent. Nothing re-includes it: reload reconcile starts
-   only **added or signature-changed** services (by name and signature,
-   regardless of change patterns — `reconcile_services`); an **unchanged**
-   init-only service stays down until a config change touches it, the
-   watcher restarts, or an explicit `ctl run` names it.
+## 3. Readiness execution
 
-Observed in the Design A probe: a single config with an init-only mirror
-poller service plus a reactor job died after its first poll — the first
-mirror write superseded the init generation, and the poller never returned
-(`.tmp/reports/26-08-26/gh-actions-watch-design-a.md`, Result 1).
+After the service process spawns successfully, Funzzy starts at most one
+readiness attempt at a time. A failed attempt must exit before the next retry;
+the interval begins after that attempt exits. Exit code zero promotes the
+service only when the service is still alive. Non-zero attempts retry until
+success or the absolute timeout. A readiness-command spawn failure fails
+immediately.
 
-**Do not** "fix" this by giving the service `change: "**"`: it then joins
-*every* event plan, and a generation owning a live service never reaches
-`Finished` — the normal edit loop never renders results (same probe,
-rejected alternative).
+A timeout terminates and reaps an active readiness process group before the
+service lifecycle becomes failed. A service that exits before readiness is a
+pre-readiness failure, not a post-settlement restart. Service and readiness
+processes use separate ownership and output channels; readiness stdin is
+null, so a probe cannot consume watcher input.
 
-**Valid patterns** for a long-lived poller today:
+Readiness attempts use a synthetic `<service>:readiness` capture. Failed
+attempts are intermediate evidence, not separate generation task failures.
+The service's resolved context and frozen policy are reused after a restart.
 
-- **Split instances:** run the poller as a dedicated config
-  (`fzz watch -c bridge.yaml`) with no other change-triggered jobs in it —
-  nothing supersedes it; or run it outside funzzy entirely.
-- **Event-driven service:** give the service real change patterns so
-  re-inclusion is the desired restart behavior.
-- **Watched-scope services** (survive supersede, restart only on reload) is
-  a recorded future direction, not today's semantics.
+## 4. Generation settlement and ownership
 
-## 6. `fzz check`: actionably warn, do not reject — DECIDED
+A generation settles exactly once when its finite work is terminal and every
+readiness-enabled service included by that generation is ready. At the
+promotion boundary, the executor detaches the live service through an opaque
+`ServiceHandoff`; the worker adopts it into the managed pool before publishing
+the generation terminal result. `CompletedRun` exposes no live service or
+process handle.
 
-Decision (lead, recorded): `fzz check` on `service: true` with
-`run_on_init: true` and **empty effective change patterns** emits an
-**actionable warning**, not a rejection.
+The generation result is immutable and primary. A settled `passed` generation
+stays passed even if its pooled service later restarts, fails, or stops. A
+post-settlement service event does not reopen the generation or rerun its
+hooks. Generation hooks run at the generation settlement boundary, once.
 
-Rationale:
+A generation containing a legacy service remains running while that service is
+alive. This distinction is intentional: readiness is the explicit health
+contract that permits settlement.
 
-1. **The config is legal-but-surprising, not invalid.** It parses, and it
-   functions — until the first superseding generation. Rejection would fail
-   a configuration that the runtime accepts and that has a legitimate
-   standalone-daemon use (the split-instance pattern: a config whose only
-   job is an init-only service has nothing to supersede it).
-2. **Compatibility surface.** `fzz check` is the same validator the
-   templates and existing users run; turning previously-valid configs into
-   errors is a breaking change to declared behavior (repo compatibility
-   surfaces), and this card's non-goals pin restart/cancel/reload/legacy
-   behavior as unchanged.
-3. **The failure is contextual, not syntactic.** Whether the footgun fires
-   depends on sibling jobs and events, not on the job itself — validation
-   cannot know intent; a warning communicates the lifecycle rule exactly
-   where the user can act on it.
+## 5. Pooled service lifecycle
 
-Warning spec (implementation dispatched to Dave):
+The worker pool is keyed by service name and retains internal revision,
+signature, origin-generation, instance, and lifecycle metadata. External
+status intentionally projects only the secondary shape:
 
-- **Site:** `app.rs::check_config`, after `validate_rules` succeeds and
-  before the summary `config valid` line. Use the existing `stdout::warn`
-  channel (precedent: the missing-paths warning).
-- **Condition:** `rule.service() && rule.run_on_init() && rule.watch_patterns().is_empty()`
-  — `watch_patterns()` are the **effective** patterns, including those
-  inherited from root `on.change` via `merge_patterns`.
-- **Message** (actionable, states the model): warns that an init-only
-  service is **not automatically re-included by unrelated replacement
-generations** (it is reaped on supersession); suggests either adding
-  `change:` patterns (re-inclusion restarts it) or isolating it in a
-  dedicated config instance (split-instance pattern).
-- **Tests:** a `check` unit test asserting the warning fires for the
-  init-only shape, and does not fire when effective change patterns exist
-  (job-level or inherited from root `on.change`), nor for non-service
-  `run_on_init` jobs.
+```json
+"services": [
+  {"name": "api", "state": "ready"}
+]
+```
 
-Option-catalog help alignment (also Dave, same dispatch): the `service`
-help text (`option_catalog.rs`: "Managed long-running service: started on
-init, restarted on change, stopped on exit.") drifts from this contract —
-"restarted on change" is only true when effective change patterns match,
-and it omits automatic retry. Replace with generation-owned wording that
-mentions bounded retry, e.g. "Managed long-running service: owned by the
-active generation; restarted by re-inclusion in a replacement generation
-and retried up to 3 times on non-zero exit; stopped on supersession or
-exit." Add the help-drift test: assert the catalog renders the agreed
-wording verbatim so help and this contract cannot diverge silently.
+The current generation outcome and this service projection are separate facts.
+For example, status may show `state: "passed"` for the generation and
+`services: [{"name":"api","state":"failed"}]` after a later service
+failure.
 
-## 7. Invariants preserved
+A promoted service follows these post-settlement rules:
 
-- Restart policy (3 attempts, 500ms backoff), cancellation, reload
-  reconcile, and legacy configuration behavior are unchanged.
-- `fzz check` remains side-effect-free: the warning adds no filesystem,
-  watcher, or socket behavior.
-- Non-service `run_on_init` jobs and manual-trigger jobs are untouched
-  (manual + service is already rejected at parse time, `config.rs`).
-- Nothing in this contract changes generation scheduling, batching, or the
-  control protocol.
+- zero exit is deliberate `stopped`; it is not restarted;
+- non-zero exit enters `restarting`, consumes the existing bounded restart
+  policy (three attempts with 500ms backoff), and must pass the frozen
+  readiness probe again;
+- exhausted restart/readiness attempts become `failed`;
+- service lifecycle changes do not change generation history or generation
+  hooks.
 
-## 8. Verification
+Replacement and reload decisions are worker-owned. A same-name replacement
+reserves the current internal instance, physically stops and reaps the opaque
+old handoff, and only then authorizes the new start. A stale revision,
+instance, name, or signature fact cannot act on a newer pool entry. A
+cancellation after the old reap suppresses the replacement start. Removed
+services remain visible internally until their owned processes are reaped.
 
-- This document's claims are traceable to the cited symbols; TASK-0133
-  verification (Kely) checks each §2–§5 statement against source.
-- Follow-up code (warning + help + their tests) lands via TDD under this
-  card's dispatch; acceptance for those changes is §6's spec.
+Omitted services remain pooled and untouched. Added or changed reload
+services use the same stop/reap-before-start rule. Legacy `ReconcileServices`
+and `StartServices` behavior remains available for existing callers.
+
+## 6. Local runs and shutdown
+
+A local one-shot `fzz run` has no worker pool. It probes readiness, computes
+and publishes the frozen generation outcome, then deliberately stops and
+reaps the service before returning. A watcher transfers a ready service to
+its worker pool instead.
+
+Watcher shutdown stops new work, cancels active probes, shuts down pooled
+services, and waits for owned child handles to be reaped before crossing the
+close boundary. Process-group signaling without direct-child reap is not a
+successful shutdown proof.
+
+## 7. Duration and retained evidence
+
+For a readiness-enabled service, the service task's duration covers service
+spawn through committed readiness and is recorded with the settled generation.
+Later service uptime is pool state, not a completed generation duration. A
+legacy live service has no completed lifetime and therefore no finite duration
+row while it remains alive.
+
+Generation and finite-job durations remain monotonic measurements supplied by
+the executor. Renderers do not invent uptime, sum parallel job durations, or
+replace a supplied `durationMs` value. Readiness output freezes with the
+settled generation; later service output is not appended to that exact
+-generation evidence.
+
+See `CURRENT-RUN-JOB-DURATION-REPORT-CONTRACT.md` for duration formatting.
+
+## 8. Observable output
+
+Control status, await, and subscriptions keep the generation result as the
+primary observation and expose the additive minimal `services` array as the
+secondary live view. When no managed services exist, it is `[]`.
+
+The MVP intentionally omits managed-service lifecycle records from the local
+NDJSON event stream. Run, task, and generation records retain their existing
+schema and meanings; service state is consumed through the status/control
+projection. This omission is intentional and is not a promise of a rich
+NDJSON service-log API.
+
+## 9. Compatibility and proof
+
+Finite jobs, recovery, timeouts, sequential/parallel scheduling, hooks, and
+legacy service configurations remain unchanged. No implicit HTTP/TCP probe or
+provider integration is added; the readiness command is the user's shell
+command.
+
+Black-box proof:
+
+- `readiness_service_settles_generation_and_remains_in_pool` starts a
+  readiness-enabled `jobs:` service, synchronizes on its start marker, proves
+  exact await `passed`, status `api: ready`, and service liveness.
+- `readiness_timeout_fails_generation_and_reaps_service` proves a failed
+  readiness timeout returns a failed generation and reaps the service.
+
+Focused command:
+
+```sh
+cargo test --test control_await --features test-integration readiness -- --nocapture
+```
+
+The broader worker/executor lifecycle tests cover deterministic probing,
+restarts, stale facts, handoff ownership, pool actions, and shutdown. Do not
+infer external replacement or reload behavior from those unit tests alone;
+those paths require their own synchronized proof when changed.

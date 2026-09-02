@@ -32,7 +32,8 @@ A job row has one final state and at most one `durationMs` value:
 | A started job is cancelled or superseded | `cancelled` | partial elapsed value at cancellation |
 | A job never starts, including fail-fast-skipped work | `cancelled` | `null` |
 | A finite hook has no job snapshot | not a job row | not reported |
-| A managed service remains alive | service/running, not completed | `null` |
+| A legacy managed service remains alive | service/running, generation remains active | `null` |
+| A readiness-enabled service reaches readiness | `passed` at promotion; later uptime is pool state | terminal snapshot value |
 
 `null` means the job did not obtain a finite executor duration. A human report
 renders it as `-`; it MUST NOT render `0ms`, estimate a value, or imply that a
@@ -91,10 +92,17 @@ nor a substitute for generation identity.
 
 ## 7. Services and hooks
 
-A managed `service: true` job has no completed lifetime while it is alive, so a
-report MUST NOT present its unbounded uptime as a completed job duration. If
-it reaches a finite terminal outcome, the ordinary terminal snapshot rule
-applies; otherwise it is represented as running/service without a duration.
+A legacy `service: true` job without readiness has no completed lifetime while
+it is alive. A report MUST represent it as running/service without a duration;
+its unbounded uptime is never a completed job duration.
+
+A readiness-enabled service has an explicit promotion boundary. Its service
+row records the monotonic duration from service spawn through committed
+readiness, and the generation can settle as `passed`. After promotion, the
+service remains worker-owned and its uptime is live pool state, not a new
+or changing generation duration. A later restart or failure does not rewrite
+the settled generation's duration or outcome.
+
 Generation hooks are not configured jobs and do not create job rows or change
 job measurements.
 
