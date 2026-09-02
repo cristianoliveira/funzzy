@@ -45,6 +45,15 @@ pub fn rule_from(yaml: &Yaml) -> errors::Result<Rules> {
             Some("Rename 'tasks' to 'jobs' before declaring a timeout.".to_owned()),
         ));
     }
+    // Readiness follows the existing managed-service shape and is therefore
+    // not accepted by the legacy root list, which has no service semantics.
+    if yaml["readiness"] != Yaml::BadValue {
+        return Err(errors::FzzError::InvalidConfigError(
+            "Property 'readiness' is supported only in preferred V2 jobs".to_owned(),
+            None,
+            Some("Rename the root list to `jobs:` before declaring readiness.".to_owned()),
+        ));
+    }
     let name = yaml::extract_string(yaml, "name")?;
     let commands = yaml::extract_list(yaml, "run")?;
     let watch_patterns = ensure_glob_only(
@@ -1319,6 +1328,7 @@ pub fn rule_as_yaml(rule: &Rules) -> String {
         lines.push(format!("timeout: {}", render_duration(timeout)));
     }
     if let Some(readiness) = rule.readiness() {
+        lines.push("service: true".to_owned());
         lines.push("readiness:".to_owned());
         lines.push(format!("  run: {}", readiness.run()));
         lines.push(format!("  timeout: {}", render_duration(readiness.timeout())));
