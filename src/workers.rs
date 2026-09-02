@@ -2835,6 +2835,82 @@ mod manual_frozen_reload_tests {
         assert!(matches!(state, SettlementState::Idle));
     }
     #[test]
+    fn worker_coordinator_promotes_handoff_without_reaping_it() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        assert_eq!(coordinator.handoff_len(), 0);
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Ready
+        );
+    }
+
+    #[test]
+    fn worker_coordinator_keeps_omitted_services_and_replaces_selected_names() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        assert!(coordinator.select_generation(&[]).is_empty());
+        assert_eq!(coordinator.state().get("api").unwrap().state, crate::service_pool::ServiceState::Ready);
+        assert_eq!(
+            coordinator.select_generation(&[crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(2),
+            }]),
+            vec![crate::service_pool::PoolAction::Stop { name: "api".into(), instance_id: 1 }]
+        );
+    }
+
+    #[test]
+    fn worker_coordinator_reload_and_post_settlement_restart_are_ordered() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        assert_eq!(
+            coordinator.reconcile_reload(&[crate::service_pool::ServiceSpec {
+                name: "db".into(),
+                revision: 2,
+                signature: "sha256:d".into(),
+                origin_generation: None,
+            }]),
+            vec![
+                crate::service_pool::PoolAction::Stop { name: "api".into(), instance_id: 1 },
+                crate::service_pool::PoolAction::Start { name: "db".into(), instance_id: 2 },
+            ]
+        );
+        assert_eq!(
+            coordinator.exited("db", 2, false),
+            Some(crate::service_pool::PoolAction::Probe { name: "db".into(), instance_id: 2 })
+        );
+        coordinator.probed("db", 2, true);
+        assert_eq!(coordinator.state().get("db").unwrap().state, crate::service_pool::ServiceState::Ready);
+    }
+
+    #[test]
     fn scheduler_close_cancels_claimed_settlement() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let now = Instant::now();
