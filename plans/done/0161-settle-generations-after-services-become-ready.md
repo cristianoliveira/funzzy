@@ -1,7 +1,7 @@
 ---
 id: TASK-0161
 title: Settle generations after services become ready
-status: doing
+status: done
 depends_on: [TASK-0160]
 priority: high
 tags: [rust, services, readiness, executor, control-socket, tdd]
