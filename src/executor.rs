@@ -488,6 +488,44 @@ pub(crate) struct ServiceHandoff {
     specs: Vec<crate::service_pool::ServiceSpec>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ManagedServiceInfo {
+    pub(crate) name: String,
+    pub(crate) revision: u64,
+    pub(crate) signature: String,
+    pub(crate) origin_generation: Option<u64>,
+    pub(crate) readiness_ready: bool,
+}
+
+#[allow(dead_code)]
+pub(crate) enum ManagedServiceEvent {
+    Stopped {
+        info: ManagedServiceInfo,
+    },
+    Restarting {
+        info: ManagedServiceInfo,
+        attempts_remaining: usize,
+    },
+    Failed {
+        info: ManagedServiceInfo,
+        error: String,
+    },
+}
+
+impl ManagedServiceEvent {
+    pub(crate) fn info(&self) -> &ManagedServiceInfo {
+        match self {
+            Self::Stopped { info } | Self::Restarting { info, .. } | Self::Failed { info, .. } => {
+                info
+            }
+        }
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        matches!(self, Self::Stopped { .. })
+    }
+}
+
 impl ServiceHandoff {
     pub(crate) fn merge(&mut self, mut other: Self) {
         self.services.append(&mut other.services);
@@ -509,7 +547,8 @@ impl ServiceHandoff {
             if names.iter().any(|name| name == &self.services[index].name) {
                 let mut service = self.services.remove(index);
                 executor.shutdown_task(&mut service);
-                stopped.push(service.name);
+                stopped.push(service.name.clone());
+                self.specs.retain(|spec| spec.name != service.name);
             } else {
                 index += 1;
             }
@@ -2482,6 +2521,159 @@ impl Executor {
             self.shutdown_task(service);
         }
         handoff.services.clear();
+        handoff.specs.clear();
+    }
+
+    pub(crate) fn service_handoff_info(&self, handoff: &ServiceHandoff) -> Vec<ManagedServiceInfo> {
+        handoff
+            .services
+            .iter()
+            .map(|service| {
+                let spec = handoff.specs.iter().find(|spec| spec.name == service.name);
+                ManagedServiceInfo {
+                    name: service.name.clone(),
+                    revision: spec.map(|spec| spec.revision).unwrap_or_default(),
+                    signature: spec
+                        .map(|spec| spec.signature.clone())
+                        .unwrap_or_else(|| service.service_signature.clone()),
+                    origin_generation: spec.and_then(|spec| spec.origin_generation),
+                    readiness_ready: service.readiness_ready,
+                }
+            })
+            .collect()
+    }
+
+    /// Polls worker-owned service children without mutating generation
+    /// history. Non-zero exits consume the existing bounded restart budget;
+    /// the worker decides how to publish the returned lifecycle event.
+    pub(crate) fn poll_service_handoff(
+        &self,
+        handoff: &mut ServiceHandoff,
+    ) -> Vec<ManagedServiceEvent> {
+        let mut events = vec![];
+        let mut index = 0;
+        while index < handoff.services.len() {
+            let info = self.service_handoff_info(handoff)[index].clone();
+            if handoff.services[index].child.is_none() {
+                let Some(command) = handoff.services[index].commands.pop_front() else {
+                    // A failed startup has no replacement command left.
+                    handoff.services.remove(index);
+                    handoff.specs.retain(|spec| spec.name != info.name);
+                    events.push(ManagedServiceEvent::Failed {
+                        info,
+                        error: "service child disappeared".to_owned(),
+                    });
+                    continue;
+                };
+                let readiness = handoff.services[index].readiness.clone();
+                match self.runner.spawn(
+                    &handoff.services[index].name,
+                    &command,
+                    &handoff.services[index].context,
+                    handoff.services[index].capture.clone(),
+                    None,
+                    !matches!(
+                        handoff.services[index].output,
+                        crate::rules::OutputPolicy::Inherit
+                    ),
+                ) {
+                    Ok(child) => {
+                        let spawned_at = self.clock.now();
+                        handoff.services[index].child = Some(child);
+                        handoff.services[index].current_command = Some(command.display());
+                        if let Some(readiness) = readiness {
+                            handoff.services[index].readiness_deadline =
+                                Some(spawned_at + readiness.timeout());
+                            handoff.services[index].readiness_next_attempt = Some(spawned_at);
+                        }
+                        index += 1;
+                        continue;
+                    }
+                    Err(error) => {
+                        handoff.services.remove(index);
+                        handoff.specs.retain(|spec| spec.name != info.name);
+                        events.push(ManagedServiceEvent::Failed { info, error });
+                        continue;
+                    }
+                }
+            }
+            if handoff.services[index].readiness.is_some()
+                && !handoff.services[index].readiness_ready
+            {
+                let mut probe_results: Vec<Result<(), String>> = vec![];
+                match self.advance_starting_service(
+                    &mut handoff.services[index],
+                    &mut probe_results,
+                    0,
+                    false,
+                ) {
+                    TaskStep::Running => {
+                        index += 1;
+                        continue;
+                    }
+                    TaskStep::Finished | TaskStep::FailedFast => {
+                        let error = probe_results
+                            .into_iter()
+                            .find_map(Result::err)
+                            .unwrap_or_else(|| format!("Service {} readiness failed", info.name));
+                        handoff.services.remove(index);
+                        handoff.specs.retain(|spec| spec.name != info.name);
+                        events.push(ManagedServiceEvent::Failed { info, error });
+                        continue;
+                    }
+                    TaskStep::TimedOut => unreachable!("service readiness has no finite timeout"),
+                }
+            }
+            let service = &mut handoff.services[index];
+            let Some(child) = service.child.as_mut() else {
+                index += 1;
+                continue;
+            };
+            let observation = match child.try_wait() {
+                Ok(observation) => observation,
+                Err(error) => {
+                    let error = error.to_string();
+                    service.failures.push(error.clone());
+                    self.shutdown_task(service);
+                    events.push(ManagedServiceEvent::Failed { info, error });
+                    handoff.services.remove(index);
+                    continue;
+                }
+            };
+            let Some(status) = observation else {
+                index += 1;
+                continue;
+            };
+            service.child = None;
+            let command = service.current_command.take();
+            if status.success() {
+                handoff.services.remove(index);
+                handoff.specs.retain(|spec| spec.name != info.name);
+                events.push(ManagedServiceEvent::Stopped { info });
+                continue;
+            }
+            if service.service_restarts_left > 0 {
+                service.service_restarts_left -= 1;
+                if let Some(command) = command {
+                    service.commands.push_front(CommandLine::Shell(command));
+                }
+                service.readiness_ready = service.readiness.is_none();
+                events.push(ManagedServiceEvent::Restarting {
+                    info,
+                    attempts_remaining: service.service_restarts_left,
+                });
+                index += 1;
+                continue;
+            }
+            let error = format!(
+                "Service {} has failed after {} restarts",
+                info.name, SERVICE_MAX_RESTARTS
+            );
+            handoff.services.remove(index);
+            handoff.specs.retain(|spec| spec.name != info.name);
+            events.push(ManagedServiceEvent::Failed { info, error });
+        }
+        events
     }
 
     /// Reconciles the background services of one generation by name
@@ -3989,6 +4181,44 @@ mod tests {
         assert_eq!(events[0].info().name, "api");
         assert!(events[0].is_stopped());
         assert_eq!(executor.service_handoff_info(&handoff).len(), 0);
+    }
+
+    #[test]
+    fn polling_handoff_restarts_and_reprobes_readiness_without_generation_event() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(208, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let mut handoff = handoff.take().unwrap();
+        runner.complete("serve", false);
+        let events = executor.poll_service_handoff(&mut handoff);
+        assert!(matches!(
+            events.as_slice(),
+            [ManagedServiceEvent::Restarting { .. }]
+        ));
+        runner.clear_completion("serve");
+        executor.poll_service_handoff(&mut handoff); // replacement spawn
+        executor.poll_service_handoff(&mut handoff); // readiness probe spawn
+        executor.poll_service_handoff(&mut handoff); // readiness probe pass
+        assert_eq!(
+            runner
+                .started_commands()
+                .iter()
+                .filter(|c| *c == "probe")
+                .count(),
+            2
+        );
+        assert!(executor.service_handoff_info(&handoff)[0].readiness_ready);
     }
 
     #[test]
