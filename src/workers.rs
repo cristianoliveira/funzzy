@@ -3566,6 +3566,86 @@ mod manual_frozen_reload_tests {
     }
 
     #[test]
+    fn worker_cycle_resolves_commands_before_child_observations() {
+        assert_eq!(
+            ManagedServiceCoordinator::resolve_cycle(
+                &[crate::service_lifecycle::ArbitrationCommand::Cancel],
+                &[crate::service_lifecycle::ChildObservation::ReadinessExit {
+                    success: true,
+                }],
+            ),
+            crate::service_lifecycle::ArbitrationDecision::Cancelled
+        );
+    }
+
+    #[test]
+    fn worker_reservation_requires_explicit_start_authorization() {
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: None,
+            },
+            ServiceHandoff::default(),
+        );
+        assert!(coordinator
+            .authorize_service_replacement("api", 1)
+            .is_none());
+        let _ = executor;
+    }
+
+    #[test]
+    fn worker_cancellation_after_reap_suppresses_replacement_start() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        assert!(coordinator.cancel_replacement("api", 1));
+        assert!(coordinator
+            .authorize_service_replacement("api", 1)
+            .is_none());
+    }
+
+    #[test]
+    fn worker_reload_replacement_authorizes_start_only_after_reap() {
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let mut coordinator = ManagedServiceCoordinator::new();
+        let actions = coordinator.reconcile_reload(
+            &executor,
+            &[crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: None,
+            }],
+            1,
+        );
+        assert_eq!(
+            actions,
+            vec![crate::service_pool::PoolAction::Start {
+                name: "api".into(),
+                instance_id: 1,
+            }]
+        );
+    }
+
+    #[test]
     fn worker_scheduler_shutdown_pool_command_is_explicit_and_ordered() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let (reply, _receipt) = std::sync::mpsc::channel();
