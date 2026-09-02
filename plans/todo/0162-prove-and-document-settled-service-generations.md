@@ -1,7 +1,7 @@
 ---
 id: TASK-0162
 title: Prove and document settled service generations
-status: todo
+status: doing
 depends_on: [TASK-0161]
 priority: high
 tags: [integration-tests, docs, services, readiness, control-socket, pi-watcher, reliability]
