@@ -4230,6 +4230,113 @@ mod tests {
     }
 
     #[test]
+    fn handoff_advancement_restarts_nonzero_service_and_reprobes() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(209, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let mut handoff = handoff.take().unwrap();
+        runner.complete("serve", false);
+        let events = executor.advance_service_handoff(&mut handoff);
+        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Restarting { .. }]));
+        runner.clear_completion("serve");
+        executor.advance_service_handoff(&mut handoff); // replacement spawn
+        executor.advance_service_handoff(&mut handoff); // probe spawn
+        executor.advance_service_handoff(&mut handoff); // probe pass
+        assert!(executor.service_handoff_info(&handoff)[0].readiness_ready);
+    }
+
+    #[test]
+    fn handoff_readiness_timeout_consumes_restart_attempt_and_fails() {
+        let runner = FakeRunner::default();
+        let clock = Arc::new(ManualClock::new());
+        let executor = executor_with(runner.clone(), clock.clone(), false);
+        let mut run = executor.start(
+            RunMetadata::new(210, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        // The initial probe passes so the service can enter the worker pool.
+        runner.complete("probe", true);
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let mut handoff = handoff.take().unwrap();
+        runner.complete("serve", false);
+        executor.advance_service_handoff(&mut handoff); // old exit
+        runner.clear_completion("serve");
+        executor.advance_service_handoff(&mut handoff); // replacement spawn
+        executor.advance_service_handoff(&mut handoff); // probe spawn
+        clock.advance_ms(30_000);
+        let events = executor.advance_service_handoff(&mut handoff);
+        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Failed { .. }]));
+    }
+
+    #[test]
+    fn handoff_deliberate_zero_exit_reports_stopped_without_restart() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(211, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let mut handoff = handoff.take().unwrap();
+        runner.complete("serve", true);
+        let events = executor.advance_service_handoff(&mut handoff);
+        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Stopped { .. }]));
+        assert!(executor.advance_service_handoff(&mut handoff).is_empty());
+    }
+
+    #[test]
+    fn handoff_shutdown_reaps_active_probe_and_ignores_later_facts() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(212, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        let mut handoff = handoff.take().unwrap();
+        runner.complete("serve", false);
+        executor.advance_service_handoff(&mut handoff);
+        runner.clear_completion("serve");
+        executor.advance_service_handoff(&mut handoff); // replacement spawn
+        executor.advance_service_handoff(&mut handoff); // active probe
+        executor.shutdown_service_handoff(&mut handoff);
+        assert!(runner.shutdown_commands().contains(&"serve".to_owned()));
+        assert!(runner.shutdown_commands().contains(&"probe".to_owned()));
+        assert!(executor.advance_service_handoff(&mut handoff).is_empty());
+    }
+
+    #[test]
     fn service_exit_before_readiness_fails_without_restart() {
         let runner = FakeRunner::default();
         runner.complete("serve", false);
