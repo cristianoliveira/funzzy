@@ -5,10 +5,10 @@
 Funzzy has two different terminal boundaries. Their hooks must not be
 confused:
 
-| Hook | Boundary | Cardinality | Correlation |
+| Hook | Boundary | Cardinality | Internal correlation |
 |---|---|---|---|
-| `hooks.success` | one generation passes | once per passing generation | generation ID |
-| `hooks.failure` | one generation fails | once per failing generation | generation ID |
+| `hooks.success` | one generation passes | once per passing generation | exact generation ID in events/evidence and `FUNZZY_GENERATION_ID` |
+| `hooks.failure` | one generation fails | once per failing generation | exact generation ID in events/evidence and `FUNZZY_GENERATION_ID` |
 | `hooks.close` | one ready watcher session closes | at most once per process/session | watcher instance + config revision; **no generation ID** |
 
 - **Generation terminal hooks** (`success`/`failure`) observe workflow
@@ -47,7 +47,9 @@ jobs:
   duration syntax and be greater than zero and no greater than the fixed maximum of 24h in this revision.
 - The command must be finite. A service/daemon belongs in a `service: true`
   job, not a close hook.
-- Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and generated init comments must agree that `close` is an optional `hooks` string.
+- Parser allowlist, JSON Schema, canonical option catalog, `fzz check`, and
+  generated init comments must agree that `close` is an optional `hooks`
+  string and `failure` is either an immediate string or `{run, settle}`.
 
 ## 3. Generation terminal hooks (unchanged TASK-0040 behavior)
 
@@ -73,9 +75,10 @@ introduce a shared hook policy.
 For `hooks.failure: {run: COMMAND, settle: DURATION}`, a failed generation is
 published as terminal immediately, then a settle timer starts at the instant
 that terminal failure is committed. The timer is owned by that generation and
-its immutable committed configuration revision. Settlement means that this
-failure remains the latest accepted generation outcome for the entire duration;
-knowledge of editor or agent activity is not involved.
+its immutable committed configuration revision. Settlement means that this failure remains the latest accepted generation outcome for the entire duration;
+knowledge of editor, agent, or other client activity is not involved. The
+settle boundary is a watcher-generation lifecycle boundary, not an idle or
+quiet-period guess.
 
 Scheduling a newer generation is the supersession boundary: once accepted by
 the watcher (including a control-triggered run), it invalidates the pending
@@ -93,11 +96,14 @@ and grace/reaping policy. A command that has begun cannot have external side
 effects recalled. In either order, no settled hook runs twice and no stale
 pending timer remains.
 
-The settled command receives the same generation correlation, template
-expansion, working directory, environment, output handling, and hook-failure
-semantics as an immediate failure hook. Its command and configuration revision
-are snapshots from the failed generation, so reloads do not rewrite a pending
-or running hook. A valid reload may affect later generations; malformed
+The settled command uses the same shell, workspace working directory,
+inherited environment, output forwarding, and hook-failure semantics as an
+immediate failure hook. The failed generation's command and configuration
+revision are immutable snapshots, so reloads do not rewrite a pending or
+running hook. Generation correlation is retained by Funzzy's internal events and control
+evidence and is passed to the command through reserved
+`FUNZZY_GENERATION_ID`/`FUNZZY_GENERATION_OUTCOME` environment variables; see
+§10. A valid reload may affect later generations; malformed
 reloads do not. Hook failure (spawn error, nonzero exit, signal, or timeout)
 never changes the generation result or schedules another hook.
 
@@ -197,6 +203,23 @@ A control client disconnecting or a generation ending is not watcher close.
 
 ## 7. Working directory, environment, and templates
 
+Generation hooks, including a settled failure command, are invoked as
+`$SHELL -c '<configured command>'`; they are not parsed as an argv array.
+`$SHELL` is inherited and defaults to `/bin/sh` when absent. They run from the
+watcher workspace root (the configured project cwd), not a later client cwd or
+job-specific `cwd`. The watcher process environment is inherited, with Funzzy
+reserved `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` variables
+forced to the immutable generation number and final outcome (`passed` or
+`failed`). Declared or inherited values cannot shadow these two variables.
+Funzzy adds no failed job names, changed paths, or evidence variables. Stdin is
+inherited from the watcher process and Funzzy does not write a payload to it. Stdout/stderr are forwarded to the watcher output and
+normal configured log mirror; settled-hook output is not inserted into
+retained generation/task output. A zero exit is success; spawn errors,
+non-zero exits, signals, and cancellation are warnings only and cannot alter
+the failed generation. Process-group cancellation and reaping use the normal
+hook lifecycle policy, so a started command can have external side effects
+that cannot be recalled.
+
 - Close hook runs from the immutable watcher workspace root, not the shell's
   later cwd and not a job-specific `cwd`.
 - It inherits the watcher process environment. No synthetic secrets,
@@ -240,6 +263,41 @@ generation; those loops stay observable. Close hook differs:
   existing hook policy.
 
 ## 10. Correlation, output, and control socket
+
+- Generation hook events and retained task evidence carry the exact generation
+  identity internally. The custom settled command receives the same immutable
+  identity as `FUNZZY_GENERATION_ID` and its final outcome as
+  `FUNZZY_GENERATION_OUTCOME`; these are environment variables, not argv or
+  stdin. In watcher mode the ID is suitable for exact control retrieval. A
+  finite local `fzz run` has no watcher/control registry, so its hook ID is
+  diagnostic only and has no `control output` record. Hooks receive no
+  automatic failed-job list or evidence payload.
+- `control status` is a latest-generation projection. After a failure is
+  observed, a newer generation can replace it before a client performs the
+  lookup; therefore a status-only correlation is inherently racy. Prefer the
+  exact ID returned by `control run`/`control emit`, then await and retrieve
+  `fzz control output --generation N`. Exact retained output is bounded by the
+  normal per-stream retention limit and is available only while that watcher
+  retains the generation.
+- A provider-neutral evidence-forwarding recipe is:
+
+  ```sh
+  # Schedule and save the exact identity printed by the client.
+  fzz control run verify                  # note: scheduled generation: N
+  fzz control await --generation N --timeout 30s
+  fzz control output --generation N --full > evidence.txt
+  ./scripts/forward-failure N evidence.txt # user-owned transport
+  ```
+
+  If a separate client only has latest status, read `generation` from
+  `fzz control --format json status` and immediately request that same exact
+  generation; treat a mismatch as a race and do not forward stale evidence.
+  A Pi integration is optional and external to Funzzy:
+
+  ```sh
+  pi-bebop send --socket .pi/bebop/sockets/dev.sock --mode steer --wait accepted \\
+    --message "settled failure generation N: see evidence.txt"
+  ```
 
 - Close-hook diagnostics use explicit `close hook` vocabulary and carry
   watcher instance identity + committed config revision when those are

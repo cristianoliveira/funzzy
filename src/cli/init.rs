@@ -292,6 +292,9 @@ mod renderer_tests {
         assert!(yaml.contains("  concurrency: 2"));
         assert!(yaml.contains("hooks:\n  # success:"));
         assert!(yaml.contains("  success: echo \"Funzzy generation succeeded\""));
+        assert!(
+            yaml.contains("  # failure:\n  #   run: echo failed > .fzz-failed\n  #   settle: 30s")
+        );
         assert!(!yaml.contains("inherits on.output"));
         assert!(!yaml.contains("on.success runs"));
     }
