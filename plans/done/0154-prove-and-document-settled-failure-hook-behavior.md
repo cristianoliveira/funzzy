@@ -1,7 +1,7 @@
 ---
 id: TASK-0154
 title: Prove and document settled failure hook behavior
-status: doing
+status: done
 depends_on: [TASK-0153]
 priority: high
 tags: [integration-tests, docs, hooks, config, watcher, reliability]
@@ -32,7 +32,7 @@ Prove the accepted contract at the CLI and watcher boundaries and teach users wh
 - [x] Document output-retention guarantees and the difference between latest `control status` and exact `control output --generation N` retrieval.
 - [x] Add a self-contained evidence-forwarding recipe: wait for a settled failure, obtain the exact retained result, and invoke a user-owned transport. Include a Pi Bebop socket example using `pi-bebop send --socket .pi/bebop/sockets/dev.sock --mode steer --wait accepted` without making Pi a Funzzy dependency.
 - [x] Documentation warns that external side effects cannot be recalled once command execution begins.
-- [ ] Verification includes focused tests plus configured final watcher gates; failure evidence is retained in the task notes.
+- [x] Verification includes focused tests plus configured final watcher gates; failure evidence is retained in the task notes.
 
 ## Constraints
 
@@ -45,4 +45,4 @@ QA should challenge boundary races rather than treating elapsed wall time alone 
 
 Feedback captured 2026-09-01: a user configured `failure.settle: 3m` and had to infer a `control status` → `control output --generation` → Pi Bebop forwarding flow from logs and binary strings because the hook payload and working-directory contract were undiscoverable. Treat this as a documentation defect and a possible exact-correlation capability gap, not as a request for built-in Pi integration.
 
-Implementation evidence (2026-09-02): `tests/settled_failure_hooks.rs` provides nine feature-gated black-box tests for stable settlement, exact-once invocation, reserved environment correlation, supersession/coalescing/pass suppression, shutdown, hook failure, finite execution, and valid/malformed reloads. `cargo test --test settled_failure_hooks --features test-integration -- --nocapture` passed (9 tests). Immediate scalar compatibility passed via `cargo test --test run_once --features test-integration success_and_failure_hooks_run_once_per_generation -- --nocapture`. Schema/init/CLI unit suites and `cargo test --lib` passed. The final watcher gate was unavailable locally because `.tmp/funzzy/control.sock` was absent; leave the task in `doing` until that gate is run.
+Implementation evidence (2026-09-02): `tests/settled_failure_hooks.rs` provides nine feature-gated black-box tests for stable settlement, exact-once invocation, reserved environment correlation, supersession/coalescing/pass suppression, shutdown, hook failure, finite execution, and valid/malformed reloads. `cargo test --test settled_failure_hooks --features test-integration -- --nocapture` passed (9 tests). Immediate scalar compatibility passed via `cargo test --test run_once --features test-integration success_and_failure_hooks_run_once_per_generation -- --nocapture`. Schema/init/CLI unit suites and `cargo test --lib` passed. Configured final watcher gates subsequently passed: generation 16 `integration @agent-final` (447453ms), generation 17 `format @quick @agent-final` (2433ms), and generation 23 `unit tests @quick @agent-final` (64921ms), all with unchanged worktree fingerprint `35875274d1a7`. The external watcher was available for these explicit runs.
