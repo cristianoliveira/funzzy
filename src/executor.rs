@@ -2554,7 +2554,7 @@ impl Executor {
     /// Polls worker-owned service children without mutating generation
     /// history. Non-zero exits consume the existing bounded restart budget;
     /// the worker decides how to publish the returned lifecycle event.
-    pub(crate) fn poll_service_handoff(
+    pub(crate) fn advance_service_handoff(
         &self,
         handoff: &mut ServiceHandoff,
     ) -> Vec<ManagedServiceEvent> {
@@ -2682,6 +2682,14 @@ impl Executor {
             events.push(ManagedServiceEvent::Failed { info, error });
         }
         events
+    }
+
+    /// Compatibility alias for callers that use the polling terminology.
+    pub(crate) fn poll_service_handoff(
+        &self,
+        handoff: &mut ServiceHandoff,
+    ) -> Vec<ManagedServiceEvent> {
+        self.advance_service_handoff(handoff)
     }
 
     /// Reconciles the background services of one generation by name
@@ -4248,7 +4256,10 @@ mod tests {
         let mut handoff = handoff.take().unwrap();
         runner.complete("serve", false);
         let events = executor.advance_service_handoff(&mut handoff);
-        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Restarting { .. }]));
+        assert!(matches!(
+            events.as_slice(),
+            [ManagedServiceEvent::Restarting { .. }]
+        ));
         runner.clear_completion("serve");
         executor.advance_service_handoff(&mut handoff); // replacement spawn
         executor.advance_service_handoff(&mut handoff); // probe spawn
@@ -4282,7 +4293,10 @@ mod tests {
         executor.advance_service_handoff(&mut handoff); // probe spawn
         clock.advance_ms(30_000);
         let events = executor.advance_service_handoff(&mut handoff);
-        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Failed { .. }]));
+        assert!(matches!(
+            events.as_slice(),
+            [ManagedServiceEvent::Failed { .. }]
+        ));
     }
 
     #[test]
@@ -4304,7 +4318,10 @@ mod tests {
         let mut handoff = handoff.take().unwrap();
         runner.complete("serve", true);
         let events = executor.advance_service_handoff(&mut handoff);
-        assert!(matches!(events.as_slice(), [ManagedServiceEvent::Stopped { .. }]));
+        assert!(matches!(
+            events.as_slice(),
+            [ManagedServiceEvent::Stopped { .. }]
+        ));
         assert!(executor.advance_service_handoff(&mut handoff).is_empty());
     }
 
