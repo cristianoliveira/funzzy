@@ -1,5 +1,5 @@
 use crate::executor::{
-    CancelDisposition, Event, EventSink, Executor, ManagedService, Run, RunMetadata, Step,
+    CancelDisposition, Event, EventSink, Executor, Run, RunMetadata, ServiceHandoff, Step,
     SystemClock, SystemProcessRunner,
 };
 use crate::output::OutputRegistry;
@@ -604,7 +604,7 @@ impl Worker {
             let mut pending: Option<RunRequest> = None;
             // Readiness services outlive their settled generation and are
             // owned by this worker until reconciliation or shutdown.
-            let mut managed_services: Vec<ManagedService> = vec![];
+            let mut managed_services = ServiceHandoff::default();
             let mut settled_hook_owner = SettledHookOwner::new(hook_context.clone());
 
             loop {
@@ -782,7 +782,7 @@ impl Worker {
                         }
                         SchedulerWake::Closed => {
                             settled_hook_owner.shutdown(&executor);
-                            executor.shutdown_managed_services(&mut managed_services);
+                            executor.shutdown_service_handoff(&mut managed_services);
                             break;
                         }
                     }
@@ -930,13 +930,16 @@ impl Worker {
                     Step::Finished => {
                         let completed_run = active.take().expect("active run");
                         consumer_scheduler.unregister_active(completed_run.run_id());
-                        let completed = executor.finish_with_callback(completed_run, |pending| {
-                            if let Some(spec) = pending {
-                                consumer_scheduler
-                                    .register_settlement(spec.clone(), Instant::now());
-                            }
-                        });
-                        managed_services.extend(completed.managed_services);
+                        let completed = executor.finish_with_service_handoff(
+                            completed_run,
+                            |pending| {
+                                if let Some(spec) = pending {
+                                    consumer_scheduler
+                                        .register_settlement(spec.clone(), Instant::now());
+                                }
+                            },
+                            |services| managed_services.merge(services),
+                        );
                         stdout::present_results(
                             completed.results,
                             completed.elapsed,

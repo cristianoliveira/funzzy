@@ -447,20 +447,17 @@ pub struct PendingSettledHook {
     pub revision_hash: String,
 }
 
-/// A readiness-enabled service transferred to worker ownership when its
-/// generation settles. The child handle is deliberately not dropped by the
-/// executor's generation finalization path.
-pub struct ManagedService {
-    task: ActiveTask,
+/// Opaque transfer of promoted services from the executor to the worker.
+/// Keeping the child handles private prevents a terminal `CompletedRun` from
+/// becoming the owner of live services or exposing process internals.
+#[derive(Default)]
+pub(crate) struct ServiceHandoff {
+    services: Vec<ActiveTask>,
 }
 
-impl ManagedService {
-    pub fn name(&self) -> &str {
-        &self.task.name
-    }
-
-    pub fn readiness_ready(&self) -> bool {
-        self.task.readiness_ready
+impl ServiceHandoff {
+    pub(crate) fn merge(&mut self, mut other: Self) {
+        self.services.append(&mut other.services);
     }
 }
 
@@ -473,8 +470,6 @@ pub struct CompletedRun {
     /// Terminal job snapshots in configured declaration order. These carry
     /// the executor's only per-job monotonic duration measurements.
     pub tasks: Vec<TaskSnapshot>,
-    /// Readiness-enabled services handed to the worker-owned pool.
-    pub managed_services: Vec<ManagedService>,
 }
 
 /// How a run cancellation ended (TASK-0046): graceful when every active child
@@ -2142,21 +2137,31 @@ impl Executor {
     }
 
     pub fn finish(&self, run: Run) -> CompletedRun {
-        self.finish_with_callback(run, |_| {})
+        // Local one-shot execution has no worker pool: stop and reap every
+        // promoted service before publishing the frozen terminal result.
+        self.finish_with_service_handoff(run, |_| {}, |mut handoff| {
+            self.shutdown_service_handoff(&mut handoff)
+        })
     }
 
-    pub(crate) fn finish_with_callback<F>(&self, mut run: Run, before_publish: F) -> CompletedRun
+    /// Finalizes a generation while atomically detaching promoted services to
+    /// the worker-owned pool before the terminal event is published. The
+    /// ordinary `CompletedRun` never carries live process handles.
+    pub(crate) fn finish_with_service_handoff<F, G>(
+        &self,
+        mut run: Run,
+        before_publish: F,
+        detach_services: G,
+    ) -> CompletedRun
     where
         F: FnOnce(Option<&PendingSettledHook>),
+        G: FnOnce(ServiceHandoff),
     {
         let elapsed = self.clock.elapsed(run.started);
-        // Transfer promoted readiness services before the run is consumed.
-        // The worker-owned pool becomes their sole owner after this point.
-        let managed_services = run
-            .services
-            .drain(..)
-            .map(|task| ManagedService { task })
-            .collect();
+        let service_handoff = ServiceHandoff {
+            services: run.services.drain(..).collect(),
+        };
+        detach_services(service_handoff);
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
             run.outcomes
@@ -2192,7 +2197,6 @@ impl Executor {
             outcome,
             tasks: run.task_snapshots,
             pending_settled_hook,
-            managed_services,
         }
     }
 
@@ -2355,11 +2359,11 @@ impl Executor {
 
     /// Reaps every service transferred to the worker-owned pool during
     /// watcher shutdown or replacement.
-    pub fn shutdown_managed_services(&self, services: &mut Vec<ManagedService>) {
-        for service in services.iter_mut() {
-            self.shutdown_task(&mut service.task);
+    pub(crate) fn shutdown_service_handoff(&self, handoff: &mut ServiceHandoff) {
+        for service in handoff.services.iter_mut() {
+            self.shutdown_task(service);
         }
-        services.clear();
+        handoff.services.clear();
     }
 
     /// Reconciles the background services of one generation by name
@@ -3786,7 +3790,37 @@ mod tests {
         assert!(completed.outcome.is_success());
         assert_eq!(completed.tasks.len(), 1);
         assert_eq!(completed.tasks[0].state, TaskState::Passed);
-        assert_eq!(completed.managed_services.len(), 1);
+        assert!(
+            runner.shutdown_commands().contains(&"serve".to_owned()),
+            "local one-shot finish must explicitly stop promoted services"
+        );
+    }
+
+    #[test]
+    fn worker_handoff_detaches_ready_service_without_local_shutdown() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner.clone(), 1, false);
+        let mut run = executor.start(
+            RunMetadata::new(205, "test"),
+            RunPlan::from_rules(vec![readiness_service("api")]),
+        );
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        let _completed = executor.finish_with_service_handoff(
+            run,
+            |_| {},
+            |services| handoff = Some(services),
+        );
+        assert_eq!(handoff.as_ref().unwrap().services.len(), 1);
+        assert!(runner.shutdown_commands().is_empty());
+        let mut handoff = handoff.take().unwrap();
+        executor.shutdown_service_handoff(&mut handoff);
+        assert!(runner.shutdown_commands().contains(&"serve".to_owned()));
     }
 
     #[test]
