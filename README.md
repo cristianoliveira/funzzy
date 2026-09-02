@@ -380,12 +380,18 @@ validation. Legacy root-list configs remain accepted and are rewritten with `fzz
 ```yaml
 hooks:
   success: ./scripts/notify-success   # once per passing generation
-  failure: ./scripts/notify-failure   # once per failing generation
-  close: ./scripts/cleanup            # once per graceful ready-watcher close
+  failure:
+    run: ./scripts/notify-failure     # delayed failure notification
+    settle: 30s                       # only if this failure stays latest
+  close: ./scripts/cleanup             # once per graceful ready-watcher close
 ```
 
-See [run and watcher hook lifecycle](docs/RUN-HOOKS-CONTRACT.md) for signal,
-timeout, reload, and exit-code semantics.
+The scalar `failure: ./scripts/notify-failure` form remains available for an
+immediate notification. Settled hooks observe watcher generations, not agent
+activity. Generation hooks receive exact `FUNZZY_GENERATION_ID` and
+`FUNZZY_GENERATION_OUTCOME` environment variables; use the ID to retrieve
+retained evidence before forwarding it to a user-owned transport. See [run and watcher hook lifecycle](docs/RUN-HOOKS-CONTRACT.md)
+for invocation, signal, timeout, reload, and exit-code semantics.
 
 ## Parallel execution
 

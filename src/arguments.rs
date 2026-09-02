@@ -581,9 +581,9 @@ pub fn command() -> Command {
                                 .long("section")
                                 .value_name("SECTION")
                                 .value_parser(clap::builder::PossibleValuesParser::new([
-                                    "on", "job", "matching", "execution", "parallel", "control",
+                                    "on", "job", "matching", "execution", "hooks", "parallel", "control",
                                 ]))
-                                .help("Emit one bounded schema section (on|job|matching|execution|parallel|control)."),
+                                .help("Emit one bounded schema section (on|job|matching|execution|hooks|parallel|control)."),
                         )
                         .arg(
                             Arg::new("config_format")

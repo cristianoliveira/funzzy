@@ -29,6 +29,8 @@ pub enum SpecKind {
     Duration,
     Enum(&'static [&'static str]),
     StringMap,
+    /// Immediate scalar or settled `{run, settle}` failure hook.
+    FailureHook,
 }
 
 /// One catalog entry. `example` holds raw YAML lines without leading
@@ -192,10 +194,14 @@ const HOOK_SPECS: &[OptionSpec] = &[
         owner: Owner::Hooks,
         required: false,
         default: None,
-        help: "Hook command run after a failed generation.",
+        help: "Hook command run after a failed generation; optionally settle the failure first.",
         values: None,
-        example: &["failure: echo failed > .fzz-failed"],
-        kind: SpecKind::String,
+        example: &[
+            "failure:",
+            "  run: echo failed > .fzz-failed",
+            "  settle: 30s",
+        ],
+        kind: SpecKind::FailureHook,
     },
     OptionSpec {
         name: "close",

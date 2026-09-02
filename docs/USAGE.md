@@ -177,7 +177,7 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
-- **Hooks**: `hooks.success` runs after each passing generation and `hooks.failure` after each failing generation; neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run it (RUN-HOOKS-CONTRACT).
+- **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
 - **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
   are rewritten deterministically with `fzz migrate`.
@@ -214,6 +214,27 @@ fzz watch --recovery-policy skip
 `hooks.failure` is different: it observes the final failed generation and
 cannot change its result; `jobs[].recovery` runs before the final result and can
 make verification pass. Service jobs cannot declare recovery.
+
+For delayed failure notification, use the object form:
+
+```yaml
+hooks:
+  failure:
+    run: ./scripts/notify-failure
+    settle: 30s
+```
+
+Settlement is based only on watcher generations. It does not know whether an
+editor, agent, or other client is active. The command is run by the watcher as
+`$SHELL -c '<command>'` from the workspace root, with inherited environment and
+stdin, and its stdout/stderr are forwarded like other hooks. Funzzy injects
+reserved `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` environment
+variables, overriding inherited values. It does not inject failed job names,
+changed paths, or evidence into argv, environment, or stdin. Use the exact
+`FUNZZY_GENERATION_ID` to retrieve evidence with `fzz control output
+--generation N`; latest-status lookup can race with a newer generation. A
+hook that has started may have external side effects even if a newer generation
+subsequently cancels it.
 
 ## 5. Recovery actions
 

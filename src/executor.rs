@@ -1669,6 +1669,20 @@ impl Executor {
         }
     }
 
+    /// Adds the reserved correlation inputs shared by immediate and settled
+    /// generation hooks. Declared environment values cannot shadow these
+    /// exact immutable identifiers.
+    fn hook_context(run_id: u64, outcome: &str) -> TaskContext {
+        let mut context = TaskContext::default();
+        context
+            .environment
+            .insert("FUNZZY_GENERATION_ID".to_owned(), run_id.to_string());
+        context
+            .environment
+            .insert("FUNZZY_GENERATION_OUTCOME".to_owned(), outcome.to_owned());
+        context
+    }
+
     /// Runs the applicable terminal hook once (TASK-0040): success hook on
     /// pass, failure hook on fail. Hook failure never changes the run
     /// outcome; it is surfaced via a warning for loop diagnosis. The hook is
@@ -1709,12 +1723,20 @@ impl Executor {
                 ..Default::default()
             });
         }
+        let context = Self::hook_context(
+            metadata.run_id,
+            if outcome.is_success() {
+                "passed"
+            } else {
+                "failed"
+            },
+        );
         let result = self
             .runner
             .spawn(
                 "hook",
                 &CommandLine::Shell(command.to_owned()),
-                &TaskContext::default(),
+                &context,
                 None,
                 None,
                 false,
@@ -1753,12 +1775,13 @@ impl Executor {
         if token.is_cancelled() {
             return Ok(None);
         }
+        let context = Self::hook_context(spec.run_id, "failed");
         let child = self
             .runner
             .spawn(
                 "hook",
                 &CommandLine::Shell(spec.command.clone()),
-                &TaskContext::default(),
+                &context,
                 None,
                 None,
                 false,

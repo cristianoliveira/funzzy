@@ -62,6 +62,27 @@ fn full_schema() -> Value {
 /// schema and the init renderer consume the same option metadata).
 fn schema_property(spec: &OptionSpec) -> Value {
     let mut prop = match spec.kind {
+        SpecKind::FailureHook => json!({
+            "description": "Immediate scalar failure hook or delayed settled failure hook.",
+            "oneOf": [
+                { "type": "string", "minLength": 1 },
+                {
+                    "type": "object",
+                    "required": ["run", "settle"],
+                    "properties": {
+                        "run": { "type": "string", "minLength": 1 },
+                        "settle": {
+                            "oneOf": [
+                                { "type": "string", "pattern": "^[0-9]+(ms|s|m)?$" },
+                                { "type": "integer", "minimum": 1 }
+                            ],
+                            "description": "Positive duration, at most 24h (1440m)."
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            ]
+        }),
         SpecKind::Bool => json!({ "type": "boolean" }),
         SpecKind::Int => json!({ "type": "integer", "minimum": 1 }),
         SpecKind::String => json!({ "type": "string" }),
@@ -385,6 +406,17 @@ mod catalog_parity_tests {
         assert!(execution.contains(&"output".to_string()));
         assert!(hooks.contains(&"success".to_string()));
         assert!(hooks.contains(&"failure".to_string()));
+    }
+
+    #[test]
+    fn failure_hook_schema_accepts_scalar_and_settled_object_forms() {
+        let failure = &full_schema()["$defs"]["hooks"]["properties"]["failure"];
+        let alternatives = failure["oneOf"].as_array().expect("failure oneOf");
+        assert_eq!(alternatives.len(), 2);
+        assert_eq!(alternatives[0]["type"], "string");
+        assert_eq!(alternatives[1]["required"][0], "run");
+        assert_eq!(alternatives[1]["required"][1], "settle");
+        assert_eq!(alternatives[1]["additionalProperties"], false);
     }
 
     #[test]
