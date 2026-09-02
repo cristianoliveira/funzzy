@@ -256,6 +256,7 @@ impl ManagedServicePool {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PoolCommand {
     Shutdown,
@@ -264,6 +265,7 @@ pub(crate) enum PoolCommand {
     ReloadReplacement,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PoolFact {
     ServiceExited,
@@ -285,6 +287,7 @@ pub(crate) enum PoolDecision {
     Noop,
 }
 
+#[allow(dead_code)]
 #[derive(Default)]
 pub(crate) struct PoolCycle {
     commands: Vec<PoolCommand>,
@@ -305,32 +308,63 @@ impl PoolCycle {
     }
 
     pub(crate) fn resolve(&self) -> PoolDecision {
-        for (command, decision) in [
-            (PoolCommand::Shutdown, PoolDecision::Shutdown),
-            (PoolCommand::Cancel, PoolDecision::Cancelled),
-            (PoolCommand::Supersede, PoolDecision::Superseded),
-            (
-                PoolCommand::ReloadReplacement,
-                PoolDecision::ReloadReplacement,
-            ),
-        ] {
-            if self.commands.contains(&command) {
-                return decision;
+        // Keep command/child precedence in the single shared resolver used by
+        // executor readiness arbitration.
+        let commands: Vec<_> = self
+            .commands
+            .iter()
+            .map(|command| match command {
+                PoolCommand::Shutdown => crate::service_lifecycle::ArbitrationCommand::Shutdown,
+                PoolCommand::Cancel => crate::service_lifecycle::ArbitrationCommand::Cancel,
+                PoolCommand::Supersede => crate::service_lifecycle::ArbitrationCommand::Supersede,
+                PoolCommand::ReloadReplacement => {
+                    crate::service_lifecycle::ArbitrationCommand::ReloadReplacement
+                }
+            })
+            .collect();
+        let observations: Vec<_> = self
+            .facts
+            .iter()
+            .filter_map(|fact| match fact {
+                PoolFact::ServiceExited => {
+                    Some(crate::service_lifecycle::ChildObservation::ServiceExit)
+                }
+                PoolFact::ReadinessTimedOut => {
+                    Some(crate::service_lifecycle::ChildObservation::ReadinessTimeout)
+                }
+                PoolFact::ReadinessPassed => {
+                    Some(crate::service_lifecycle::ChildObservation::ReadinessExit {
+                        success: true,
+                    })
+                }
+                PoolFact::ReadinessFailed => {
+                    Some(crate::service_lifecycle::ChildObservation::ReadinessExit {
+                        success: false,
+                    })
+                }
+            })
+            .collect();
+        match crate::service_lifecycle::ReadinessArbiter::resolve(&commands, &observations) {
+            crate::service_lifecycle::ArbitrationDecision::Shutdown => PoolDecision::Shutdown,
+            crate::service_lifecycle::ArbitrationDecision::Cancelled => PoolDecision::Cancelled,
+            crate::service_lifecycle::ArbitrationDecision::Superseded => PoolDecision::Superseded,
+            crate::service_lifecycle::ArbitrationDecision::ReloadReplacement => {
+                PoolDecision::ReloadReplacement
             }
+            crate::service_lifecycle::ArbitrationDecision::ServiceExited => {
+                PoolDecision::ServiceExited
+            }
+            crate::service_lifecycle::ArbitrationDecision::ReadinessTimedOut => {
+                PoolDecision::ReadinessTimedOut
+            }
+            crate::service_lifecycle::ArbitrationDecision::ReadinessPassed => {
+                PoolDecision::ReadinessPassed
+            }
+            crate::service_lifecycle::ArbitrationDecision::RetryReadiness => {
+                PoolDecision::RetryReadiness
+            }
+            crate::service_lifecycle::ArbitrationDecision::Noop => PoolDecision::Noop,
         }
-        if self.facts.contains(&PoolFact::ServiceExited) {
-            return PoolDecision::ServiceExited;
-        }
-        if self.facts.contains(&PoolFact::ReadinessTimedOut) {
-            return PoolDecision::ReadinessTimedOut;
-        }
-        if self.facts.contains(&PoolFact::ReadinessPassed) {
-            return PoolDecision::ReadinessPassed;
-        }
-        if self.facts.contains(&PoolFact::ReadinessFailed) {
-            return PoolDecision::RetryReadiness;
-        }
-        PoolDecision::Noop
     }
 }
 
