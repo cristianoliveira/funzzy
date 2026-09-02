@@ -3,6 +3,91 @@
 //! The worker owns process handles; this module owns only the precedence rules
 //! used when commands and child observations arrive in one worker cycle.
 
+/// Commands accepted by the worker before an observation-cycle marker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArbitrationCommand {
+    Shutdown,
+    Cancel,
+    Supersede,
+    ReloadReplacement,
+}
+
+/// Child facts observed during one deterministic worker cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildObservation {
+    ServiceExit,
+    ReadinessTimeout,
+    ReadinessExit { success: bool },
+}
+
+/// The single fact allowed to affect a starting service in one cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArbitrationDecision {
+    Shutdown,
+    Cancelled,
+    Superseded,
+    ReloadReplacement,
+    ServiceExited,
+    ReadinessTimedOut,
+    ReadinessPassed,
+    RetryReadiness,
+    Noop,
+}
+
+/// Stateless precedence resolver. Commands outrank child facts; within each
+/// class the contract's explicit precedence order is used, not arrival order.
+pub struct ReadinessArbiter;
+
+impl ReadinessArbiter {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn resolve(
+        commands: &[ArbitrationCommand],
+        observations: &[ChildObservation],
+    ) -> ArbitrationDecision {
+        for (command, decision) in [
+            (ArbitrationCommand::Shutdown, ArbitrationDecision::Shutdown),
+            (ArbitrationCommand::Cancel, ArbitrationDecision::Cancelled),
+            (ArbitrationCommand::Supersede, ArbitrationDecision::Superseded),
+            (
+                ArbitrationCommand::ReloadReplacement,
+                ArbitrationDecision::ReloadReplacement,
+            ),
+        ] {
+            if commands.contains(&command) {
+                return decision;
+            }
+        }
+        if observations.contains(&ChildObservation::ServiceExit) {
+            return ArbitrationDecision::ServiceExited;
+        }
+        if observations.contains(&ChildObservation::ReadinessTimeout) {
+            return ArbitrationDecision::ReadinessTimedOut;
+        }
+        if observations
+            .iter()
+            .any(|observation| matches!(observation, ChildObservation::ReadinessExit { success: true }))
+        {
+            return ArbitrationDecision::ReadinessPassed;
+        }
+        if observations
+            .iter()
+            .any(|observation| matches!(observation, ChildObservation::ReadinessExit { success: false }))
+        {
+            return ArbitrationDecision::RetryReadiness;
+        }
+        ArbitrationDecision::Noop
+    }
+}
+
+impl Default for ReadinessArbiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
