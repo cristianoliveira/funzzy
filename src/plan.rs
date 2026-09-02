@@ -1160,6 +1160,36 @@ mod tests {
     }
 
     #[test]
+    fn readiness_command_expands_filepath_and_paths_with_the_task() {
+        let rule = Rules::new(
+            "api".to_owned(),
+            vec!["serve".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            true,
+        )
+        .with_service(true)
+        .with_readiness(Some(crate::rules::Readiness::new(
+            "curl {{filepath}} {{paths}}".to_owned(),
+            Duration::from_secs(30),
+            Duration::from_millis(500),
+        )));
+        let (expanded, unknown) = RunPlan::from_rules(vec![rule]).expand(&TemplateOptions {
+            filepath: Some("/workspace/src/main.rs".to_owned()),
+            paths: vec!["src/main.rs".to_owned(), "src/lib.rs".to_owned()],
+            current_dir: "/workspace".to_owned(),
+        });
+        assert!(unknown.is_empty());
+        let Stage::Serial(task) = &expanded.stages[0] else {
+            panic!("expected serial task");
+        };
+        assert_eq!(
+            task.readiness.as_ref().unwrap().run(),
+            "curl /workspace/src/main.rs 'src/main.rs' 'src/lib.rs'"
+        );
+    }
+
+    #[test]
     fn signature_is_deterministic_for_identical_plan() {
         let plan = RunPlan::from_rules(vec![rule("A", None, false), rule("B", Some("g"), false)]);
         let first = plan.execution_signature(4, false);
