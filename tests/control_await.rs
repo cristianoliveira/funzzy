@@ -8,6 +8,7 @@
 #![cfg(all(feature = "test-integration", unix))]
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
@@ -182,6 +183,67 @@ fn reap(output: &mut Output) -> String {
     String::from_utf8_lossy(&output.stdout).to_string()
 }
 
+fn await_json(directory: &std::path::Path, generation: u64) -> (Output, serde_json::Value) {
+    let generation = generation.to_string();
+    let output = run_cli(
+        directory,
+        &[
+            "control",
+            "--format",
+            "json",
+            "await",
+            "--generation",
+            &generation,
+            "--timeout",
+            "20s",
+        ],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payload = stdout
+        .split_once("Error:")
+        .map_or(stdout.as_ref(), |(json, _)| json);
+    let value = serde_json::from_str(payload.trim())
+        .unwrap_or_else(|error| panic!("invalid await JSON ({error}): {stdout}"));
+    (output, value)
+}
+
+fn write_service_script(directory: &std::path::Path) {
+    std::fs::write(
+        directory.join("api.sh"),
+        "#!/bin/sh\necho $$ > api.pid\ntouch api.started\nwhile :; do sleep 0.02; done\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(directory.join("api.sh"))
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(directory.join("api.sh"), permissions).unwrap();
+}
+
+fn wait_until<F: FnMut() -> bool>(mut condition: F, description: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if condition() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {description}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn process_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Parses `scheduled generation: N` from a control CLI output; the panic
 /// includes the full output so a flaky failure shows the real server error.
 fn scheduled_generation(output: &Output) -> u64 {
@@ -193,6 +255,122 @@ fn scheduled_generation(output: &Output) -> u64 {
         .expect(&format!("scheduled generation line missing in: {combined}"))
         .parse()
         .expect("numeric generation")
+}
+
+#[test]
+fn readiness_service_settles_generation_and_remains_in_pool() {
+    let directory = setup_directory(
+        "readiness-pass",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "test -f readiness.ok"
+      timeout: 5s
+      interval: 20ms
+"#,
+    );
+    write_service_script(&directory);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let scheduled = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        scheduled.status.success(),
+        "schedule: {}",
+        reap(&mut scheduled.clone())
+    );
+    let generation = scheduled_generation(&scheduled);
+    wait_until(
+        || directory.join("api.started").exists(),
+        "readiness service to start",
+    );
+    std::fs::write(directory.join("readiness.ok"), "ready").unwrap();
+
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "ready")
+            })
+    });
+    let status_snapshot = try_status(&socket).unwrap()["result"].clone();
+    assert_eq!(status_snapshot["state"], "passed");
+    assert_eq!(status_snapshot["services"][0]["name"], "api");
+    assert_eq!(status_snapshot["services"][0]["state"], "ready");
+
+    let (awaited, observation) = await_json(&directory, generation);
+    assert!(
+        awaited.status.success(),
+        "await: {}",
+        reap(&mut awaited.clone())
+    );
+    assert_eq!(observation["terminalReason"], "passed");
+    assert_eq!(observation["snapshot"]["state"], "passed");
+
+    let pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    assert!(process_alive(pid), "ready service must remain alive");
+}
+
+#[test]
+fn readiness_timeout_fails_generation_and_reaps_service() {
+    let directory = setup_directory(
+        "readiness-fail",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "false"
+      timeout: 500ms
+      interval: 20ms
+"#,
+    );
+    write_service_script(&directory);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+
+    let scheduled = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        scheduled.status.success(),
+        "schedule: {}",
+        reap(&mut scheduled.clone())
+    );
+    let generation = scheduled_generation(&scheduled);
+    wait_until(
+        || directory.join("api.started").exists(),
+        "readiness service to start",
+    );
+    let (awaited, observation) = await_json(&directory, generation);
+    assert_eq!(awaited.status.code(), Some(1), "failed await must exit 1");
+    assert_eq!(observation["terminalReason"], "failed");
+    assert_eq!(observation["snapshot"]["state"], "failed");
+
+    let pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    wait_until(
+        || !process_alive(pid),
+        "failed readiness service to be reaped",
+    );
 }
 
 const INIT_FAST: &str = r#"
