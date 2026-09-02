@@ -327,7 +327,8 @@ mod tests {
     fn generation_reinclusion_reserves_then_stops_before_starting_replacement() {
         let mut pool = ManagedServicePool::new();
         pool.promote_ready(spec("api", 1, "sha256:a"));
-        let actions = pool.select_generation(&[spec("api", 2, "sha256:a")]);
+        // Selection replaces even when the frozen signature is unchanged.
+        let actions = pool.select_generation(&[spec("api", 1, "sha256:a")]);
         assert_eq!(actions, vec![PoolAction::Stop { name: "api".into(), instance_id: 1 }]);
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Stopping);
 
@@ -351,6 +352,23 @@ mod tests {
         );
         assert_eq!(pool.get("api").unwrap().state, ServiceState::Stopping);
         assert_eq!(pool.get("db").unwrap().state, ServiceState::Starting);
+    }
+
+    #[test]
+    fn reload_removed_service_stays_stopping_until_reap_then_disappears() {
+        let mut pool = ManagedServicePool::new();
+        pool.promote_ready(spec("api", 1, "sha256:a"));
+        let actions = pool.reconcile_reload(&[]);
+        assert_eq!(
+            actions,
+            vec![PoolAction::Stop {
+                name: "api".into(),
+                instance_id: 1,
+            }]
+        );
+        assert_eq!(pool.get("api").unwrap().state, ServiceState::Stopping);
+        assert!(pool.stopped("api", 1).is_none());
+        assert!(pool.get("api").is_none());
     }
 
     #[test]
