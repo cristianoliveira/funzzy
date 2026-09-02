@@ -7,7 +7,7 @@ use crate::plan::{ExecutionSignature, RunPlan};
 use crate::rules::Rules;
 use crate::stdout;
 use crate::template::TemplateOptions;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -211,6 +211,12 @@ enum WorkerCommand {
         signature: String,
         reply: std::sync::mpsc::Sender<Option<crate::service_pool::PoolAction>>,
     },
+    /// Authorize a previously reaped replacement to start.
+    AuthorizeServiceReplacement {
+        name: String,
+        instance_id: u64,
+        reply: std::sync::mpsc::Sender<Option<crate::service_pool::PoolAction>>,
+    },
     /// Reconcile the worker-owned pool against a committed revision.
     ReconcileServicePool {
         desired: Vec<crate::service_pool::ServiceSpec>,
@@ -231,15 +237,24 @@ struct ManagedServiceCoordinator {
     handoff: ServiceHandoff,
     committed_revision: u64,
     service_order: Vec<String>,
+    reaped_replacements: BTreeSet<(String, u64)>,
 }
 
 impl ManagedServiceCoordinator {
+    fn resolve_cycle(
+        commands: &[crate::service_lifecycle::ArbitrationCommand],
+        observations: &[crate::service_lifecycle::ChildObservation],
+    ) -> crate::service_lifecycle::ArbitrationDecision {
+        crate::service_lifecycle::ReadinessArbiter::resolve(commands, observations)
+    }
+
     fn new() -> Self {
         Self {
             pool: crate::service_pool::ManagedServicePool::new(),
             handoff: ServiceHandoff::default(),
             committed_revision: 0,
             service_order: vec![],
+            reaped_replacements: BTreeSet::new(),
         }
     }
 
@@ -256,12 +271,13 @@ impl ManagedServiceCoordinator {
         self.pool.promote_ready(spec)
     }
 
-    fn adopt_handoff(&mut self, handoff: ServiceHandoff) {
-        for spec in handoff.specs() {
+    fn adopt_handoff(&mut self, mut handoff: ServiceHandoff) {
+        for spec in handoff.specs().to_vec() {
             if !self.service_order.contains(&spec.name) {
                 self.service_order.push(spec.name.clone());
             }
-            self.pool.commit_promotion(spec.clone());
+            let entry = self.pool.commit_promotion(spec.clone());
+            handoff.bind_instance(&spec.name, entry.instance_id);
         }
         self.handoff.merge(handoff);
     }
@@ -324,10 +340,54 @@ impl ManagedServiceCoordinator {
             .handoff
             .stop_named(executor, std::slice::from_ref(&name));
         if stopped.iter().any(|stopped_name| stopped_name == &name) {
-            self.pool.stopped(&name, instance_id)
+            self.reaped_replacements.insert((name.clone(), instance_id));
+            Some(crate::service_pool::PoolAction::Stop { name, instance_id })
         } else {
             None
         }
+    }
+
+    fn authorize_service_replacement(
+        &mut self,
+        name: &str,
+        instance_id: u64,
+    ) -> Option<crate::service_pool::PoolAction> {
+        if !self
+            .reaped_replacements
+            .remove(&(name.to_owned(), instance_id))
+        {
+            return None;
+        }
+        self.pool.stopped(name, instance_id)
+    }
+
+    fn reconcile_reload_with_executor(
+        &mut self,
+        executor: &Executor,
+        specs: &[crate::service_pool::ServiceSpec],
+        revision: u64,
+    ) -> Vec<crate::service_pool::PoolAction> {
+        let actions = self.reconcile_reload(specs, revision);
+        let mut authorized = Vec::with_capacity(actions.len());
+        for action in actions {
+            let crate::service_pool::PoolAction::Stop { name, instance_id } = &action else {
+                authorized.push(action);
+                continue;
+            };
+            let stopped = self
+                .handoff
+                .stop_named(executor, std::slice::from_ref(name));
+            if stopped.iter().any(|stopped_name| stopped_name == name) {
+                self.reaped_replacements
+                    .insert((name.clone(), *instance_id));
+                if let Some(start) = self.authorize_service_replacement(name, *instance_id) {
+                    authorized.push(start);
+                }
+            } else {
+                authorized.push(action);
+            }
+        }
+        authorized
     }
 
     fn select_generation(
@@ -373,7 +433,16 @@ impl ManagedServiceCoordinator {
     }
 
     fn cancel_replacement(&mut self, name: &str, instance_id: u64) -> bool {
+        self.reaped_replacements
+            .remove(&(name.to_owned(), instance_id));
         self.pool.cancel_replacement(name, instance_id)
+    }
+
+    fn cancel_replacements(&mut self) {
+        let reservations: Vec<_> = self.reaped_replacements.iter().cloned().collect();
+        for (name, instance_id) in reservations {
+            self.cancel_replacement(&name, instance_id);
+        }
     }
 
     fn stopped(&mut self, name: &str, instance_id: u64) -> Option<crate::service_pool::PoolAction> {
@@ -385,7 +454,8 @@ impl ManagedServiceCoordinator {
         let Some(entry) = self.pool.get(&info.name) else {
             return;
         };
-        if entry.instance_id != instance_id
+        if info.instance_id != Some(instance_id)
+            || entry.instance_id != instance_id
             || entry.revision != info.revision
             || entry.signature != info.signature
         {
@@ -406,8 +476,10 @@ impl ManagedServiceCoordinator {
         let mut snapshots = vec![];
         for event in &events {
             let info = event.info();
-            let instance_id = self.pool.get(&info.name).map(|entry| entry.instance_id);
-            if let Some(instance_id) = instance_id {
+            let Some(instance_id) = info.instance_id else {
+                continue;
+            };
+            if self.pool.get(&info.name).is_some() {
                 self.apply_event(instance_id, event.clone());
                 if let Some(service) = self
                     .pool
@@ -662,6 +734,7 @@ impl Scheduler {
             WorkerCommand::ReconcileServices { .. }
             | WorkerCommand::StartServices { .. }
             | WorkerCommand::ReserveServiceReplacement { .. }
+            | WorkerCommand::AuthorizeServiceReplacement { .. }
             | WorkerCommand::ReconcileServicePool { .. }
             | WorkerCommand::ShutdownServicePool { .. } => {
                 // Direct command: never coalesced with runs or cancels.
@@ -669,6 +742,10 @@ impl Scheduler {
             }
         }
         self.ready.notify_one();
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.state.lock().unwrap().queue.is_empty()
     }
 
     fn try_recv(&self) -> Option<WorkerCommand> {
@@ -881,18 +958,21 @@ impl Worker {
             let mut settled_hook_owner = SettledHookOwner::new(hook_context.clone());
 
             loop {
-                // Poll pooled services independently of generation lifetime;
-                // post-settlement events never reopen or rewrite a generation.
-                for service in managed_services.poll(&executor) {
-                    if service.state == crate::service_pool::ServiceState::Restarting {
-                        stdout::warn(&format!(
-                            "service '{}' restarted after an unexpected exit",
-                            service.name
-                        ));
-                    } else if service.state == crate::service_pool::ServiceState::Failed {
-                        stdout::warn(&format!("service '{}' failed", service.name));
+                // Establish the cycle marker before polling pooled children:
+                // commands already accepted by the scheduler must be handled
+                // first so cancellation/shutdown/reload wins over child facts.
+                if !consumer_scheduler.has_pending() {
+                    for service in managed_services.poll(&executor) {
+                        if service.state == crate::service_pool::ServiceState::Restarting {
+                            stdout::warn(&format!(
+                                "service '{}' restarted after an unexpected exit",
+                                service.name
+                            ));
+                        } else if service.state == crate::service_pool::ServiceState::Failed {
+                            stdout::warn(&format!("service '{}' failed", service.name));
+                        }
+                        service_events.emit(Event::ServiceLifecycle { service });
                     }
-                    service_events.emit(Event::ServiceLifecycle { service });
                 }
                 if active.is_none() {
                     // Promote the newest superseding run, or block on the next
@@ -974,6 +1054,7 @@ impl Worker {
                                 }
                                 WorkerCommand::Cancel { generation, reply } => {
                                     if generation.is_none() {
+                                        managed_services.cancel_replacements();
                                         settled_hook_owner.shutdown(&executor);
                                         consumer_scheduler.cancel_settlement();
                                     }
@@ -1008,23 +1089,26 @@ impl Worker {
                                     let _ = reply.send(action);
                                     emit_service_snapshots(&mut managed_services, &service_events);
                                 }
+                                WorkerCommand::AuthorizeServiceReplacement {
+                                    name,
+                                    instance_id,
+                                    reply,
+                                } => {
+                                    let _ = reply.send(
+                                        managed_services
+                                            .authorize_service_replacement(&name, instance_id),
+                                    );
+                                }
                                 WorkerCommand::ReconcileServicePool {
                                     desired,
                                     revision,
                                     reply,
                                 } => {
-                                    let actions = managed_services
-                                        .reconcile_reload(&desired, revision.number);
-                                    let stop_names: Vec<String> = actions
-                                        .iter()
-                                        .filter_map(|action| match action {
-                                            crate::service_pool::PoolAction::Stop {
-                                                name, ..
-                                            } => Some(name.clone()),
-                                            _ => None,
-                                        })
-                                        .collect();
-                                    let _ = managed_services.stop_named(&executor, &stop_names);
+                                    let actions = managed_services.reconcile_reload_with_executor(
+                                        &executor,
+                                        &desired,
+                                        revision.number,
+                                    );
                                     let _ = reply.send(actions);
                                     emit_service_snapshots(&mut managed_services, &service_events);
                                 }
@@ -1189,23 +1273,25 @@ impl Worker {
                             let _ = reply.send(action);
                             emit_service_snapshots(&mut managed_services, &service_events);
                         }
+                        Some(WorkerCommand::AuthorizeServiceReplacement {
+                            name,
+                            instance_id,
+                            reply,
+                        }) => {
+                            let _ = reply.send(
+                                managed_services.authorize_service_replacement(&name, instance_id),
+                            );
+                        }
                         Some(WorkerCommand::ReconcileServicePool {
                             desired,
                             revision,
                             reply,
                         }) => {
-                            let actions =
-                                managed_services.reconcile_reload(&desired, revision.number);
-                            let stop_names: Vec<String> = actions
-                                .iter()
-                                .filter_map(|action| match action {
-                                    crate::service_pool::PoolAction::Stop { name, .. } => {
-                                        Some(name.clone())
-                                    }
-                                    _ => None,
-                                })
-                                .collect();
-                            let _ = managed_services.stop_named(&executor, &stop_names);
+                            let actions = managed_services.reconcile_reload_with_executor(
+                                &executor,
+                                &desired,
+                                revision.number,
+                            );
                             let _ = reply.send(actions);
                             emit_service_snapshots(&mut managed_services, &service_events);
                         }
@@ -1286,6 +1372,7 @@ impl Worker {
                                 }
                             }
                             None => {
+                                managed_services.cancel_replacements();
                                 if let Some(mut cancelled) = active.take() {
                                     consumer_scheduler.unregister_active(cancelled.run_id());
                                     executor.cancel(&mut cancelled, None);
@@ -1623,6 +1710,27 @@ impl Worker {
         receipt
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "service replacement reservation timed out".to_owned())
+    }
+
+    /// Authorizes spawning after a replacement's old instance has been reaped.
+    #[allow(dead_code)]
+    pub(crate) fn authorize_service_replacement(
+        &self,
+        name: String,
+        instance_id: u64,
+    ) -> Result<Option<crate::service_pool::PoolAction>, String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_owned());
+        };
+        let (reply, receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::AuthorizeServiceReplacement {
+            name,
+            instance_id,
+            reply,
+        });
+        receipt
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "service replacement authorization timed out".to_owned())
     }
 
     /// Reconciles the worker-owned pool against a committed revision.
@@ -3390,6 +3498,7 @@ mod manual_frozen_reload_tests {
         coordinator.promote(spec.clone(), ServiceHandoff::default());
         let info = crate::executor::ManagedServiceInfo {
             name: "api".into(),
+            instance_id: Some(1),
             revision: 1,
             signature: "sha256:a".into(),
             origin_generation: Some(1),
@@ -3424,6 +3533,7 @@ mod manual_frozen_reload_tests {
         );
         let info = crate::executor::ManagedServiceInfo {
             name: "api".into(),
+            instance_id: Some(1),
             revision: 1,
             signature: "sha256:a".into(),
             origin_generation: Some(1),
@@ -3461,12 +3571,29 @@ mod manual_frozen_reload_tests {
         let _ = coordinator.stopped("api", 1);
         let info = crate::executor::ManagedServiceInfo {
             name: "api".into(),
+            instance_id: Some(1),
             revision: 1,
             signature: "sha256:a".into(),
             origin_generation: Some(1),
             readiness_ready: true,
         };
         coordinator.apply_event(1, crate::executor::ManagedServiceEvent::stopped(info));
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Starting
+        );
+        let same_metadata_old_fact = crate::executor::ManagedServiceInfo {
+            name: "api".into(),
+            instance_id: Some(1),
+            revision: 2,
+            signature: "sha256:b".into(),
+            origin_generation: Some(2),
+            readiness_ready: true,
+        };
+        coordinator.apply_event(
+            2,
+            crate::executor::ManagedServiceEvent::stopped(same_metadata_old_fact),
+        );
         assert_eq!(
             coordinator.state().get("api").unwrap().state,
             crate::service_pool::ServiceState::Starting
@@ -3570,9 +3697,7 @@ mod manual_frozen_reload_tests {
         assert_eq!(
             ManagedServiceCoordinator::resolve_cycle(
                 &[crate::service_lifecycle::ArbitrationCommand::Cancel],
-                &[crate::service_lifecycle::ChildObservation::ReadinessExit {
-                    success: true,
-                }],
+                &[crate::service_lifecycle::ChildObservation::ReadinessExit { success: true }],
             ),
             crate::service_lifecycle::ArbitrationDecision::Cancelled
         );
@@ -3608,6 +3733,22 @@ mod manual_frozen_reload_tests {
     #[test]
     fn worker_cancellation_after_reap_suppresses_replacement_start() {
         let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: None,
+            },
+            ServiceHandoff::default(),
+        );
+        coordinator.select_generation(&[crate::service_pool::ServiceSpec {
+            name: "api".into(),
+            revision: 2,
+            signature: "sha256:b".into(),
+            origin_generation: None,
+        }]);
+        coordinator.reaped_replacements.insert(("api".into(), 1));
         assert!(coordinator.cancel_replacement("api", 1));
         assert!(coordinator
             .authorize_service_replacement("api", 1)
@@ -3626,7 +3767,7 @@ mod manual_frozen_reload_tests {
         )
         .unwrap();
         let mut coordinator = ManagedServiceCoordinator::new();
-        let actions = coordinator.reconcile_reload(
+        let actions = coordinator.reconcile_reload_with_executor(
             &executor,
             &[crate::service_pool::ServiceSpec {
                 name: "api".into(),

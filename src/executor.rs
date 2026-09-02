@@ -491,11 +491,13 @@ pub struct PendingSettledHook {
 pub(crate) struct ServiceHandoff {
     services: Vec<ActiveTask>,
     specs: Vec<crate::service_pool::ServiceSpec>,
+    instance_ids: Vec<(String, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ManagedServiceInfo {
     pub(crate) name: String,
+    pub(crate) instance_id: Option<u64>,
     pub(crate) revision: u64,
     pub(crate) signature: String,
     pub(crate) origin_generation: Option<u64>,
@@ -559,6 +561,12 @@ impl ServiceHandoff {
     pub(crate) fn merge(&mut self, mut other: Self) {
         self.services.append(&mut other.services);
         self.specs.append(&mut other.specs);
+        self.instance_ids.append(&mut other.instance_ids);
+    }
+
+    pub(crate) fn bind_instance(&mut self, name: &str, instance_id: u64) {
+        self.instance_ids.retain(|(service, _)| service != name);
+        self.instance_ids.push((name.to_owned(), instance_id));
     }
 
     pub(crate) fn specs(&self) -> &[crate::service_pool::ServiceSpec] {
@@ -2355,7 +2363,11 @@ impl Executor {
                 origin_generation: Some(run.metadata.run_id),
             })
             .collect();
-        let service_handoff = ServiceHandoff { services, specs };
+        let service_handoff = ServiceHandoff {
+            services,
+            specs,
+            instance_ids: vec![],
+        };
         detach_services(service_handoff);
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
@@ -2570,6 +2582,11 @@ impl Executor {
                 let spec = handoff.specs.iter().find(|spec| spec.name == service.name);
                 ManagedServiceInfo {
                     name: service.name.clone(),
+                    instance_id: handoff
+                        .instance_ids
+                        .iter()
+                        .find(|(name, _)| name == &service.name)
+                        .map(|(_, instance_id)| *instance_id),
                     revision: spec.map(|spec| spec.revision).unwrap_or_default(),
                     signature: spec
                         .map(|spec| spec.signature.clone())

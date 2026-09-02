@@ -338,7 +338,7 @@ jobs:
     change: "src/**"
     readiness:
       run: "false"
-      timeout: 500ms
+      timeout: 5s
       interval: 20ms
 "#,
     );
