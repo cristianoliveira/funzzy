@@ -3750,6 +3750,7 @@ mod tests {
         assert!(completed.outcome.is_success());
         assert_eq!(completed.tasks.len(), 1);
         assert_eq!(completed.tasks[0].state, TaskState::Passed);
+        assert_eq!(completed.managed_services.len(), 1);
     }
 
     #[test]
