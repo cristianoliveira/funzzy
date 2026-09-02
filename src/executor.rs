@@ -498,6 +498,7 @@ pub(crate) struct ManagedServiceInfo {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub(crate) enum ManagedServiceEvent {
     Stopped {
         info: ManagedServiceInfo,
@@ -513,6 +514,21 @@ pub(crate) enum ManagedServiceEvent {
 }
 
 impl ManagedServiceEvent {
+    pub(crate) fn stopped(info: ManagedServiceInfo) -> Self {
+        Self::Stopped { info }
+    }
+
+    pub(crate) fn restarting(info: ManagedServiceInfo, attempts_remaining: usize) -> Self {
+        Self::Restarting {
+            info,
+            attempts_remaining,
+        }
+    }
+
+    pub(crate) fn failed(info: ManagedServiceInfo, error: String) -> Self {
+        Self::Failed { info, error }
+    }
+
     pub(crate) fn info(&self) -> &ManagedServiceInfo {
         match self {
             Self::Stopped { info } | Self::Restarting { info, .. } | Self::Failed { info, .. } => {

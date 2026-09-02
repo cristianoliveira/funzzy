@@ -333,21 +333,34 @@ impl ManagedServiceCoordinator {
         self.pool.stopped(name, instance_id)
     }
 
+    fn apply_event(&mut self, instance_id: u64, event: crate::executor::ManagedServiceEvent) {
+        let info = event.info();
+        let Some(entry) = self.pool.get(&info.name) else {
+            return;
+        };
+        if entry.instance_id != instance_id
+            || entry.revision != info.revision
+            || entry.signature != info.signature
+        {
+            return;
+        }
+        if event.is_stopped() {
+            let _ = self.pool.exited(&info.name, instance_id, true);
+        } else if event.is_restarting() {
+            let _ = self.pool.exited(&info.name, instance_id, false);
+        } else if event.is_failed() {
+            let _ = self.pool.exited(&info.name, instance_id, false);
+            let _ = self.pool.probed(&info.name, instance_id, false);
+        }
+    }
+
     fn poll(&mut self, executor: &Executor) -> Vec<crate::executor::ManagedServiceEvent> {
         let events = executor.advance_service_handoff(&mut self.handoff);
         for event in &events {
             let info = event.info();
             let instance_id = self.pool.get(&info.name).map(|entry| entry.instance_id);
-            let Some(instance_id) = instance_id else {
-                continue;
-            };
-            if event.is_stopped() {
-                let _ = self.pool.exited(&info.name, instance_id, true);
-            } else if event.is_restarting() {
-                let _ = self.pool.exited(&info.name, instance_id, false);
-            } else if event.is_failed() {
-                let _ = self.pool.exited(&info.name, instance_id, false);
-                let _ = self.pool.probed(&info.name, instance_id, false);
+            if let Some(instance_id) = instance_id {
+                self.apply_event(instance_id, event.clone());
             }
         }
         events
@@ -3280,13 +3293,39 @@ mod manual_frozen_reload_tests {
             coordinator.state().get("api").unwrap().state,
             crate::service_pool::ServiceState::Restarting
         );
-        coordinator.apply_event(
-            1,
-            crate::executor::ManagedServiceEvent::stopped(info),
-        );
+        coordinator.apply_event(1, crate::executor::ManagedServiceEvent::stopped(info));
         assert_eq!(
             coordinator.state().get("api").unwrap().state,
             crate::service_pool::ServiceState::Stopped
+        );
+    }
+
+    #[test]
+    fn worker_coordinator_maps_failed_event_to_failed_pool_state() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 1,
+                signature: "sha256:a".into(),
+                origin_generation: Some(1),
+            },
+            ServiceHandoff::default(),
+        );
+        let info = crate::executor::ManagedServiceInfo {
+            name: "api".into(),
+            revision: 1,
+            signature: "sha256:a".into(),
+            origin_generation: Some(1),
+            readiness_ready: true,
+        };
+        coordinator.apply_event(
+            1,
+            crate::executor::ManagedServiceEvent::failed(info, "probe exhausted".into()),
+        );
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Failed
         );
     }
 
