@@ -24,7 +24,7 @@ fn fixture(label: &str, jobs: &str, hooks: &str) -> PathBuf {
     let root =
         std::env::temp_dir().join(format!("fzzsh-{}-{sequence}-{label}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("create fixture");
+    std::fs::create_dir_all(root.join("job-dir")).expect("create job cwd");
     std::fs::write(
         root.join(".watch.yaml"),
         format!("{CONFIG_PREFIX}{hooks}jobs:\n{jobs}"),
@@ -172,7 +172,7 @@ fn wait_for_text(root: &Path, file: &str, text: &str, timeout: Duration) {
 fn stable_failure_runs_settled_hook_once_and_exposes_invocation_boundary() {
     let root = fixture(
         "stable",
-        "  - name: fail\n    run: \"echo task-failure >&2; exit 3\"\n    change: \"*.txt\"\n",
+        "  - name: fail\n    run: \"echo task-failure >&2; exit 3\"\n    cwd: job-dir\n    change: \"*.txt\"\n",
         "hooks:\n  failure:\n    run: 'echo hook >> settled.log; echo $PWD >> settled.log; echo $SETTLED_TEST_ENV >> settled.log; echo $FUNZZY_GENERATION_ID >> settled.log; echo $FUNZZY_GENERATION_OUTCOME >> settled.log; echo hook-output'\n    settle: 1s\n",
     );
     let mut watcher = Watcher::start(&root);

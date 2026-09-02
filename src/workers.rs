@@ -19,10 +19,14 @@ struct SettledHookOwner {
         crate::executor::SettledHookRun,
         crate::executor::CancellationToken,
     )>,
+    hook_context: crate::plan::TaskContext,
 }
 impl SettledHookOwner {
-    fn new() -> Self {
-        Self { running: None }
+    fn new(hook_context: crate::plan::TaskContext) -> Self {
+        Self {
+            running: None,
+            hook_context,
+        }
     }
     fn start(
         &mut self,
@@ -30,7 +34,9 @@ impl SettledHookOwner {
         spec: crate::executor::PendingSettledHook,
         token: crate::executor::CancellationToken,
     ) -> Result<bool, String> {
-        let Some(run) = executor.start_settled_hook(spec, &token)? else {
+        let Some(run) =
+            executor.start_settled_hook_with_context(spec, &token, &self.hook_context)?
+        else {
             return Ok(false);
         };
         self.running = Some((run, token));
@@ -589,10 +595,14 @@ impl Worker {
         .with_recovery_approval(approval)
         .with_concurrency_handle(Arc::clone(&concurrency_handle));
 
+        let hook_context = crate::plan::TaskContext {
+            cwd: Some(root.clone()),
+            environment: Default::default(),
+        };
         let consumer = std::thread::spawn(move || {
             let mut active: Option<Run> = None;
             let mut pending: Option<RunRequest> = None;
-            let mut settled_hook_owner = SettledHookOwner::new();
+            let mut settled_hook_owner = SettledHookOwner::new(hook_context.clone());
 
             loop {
                 if active.is_none() {
@@ -617,6 +627,7 @@ impl Worker {
                                 .with_hooks(req.hooks.clone())
                                 .with_recovery_policy(req.recovery_policy)
                                 .with_recovery_timeout(req.recovery_timeout)
+                                .with_hook_context(hook_context.clone())
                                 .with_revision(
                                     req.revision.unwrap_or(0),
                                     req.revision_hash.clone().unwrap_or_default(),
@@ -657,6 +668,7 @@ impl Worker {
                                             .with_hooks(req.hooks.clone())
                                             .with_recovery_policy(req.recovery_policy)
                                             .with_recovery_timeout(req.recovery_timeout)
+                                            .with_hook_context(hook_context.clone())
                                             .with_revision(
                                                 req.revision.unwrap_or(0),
                                                 req.revision_hash.clone().unwrap_or_default(),
@@ -713,6 +725,7 @@ impl Worker {
                                                 None,
                                                 vec![],
                                             )
+                                            .with_hook_context(hook_context.clone())
                                             .with_revision(
                                                 revision.as_ref().map(|r| r.number).unwrap_or(0),
                                                 revision
@@ -868,6 +881,7 @@ impl Worker {
                                             None,
                                             vec![],
                                         )
+                                        .with_hook_context(hook_context.clone())
                                         .with_revision(
                                             revision.as_ref().map(|r| r.number).unwrap_or(0),
                                             revision
