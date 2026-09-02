@@ -3088,6 +3088,53 @@ mod service_tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn readiness_parses_required_fields_and_defaults_interval() {
+        let rules = from_yaml(
+            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl --fail http://localhost/health\n      timeout: 30s\n",
+        )
+        .expect("readiness config parses");
+        let readiness = rules[0].readiness().expect("readiness is present");
+        assert_eq!(readiness.run(), "curl --fail http://localhost/health");
+        assert_eq!(readiness.timeout(), std::time::Duration::from_secs(30));
+        assert_eq!(readiness.interval(), std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn readiness_rejects_non_service_and_invalid_shape() {
+        let non_service = from_yaml(
+            "jobs:\n  - name: check\n    run: echo check\n    change: '**/*'\n    readiness:\n      run: echo ready\n      timeout: 1s\n",
+        )
+        .expect_err("readiness requires service");
+        assert!(non_service.to_string().contains("service: true"));
+
+        for readiness in [
+            "readiness:\n      timeout: 1s",
+            "readiness:\n      run: ''\n      timeout: 1s",
+            "readiness:\n      run: echo ready\n      timeout: 0s",
+            "readiness:\n      run: echo ready\n      timeout: 1s\n      interval: 2s",
+            "readiness: null",
+        ] {
+            let config = format!(
+                "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    {readiness}\n"
+            );
+            assert!(from_yaml(&config).is_err(), "expected rejection: {readiness}");
+        }
+    }
+
+    #[test]
+    fn readiness_render_and_revision_include_complete_policy() {
+        let rules = from_yaml(
+            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl health\n      timeout: 1m\n      interval: 2s\n",
+        )
+        .unwrap();
+        let rendered = rule_as_yaml(&rules[0]);
+        assert!(rendered.contains("readiness:"));
+        assert!(rendered.contains("run: curl health"));
+        assert!(rendered.contains("timeout: 1m"));
+        assert!(rendered.contains("interval: 2s"));
+    }
 }
 
 #[cfg(test)]
