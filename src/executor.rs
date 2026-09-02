@@ -524,6 +524,14 @@ impl ManagedServiceEvent {
     pub(crate) fn is_stopped(&self) -> bool {
         matches!(self, Self::Stopped { .. })
     }
+
+    pub(crate) fn is_restarting(&self) -> bool {
+        matches!(self, Self::Restarting { .. })
+    }
+
+    pub(crate) fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
 }
 
 impl ServiceHandoff {
