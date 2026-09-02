@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 6;
+pub const REVISION_SCHEMA_VERSION: u64 = 7;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -227,9 +227,15 @@ pub fn service_signature(rule: &Rules) -> String {
     canonical.bool(true); // service rule tag
     canonical.string(&rule.name);
     canonical.bool(rule.service());
-    // Preserve the absent encoding for legacy services; an explicit readiness
-    // policy contributes its complete command/timing surface.
-    encode_readiness(&mut canonical, rule.readiness());
+    // Preserve the exact legacy encoding when readiness is absent. An
+    // explicit policy is an additive suffix so unchanged legacy services keep
+    // their historical signature.
+    if let Some(readiness) = rule.readiness() {
+        canonical.byte(1);
+        canonical.string(readiness.run());
+        canonical.u64(readiness.timeout().as_millis() as u64);
+        canonical.u64(readiness.interval().as_millis() as u64);
+    }
     canonical.string(&output_policy_tag(&rule.output()));
     canonical.optional_string(rule.cwd().map(str::to_owned));
 
@@ -439,7 +445,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "576481c9a234b62f99b0ebc5e80e6bb7168d4abf2312f1b2425bd056779e5df5"
+            "348d24d5c2650482fd395cb35331a2e631db84528cfc7854136ce74ecb9ff7a9"
         );
     }
 
@@ -821,7 +827,7 @@ mod manual_trigger_tests {
     /// hooks bump it to 5. Each invalidates prior revision hashes by design.
     #[test]
     fn revision_schema_version_is_pinned() {
-        assert_eq!(REVISION_SCHEMA_VERSION, 6);
+        assert_eq!(REVISION_SCHEMA_VERSION, 7);
     }
 
     #[test]
