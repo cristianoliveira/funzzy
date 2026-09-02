@@ -3055,6 +3055,56 @@ mod manual_frozen_reload_tests {
     }
 
     #[test]
+    fn worker_scheduler_accepts_explicit_pool_command_vocabulary() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        let (reply, _receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ReserveServiceReplacement {
+            name: "api".into(),
+            revision: crate::config_revision::ConfigRevision {
+                number: 2,
+                hash: "rev2".into(),
+            },
+            signature: "sha256:api".into(),
+            reply,
+        });
+        assert!(matches!(
+            scheduler.receive_until_deadline(Duration::ZERO),
+            SchedulerWake::Command(WorkerCommand::ReserveServiceReplacement { .. })
+        ));
+    }
+
+    #[test]
+    fn worker_pool_rejects_stale_reservation_after_newer_reload() {
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 3,
+                signature: "sha256:new".into(),
+                origin_generation: None,
+            },
+            ServiceHandoff::default(),
+        );
+        assert!(coordinator.reserve_service_replacement(crate::service_pool::ServiceSpec {
+            name: "api".into(),
+            revision: 2,
+            signature: "sha256:old".into(),
+            origin_generation: Some(2),
+        }).is_none());
+    }
+
+    #[test]
+    fn worker_scheduler_shutdown_pool_command_is_explicit_and_ordered() {
+        let scheduler = Scheduler::new(Arc::new(|_| {}));
+        let (reply, _receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ShutdownServicePool { reply });
+        assert!(matches!(
+            scheduler.receive_until_deadline(Duration::ZERO),
+            SchedulerWake::Command(WorkerCommand::ShutdownServicePool { .. })
+        ));
+    }
+
+    #[test]
     fn scheduler_close_cancels_claimed_settlement() {
         let scheduler = Scheduler::new(Arc::new(|_| {}));
         let now = Instant::now();
