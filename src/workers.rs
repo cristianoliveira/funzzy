@@ -289,10 +289,12 @@ impl ManagedServiceCoordinator {
         let Some(entry) = self.pool.get(&spec.name) else {
             return None;
         };
-        if entry.revision != spec.revision
-            || entry.signature != spec.signature
+        if spec.revision < entry.revision
+            || (spec.revision == entry.revision && spec.signature != entry.signature)
             || entry.state != crate::service_pool::ServiceState::Ready
-            || !self.handoff.has_matching_service(&spec)
+            || !self
+                .handoff
+                .has_matching_service(&entry.name, entry.revision, &entry.signature)
         {
             return None;
         }

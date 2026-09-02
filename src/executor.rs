@@ -564,14 +564,12 @@ impl ServiceHandoff {
         self.services.len()
     }
 
-    pub(crate) fn has_matching_service(&self, spec: &crate::service_pool::ServiceSpec) -> bool {
-        self.services
-            .iter()
-            .any(|service| service.name == spec.name)
+    pub(crate) fn has_matching_service(&self, name: &str, revision: u64, signature: &str) -> bool {
+        self.services.iter().any(|service| service.name == name)
             && self.specs.iter().any(|candidate| {
-                candidate.name == spec.name
-                    && candidate.revision == spec.revision
-                    && candidate.signature == spec.signature
+                candidate.name == name
+                    && candidate.revision == revision
+                    && candidate.signature == signature
             })
     }
 
