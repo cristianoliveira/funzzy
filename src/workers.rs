@@ -280,17 +280,38 @@ impl ManagedServiceCoordinator {
 
     fn reserve_service_replacement(
         &mut self,
+        executor: &Executor,
         spec: crate::service_pool::ServiceSpec,
     ) -> Option<crate::service_pool::PoolAction> {
-        if spec.revision < self.committed_revision
-            || self
-                .pool
-                .get(&spec.name)
-                .is_some_and(|entry| entry.revision > spec.revision)
+        if spec.name.is_empty() || spec.revision < self.committed_revision {
+            return None;
+        }
+        let Some(entry) = self.pool.get(&spec.name) else {
+            return None;
+        };
+        if entry.revision != spec.revision
+            || entry.signature != spec.signature
+            || entry.state != crate::service_pool::ServiceState::Ready
+            || !self.handoff.has_matching_service(&spec)
         {
             return None;
         }
-        self.pool.select_generation(&[spec]).into_iter().next()
+        let Some(crate::service_pool::PoolAction::Stop { name, instance_id }) = self
+            .pool
+            .select_generation(std::slice::from_ref(&spec))
+            .into_iter()
+            .next()
+        else {
+            return None;
+        };
+        let stopped = self
+            .handoff
+            .stop_named(executor, std::slice::from_ref(&name));
+        if stopped.iter().any(|stopped_name| stopped_name == &name) {
+            self.pool.stopped(&name, instance_id)
+        } else {
+            None
+        }
     }
 
     fn select_generation(
@@ -904,8 +925,10 @@ impl Worker {
                                         signature,
                                         origin_generation: None,
                                     };
-                                    let _ = reply
-                                        .send(managed_services.reserve_service_replacement(spec));
+                                    let _ = reply.send(
+                                        managed_services
+                                            .reserve_service_replacement(&executor, spec),
+                                    );
                                 }
                                 WorkerCommand::ReconcileServicePool {
                                     desired,
@@ -1076,6 +1099,7 @@ impl Worker {
                             reply,
                         }) => {
                             let action = managed_services.reserve_service_replacement(
+                                &executor,
                                 crate::service_pool::ServiceSpec {
                                     name,
                                     revision: revision.number,
@@ -3435,12 +3459,23 @@ mod manual_frozen_reload_tests {
             ServiceHandoff::default(),
         );
         assert!(coordinator
-            .reserve_service_replacement(crate::service_pool::ServiceSpec {
-                name: "api".into(),
-                revision: 2,
-                signature: "sha256:old".into(),
-                origin_generation: Some(2),
-            })
+            .reserve_service_replacement(
+                &Executor::new(
+                    Arc::new(SystemProcessRunner),
+                    Arc::new(SystemClock),
+                    1,
+                    Arc::new(|_| {}),
+                    false,
+                    false,
+                )
+                .unwrap(),
+                crate::service_pool::ServiceSpec {
+                    name: "api".into(),
+                    revision: 2,
+                    signature: "sha256:old".into(),
+                    origin_generation: Some(2),
+                }
+            )
             .is_none());
     }
 

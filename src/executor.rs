@@ -564,6 +564,17 @@ impl ServiceHandoff {
         self.services.len()
     }
 
+    pub(crate) fn has_matching_service(&self, spec: &crate::service_pool::ServiceSpec) -> bool {
+        self.services
+            .iter()
+            .any(|service| service.name == spec.name)
+            && self.specs.iter().any(|candidate| {
+                candidate.name == spec.name
+                    && candidate.revision == spec.revision
+                    && candidate.signature == spec.signature
+            })
+    }
+
     pub(crate) fn stop_named(&mut self, executor: &Executor, names: &[String]) -> Vec<String> {
         let mut stopped = vec![];
         let mut index = 0;
