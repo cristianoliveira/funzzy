@@ -3383,6 +3383,46 @@ mod manual_frozen_reload_tests {
     }
 
     #[test]
+    fn worker_reservation_requires_reaped_matching_handoff_before_start() {
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap();
+        let mut coordinator = ManagedServiceCoordinator::new();
+        coordinator.promote(
+            crate::service_pool::ServiceSpec {
+                name: "api".into(),
+                revision: 3,
+                signature: "sha256:new".into(),
+                origin_generation: None,
+            },
+            ServiceHandoff::default(),
+        );
+        assert_eq!(
+            coordinator.reserve_service_replacement(
+                &executor,
+                crate::service_pool::ServiceSpec {
+                    name: "api".into(),
+                    revision: 3,
+                    signature: "sha256:new".into(),
+                    origin_generation: Some(4),
+                },
+            ),
+            None,
+            "without the exact opaque handoff, replacement cannot start"
+        );
+        assert_eq!(
+            coordinator.state().get("api").unwrap().state,
+            crate::service_pool::ServiceState::Ready
+        );
+    }
+
+    #[test]
     fn worker_pool_rejects_stale_reservation_after_newer_reload() {
         let mut coordinator = ManagedServiceCoordinator::new();
         coordinator.promote(
