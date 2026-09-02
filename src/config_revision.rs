@@ -439,7 +439,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "37e0833a166590461868991ce60af5e86d8d9dee246aab6a1691baf52a50b8a0"
+            "576481c9a234b62f99b0ebc5e80e6bb7168d4abf2312f1b2425bd056779e5df5"
         );
     }
 

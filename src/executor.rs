@@ -510,6 +510,12 @@ struct ActiveTask {
     /// continuation spawns (§3 job-wide rule).
     deadline: Option<Instant>,
     timeout: Option<Duration>,
+    /// Frozen application-level service health policy and probe state.
+    readiness: Option<crate::rules::Readiness>,
+    readiness_child: Option<Box<dyn ChildProcess>>,
+    readiness_deadline: Option<Instant>,
+    readiness_next_attempt: Option<Instant>,
+    readiness_ready: bool,
 }
 
 impl From<TaskPlan> for ActiveTask {
@@ -537,6 +543,11 @@ impl From<TaskPlan> for ActiveTask {
             timed_out: false,
             deadline: None,
             timeout: task.timeout,
+            readiness: task.readiness,
+            readiness_child: None,
+            readiness_deadline: None,
+            readiness_next_attempt: None,
+            readiness_ready: false,
         }
     }
 }
@@ -756,6 +767,11 @@ impl Executor {
                     // alive (polled for restart/failure) until reaped.
                     if !run.services.is_empty() {
                         self.advance_services(run);
+                        if run.services.iter().all(|service| {
+                            service.readiness.is_some() && service.readiness_ready
+                        }) {
+                            return Step::Finished;
+                        }
                         return Step::Running;
                     }
                     return Step::Finished;
@@ -793,7 +809,10 @@ impl Executor {
                         // TASK-0035: a spawned-and-running service is moved
                         // to the background set so it never blocks later
                         // stages; it is reaped at cancellation/shutdown.
-                        if run.active[index].service {
+                        if run.active[index].service
+                            && (run.active[index].readiness.is_none()
+                                || run.active[index].readiness_ready)
+                        {
                             let service = run.active.remove(index);
                             run.services.push(service);
                             continue;
@@ -853,6 +872,11 @@ impl Executor {
                 if run.services.is_empty() {
                     continue;
                 }
+                if run.services.iter().all(|service| {
+                    service.readiness.is_some() && service.readiness_ready
+                }) {
+                    return Step::Finished;
+                }
                 return Step::Running;
             }
 
@@ -870,6 +894,172 @@ impl Executor {
                 return;
             };
             run.active.push(task.into());
+        }
+    }
+
+    /// Advances a service's startup health gate. The service child is always
+    /// observed before the probe, and again before committing probe success;
+    /// this gives service exit precedence without relying on wall-clock races.
+    fn advance_starting_service(
+        &self,
+        task: &mut ActiveTask,
+        results: &mut Vec<Result<(), String>>,
+        run_id: u64,
+        fail_fast: bool,
+    ) -> TaskStep {
+        let Some(readiness) = task.readiness.clone() else {
+            return TaskStep::Running;
+        };
+        let now = self.clock.now();
+        if task.child.is_none() {
+            return self.fail_starting_service(
+                task,
+                results,
+                format!("Service {} exited before readiness", task.name),
+                fail_fast,
+            );
+        }
+        if task.readiness_deadline.is_some_and(|deadline| now >= deadline) {
+            return self.fail_starting_service(
+                task,
+                results,
+                format!("Service {} readiness timed out", task.name),
+                fail_fast,
+            );
+        }
+
+        // Service exit wins over every probe observation in this cycle.
+        match task.child.as_mut().expect("starting service child") .try_wait() {
+            Ok(Some(status)) => {
+                task.child = None;
+                return self.fail_starting_service(
+                    task,
+                    results,
+                    format!("Service {} exited before readiness ({status})", task.name),
+                    fail_fast,
+                );
+            }
+            Err(error) => {
+                task.child = None;
+                return self.fail_starting_service(
+                    task,
+                    results,
+                    format!("Service {} could not be observed before readiness: {error}", task.name),
+                    fail_fast,
+                );
+            }
+            Ok(None) => {}
+        }
+
+        if let Some(probe) = task.readiness_child.as_mut() {
+            match probe.try_wait() {
+                Ok(None) => return TaskStep::Running,
+                Ok(Some(status)) => {
+                    task.readiness_child = None;
+                    if !status.success() {
+                        task.readiness_next_attempt = Some(now + readiness.interval());
+                        self.events.emit(Event::Tick {
+                            task: format!("{}:readiness", task.name),
+                            group_occurrence: task.group_occurrence.clone(),
+                        });
+                        return TaskStep::Running;
+                    }
+                    // Probe success is committed only if the service remains
+                    // alive at the promotion boundary.
+                    match task.child.as_mut().expect("starting service child").try_wait() {
+                        Ok(None) => {
+                            task.readiness_ready = true;
+                            task.readiness_child = None;
+                            self.events.emit(Event::Tick {
+                                task: task.name.clone(),
+                                group_occurrence: task.group_occurrence.clone(),
+                            });
+                            return TaskStep::Running;
+                        }
+                        Ok(Some(status)) => {
+                            task.child = None;
+                            task.readiness_child = None;
+                            return self.fail_starting_service(
+                                task,
+                                results,
+                                format!("Service {} exited before readiness ({status})", task.name),
+                                fail_fast,
+                            );
+                        }
+                        Err(error) => {
+                            task.child = None;
+                            task.readiness_child = None;
+                            return self.fail_starting_service(
+                                task,
+                                results,
+                                format!("Service {} could not be observed before readiness: {error}", task.name),
+                                fail_fast,
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    task.readiness_child = None;
+                    return self.fail_starting_service(
+                        task,
+                        results,
+                        format!("Service {} readiness check errored: {error}", task.name),
+                        fail_fast,
+                    );
+                }
+            }
+        }
+
+        if task.readiness_next_attempt.is_some_and(|next| now < next) {
+            return TaskStep::Running;
+        }
+        let command = CommandLine::Shell(readiness.run().to_owned());
+        let capture = task.capture.clone();
+        match self.runner.spawn(
+            &task.name,
+            &command,
+            &task.context,
+            capture,
+            Some(format!("{}:readiness", task.name)),
+            !matches!(task.output, crate::rules::OutputPolicy::Inherit),
+        ) {
+            Ok(probe) => {
+                task.readiness_child = Some(probe);
+                task.readiness_next_attempt = None;
+                if self.verbose {
+                    diagnostics::debug(&diagnostics::Record {
+                        generation: Some(run_id),
+                        state: Some("readiness_started"),
+                        command: Some(command.display()),
+                        ..Default::default()
+                    });
+                }
+                TaskStep::Running
+            }
+            Err(error) => self.fail_starting_service(
+                task,
+                results,
+                format!("Service {} readiness check failed to start: {error}", task.name),
+                fail_fast,
+            ),
+        }
+    }
+
+    fn fail_starting_service(
+        &self,
+        task: &mut ActiveTask,
+        results: &mut Vec<Result<(), String>>,
+        failure: String,
+        fail_fast: bool,
+    ) -> TaskStep {
+        self.shutdown_task(task);
+        task.commands.clear();
+        task.failures.push(failure.clone());
+        results.push(Err(failure));
+        if fail_fast {
+            TaskStep::FailedFast
+        } else {
+            TaskStep::Finished
         }
     }
 
@@ -901,6 +1091,14 @@ impl Executor {
                     };
                 }
             }
+        }
+
+        if task.service
+            && task.child.is_some()
+            && task.readiness.is_some()
+            && !task.readiness_ready
+        {
+            return self.advance_starting_service(task, results, run_id, fail_fast);
         }
 
         loop {
@@ -953,6 +1151,12 @@ impl Executor {
                             // reset, never fresh).
                             if let (Some(timeout), None) = (task.timeout, task.deadline) {
                                 task.deadline = task.started.map(|started| started + timeout);
+                            }
+                            if let Some(readiness) = &task.readiness {
+                                if let Some(started) = task.started {
+                                    task.readiness_deadline = Some(started + readiness.timeout());
+                                    task.readiness_next_attempt = Some(started);
+                                }
                             }
                         }
                         if self.verbose {
@@ -1997,13 +2201,17 @@ impl Executor {
     }
 
     fn shutdown_task(&self, task: &mut ActiveTask) -> bool {
-        let Some(child) = task.child.as_mut() else {
-            task.commands.clear();
-            return false;
-        };
         let (signal, grace) = crate::process_owner::shutdown_policy();
-        let outcome = child.shutdown(signal, grace, self.verbose);
-        let escalated = matches!(outcome, ShutdownOutcome::Escalated { .. });
+        let mut escalated = false;
+        if let Some(probe) = task.readiness_child.as_mut() {
+            let outcome = probe.shutdown(signal, grace, self.verbose);
+            escalated |= matches!(outcome, ShutdownOutcome::Escalated { .. });
+        }
+        task.readiness_child = None;
+        if let Some(child) = task.child.as_mut() {
+            let outcome = child.shutdown(signal, grace, self.verbose);
+            escalated |= matches!(outcome, ShutdownOutcome::Escalated { .. });
+        }
         task.child = None;
         task.commands.clear();
         escalated
@@ -3441,7 +3649,11 @@ mod tests {
             }
         }
         assert!(settled, "ready service must settle its generation");
-        assert!(runner.started_commands().contains(&"serve".to_owned()));
+        assert!(
+            runner.started_commands().contains(&"serve".to_owned()),
+            "started: {:?}",
+            runner.started_commands()
+        );
         assert!(runner.started_commands().contains(&"probe".to_owned()));
         let completed = executor.finish(run);
         assert!(completed.outcome.is_success());

@@ -344,7 +344,7 @@ const JOB_SPECS: &[OptionSpec] = &[
         default: None,
         help: "Application health command for a managed service; successful readiness settles the generation while the service remains managed.",
         values: None,
-        example: &["readiness:", "  run: curl --fail http://localhost/health", "  timeout: 30s"],
+        example: &["service: true", "readiness:", "  run: curl --fail http://localhost/health", "  timeout: 30s"],
         kind: SpecKind::StringMap,
     },
     OptionSpec {
@@ -498,6 +498,7 @@ mod tests {
             "trigger",
             "timeout",
             "service",
+            "readiness",
             "output",
         ];
         let actual: Vec<&str> = property_names(Owner::Job);

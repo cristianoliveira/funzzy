@@ -523,6 +523,16 @@ impl TaskPlan {
         canonical.string(&self.name);
         canonical.optional_string(self.parallel.as_deref());
         canonical.optional_string(self.group_occurrence.as_deref());
+        canonical.bool(self.service);
+        match &self.readiness {
+            Some(readiness) => {
+                canonical.byte(1);
+                canonical.string(readiness.run());
+                canonical.u64(readiness.timeout().as_millis() as u64);
+                canonical.u64(readiness.interval().as_millis() as u64);
+            }
+            None => canonical.byte(0),
+        }
         canonical.u64(self.commands.len() as u64);
         for command in &self.commands {
             match command {
@@ -1158,7 +1168,7 @@ mod tests {
         assert_eq!(first.to_string().len(), 64, "sha256 lowercase hex");
         assert_eq!(
             first.to_string(),
-            "b1d26b16da54ba57ecbb973c66ac6bd5108853ae37956efedfe1c3fdaca216df"
+            "068f8919a409d05b77f901bb289145ee0c145f47d8d2f6e9f3b36292d42112cc"
         );
     }
 
