@@ -157,6 +157,17 @@ impl ManagedServicePool {
         actions
     }
 
+    pub(crate) fn cancel_replacement(&mut self, name: &str, instance_id: u64) -> bool {
+        let Some(entry) = self.entries.get_mut(name) else {
+            return false;
+        };
+        if entry.instance_id != instance_id || entry.state != ServiceState::Stopping {
+            return false;
+        }
+        entry.pending = None;
+        true
+    }
+
     pub(crate) fn remove_stopped(&mut self, name: &str, instance_id: u64) -> bool {
         self.entries
             .get(name)

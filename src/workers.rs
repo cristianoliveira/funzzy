@@ -285,6 +285,14 @@ impl ManagedServiceCoordinator {
         self.pool.probed(name, instance_id, success)
     }
 
+    fn cancel_replacement(&mut self, name: &str, instance_id: u64) -> bool {
+        self.pool.cancel_replacement(name, instance_id)
+    }
+
+    fn stopped(&mut self, name: &str, instance_id: u64) -> Option<crate::service_pool::PoolAction> {
+        self.pool.stopped(name, instance_id)
+    }
+
     fn shutdown(&mut self, executor: &Executor) {
         executor.shutdown_service_handoff(&mut self.handoff);
     }
