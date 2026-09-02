@@ -39,6 +39,8 @@ pub struct CorrelatedSnapshot {
     pub trigger: Option<String>,
     pub commands: Vec<String>,
     pub tasks: Vec<TaskSnapshot>,
+    /// Live managed services, independent from immutable generation outcome.
+    pub services: Vec<crate::service_pool::ManagedServiceSnapshot>,
     pub pending: u64,
     pub freshness: crate::awaiting::Freshness,
     pub duration_ms: Option<u64>,
@@ -233,6 +235,7 @@ impl SnapshotBroker {
             trigger: state.trigger().map(str::to_owned),
             commands: state.commands().to_vec(),
             tasks: state.tasks().to_vec(),
+            services: state.services().to_vec(),
             pending: pending.queued_batches as u64,
             freshness,
             duration_ms: state.duration_ms(),

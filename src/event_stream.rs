@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Schema version of the NDJSON event records (contract §3).
-pub const EVENT_SCHEMA_VERSION: u64 = 1;
+pub const EVENT_SCHEMA_VERSION: u64 = 2;
 
 /// Appends NDJSON run events to one file. A single `Mutex` serializes
 /// writers so every record is one atomic line (no interleaving); after a
@@ -144,6 +144,24 @@ impl EventStream {
                 "phase": phase,
                 "outcome": outcome,
             }),
+            Event::ServiceLifecycle {
+                sequence,
+                ts_ms,
+                service,
+            } => json!({
+                "schemaVersion": EVENT_SCHEMA_VERSION,
+                "event": "service_lifecycle",
+                "sequence": sequence,
+                "tsMs": ts_ms,
+                "name": service.name,
+                "instanceId": service.instance_id,
+                "state": service.state,
+                "originGeneration": service.origin_generation,
+                "revision": service.revision,
+                "restartAttemptsUsed": service.restart_attempts_used,
+                "restartAttemptsRemaining": service.restart_attempts_remaining,
+                "latestError": service.latest_error,
+            }),
         }
     }
 }
@@ -219,7 +237,7 @@ mod tests {
         drop(stream);
         let records = read_lines(&path);
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["schemaVersion"], 1);
+        assert_eq!(records[0]["schemaVersion"], EVENT_SCHEMA_VERSION);
         assert_eq!(records[0]["event"], "started");
         assert_eq!(records[0]["runId"], 7);
         assert_eq!(records[0]["batch"], 3);
@@ -227,6 +245,38 @@ mod tests {
         assert_eq!(records[0]["effectiveConcurrency"], 2);
         assert_eq!(records[0]["concurrencySource"], "config");
         assert!(records[0]["tsMs"].is_number());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn managed_service_record_uses_schema_two_lifecycle_shape() {
+        let (path, stream) = stream_in_temp("service-lifecycle");
+        stream.emit(Event::ServiceLifecycle {
+            sequence: 4,
+            ts_ms: 99,
+            service: crate::service_pool::ManagedServiceSnapshot {
+                name: "api".to_owned(),
+                instance_id: 2,
+                state: crate::service_pool::ServiceState::Restarting,
+                origin_generation: Some(7),
+                revision: 3,
+                signature: "sig".to_owned(),
+                restart_attempts_used: 1,
+                restart_attempts_remaining: 2,
+                started_at_epoch_ms: None,
+                ready_at_epoch_ms: None,
+                uptime_ms: None,
+                latest_error: Some("boom".to_owned()),
+            },
+        });
+        drop(stream);
+        let records = read_lines(&path);
+        assert_eq!(records[0]["schemaVersion"], 2);
+        assert_eq!(records[0]["event"], "service_lifecycle");
+        assert_eq!(records[0]["sequence"], 4);
+        assert_eq!(records[0]["name"], "api");
+        assert_eq!(records[0]["state"], "restarting");
+        assert_eq!(records[0]["restartAttemptsRemaining"], 2);
         std::fs::remove_file(&path).ok();
     }
 

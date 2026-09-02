@@ -69,6 +69,8 @@ pub struct WatcherState {
     /// keeps its internal declaration position serde-skipped, preserving the
     /// existing `tasks[].durationMs` wire shape.
     tasks: Vec<TaskSnapshot>,
+    /// Live managed-service telemetry is independent from generation outcome.
+    services: Vec<crate::service_pool::ManagedServiceSnapshot>,
     effective_concurrency: Option<usize>,
     concurrency_source: Option<&'static str>,
     /// Immutable configuration revision this generation was frozen under.
@@ -96,6 +98,7 @@ impl Default for WatcherState {
             predecessor: None,
             superseded_by: None,
             tasks: vec![],
+            services: vec![],
             effective_concurrency: None,
             concurrency_source: None,
             revision: None,
@@ -123,6 +126,10 @@ impl WatcherState {
 
     pub fn tasks(&self) -> &[TaskSnapshot] {
         &self.tasks
+    }
+
+    pub fn services(&self) -> &[crate::service_pool::ManagedServiceSnapshot] {
+        &self.services
     }
 
     pub fn trigger(&self) -> Option<&str> {
@@ -224,6 +231,20 @@ impl WatcherState {
                 }
             }
             Event::RecoveryPhase { .. } => {}
+            Event::ServiceLifecycle { service, .. } => {
+                if let Some(current) = self.services.iter_mut().find(|current| {
+                    current.name == service.name && current.instance_id == service.instance_id
+                }) {
+                    *current = service;
+                } else {
+                    self.services.push(service);
+                }
+                self.services.sort_by(|left, right| {
+                    left.instance_id
+                        .cmp(&right.instance_id)
+                        .then_with(|| left.name.cmp(&right.name))
+                });
+            }
         }
     }
 }
@@ -397,8 +418,14 @@ mod tests {
         assert_eq!(state.generation(), 42);
         assert_eq!(state.state(), &WatcherExecutionState::Running);
         assert_eq!(state.services()[0].name, "api");
-        assert_eq!(state.services()[0].state, crate::service_pool::ServiceState::Ready);
-        assert_eq!(serde_json::to_value(&state).unwrap()["services"][0]["instanceId"], 7);
+        assert_eq!(
+            state.services()[0].state,
+            crate::service_pool::ServiceState::Ready
+        );
+        assert_eq!(
+            serde_json::to_value(&state).unwrap()["services"][0]["instanceId"],
+            7
+        );
     }
 
     #[test]

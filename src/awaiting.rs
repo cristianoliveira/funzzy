@@ -177,7 +177,9 @@ impl AwaitCoordinator {
             Event::Tick { .. } => {}
             // Per-task outcomes live in `WatcherState`; the coordinator only
             // tracks generation/batch/pending facts for freshness (TASK-0050).
-            Event::TaskTerminal { .. } | Event::RecoveryPhase { .. } => {}
+            Event::TaskTerminal { .. }
+            | Event::RecoveryPhase { .. }
+            | Event::ServiceLifecycle { .. } => {}
         }
     }
 

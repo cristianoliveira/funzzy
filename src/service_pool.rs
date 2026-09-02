@@ -3,6 +3,7 @@
 //! Process handles remain behind the executor's opaque promotion adapter. This
 //! module tracks lifecycle metadata and serial replacement decisions.
 
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,14 +14,32 @@ pub(crate) struct ServiceSpec {
     pub(crate) origin_generation: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ServiceState {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceState {
     Starting,
     Ready,
     Restarting,
     Stopping,
     Failed,
     Stopped,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedServiceSnapshot {
+    pub name: String,
+    pub instance_id: u64,
+    pub state: ServiceState,
+    pub origin_generation: Option<u64>,
+    pub revision: u64,
+    pub signature: String,
+    pub restart_attempts_used: usize,
+    pub restart_attempts_remaining: usize,
+    pub started_at_epoch_ms: Option<u64>,
+    pub ready_at_epoch_ms: Option<u64>,
+    pub uptime_ms: Option<u64>,
+    pub latest_error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +73,26 @@ impl ManagedServicePool {
 
     pub(crate) fn get(&self, name: &str) -> Option<&ServiceEntry> {
         self.entries.get(name)
+    }
+
+    pub(crate) fn snapshots(&self) -> Vec<ManagedServiceSnapshot> {
+        self.entries
+            .values()
+            .map(|entry| ManagedServiceSnapshot {
+                name: entry.name.clone(),
+                instance_id: entry.instance_id,
+                state: entry.state,
+                origin_generation: entry.origin_generation,
+                revision: entry.revision,
+                signature: entry.signature.clone(),
+                restart_attempts_used: 0,
+                restart_attempts_remaining: crate::executor::SERVICE_MAX_RESTARTS,
+                started_at_epoch_ms: None,
+                ready_at_epoch_ms: None,
+                uptime_ms: None,
+                latest_error: None,
+            })
+            .collect()
     }
 
     pub(crate) fn instance_ids(&self) -> Vec<u64> {

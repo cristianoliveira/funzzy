@@ -439,7 +439,7 @@ fn run_events_flag_writes_ndjson_stream() {
         .collect();
     assert!(!records.is_empty(), "stream must not be empty");
     for record in &records {
-        assert_eq!(record["schemaVersion"], 1, "schema on every record");
+        assert_eq!(record["schemaVersion"], 2, "schema on every record");
         assert!(record["tsMs"].is_number());
     }
     assert!(

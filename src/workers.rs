@@ -14,6 +14,44 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+fn service_timestamp_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn emit_service_snapshots(coordinator: &mut ManagedServiceCoordinator, sink: &Arc<dyn EventSink>) {
+    for service in coordinator.snapshots() {
+        sink.emit(Event::ServiceLifecycle {
+            sequence: coordinator.next_service_sequence(),
+            ts_ms: service_timestamp_ms(),
+            service,
+        });
+    }
+}
+
+fn service_error_tail(error: &str) -> String {
+    const MAX_BYTES: usize = 4 * 1024;
+    const MAX_LINES: usize = 40;
+    let lines: Vec<&str> = error.lines().collect();
+    if lines.len() <= MAX_LINES && error.len() <= MAX_BYTES {
+        return error.to_owned();
+    }
+    let mut retained = vec!["[...truncated...]"];
+    let mut used = retained[0].len();
+    for line in lines.iter().rev().take(MAX_LINES - 1) {
+        let needed = line.len() + 1;
+        if used + needed > MAX_BYTES {
+            break;
+        }
+        retained.push(line);
+        used += needed;
+    }
+    retained[1..].reverse();
+    retained.join("\n")
+}
+
 struct SettledHookOwner {
     running: Option<(
         crate::executor::SettledHookRun,
@@ -224,6 +262,8 @@ struct ManagedServiceCoordinator {
     pool: crate::service_pool::ManagedServicePool,
     handoff: ServiceHandoff,
     committed_revision: u64,
+    service_sequence: u64,
+    service_order: Vec<String>,
 }
 
 impl ManagedServiceCoordinator {
@@ -232,6 +272,8 @@ impl ManagedServiceCoordinator {
             pool: crate::service_pool::ManagedServicePool::new(),
             handoff: ServiceHandoff::default(),
             committed_revision: 0,
+            service_sequence: 0,
+            service_order: vec![],
         }
     }
 
@@ -241,12 +283,18 @@ impl ManagedServiceCoordinator {
         handoff: ServiceHandoff,
     ) -> crate::service_pool::ServiceEntry {
         self.committed_revision = self.committed_revision.max(spec.revision);
+        if !self.service_order.contains(&spec.name) {
+            self.service_order.push(spec.name.clone());
+        }
         self.handoff.merge(handoff);
         self.pool.promote_ready(spec)
     }
 
     fn adopt_handoff(&mut self, handoff: ServiceHandoff) {
         for spec in handoff.specs() {
+            if !self.service_order.contains(&spec.name) {
+                self.service_order.push(spec.name.clone());
+            }
             self.pool.commit_promotion(spec.clone());
         }
         self.handoff.merge(handoff);
@@ -332,6 +380,16 @@ impl ManagedServiceCoordinator {
             return vec![];
         }
         self.committed_revision = revision;
+        let previous_order = std::mem::take(&mut self.service_order);
+        self.service_order = specs
+            .iter()
+            .map(|spec| spec.name.clone())
+            .chain(
+                previous_order
+                    .into_iter()
+                    .filter(|name| !specs.iter().any(|spec| &spec.name == name)),
+            )
+            .collect();
         self.pool.reconcile_reload(specs)
     }
 
@@ -377,16 +435,91 @@ impl ManagedServiceCoordinator {
         }
     }
 
-    fn poll(&mut self, executor: &Executor) -> Vec<crate::executor::ManagedServiceEvent> {
+    fn poll(
+        &mut self,
+        executor: &Executor,
+    ) -> Vec<(u64, crate::service_pool::ManagedServiceSnapshot)> {
         let events = executor.advance_service_handoff(&mut self.handoff);
+        let mut snapshots = vec![];
         for event in &events {
             let info = event.info();
             let instance_id = self.pool.get(&info.name).map(|entry| entry.instance_id);
             if let Some(instance_id) = instance_id {
                 self.apply_event(instance_id, event.clone());
+                if let Some(mut service) = self
+                    .pool
+                    .snapshots()
+                    .into_iter()
+                    .find(|service| service.name == info.name)
+                {
+                    if let Some(remaining) = event.restart_attempts_remaining() {
+                        service.restart_attempts_remaining = remaining;
+                        service.restart_attempts_used =
+                            crate::executor::SERVICE_MAX_RESTARTS.saturating_sub(remaining);
+                    } else if event.is_failed() {
+                        service.restart_attempts_used = crate::executor::SERVICE_MAX_RESTARTS;
+                        service.restart_attempts_remaining = 0;
+                    }
+                    if let Some(error) = event.error() {
+                        service.latest_error = Some(service_error_tail(error));
+                    }
+                    self.service_sequence += 1;
+                    snapshots.push((self.service_sequence, service));
+                }
             }
         }
-        events
+        // Readiness passes on a later handoff advancement without producing a
+        // process lifecycle event. Reconcile that health transition into the
+        // worker-owned pool and publish it independently of generation state.
+        for info in executor.service_handoff_info(&self.handoff) {
+            let Some(entry) = self.pool.get(&info.name) else {
+                continue;
+            };
+            if info.readiness_ready && entry.state == crate::service_pool::ServiceState::Restarting
+            {
+                let instance_id = entry.instance_id;
+                self.pool.probed(&info.name, instance_id, true);
+                if let Some(service) = self
+                    .pool
+                    .snapshots()
+                    .into_iter()
+                    .find(|service| service.name == info.name)
+                {
+                    self.service_sequence += 1;
+                    snapshots.push((self.service_sequence, service));
+                }
+            }
+        }
+        snapshots
+    }
+
+    fn snapshots(&self) -> Vec<crate::service_pool::ManagedServiceSnapshot> {
+        let mut snapshots = self.pool.snapshots();
+        snapshots.sort_by_key(|service| {
+            let draining = matches!(
+                service.state,
+                crate::service_pool::ServiceState::Stopping
+                    | crate::service_pool::ServiceState::Stopped
+            );
+            if draining {
+                (1_u8, usize::MAX, service.instance_id)
+            } else {
+                (
+                    0_u8,
+                    self.service_order
+                        .iter()
+                        .position(|name| name == &service.name)
+                        .unwrap_or(usize::MAX),
+                    service.instance_id,
+                )
+            }
+        });
+        snapshots
+    }
+
+    fn next_service_sequence(&mut self) -> u64 {
+        self.service_sequence += 1;
+        self.service_sequence
     }
 
     fn shutdown(&mut self, executor: &Executor) {
@@ -775,6 +908,7 @@ impl Worker {
         });
         let scheduler = Arc::new(Scheduler::new(Arc::clone(&events)));
         let consumer_scheduler = Arc::clone(&scheduler);
+        let service_events = Arc::clone(&events);
         // TASK-0090 AC7: one shared bound handle drives both the executor's
         // stage planning and the worker's scheduling/signature reads, so a
         // config reload swaps concurrency for newly planned generations
@@ -808,15 +942,20 @@ impl Worker {
             loop {
                 // Poll pooled services independently of generation lifetime;
                 // post-settlement events never reopen or rewrite a generation.
-                for event in managed_services.poll(&executor) {
-                    if event.is_restarting() {
+                for (sequence, service) in managed_services.poll(&executor) {
+                    if service.state == crate::service_pool::ServiceState::Restarting {
                         stdout::warn(&format!(
                             "service '{}' restarted after an unexpected exit",
-                            event.info().name
+                            service.name
                         ));
-                    } else if event.is_failed() {
-                        stdout::warn(&format!("service '{}' failed", event.info().name));
+                    } else if service.state == crate::service_pool::ServiceState::Failed {
+                        stdout::warn(&format!("service '{}' failed", service.name));
                     }
+                    service_events.emit(Event::ServiceLifecycle {
+                        sequence,
+                        ts_ms: service_timestamp_ms(),
+                        service,
+                    });
                 }
                 if active.is_none() {
                     // Promote the newest superseding run, or block on the next
@@ -927,10 +1066,10 @@ impl Worker {
                                         signature,
                                         origin_generation: None,
                                     };
-                                    let _ = reply.send(
-                                        managed_services
-                                            .reserve_service_replacement(&executor, spec),
-                                    );
+                                    let action = managed_services
+                                        .reserve_service_replacement(&executor, spec);
+                                    let _ = reply.send(action);
+                                    emit_service_snapshots(&mut managed_services, &service_events);
                                 }
                                 WorkerCommand::ReconcileServicePool {
                                     desired,
@@ -950,6 +1089,7 @@ impl Worker {
                                         .collect();
                                     let _ = managed_services.stop_named(&executor, &stop_names);
                                     let _ = reply.send(actions);
+                                    emit_service_snapshots(&mut managed_services, &service_events);
                                 }
                                 WorkerCommand::ShutdownServicePool { reply } => {
                                     managed_services.shutdown(&executor);
@@ -1110,6 +1250,7 @@ impl Worker {
                                 },
                             );
                             let _ = reply.send(action);
+                            emit_service_snapshots(&mut managed_services, &service_events);
                         }
                         Some(WorkerCommand::ReconcileServicePool {
                             desired,
@@ -1129,6 +1270,7 @@ impl Worker {
                                 .collect();
                             let _ = managed_services.stop_named(&executor, &stop_names);
                             let _ = reply.send(actions);
+                            emit_service_snapshots(&mut managed_services, &service_events);
                         }
                         Some(WorkerCommand::ShutdownServicePool { reply }) => {
                             managed_services.shutdown(&executor);
@@ -1226,7 +1368,16 @@ impl Worker {
                                         .register_settlement(spec.clone(), Instant::now());
                                 }
                             },
-                            |services| managed_services.adopt_handoff(services),
+                            |services| {
+                                managed_services.adopt_handoff(services);
+                                for service in managed_services.snapshots() {
+                                    service_events.emit(Event::ServiceLifecycle {
+                                        sequence: managed_services.next_service_sequence(),
+                                        ts_ms: service_timestamp_ms(),
+                                        service,
+                                    });
+                                }
+                            },
                         );
                         stdout::present_results(
                             completed.results,
