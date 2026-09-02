@@ -288,6 +288,9 @@ fn template_comments_cover_catalog_without_unsupported_properties() {
         .chain(option_catalog::property_names(Owner::Hooks))
         .chain(option_catalog::property_names(Owner::Job))
         .chain(option_catalog::property_names(Owner::Root))
+        // `settle` is nested inside the catalog's `hooks.failure` object,
+        // so it is not a top-level catalog property.
+        .chain(std::iter::once("settle"))
         .collect();
 
     // Every optional catalog property appears commented.
