@@ -453,11 +453,36 @@ pub struct PendingSettledHook {
 #[derive(Default)]
 pub(crate) struct ServiceHandoff {
     services: Vec<ActiveTask>,
+    specs: Vec<crate::service_pool::ServiceSpec>,
 }
 
 impl ServiceHandoff {
     pub(crate) fn merge(&mut self, mut other: Self) {
         self.services.append(&mut other.services);
+        self.specs.append(&mut other.specs);
+    }
+
+    pub(crate) fn specs(&self) -> &[crate::service_pool::ServiceSpec] {
+        &self.specs
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.services.len()
+    }
+
+    pub(crate) fn stop_named(&mut self, executor: &Executor, names: &[String]) -> Vec<String> {
+        let mut stopped = vec![];
+        let mut index = 0;
+        while index < self.services.len() {
+            if names.iter().any(|name| name == &self.services[index].name) {
+                let mut service = self.services.remove(index);
+                executor.shutdown_task(&mut service);
+                stopped.push(service.name);
+            } else {
+                index += 1;
+            }
+        }
+        stopped
     }
 }
 
@@ -524,6 +549,8 @@ struct ActiveTask {
     /// continuation spawns (§3 job-wide rule).
     deadline: Option<Instant>,
     timeout: Option<Duration>,
+    /// Stable service signature retained for the worker promotion handoff.
+    service_signature: String,
     /// Frozen application-level service health policy and probe state.
     readiness: Option<crate::rules::Readiness>,
     readiness_child: Option<Box<dyn ChildProcess>>,
@@ -557,6 +584,7 @@ impl From<TaskPlan> for ActiveTask {
             timed_out: false,
             deadline: None,
             timeout: task.timeout,
+            service_signature: crate::config_revision::service_signature(&task.rule),
             readiness: task.readiness,
             readiness_child: None,
             readiness_deadline: None,
@@ -2158,9 +2186,17 @@ impl Executor {
         G: FnOnce(ServiceHandoff),
     {
         let elapsed = self.clock.elapsed(run.started);
-        let service_handoff = ServiceHandoff {
-            services: run.services.drain(..).collect(),
-        };
+        let services: Vec<ActiveTask> = run.services.drain(..).collect();
+        let specs = services
+            .iter()
+            .map(|task| crate::service_pool::ServiceSpec {
+                name: task.name.clone(),
+                revision: run.metadata.revision.unwrap_or(0),
+                signature: task.service_signature.clone(),
+                origin_generation: Some(run.metadata.run_id),
+            })
+            .collect();
+        let service_handoff = ServiceHandoff { services, specs };
         detach_services(service_handoff);
         run.outcomes.sort_by_key(|(position, _, _, _)| *position);
         let outcome = RunOutcome::from_task_outcomes(
@@ -3817,6 +3853,8 @@ mod tests {
             |services| handoff = Some(services),
         );
         assert_eq!(handoff.as_ref().unwrap().services.len(), 1);
+        assert_eq!(handoff.as_ref().unwrap().specs()[0].name, "api");
+        assert_eq!(handoff.as_ref().unwrap().specs()[0].origin_generation, Some(205));
         assert!(runner.shutdown_commands().is_empty());
         let mut handoff = handoff.take().unwrap();
         executor.shutdown_service_handoff(&mut handoff);

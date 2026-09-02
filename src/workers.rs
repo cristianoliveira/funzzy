@@ -200,6 +200,96 @@ enum WorkerCommand {
     },
 }
 
+/// Worker-owned coordinator for promoted readiness services. Process handles
+/// remain opaque in `ServiceHandoff`; this object owns pool decisions and the
+/// eventual shutdown handoff.
+struct ManagedServiceCoordinator {
+    pool: crate::service_pool::ManagedServicePool,
+    handoff: ServiceHandoff,
+}
+
+impl ManagedServiceCoordinator {
+    fn new() -> Self {
+        Self {
+            pool: crate::service_pool::ManagedServicePool::new(),
+            handoff: ServiceHandoff::default(),
+        }
+    }
+
+    fn promote(
+        &mut self,
+        spec: crate::service_pool::ServiceSpec,
+        handoff: ServiceHandoff,
+    ) -> crate::service_pool::ServiceEntry {
+        self.handoff.merge(handoff);
+        self.pool.promote_ready(spec)
+    }
+
+    fn adopt_handoff(&mut self, handoff: ServiceHandoff) {
+        for spec in handoff.specs() {
+            self.pool.commit_promotion(spec.clone());
+        }
+        self.handoff.merge(handoff);
+    }
+
+    fn stop_named(&mut self, executor: &Executor, names: &[String]) -> Vec<String> {
+        let stopped = self.handoff.stop_named(executor, names);
+        for name in &stopped {
+            let entry = self
+                .pool
+                .get(name)
+                .map(|entry| (entry.instance_id, entry.state));
+            if let Some((instance_id, state)) = entry {
+                if state == crate::service_pool::ServiceState::Stopping {
+                    let _ = self.pool.stopped(name, instance_id);
+                } else {
+                    let _ = self.pool.remove_stopped(name, instance_id);
+                }
+            }
+        }
+        stopped
+    }
+
+    fn handoff_len(&self) -> usize {
+        self.handoff.len()
+    }
+
+    fn state(&self) -> &crate::service_pool::ManagedServicePool {
+        &self.pool
+    }
+
+    fn select_generation(
+        &mut self,
+        specs: &[crate::service_pool::ServiceSpec],
+    ) -> Vec<crate::service_pool::PoolAction> {
+        self.pool.select_generation(specs)
+    }
+
+    fn reconcile_reload(
+        &mut self,
+        specs: &[crate::service_pool::ServiceSpec],
+    ) -> Vec<crate::service_pool::PoolAction> {
+        self.pool.reconcile_reload(specs)
+    }
+
+    fn exited(
+        &mut self,
+        name: &str,
+        instance_id: u64,
+        deliberate: bool,
+    ) -> Option<crate::service_pool::PoolAction> {
+        self.pool.exited(name, instance_id, deliberate)
+    }
+
+    fn probed(&mut self, name: &str, instance_id: u64, success: bool) -> Option<()> {
+        self.pool.probed(name, instance_id, success)
+    }
+
+    fn shutdown(&mut self, executor: &Executor) {
+        executor.shutdown_service_handoff(&mut self.handoff);
+    }
+}
+
 /// Ordered command queue: at most one queued Run (newest wins), while
 /// cancels are applied in order. The condition variable blocks idle consumers
 /// without polling.
@@ -604,7 +694,7 @@ impl Worker {
             let mut pending: Option<RunRequest> = None;
             // Readiness services outlive their settled generation and are
             // owned by this worker until reconciliation or shutdown.
-            let mut managed_services = ServiceHandoff::default();
+            let mut managed_services = ManagedServiceCoordinator::new();
             let mut settled_hook_owner = SettledHookOwner::new(hook_context.clone());
 
             loop {
@@ -700,13 +790,9 @@ impl Worker {
                                         }
                                     }
                                 }
-                                WorkerCommand::ReconcileServices {
-                                    stop_names: _,
-                                    reply,
-                                } => {
-                                    // No active generation: nothing to stop; every
-                                    // desired service still needs starting.
-                                    let _ = reply.send(vec![]);
+                                WorkerCommand::ReconcileServices { stop_names, reply } => {
+                                    let stopped = managed_services.stop_named(&executor, &stop_names);
+                                    let _ = reply.send(stopped);
                                 }
                                 WorkerCommand::StartServices {
                                     run_id,
@@ -782,7 +868,7 @@ impl Worker {
                         }
                         SchedulerWake::Closed => {
                             settled_hook_owner.shutdown(&executor);
-                            executor.shutdown_service_handoff(&mut managed_services);
+                            managed_services.shutdown(&executor);
                             break;
                         }
                     }
@@ -861,7 +947,8 @@ impl Worker {
                                 let still = executor.reconcile_services(active, &stop);
                                 let _ = reply.send(still);
                             } else {
-                                let _ = reply.send(vec![]);
+                                let stopped = managed_services.stop_named(&executor, &stop_names);
+                                let _ = reply.send(stopped);
                             }
                         }
                         Some(WorkerCommand::StartServices {
@@ -938,7 +1025,7 @@ impl Worker {
                                         .register_settlement(spec.clone(), Instant::now());
                                 }
                             },
-                            |services| managed_services.merge(services),
+                            |services| managed_services.adopt_handoff(services),
                         );
                         stdout::present_results(
                             completed.results,

@@ -75,6 +75,23 @@ impl ManagedServicePool {
         entry
     }
 
+    /// Commits readiness to a reservation made before generation spawn,
+    /// preserving the reserved instance id. A reload-only or unreserved start
+    /// allocates a fresh instance.
+    pub(crate) fn commit_promotion(&mut self, spec: ServiceSpec) -> ServiceEntry {
+        if let Some(entry) = self.entries.get_mut(&spec.name) {
+            if entry.state == ServiceState::Starting
+                && entry.revision == spec.revision
+                && entry.signature == spec.signature
+            {
+                entry.state = ServiceState::Ready;
+                entry.origin_generation = spec.origin_generation;
+                return entry.clone();
+            }
+        }
+        self.promote_ready(spec)
+    }
+
     /// A generation only acts on explicitly selected services. Omitted names
     /// remain pooled and untouched, including when their signature is equal.
     pub(crate) fn select_generation(&mut self, specs: &[ServiceSpec]) -> Vec<PoolAction> {
@@ -138,6 +155,13 @@ impl ManagedServicePool {
             }
         }
         actions
+    }
+
+    pub(crate) fn remove_stopped(&mut self, name: &str, instance_id: u64) -> bool {
+        self.entries
+            .get(name)
+            .is_some_and(|entry| entry.instance_id == instance_id)
+            && self.entries.remove(name).is_some()
     }
 
     pub(crate) fn stopped(&mut self, name: &str, instance_id: u64) -> Option<PoolAction> {
