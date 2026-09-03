@@ -149,17 +149,16 @@ impl Arguments {
             },
             Some(("watch", sub)) => {
                 let target = sub.get_one::<String>("target").cloned();
+                let mut exclude = matches
+                    .get_many::<String>("root_exclude")
+                    .map(|values| values.cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if let Some(values) = sub.get_many::<String>("exclude") {
+                    exclude.extend(values.cloned());
+                }
                 Action::Watch {
                     target,
-                    exclude: sub
-                        .get_many::<String>("exclude")
-                        .map(|values| values.cloned().collect())
-                        .or_else(|| {
-                            matches
-                                .get_many::<String>("root_exclude")
-                                .map(|values| values.cloned().collect())
-                        })
-                        .unwrap_or_default(),
+                    exclude,
                     no_services: sub.get_flag("no_services")
                         || matches.get_flag("root_no_services"),
                 }
@@ -1081,6 +1080,17 @@ mod tests {
                 target: None,
                 exclude: vec!["lint".to_owned()],
                 no_services: true,
+            }
+        );
+
+        let mixed = parse(&["--exclude", "before", "watch", "--exclude", "after"])
+            .expect("mixed placement remains deterministic");
+        assert_eq!(
+            mixed.action,
+            Action::Watch {
+                target: None,
+                exclude: vec!["before".to_owned(), "after".to_owned()],
+                no_services: false,
             }
         );
     }
