@@ -27,7 +27,11 @@ pub enum OnBusy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// `fzz` (no subcommand) or `fzz watch [TARGET]`: run configured tasks.
-    Watch { target: Option<String> },
+    Watch {
+        target: Option<String>,
+        exclude: Vec<String>,
+        no_services: bool,
+    },
     /// `fzz list`: print configured tasks.
     List,
     /// `fzz check`: validate configuration without starting a watcher.
@@ -135,10 +139,30 @@ impl Arguments {
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
         let action = match matches.subcommand() {
-            None => Action::Watch { target: None },
+            None => Action::Watch {
+                target: None,
+                exclude: matches
+                    .get_many::<String>("root_exclude")
+                    .map(|values| values.cloned().collect())
+                    .unwrap_or_default(),
+                no_services: matches.get_flag("root_no_services"),
+            },
             Some(("watch", sub)) => {
                 let target = sub.get_one::<String>("target").cloned();
-                Action::Watch { target }
+                Action::Watch {
+                    target,
+                    exclude: sub
+                        .get_many::<String>("exclude")
+                        .map(|values| values.cloned().collect())
+                        .or_else(|| {
+                            matches
+                                .get_many::<String>("root_exclude")
+                                .map(|values| values.cloned().collect())
+                        })
+                        .unwrap_or_default(),
+                    no_services: sub.get_flag("no_services")
+                        || matches.get_flag("root_no_services"),
+                }
             }
             Some(("list", _)) => Action::List,
             Some(("check", _)) => Action::Check,
@@ -287,6 +311,18 @@ impl Arguments {
                 unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
             }
         };
+
+        // Exclusions are a watch-only policy. Root-level spellings are
+        // accepted so the zero-argument `fzz --exclude ...` alias works, but
+        // reject them explicitly for every other action (including `run`).
+        if !matches!(action, Action::Watch { .. })
+            && (matches.contains_id("root_exclude") || matches.get_flag("root_no_services"))
+        {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::UnknownArgument,
+                "watch-only options `--exclude` and `--no-services` are only valid with `fzz watch`",
+            ));
+        }
 
         Ok(Arguments {
             action,
@@ -456,6 +492,20 @@ pub fn command() -> Command {
                 .help("Expose watcher status over a Unix socket (implies --on-busy restart)."),
         )
         .arg(
+            Arg::new("root_exclude")
+                .long("exclude")
+                .value_name("TARGET")
+                .action(ArgAction::Append)
+                .value_parser(clap::builder::ValueParser::string())
+                .help("Watch-only exclusion; repeat to exclude named targets."),
+        )
+        .arg(
+            Arg::new("root_no_services")
+                .long("no-services")
+                .action(ArgAction::SetTrue)
+                .help("Watch-only shortcut to exclude all service jobs."),
+        )
+        .arg(
             Arg::new("no_run_on_init")
                 .long("no-run-on-init")
                 .global(true)
@@ -510,6 +560,20 @@ pub fn command() -> Command {
                         .num_args(0..=1)
                         .value_parser(clap::builder::ValueParser::string())
                         .help("Optional task name/@tag substring; only matching tasks run."),
+                )
+                .arg(
+                    Arg::new("exclude")
+                        .long("exclude")
+                        .value_name("TARGET")
+                        .action(ArgAction::Append)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Exclude a target by name, @tag, or unambiguous name substring; repeatable."),
+                )
+                .arg(
+                    Arg::new("no_services")
+                        .long("no-services")
+                        .action(ArgAction::SetTrue)
+                        .help("Exclude all jobs with service: true before watcher startup."),
                 ),
         )
         .subcommand(
@@ -955,12 +1019,26 @@ mod tests {
 
     #[test]
     fn no_arguments_selects_configured_watch() {
-        assert_eq!(parse_action(&[]), Action::Watch { target: None });
+        assert_eq!(
+            parse_action(&[]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
     fn watch_subcommand_selects_configured_watch() {
-        assert_eq!(parse_action(&["watch"]), Action::Watch { target: None });
+        assert_eq!(
+            parse_action(&["watch"]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
@@ -969,8 +1047,49 @@ mod tests {
             parse_action(&["watch", "@quick"]),
             Action::Watch {
                 target: Some("@quick".to_string()),
+                exclude: vec![],
+                no_services: false,
             }
         );
+    }
+
+    #[test]
+    fn watch_exclusions_are_repeatable_and_no_services_is_explicit() {
+        let args = parse(&[
+            "watch",
+            "@quick",
+            "--exclude",
+            "lint",
+            "--exclude",
+            "@slow",
+            "--no-services",
+        ])
+        .expect("watch exclusions parse");
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec!["lint".to_owned(), "@slow".to_owned()],
+                no_services: true,
+            }
+        );
+
+        let alias = parse(&["--exclude", "lint", "--no-services"]).expect("alias options parse");
+        assert_eq!(
+            alias.action,
+            Action::Watch {
+                target: None,
+                exclude: vec!["lint".to_owned()],
+                no_services: true,
+            }
+        );
+    }
+
+    #[test]
+    fn run_rejects_watch_only_exclusion_options() {
+        assert!(parse(&["run", "build", "--exclude", "lint"]).is_err());
+        assert!(parse(&["run", "build", "--no-services"]).is_err());
+        assert!(parse(&["--exclude", "lint", "run", "build"]).is_err());
     }
 
     #[test]
@@ -981,6 +1100,8 @@ mod tests {
             args.action,
             Action::Watch {
                 target: Some("@quick".to_string()),
+                exclude: vec![],
+                no_services: false,
             }
         );
         let args = parse(&["watch", "--sequential"]).expect("parse");
@@ -1755,7 +1876,14 @@ mod tests {
     fn verbose_short_flag_is_verbose_not_version() {
         let args = parse(&["-v"]).expect("parse");
         assert!(args.verbose);
-        assert_eq!(args.action, Action::Watch { target: None });
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
@@ -1774,7 +1902,14 @@ mod tests {
     fn global_config_propagates_to_subcommand() {
         let args = parse(&["watch", "-c", "/some/path"]).expect("parse");
         assert_eq!(args.config.as_deref(), Some("/some/path"));
-        assert_eq!(args.action, Action::Watch { target: None });
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]

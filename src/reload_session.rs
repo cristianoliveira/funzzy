@@ -18,6 +18,10 @@ pub struct ReloadSettings {
     pub debounce: Duration,
     pub truncate_on_config_change: bool,
     pub current_socket: Option<String>,
+    /// Invocation-only watch selection, reapplied to every valid candidate.
+    pub target: Option<String>,
+    pub exclusions: Vec<String>,
+    pub no_services: bool,
 }
 
 pub struct ReloadSession {
@@ -37,6 +41,9 @@ impl ReloadSession {
             debounce,
             truncate_on_config_change,
             current_socket,
+            target,
+            exclusions,
+            no_services,
         } = settings;
         let baselines: std::collections::HashMap<String, std::time::SystemTime> = config_file_paths
             .iter()
@@ -72,6 +79,9 @@ impl ReloadSession {
         // reload thread detects candidate path changes and requests a
         // bind-new-before-retire-old handoff through the coordinator.
         let reload_current_socket = current_socket;
+        let reload_target = target;
+        let reload_exclusions = exclusions;
+        let reload_no_services = no_services;
         let initial_revision = watches.revision().cloned();
         // TASK-0090: the reload watcher signals readiness after registering its
         // config-path roots; the main loop gates init on it so a config-touching
@@ -173,7 +183,22 @@ impl ReloadSession {
                                 &reload_root,
                                 &reload_defaults,
                                 revision.clone(),
-                            );
+                            )
+                            .and_then(|candidate| {
+                                candidate
+                                    .select_target_with_exclusions(
+                                        reload_target.as_deref(),
+                                        &reload_exclusions,
+                                        reload_no_services,
+                                    )
+                                    .map_err(|error| error.to_string())?
+                                    .ok_or_else(|| {
+                                        format!(
+                                            "watch target '{}' is not present in the reloaded configuration",
+                                            reload_target.as_deref().unwrap_or_default()
+                                        )
+                                    })
+                            });
                             match candidate_watches {
                                 Ok(candidate) => {
                                     let log_sink = |msg: &str| stdout::warn(msg);
