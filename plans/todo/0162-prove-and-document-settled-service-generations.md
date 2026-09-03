@@ -18,7 +18,7 @@ Users and agent clients need black-box proof that a healthy background service n
 - [x] Add a spawned-watcher test where finite checks pass, a managed service reaches readiness, the exact generation reports terminal success, and the service remains alive.
 - [x] Prove a service that exits or fails its readiness contract before settlement fails the generation and leaves attributable evidence.
 - [x] Prove a post-settlement service failure is reported through the approved service-health surface without rewriting the terminal generation result.
-- [ ] Prove later unrelated and service-selecting generations follow TASK-0160 ownership/replacement semantics without leaking or duplicating processes.
+- [x] Prove later unrelated and service-selecting generations follow TASK-0160 ownership/replacement semantics without leaking or duplicating processes.
 - [ ] Prove valid reload, invalid reload, exact cancellation, supersession, SIGINT/SIGTERM, and forced termination reap the correct service process groups.
 - [ ] Prove local human output, control status/await/events/output, and pi-watcher rendering agree that generation outcome and service health are distinct.
 - [ ] Prove success/failure hooks run once at the approved generation boundary and post-settlement service events cannot produce contradictory hook history.
@@ -28,7 +28,7 @@ Users and agent clients need black-box proof that a healthy background service n
 
 ## Progress
 
-Verified in `30f5ff4`, `7ed0d2c`, `b1d460c`, and `cc26768`: spawned-watcher readiness pass/fail proof, service-only completion summary, post-settlement service failure isolation, unrelated generation continuity, cancellation/shutdown reap, lifecycle contract documentation, full Rust tests, and Pi watcher checks. Remaining acceptance work is service-selecting replacement, reload/cancel/supersession breadth, hooks/output agreement, fresh configured watcher evidence, and QA.
+Verified in `30f5ff4`, `7ed0d2c`, `b1d460c`, `cc26768`, and `03f98a4`: spawned-watcher readiness pass/fail proof, service-only completion summary, post-settlement service failure isolation, unrelated generation continuity, service-selecting replacement without overlap, cancellation/shutdown reap, lifecycle contract documentation, full Rust tests, and Pi watcher checks. Remaining acceptance work is reload/cancel/supersession breadth, hooks/output agreement, fresh configured watcher evidence, and QA.
 
 ## Test constraints
 
