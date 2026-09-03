@@ -115,7 +115,19 @@ fzz explain src/lib.rs   # which jobs match/ignore a path + the filtered plan
 ```bash
 fzz                 # zero-argument: configured watch (hero path)
 fzz watch "@quick"  # watch only matching targets
+fzz watch --exclude docs
+fzz watch "@quick" --exclude lint --no-services
 ```
+
+Watch filters are invocation-only: `TARGET` is selected first, then each
+repeatable `--exclude TARGET` removes an exact job name, every job carrying an
+`@tag`, or one unambiguous name substring. `--no-services` is the shortcut for
+excluding every `service: true` job, including readiness-enabled services.
+Selectors are validated before watcher roots, service processes, or readiness
+probes start. The filtered plan keeps declaration order and parallel-group
+barriers. These options affect only `fzz`/`fzz watch`; they do not change the
+YAML file, `fzz run`, or control-socket requests, and the same invocation
+policy is reapplied to valid configuration reloads.
 
 This is the whole loop: config → check → run → watch.
 

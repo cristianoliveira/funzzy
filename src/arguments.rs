@@ -546,6 +546,9 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("watch")
                 .about("Watch for file changes and run configured tasks.")
+                .long_about(
+                    "Watch for file changes and run configured tasks. TARGET narrows the watch; repeat --exclude TARGET to omit jobs, or use --no-services to omit every service job. Examples: `fzz watch @quick --exclude docs` and `fzz watch --no-services`.",
+                )
                 .version(env!("CARGO_PKG_VERSION"))
                 .arg(
                     Arg::new("sequential")

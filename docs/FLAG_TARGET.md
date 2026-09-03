@@ -29,5 +29,26 @@ silent all-tasks fallback); `run TARGET` selects the exact target and rejects
 path arguments. Exit-code impact: no-match/ambiguous is exit 1 with the
 available-targets list.
 
+## Per-invocation watch exclusions
+
+Watch-only filters compose with target selection without editing the config:
+
+```sh
+fzz watch --exclude lint
+fzz watch "@quick" --exclude docs --exclude "slow check"
+fzz watch --no-services
+```
+
+`TARGET` is selected first. Each `--exclude TARGET` then resolves against the
+full configured job set: an exact name wins; `@tag` excludes every tagged job;
+a plain substring must identify one job. Missing or ambiguous selectors, and
+an effective plan with no runnable jobs, are usage errors (exit 2). Repeated or
+overlapping exclusions are harmless. `--no-services` excludes all jobs with
+`service: true`, including readiness-enabled services, before watcher roots or
+process lifecycle setup.
+
+Filters are per invocation. They are not persisted, do not affect `fzz run` or
+control requests, and remain active when the watcher reloads its configuration.
+
 See docs/USAGE.md §2 for the decision table and the normative
 CLI-V2-CONTRACT for the command tree.

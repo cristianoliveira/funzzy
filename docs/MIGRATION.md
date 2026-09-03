@@ -15,6 +15,8 @@ migration reference. For the checked-in example catalog, see the
 | `fzz --migrate` | `fzz migrate` | explicit subcommand; honors `-c/--config`; atomic rewrite, already-`jobs:` is a byte-identical no-op (exit 0) | none |
 | `fzz --non-block` / `-n` | `fzz --on-busy restart` / `--restart` | explicit policy; implies restart with control socket | none |
 | `fzz --target <t>` / `-t` | `fzz watch <t>` / `fzz run <t>` | watch-with-no-match is an error; run rejects paths | 1 for no-match/ambiguous |
+| — | `fzz watch --exclude TARGET` | new invocation-only filter; repeatable; exact name, `@tag`, or unambiguous substring | 2 for missing/ambiguous/empty selection |
+| — | `fzz watch --no-services` | new invocation-only filter; excludes all `service: true` jobs before startup | 2 when no runnable jobs remain |
 | `fzz -v` | `fzz -v, --verbose` | unchanged (verbose watch) | none |
 | `fzz -V` | `fzz -V, --version` | unchanged | none |
 | `fzz --fail-fast` | `fzz -b, --fail-fast` | unchanged | 1 on failure |

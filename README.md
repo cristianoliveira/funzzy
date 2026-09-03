@@ -206,6 +206,7 @@ fzz check                      # validate (same parser as the watcher)
 fzz list                       # see the configured targets
 fzz run build                  # run the exact target once, no watcher
 fzz                            # zero-argument configured watch
+fzz watch --no-services        # watch finite checks without managed services
 # While watching, press Ctrl-G (0x07) to run the complete pipeline once.
 ```
 
