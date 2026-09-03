@@ -315,6 +315,13 @@ jobs:
     );
     assert_eq!(observation["terminalReason"], "passed");
     assert_eq!(observation["snapshot"]["state"], "passed");
+    let log = std::fs::read_to_string(directory.join("child.err")).unwrap();
+    let summary = "Success; Completed: 1; Failed: 0; Duration:";
+    assert_eq!(
+        log.matches(summary).count(),
+        1,
+        "service-only settlement must print one completed summary: {log}"
+    );
 
     let pid = std::fs::read_to_string(directory.join("api.pid"))
         .unwrap()
