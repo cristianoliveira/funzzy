@@ -642,7 +642,17 @@ impl WatchBackend {
 /// (file or directory), then the children of each non-`.git`, non-symlinked
 /// directory. Symlinked directories are recorded as paths but never walked,
 /// so cycles cannot recurse (contract §6 symlink policy).
-fn walk_descendants(root: &Path, paths: &mut Vec<PathBuf>) {
+pub(crate) fn walk_descendants(root: &Path, paths: &mut Vec<PathBuf>) {
+    // A configured root may itself be a symlink. Record it for baseline/event
+    // parity, but never follow it into a possibly cyclic directory graph.
+    if std::fs::symlink_metadata(root)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        paths.push(root.to_path_buf());
+        return;
+    }
+
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -650,17 +660,13 @@ fn walk_descendants(root: &Path, paths: &mut Vec<PathBuf>) {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let is_dir = entry
-                .file_type()
-                .map(|file_type| file_type.is_dir())
-                .unwrap_or(false);
-            let is_symlink = entry
-                .file_type()
-                .map(|file_type| file_type.is_symlink())
-                .unwrap_or(false);
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let is_symlink = file_type.is_symlink();
             let is_git = path.file_name().map(|name| name == ".git").unwrap_or(false);
             paths.push(path.clone());
-            if is_dir && !is_symlink && !is_git {
+            if file_type.is_dir() && !is_symlink && !is_git {
                 stack.push(path);
             }
         }
