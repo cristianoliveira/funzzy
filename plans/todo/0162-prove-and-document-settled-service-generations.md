@@ -17,7 +17,7 @@ Users and agent clients need black-box proof that a healthy background service n
 
 - [x] Add a spawned-watcher test where finite checks pass, a managed service reaches readiness, the exact generation reports terminal success, and the service remains alive.
 - [x] Prove a service that exits or fails its readiness contract before settlement fails the generation and leaves attributable evidence.
-- [ ] Prove a post-settlement service failure is reported through the approved service-health surface without rewriting the terminal generation result.
+- [x] Prove a post-settlement service failure is reported through the approved service-health surface without rewriting the terminal generation result.
 - [ ] Prove later unrelated and service-selecting generations follow TASK-0160 ownership/replacement semantics without leaking or duplicating processes.
 - [ ] Prove valid reload, invalid reload, exact cancellation, supersession, SIGINT/SIGTERM, and forced termination reap the correct service process groups.
 - [ ] Prove local human output, control status/await/events/output, and pi-watcher rendering agree that generation outcome and service health are distinct.
@@ -28,7 +28,7 @@ Users and agent clients need black-box proof that a healthy background service n
 
 ## Progress
 
-Verified in `30f5ff4`, `7ed0d2c`, and `b1d460c`: spawned-watcher readiness pass/fail proof, service-only completion summary, lifecycle contract documentation, full default Rust tests (863 library tests), full feature integration tests, and Pi watcher checks (527 tests). Remaining acceptance work is post-settlement health, later-generation/reload/cancel/shutdown/hook/output agreement, plus fresh configured watcher evidence and QA.
+Verified in `30f5ff4`, `7ed0d2c`, `b1d460c`, and `cc26768`: spawned-watcher readiness pass/fail proof, service-only completion summary, post-settlement service failure isolation, unrelated generation continuity, cancellation/shutdown reap, lifecycle contract documentation, full Rust tests, and Pi watcher checks. Remaining acceptance work is service-selecting replacement, reload/cancel/supersession breadth, hooks/output agreement, fresh configured watcher evidence, and QA.
 
 ## Test constraints
 
