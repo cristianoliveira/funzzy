@@ -1739,41 +1739,6 @@ mod modification_gate_seed_tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Baseline seeding must not follow a directory symlink back to an
-    /// ancestor. Ordinary files are still recorded exactly once.
-    #[cfg(unix)]
-    #[test]
-    fn seed_terminates_on_directory_symlink_cycle() {
-        let dir = scratch("symlink-cycle");
-        std::fs::create_dir_all(dir.join("nested")).unwrap();
-        let ordinary = dir.join("ordinary.txt");
-        let nested = dir.join("nested/inside.txt");
-        std::fs::write(&ordinary, "ordinary").unwrap();
-        std::fs::write(&nested, "nested").unwrap();
-        std::os::unix::fs::symlink(&dir, dir.join("nested/back-to-root")).unwrap();
-
-        let mut gate = ModificationGate::new();
-        gate.seed(&[dir.display().to_string()]);
-        assert!(
-            gate.changed(vec![
-                ordinary.display().to_string(),
-                nested.display().to_string()
-            ])
-            .is_empty(),
-            "seeded ordinary files must not route after a symlink cycle"
-        );
-        assert!(
-            !gate
-                .last_seen
-                .keys()
-                .any(|path| path.contains("back-to-root/")),
-            "directory symlink must be recorded but never traversed: {:?}",
-            gate.last_seen.keys().collect::<Vec<_>>()
-        );
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
     /// Broken symlink entries may disappear while a baseline is being read;
     /// they must be skipped without panicking or retrying forever.
     #[cfg(unix)]
