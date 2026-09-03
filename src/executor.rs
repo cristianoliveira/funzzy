@@ -521,10 +521,12 @@ pub(crate) enum ManagedServiceEvent {
 }
 
 impl ManagedServiceEvent {
+    #[cfg(test)]
     pub(crate) fn stopped(info: ManagedServiceInfo) -> Self {
         Self::Stopped { info }
     }
 
+    #[cfg(test)]
     pub(crate) fn restarting(info: ManagedServiceInfo, attempts_remaining: usize) -> Self {
         Self::Restarting {
             info,
@@ -532,6 +534,7 @@ impl ManagedServiceEvent {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn failed(info: ManagedServiceInfo, error: String) -> Self {
         Self::Failed { info, error }
     }
@@ -573,6 +576,7 @@ impl ServiceHandoff {
         &self.specs
     }
 
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.services.len()
     }
@@ -977,29 +981,10 @@ impl Executor {
                             && (run.active[index].readiness.is_none()
                                 || run.active[index].readiness_ready)
                         {
-                            if run.active[index].readiness.is_some() {
-                                let (position, name, group, started, capture, readiness_capture) = {
-                                    let task = &run.active[index];
-                                    (
-                                        task.position,
-                                        task.name.clone(),
-                                        task.group_occurrence.clone(),
-                                        task.started,
-                                        task.capture.clone(),
-                                        task.readiness_capture.clone(),
-                                    )
-                                };
-                                self.record_promoted_service(
-                                    run,
-                                    position,
-                                    &name,
-                                    group.as_deref(),
-                                    started,
-                                    capture,
-                                    readiness_capture,
-                                );
-                            }
                             let service = run.active.remove(index);
+                            if service.readiness.is_some() {
+                                self.record_promoted_service(run, &service);
+                            }
                             run.services.push(service);
                             continue;
                         }
@@ -1808,40 +1793,40 @@ impl Executor {
 
     /// Records readiness promotion as the service task's immutable startup
     /// outcome while retaining the live child in the managed set.
-    fn record_promoted_service(
-        &self,
-        run: &mut Run,
-        position: usize,
-        name: &str,
-        group: Option<&str>,
-        started: Option<Instant>,
-        capture: Option<Arc<CaptureHandle>>,
-        readiness_capture: Option<Arc<CaptureHandle>>,
-    ) {
-        if let (Some(outputs), Some(capture)) = (&self.outputs, &capture) {
+    fn record_promoted_service(&self, run: &mut Run, service: &ActiveTask) {
+        if let (Some(outputs), Some(capture)) = (&self.outputs, &service.capture) {
             outputs.record(
                 run.metadata.run_id,
-                name.to_owned(),
+                service.name.clone(),
                 capture.finish(),
                 run.metadata.revision,
                 run.metadata.revision_hash.clone(),
             );
         }
-        if let (Some(outputs), Some(capture)) = (&self.outputs, &readiness_capture) {
+        if let (Some(outputs), Some(capture)) = (&self.outputs, &service.readiness_capture) {
             outputs.record(
                 run.metadata.run_id,
-                format!("{name}:readiness"),
+                format!("{}:readiness", service.name),
                 capture.finish(),
                 run.metadata.revision,
                 run.metadata.revision_hash.clone(),
             );
         }
-        let duration_ms = started.map(|started| self.clock.elapsed(started).as_millis() as u64);
-        self.record_task_snapshot(run, position, name, group, TaskState::Passed, duration_ms);
+        let duration_ms = service
+            .started
+            .map(|started| self.clock.elapsed(started).as_millis() as u64);
+        self.record_task_snapshot(
+            run,
+            service.position,
+            &service.name,
+            service.group_occurrence.as_deref(),
+            TaskState::Passed,
+            duration_ms,
+        );
         run.outcomes.push((
-            position,
-            name.to_owned(),
-            group.map(str::to_owned),
+            service.position,
+            service.name.clone(),
+            service.group_occurrence.clone(),
             TaskOutcome::Passed,
         ));
         // A promoted readiness service is one completed task in the
@@ -2735,6 +2720,7 @@ impl Executor {
     }
 
     /// Compatibility alias for callers that use the polling terminology.
+    #[cfg(test)]
     pub(crate) fn poll_service_handoff(
         &self,
         handoff: &mut ServiceHandoff,
@@ -4220,7 +4206,7 @@ mod tests {
         assert_eq!(info[0].name, "api");
         assert_eq!(info[0].revision, 7);
         assert_eq!(info[0].origin_generation, Some(206));
-        assert_eq!(info[0].readiness_ready, true);
+        assert!(info[0].readiness_ready);
         assert!(!info[0].signature.is_empty());
     }
 

@@ -75,6 +75,7 @@ impl ManagedServicePool {
             .collect()
     }
 
+    #[cfg(test)]
     pub(crate) fn instance_ids(&self) -> Vec<u64> {
         self.entries
             .values()
@@ -270,8 +271,7 @@ impl ManagedServicePool {
     }
 
     fn replace_entry(&mut self, spec: ServiceSpec) -> PoolAction {
-        let action = self.start_entry(spec);
-        action
+        self.start_entry(spec)
     }
 }
 
@@ -293,6 +293,7 @@ pub(crate) enum PoolFact {
     ReadinessFailed,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PoolDecision {
     Shutdown,
@@ -313,6 +314,7 @@ pub(crate) struct PoolCycle {
     facts: Vec<PoolFact>,
 }
 
+#[allow(dead_code)]
 impl PoolCycle {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -344,22 +346,16 @@ impl PoolCycle {
         let observations: Vec<_> = self
             .facts
             .iter()
-            .filter_map(|fact| match fact {
-                PoolFact::ServiceExited => {
-                    Some(crate::service_lifecycle::ChildObservation::ServiceExit)
-                }
+            .map(|fact| match fact {
+                PoolFact::ServiceExited => crate::service_lifecycle::ChildObservation::ServiceExit,
                 PoolFact::ReadinessTimedOut => {
-                    Some(crate::service_lifecycle::ChildObservation::ReadinessTimeout)
+                    crate::service_lifecycle::ChildObservation::ReadinessTimeout
                 }
                 PoolFact::ReadinessPassed => {
-                    Some(crate::service_lifecycle::ChildObservation::ReadinessExit {
-                        success: true,
-                    })
+                    crate::service_lifecycle::ChildObservation::ReadinessExit { success: true }
                 }
                 PoolFact::ReadinessFailed => {
-                    Some(crate::service_lifecycle::ChildObservation::ReadinessExit {
-                        success: false,
-                    })
+                    crate::service_lifecycle::ChildObservation::ReadinessExit { success: false }
                 }
             })
             .collect();

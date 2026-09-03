@@ -241,6 +241,7 @@ struct ManagedServiceCoordinator {
 }
 
 impl ManagedServiceCoordinator {
+    #[cfg(test)]
     fn resolve_cycle(
         commands: &[crate::service_lifecycle::ArbitrationCommand],
         observations: &[crate::service_lifecycle::ChildObservation],
@@ -258,6 +259,7 @@ impl ManagedServiceCoordinator {
         }
     }
 
+    #[cfg(test)]
     fn promote(
         &mut self,
         spec: crate::service_pool::ServiceSpec,
@@ -300,10 +302,12 @@ impl ManagedServiceCoordinator {
         stopped
     }
 
+    #[cfg(test)]
     fn handoff_len(&self) -> usize {
         self.handoff.len()
     }
 
+    #[cfg(test)]
     fn state(&self) -> &crate::service_pool::ManagedServicePool {
         &self.pool
     }
@@ -316,9 +320,7 @@ impl ManagedServiceCoordinator {
         if spec.name.is_empty() || spec.revision < self.committed_revision {
             return None;
         }
-        let Some(entry) = self.pool.get(&spec.name) else {
-            return None;
-        };
+        let entry = self.pool.get(&spec.name)?;
         if spec.revision < entry.revision
             || (spec.revision == entry.revision && spec.signature != entry.signature)
             || entry.state != crate::service_pool::ServiceState::Ready
@@ -415,6 +417,7 @@ impl ManagedServiceCoordinator {
         }
     }
 
+    #[cfg(test)]
     fn select_generation(
         &mut self,
         specs: &[crate::service_pool::ServiceSpec],
@@ -444,6 +447,7 @@ impl ManagedServiceCoordinator {
         self.pool.reconcile_reload(specs)
     }
 
+    #[cfg(test)]
     fn exited(
         &mut self,
         name: &str,
@@ -453,6 +457,7 @@ impl ManagedServiceCoordinator {
         self.pool.exited(name, instance_id, deliberate)
     }
 
+    #[cfg(test)]
     fn probed(&mut self, name: &str, instance_id: u64, success: bool) -> Option<()> {
         self.pool.probed(name, instance_id, success)
     }
@@ -470,6 +475,7 @@ impl ManagedServiceCoordinator {
         }
     }
 
+    #[cfg(test)]
     fn stopped(&mut self, name: &str, instance_id: u64) -> Option<crate::service_pool::PoolAction> {
         self.pool.stopped(name, instance_id)
     }

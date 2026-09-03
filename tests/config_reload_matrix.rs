@@ -537,6 +537,19 @@ fn service_signature_change_replaces_service_without_process_exit() {
                 force_kill_process_group(*pgid);
             }
         }
+        // TASK-0162 reload reap breadth: stop/reap-before-start means the
+        // old service group must already be GONE by the time the replacement
+        // pid exists — not merely reaped later at watcher teardown.
+        let first_service_pid: i32 = std::fs::read_to_string(scratch.join("svc-pids"))
+            .unwrap_or_default()
+            .lines()
+            .next()
+            .and_then(|line| line.trim().parse().ok())
+            .expect("first service pid");
+        assert!(
+            wait_for_process_group_exit(first_service_pid),
+            "valid reload must reap the replaced service process group before the replacement starts"
+        );
         assert!(replaced, "changed service must be replaced");
         assert!(still_running, "changed service must keep running");
         assert_eq!(
