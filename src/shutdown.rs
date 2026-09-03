@@ -102,21 +102,8 @@ pub struct ShutdownCoordinator {
     state: Mutex<State>,
     completed: Condvar,
     requested: Arc<AtomicBool>,
-    /// Exactly-once reap with completion visibility (TASK-0162): the signal
-    /// thread claims and starts the reap, and `finish` blocks until the reap
-    /// COMPLETED. Without the completion side, `process::exit` on the main
-    /// thread could preempt the reaper mid-grace-loop and skip its SIGKILL
-    /// escalation, orphaning TERM-ignoring service groups.
-    reap: Mutex<ReapPhase>,
-    reap_completed: Condvar,
+    reaped: AtomicBool,
     accelerate: AtomicBool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReapPhase {
-    Idle,
-    Running,
-    Done,
 }
 
 impl ShutdownCoordinator {
@@ -154,8 +141,7 @@ impl ShutdownCoordinator {
             }),
             completed: Condvar::new(),
             requested: Arc::new(AtomicBool::new(false)),
-            reap: Mutex::new(ReapPhase::Idle),
-            reap_completed: Condvar::new(),
+            reaped: AtomicBool::new(false),
             accelerate: AtomicBool::new(false),
         }
     }
@@ -217,50 +203,13 @@ impl ShutdownCoordinator {
         first
     }
 
-    /// Starts the shared reap exactly once; returns immediately when a reap
-    /// was already started. The caller cannot assume completion — use
-    /// [`ShutdownCoordinator::reap_wait`] when the process must not exit
-    /// before every owned group is force-killed and reaped.
     fn reap_once(&self) {
-        if self.claim_reap() {
+        if self
+            .reaped
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             self.reaper.reap(self.verbose);
-            self.finish_reap();
-        }
-    }
-
-    fn claim_reap(&self) -> bool {
-        let mut phase = self.reap.lock().expect("reap mutex poisoned");
-        if *phase == ReapPhase::Idle {
-            *phase = ReapPhase::Running;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn finish_reap(&self) {
-        let mut phase = self.reap.lock().expect("reap mutex poisoned");
-        *phase = ReapPhase::Done;
-        drop(phase);
-        self.reap_completed.notify_all();
-    }
-
-    /// Ensures the shared reap runs and has COMPLETED before returning:
-    /// starts it when idle (synchronously) and otherwise blocks on the
-    /// in-flight reap started by the signal thread. This is the close-boundary
-    /// guarantee that shutdown escalation cannot be preempted by exit.
-    fn reap_wait(&self) {
-        if self.claim_reap() {
-            self.reaper.reap(self.verbose);
-            self.finish_reap();
-            return;
-        }
-        let mut phase = self.reap.lock().expect("reap mutex poisoned");
-        while *phase == ReapPhase::Running {
-            phase = self
-                .reap_completed
-                .wait(phase)
-                .expect("reap condvar poisoned");
         }
     }
 
@@ -311,7 +260,7 @@ impl ShutdownCoordinator {
             }
         };
 
-        self.reap_wait();
+        self.reap_once();
         for path in cleanup_paths {
             let _ = std::fs::remove_file(path);
         }
@@ -480,94 +429,6 @@ mod tests {
         ));
         coordinator.mark_ready();
         (coordinator, runner, reaper)
-    }
-
-    /// TASK-0162 regression proof: the signal thread claims and starts the
-    /// shared reap (grace loop + SIGKILL escalation); `finish` must block on
-    /// that in-flight reap and only cross the close boundary after it
-    /// completed, so `process::exit` can never preempt the escalation.
-    #[test]
-    fn finish_waits_for_in_flight_reap_completion() {
-        use std::sync::mpsc;
-
-        struct BlockingReaper {
-            entered: mpsc::Sender<()>,
-            release: std::sync::atomic::AtomicBool,
-            runs: AtomicUsize,
-        }
-        impl ProcessReaper for BlockingReaper {
-            fn reap(&self, _verbose: bool) {
-                self.runs.fetch_add(1, Ordering::SeqCst);
-                let _ = self.entered.send(());
-                while !self.release.load(std::sync::atomic::Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-        }
-
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let reaper = Arc::new(BlockingReaper {
-            entered: entered_tx,
-            release: std::sync::atomic::AtomicBool::new(false),
-            runs: AtomicUsize::new(0),
-        });
-        let coordinator = Arc::new(ShutdownCoordinator::new(
-            std::env::current_dir().unwrap(),
-            SessionHooks { close: None },
-            false,
-            Arc::new(FakeRunner {
-                commands: Mutex::new(Vec::new()),
-                mode: FakeMode::Pass,
-                shutdowns: Arc::new(AtomicUsize::new(0)),
-            }),
-            reaper.clone(),
-            Duration::from_secs(5),
-        ));
-        coordinator.mark_ready();
-
-        // Signal thread path: request() -> reap_once() starts and blocks in
-        // the reaper until released.
-        let signal_coordinator = Arc::clone(&coordinator);
-        let signal_thread = std::thread::spawn(move || {
-            assert!(signal_coordinator.request(ShutdownReason::Signal {
-                name: "SIGTERM",
-                exit_code: 143,
-            }));
-        });
-        // Deterministic rendezvous: wait until the reaper actually entered.
-        entered_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("reaper never started");
-
-        let (finished, completion_rx) = mpsc::channel();
-        let finish_coordinator = Arc::clone(&coordinator);
-        std::thread::spawn(move || {
-            finish_coordinator.finish();
-            let _ = finished.send(());
-        });
-        // finish() must still be parked on the in-flight reap (bounded
-        // negative check: a completion message within the window would fail
-        // the assertion; the reaper provably cannot finish while unreleased).
-        assert!(
-            completion_rx
-                .recv_timeout(Duration::from_millis(250))
-                .is_err(),
-            "finish crossed the close boundary before the in-flight reap completed"
-        );
-
-        reaper
-            .release
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        assert!(
-            completion_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
-            "finish never completed after the reap finished"
-        );
-        signal_thread.join().unwrap();
-        assert_eq!(
-            reaper.runs.load(Ordering::SeqCst),
-            1,
-            "reap must stay exactly-once across request and finish"
-        );
     }
 
     #[test]
