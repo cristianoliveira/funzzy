@@ -7,10 +7,18 @@ positional argument on the relevant subcommand.
 
 ```sh
 fzz watch "@quick"      # watch only matching targets
+fzz -- "@quick"         # equivalent watch shorthand; target follows `--`
 fzz run "@quick"        # run once, locally
 fzz list                # show every configured target
 fzz explain PATH        # which targets a path matches or is ignored by
 ```
+
+`fzz -- TARGET` is an explicit alias for `fzz watch TARGET`. The delimiter is
+required for the root form: `fzz --` keeps zero-argument watch, root options
+compose before it (`fzz --exclude lint -- @quick`), and everything after it is
+one target value, including a subcommand-shaped or hyphen-prefixed name. More
+than one trailing value is a usage error. Without `--`, existing subcommands
+retain precedence.
 
 A target is a job name, `@tag`, or an unambiguous substring. `@tag` may select
 many jobs; a plain substring must be unambiguous or it is an error listing

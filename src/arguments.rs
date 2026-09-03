@@ -140,7 +140,7 @@ impl Arguments {
 
         let action = match matches.subcommand() {
             None => Action::Watch {
-                target: None,
+                target: matches.get_one::<String>("root_target").cloned(),
                 exclude: matches
                     .get_many::<String>("root_exclude")
                     .map(|values| values.cloned().collect())
@@ -503,6 +503,14 @@ pub fn command() -> Command {
                 .long("no-services")
                 .action(ArgAction::SetTrue)
                 .help("Watch-only shortcut to exclude all service jobs."),
+        )
+        .arg(
+            Arg::new("root_target")
+                .value_name("TARGET")
+                .num_args(0..=1)
+                .last(true)
+                .value_parser(clap::builder::ValueParser::string())
+                .help("Watch target after `--` (for example, `fzz -- @quick`)."),
         )
         .arg(
             Arg::new("no_run_on_init")
@@ -1053,6 +1061,73 @@ mod tests {
                 no_services: false,
             }
         );
+    }
+
+    #[test]
+    fn delimiter_target_is_the_existing_watch_action() {
+        assert_eq!(
+            parse_action(&["--", "@quick"]),
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_without_target_keeps_zero_argument_watch() {
+        assert_eq!(
+            parse_action(&["--"]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_target_composes_root_watch_options() {
+        assert_eq!(
+            parse_action(&["--exclude", "lint", "--no-services", "--", "@quick"]),
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec!["lint".to_owned()],
+                no_services: true,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_preserves_subcommand_and_hyphen_shaped_targets() {
+        assert_eq!(
+            parse_action(&["--", "watch"]),
+            Action::Watch {
+                target: Some("watch".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+        assert_eq!(
+            parse_action(&["--", "--service"]),
+            Action::Watch {
+                target: Some("--service".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_rejects_multiple_targets() {
+        assert!(parse(&["--", "@quick", "@slow"]).is_err());
+    }
+
+    #[test]
+    fn delimiter_target_is_incompatible_with_other_actions() {
+        assert!(parse(&["run", "@quick", "--", "@slow"]).is_err());
+        assert!(parse(&["list", "--", "@slow"]).is_err());
     }
 
     #[test]
@@ -2182,6 +2257,7 @@ mod config_command_tests {
         assert!(help.contains("fzz config"));
         assert!(help.contains("schema"));
         assert!(help.contains("examples"));
+        assert!(help.contains("Watch target after `--`"));
     }
 }
 
