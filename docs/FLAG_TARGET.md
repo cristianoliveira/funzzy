@@ -20,9 +20,12 @@ one target value, including a subcommand-shaped or hyphen-prefixed name. More
 than one trailing value is a usage error. Without `--`, existing subcommands
 retain precedence.
 
-A target is a job name, `@tag`, or an unambiguous substring. `@tag` may select
-many jobs; a plain substring must be unambiguous or it is an error listing
-the alternatives.
+Watch target selection preserves its existing multi-match behavior: `watch TARGET`
+and `fzz -- TARGET` select every job whose name contains `TARGET`, including
+multiple plain-substring matches. `@tag` likewise selects every tagged job.
+Finite `run TARGET` is stricter: an exact name wins, `@tag` may select many
+jobs, and another substring must identify exactly one job or it reports the
+alternatives.
 
 ## Migration from V1
 
@@ -47,9 +50,10 @@ fzz watch "@quick" --exclude docs --exclude "slow check"
 fzz watch --no-services
 ```
 
-`TARGET` is selected first. Each `--exclude TARGET` then resolves against the
-full configured job set: an exact name wins; `@tag` excludes every tagged job;
-a plain substring must identify one job. Missing or ambiguous selectors, and
+`TARGET` is selected first using the watch multi-match behavior above. Each
+`--exclude TARGET` then resolves against the full configured job set: an exact
+name wins; `@tag` excludes every tagged job; a non-tag substring must identify
+one job. Missing or ambiguous selectors, and
 an effective plan with no runnable jobs, are usage errors (exit 2). Repeated or
 overlapping exclusions are harmless. `--no-services` excludes all jobs with
 `service: true`, including readiness-enabled services, before watcher roots or

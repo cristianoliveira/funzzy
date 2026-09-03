@@ -246,7 +246,7 @@ fn extra_shorthand_values_fail_before_configuration_load() {
 }
 
 #[test]
-fn shorthand_composes_no_services_before_target_selection() {
+fn shorthand_target_composes_with_preceding_no_services() {
     setup::with_output("target-shorthand-no-services.log", |_, _, fixture| {
         let config = r#"
 on:
