@@ -185,6 +185,12 @@ impl ReloadSession {
                                 revision.clone(),
                             )
                             .and_then(|candidate| {
+                                // Invocation selectors are frozen policy, not
+                                // frozen identities: re-resolve them against
+                                // each validated candidate. Missing,
+                                // ambiguous, and empty effective candidates
+                                // fail before coordinator root/service diff;
+                                // never widen the watch to all jobs.
                                 candidate
                                     .select_target_with_exclusions(
                                         reload_target.as_deref(),
