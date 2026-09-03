@@ -1844,6 +1844,9 @@ impl Executor {
             group.map(str::to_owned),
             TaskOutcome::Passed,
         ));
+        // A promoted readiness service is one completed task in the
+        // generation summary, even though its child remains worker-owned.
+        run.results.push(Ok(()));
     }
 
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
