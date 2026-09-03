@@ -210,7 +210,7 @@ fn await_json(directory: &std::path::Path, generation: u64) -> (Output, serde_js
 fn write_service_script(directory: &std::path::Path) {
     std::fs::write(
         directory.join("api.sh"),
-        "#!/bin/sh\necho $$ > api.pid\ntouch api.started\nwhile [ ! -f service.fail ]; do sleep 0.02; done\nexit 7\n",
+        "#!/bin/sh\nif [ -f api.active ]; then echo overlap > api.overlap; exit 99; fi\ntouch api.active\necho $$ > api.pid\ntouch api.started\ntrap 'rm -f api.active' EXIT INT TERM\nwhile [ ! -f service.fail ]; do sleep 0.02; done\nexit 7\n",
     )
     .unwrap();
     let mut permissions = std::fs::metadata(directory.join("api.sh"))
@@ -521,6 +521,85 @@ jobs:
         "watcher to exit",
     );
     wait_until(|| !process_alive(pid), "shutdown service to be reaped");
+}
+
+#[test]
+fn selecting_ready_service_replaces_without_overlap() {
+    let directory = setup_directory(
+        "readiness-replace",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "test -f readiness.ok"
+      timeout: 5s
+      interval: 20ms
+"#,
+    );
+    write_service_script(&directory);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+    std::fs::write(directory.join("readiness.ok"), "ready").unwrap();
+
+    let first = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        first.status.success(),
+        "schedule: {}",
+        reap(&mut first.clone())
+    );
+    let first_generation = scheduled_generation(&first);
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(first_generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "ready")
+            })
+    });
+    let first_pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+
+    let second = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        second.status.success(),
+        "schedule: {}",
+        reap(&mut second.clone())
+    );
+    let second_generation = scheduled_generation(&second);
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(second_generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "ready")
+            })
+    });
+    let second_pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    assert_ne!(
+        first_pid, second_pid,
+        "replacement must allocate a new process"
+    );
+    assert!(
+        !directory.join("api.overlap").exists(),
+        "same-name services overlapped"
+    );
+    assert!(!process_alive(first_pid), "old service must be reaped");
+    assert!(process_alive(second_pid), "replacement must remain alive");
 }
 
 #[test]
