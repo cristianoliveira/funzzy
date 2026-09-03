@@ -143,7 +143,11 @@ pub fn run() {
             execute(command);
         }
 
-        Action::Watch { target: ref wanted } => {
+        Action::Watch {
+            target: ref wanted,
+            exclude: ref exclusions,
+            no_services,
+        } => {
             let rules = load_rules(&args.config);
             let concurrency = effective_concurrency(&args, &args.config);
             let debounce = load_debounce(&args.config);
@@ -198,15 +202,19 @@ pub fn run() {
                     crate::config_revision::RevisionDecision::NoOp => watches,
                 }
             };
-            match wanted {
-                Some(target) => match watches.select_target(target) {
-                    Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
-                    None => stdout::failure(
+            match watches.select_target_with_exclusions(wanted.as_deref(), exclusions, no_services)
+            {
+                Ok(Some(selected)) => execute_watch_command(selected, args, event_stream.clone()),
+                Ok(None) => {
+                    let target = wanted.as_deref().unwrap_or_default();
+                    stdout::failure(
                         &format!("No target found for '{}'", target),
                         rules::available_targets(&rules),
-                    ),
-                },
-                None => execute_watch_command(watches, args, event_stream.clone()),
+                    )
+                }
+                Err(error) => {
+                    stdout::usage_failure("Cannot apply watch exclusions", error.to_string())
+                }
             }
         }
         Action::List => {
@@ -775,6 +783,28 @@ fn execute_watch_command(
     mut args: Arguments,
     event_stream: Option<Arc<crate::event_stream::EventStream>>,
 ) {
+    let (watch_target, watch_exclusions, watch_no_services) = match &args.action {
+        Action::Watch {
+            target,
+            exclude,
+            no_services,
+        } => (target.clone(), exclude.clone(), *no_services),
+        _ => (None, Vec::new(), false),
+    };
+    let startup_exclusion_note = if watch_exclusions.is_empty() && !watch_no_services {
+        None
+    } else {
+        Some(format!(
+            "exclusions={} no_services={}",
+            if watch_exclusions.is_empty() {
+                "none".to_owned()
+            } else {
+                watch_exclusions.join(",")
+            },
+            watch_no_services
+        ))
+    };
+
     // MANUAL-TRIGGER-CONTRACT §3.5: a watch selection containing only manual
     // jobs is a usage error unless the control socket is enabled (a
     // control-only watcher serving `fzz ctl run` is valid).
@@ -853,6 +883,9 @@ fn execute_watch_command(
         debounce,
         truncate_on_config_change,
         current_socket: args.control_socket.clone(),
+        target: watch_target,
+        exclusions: watch_exclusions.clone(),
+        no_services: watch_no_services,
     };
     let mut reload_session = ReloadSession::start(
         reload_settings,
@@ -876,6 +909,7 @@ fn execute_watch_command(
             args.log_file.as_deref(),
             run_on_init,
             non_block,
+            startup_exclusion_note.as_deref(),
         );
     }
     // Both wait and restart watch modes share one signal notification and
@@ -950,8 +984,8 @@ fn report_shutdown_completion(completion: &crate::shutdown::ShutdownCompletion) 
 
 /// One deterministic startup record (TASK-0023): config path, workspace
 /// root, watch roots, task count, busy policy, run-on-init state, log
-/// destination, and control socket. The summary is compact and never dumps
-/// the full configuration.
+/// destination, control socket, and (when requested) invocation exclusions.
+/// The summary is compact and never dumps the full configuration.
 fn emit_startup_record(
     watches: &Watches,
     config_file_paths: &[String],
@@ -959,6 +993,7 @@ fn emit_startup_record(
     log_file: Option<&str>,
     run_on_init: bool,
     non_block: bool,
+    invocation_note: Option<&str>,
 ) {
     let config_path = config_file_paths
         .first()
@@ -966,12 +1001,15 @@ fn emit_startup_record(
         .unwrap_or_else(|| "default".to_owned());
     let watch_roots = watches.paths_to_watch().unwrap_or_default().join(",");
     let policy = if non_block { "restart" } else { "wait" };
+    let invocation_note = invocation_note
+        .map(|note| format!(" {note}"))
+        .unwrap_or_default();
     diagnostics::debug(&diagnostics::Record {
         source: Some("config"),
         decision: Some("startup"),
         path: Some(config_path),
         note: Some(format!(
-            "workspace={} tasks={} policy={} run_on_init={} log={} socket={} watch_roots={}",
+            "workspace={} tasks={} policy={} run_on_init={} log={} socket={} watch_roots={}{}",
             watches.root().display(),
             watches.targets().len(),
             policy,
@@ -979,6 +1017,7 @@ fn emit_startup_record(
             log_file.unwrap_or("none"),
             control_socket.unwrap_or("none"),
             watch_roots,
+            invocation_note,
         )),
         ..Default::default()
     });
