@@ -210,7 +210,7 @@ fn await_json(directory: &std::path::Path, generation: u64) -> (Output, serde_js
 fn write_service_script(directory: &std::path::Path) {
     std::fs::write(
         directory.join("api.sh"),
-        "#!/bin/sh\necho $$ > api.pid\ntouch api.started\nwhile :; do sleep 0.02; done\n",
+        "#!/bin/sh\necho $$ > api.pid\ntouch api.started\nwhile [ ! -f service.fail ]; do sleep 0.02; done\nexit 7\n",
     )
     .unwrap();
     let mut permissions = std::fs::metadata(directory.join("api.sh"))
@@ -329,6 +329,198 @@ jobs:
         .parse::<u32>()
         .unwrap();
     assert!(process_alive(pid), "ready service must remain alive");
+}
+
+#[test]
+fn post_settlement_service_failure_keeps_generation_terminal() {
+    let directory = setup_directory(
+        "readiness-post-failure",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "test -f readiness.ok"
+      timeout: 5s
+      interval: 20ms
+  - name: quick
+    run: "true"
+    change: "src/**"
+"#,
+    );
+    write_service_script(&directory);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let socket = directory.join("sock");
+
+    let scheduled = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        scheduled.status.success(),
+        "schedule: {}",
+        reap(&mut scheduled.clone())
+    );
+    let service_generation = scheduled_generation(&scheduled);
+    wait_until(
+        || directory.join("api.started").exists(),
+        "readiness service to start",
+    );
+    std::fs::write(directory.join("readiness.ok"), "ready").unwrap();
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(service_generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "ready")
+            })
+    });
+
+    let unrelated = run_cli(&directory, &["control", "run", "quick"]);
+    assert!(
+        unrelated.status.success(),
+        "schedule: {}",
+        reap(&mut unrelated.clone())
+    );
+    let unrelated_generation = scheduled_generation(&unrelated);
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(unrelated_generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "ready")
+            })
+    });
+
+    std::fs::write(directory.join("service.fail"), "fail").unwrap();
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(unrelated_generation)
+            && status["state"].as_str() == Some("passed")
+            && status["services"].as_array().is_some_and(|services| {
+                services
+                    .iter()
+                    .any(|service| service["name"] == "api" && service["state"] == "failed")
+            })
+    });
+    let terminal = await_json(&directory, service_generation).1;
+    assert_eq!(terminal["terminalReason"], "passed");
+    assert_eq!(terminal["snapshot"]["state"], "passed");
+}
+
+#[test]
+fn cancelling_starting_readiness_service_reaps_service() {
+    let directory = setup_directory(
+        "readiness-cancel",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "test -f readiness.ok"
+      timeout: 30s
+      interval: 20ms
+"#,
+    );
+    write_service_script(&directory);
+    let _watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let scheduled = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        scheduled.status.success(),
+        "schedule: {}",
+        reap(&mut scheduled.clone())
+    );
+    let generation = scheduled_generation(&scheduled);
+    wait_until(
+        || directory.join("api.started").exists(),
+        "cancelled readiness service to start",
+    );
+    let cancelled = run_cli(
+        &directory,
+        &[
+            "control",
+            "cancel",
+            "--generation",
+            &generation.to_string(),
+            "--wait",
+            "--timeout",
+            "10s",
+        ],
+    );
+    assert_eq!(
+        cancelled.status.code(),
+        Some(0),
+        "cancel: {}",
+        reap(&mut cancelled.clone())
+    );
+    let terminal = await_json(&directory, generation).1;
+    assert_eq!(terminal["terminalReason"], "cancelled");
+    let pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    wait_until(|| !process_alive(pid), "cancelled service to be reaped");
+}
+
+#[test]
+fn watcher_shutdown_reaps_ready_service() {
+    let directory = setup_directory(
+        "readiness-shutdown",
+        r#"
+on:
+  socket: sock
+jobs:
+  - name: api
+    service: true
+    run: ./api.sh
+    change: "src/**"
+    readiness:
+      run: "test -f readiness.ok"
+      timeout: 5s
+      interval: 20ms
+"#,
+    );
+    write_service_script(&directory);
+    let mut watcher = start_watcher(&directory);
+    wait_until_socket(&directory);
+    let scheduled = run_cli(&directory, &["control", "run", "api"]);
+    assert!(
+        scheduled.status.success(),
+        "schedule: {}",
+        reap(&mut scheduled.clone())
+    );
+    let generation = scheduled_generation(&scheduled);
+    wait_until(
+        || directory.join("api.started").exists(),
+        "service to start",
+    );
+    std::fs::write(directory.join("readiness.ok"), "ready").unwrap();
+    let socket = directory.join("sock");
+    wait_until_status(&socket, |status| {
+        status["generation"].as_u64() == Some(generation)
+            && status["state"].as_str() == Some("passed")
+    });
+    let pid = std::fs::read_to_string(directory.join("api.pid"))
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+
+    libc_kill(watcher.child.id() as i32, 15).expect("signal watcher shutdown");
+    wait_until(
+        || watcher.child.try_wait().ok().flatten().is_some(),
+        "watcher to exit",
+    );
+    wait_until(|| !process_alive(pid), "shutdown service to be reaped");
 }
 
 #[test]
