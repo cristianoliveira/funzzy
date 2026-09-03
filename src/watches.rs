@@ -1690,6 +1690,39 @@ mod tests {
             renamed.select_target_with_exclusions(None, &["new service".to_owned()], false),
             Err(ExclusionError::Missing { .. })
         ));
+
+        let ambiguous_candidate = Watches::new(vec![
+            Rules::new(
+                "lint".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "lint docs".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+        ]);
+        assert!(matches!(
+            ambiguous_candidate.select_target_with_exclusions(None, &["lin".to_owned()], false),
+            Err(ExclusionError::Ambiguous { .. })
+        ));
+
+        let empty_candidate = Watches::new(vec![Rules::new(
+            "service".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )]);
+        assert!(matches!(
+            empty_candidate.select_target_with_exclusions(None, &["service".to_owned()], false),
+            Err(ExclusionError::Empty { .. })
+        ));
     }
 
     #[test]
