@@ -1,7 +1,7 @@
 ---
 id: TASK-0166
 title: Prevent baseline seeding from following symlink cycles
-status: todo
+status: done
 depends_on: []
 priority: high
 tags: [rust, watcher, filesystem, symlink, startup, reliability, tdd]
@@ -33,15 +33,15 @@ Baseline seeding terminates for every finite filesystem graph, including ancesto
 
 ## Acceptance criteria
 
-- [ ] Before changing production code, add a focused `ModificationGate::seed` regression with a directory symlink pointing to an ancestor; prove seeding returns and records ordinary files once.
-- [ ] Add the unhappy-path variant for an unreadable, broken, or disappearing symlink/entry without panicking or retrying forever.
-- [ ] Make baseline traversal use the established `walk_descendants` policy: record symlink paths when appropriate but never descend into symlinked directories or `.git` directories.
-- [ ] Prefer one iterative, symlink-safe traversal policy or a justified shared helper over recursive traversal that can overflow or cycle.
-- [ ] Preserve fill-only `last_seen` behavior, file mtimes, disjoint baseline seeding, and first-change routing for normal directories.
-- [ ] Add a spawned-watcher regression using a broad-root glob and ancestor symlink cycle; assert a bounded readiness marker/control socket appears without unbounded traversal.
-- [ ] Prove watcher shutdown cleans the fixture and leaves no spawned child or background watcher process.
-- [ ] Audit the generated starter configuration's broad-root patterns. Either narrow them without reducing the example's purpose, or document the whole-workspace baseline cost and symlink-safe guarantee; lock the decision with a generated-config test.
-- [ ] Run focused unit tests, feature-gated filesystem integration, lint/format, and the configured final gate.
+- [x] Before changing production code, add a focused `ModificationGate::seed` regression with a directory symlink pointing to an ancestor; prove seeding returns and records ordinary files once.
+- [x] Add the unhappy-path variant for an unreadable, broken, or disappearing symlink/entry without panicking or retrying forever.
+- [x] Make baseline traversal use the established `walk_descendants` policy: record symlink paths when appropriate but never descend into symlinked directories or `.git` directories.
+- [x] Prefer one iterative, symlink-safe traversal policy or a justified shared helper over recursive traversal that can overflow or cycle.
+- [x] Preserve fill-only `last_seen` behavior, file mtimes, disjoint baseline seeding, and first-change routing for normal directories.
+- [x] Add a spawned-watcher regression using a broad-root glob and ancestor symlink cycle; assert a bounded readiness marker/control socket appears without unbounded traversal.
+- [x] Prove watcher shutdown cleans the fixture and leaves no spawned child or background watcher process.
+- [x] Audit the generated starter configuration's broad-root patterns. Either narrow them without reducing the example's purpose, or document the whole-workspace baseline cost and symlink-safe guarantee; lock the decision with a generated-config test.
+- [x] Run focused unit tests, feature-gated filesystem integration, lint/format, and the configured final gate.
 
 ## Non-goals
 
@@ -57,4 +57,10 @@ A later inspection found no active `fzz`/`funzzy` process, so PIDs `67032` and `
 ## Test constraints
 
 Use bounded synchronization and unique temporary directories. Do not use fixed sleeps as termination proof. Symlink tests must be Unix-gated where required and must clean up even when assertions fail.
+
+## Evidence
+
+`src/watch_loop.rs` now has cycle and broken-entry regressions, and `tests/symlink_baseline.rs` starts a real watcher against a broad `**/*.txt` root with an ancestor symlink. Generated minimal, agent, and comprehensive templates document the symlink-safe broad-root baseline, locked by a renderer test.
+
+Focused evidence: `cargo test --lib modification_gate_seed_tests -- --nocapture` (6 passed), `cargo test --lib watcher -- --nocapture` (31 passed), `cargo test --lib watch_loop -- --nocapture` (26 passed), `cargo test --lib cli::templates::tests::broad_root_profiles_document_symlink_safe_baseline -- --nocapture` (1 passed), and `cargo test --test symlink_baseline --features test-integration --no-default-features -- --nocapture` (1 passed). `make lint` passed. The configured full integration gate remains to be run on this branch.
 

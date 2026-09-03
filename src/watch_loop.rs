@@ -139,36 +139,27 @@ impl ModificationGate {
     /// already-tracked write. Live reloads deliberately do NOT re-seed: a
     /// file created under a newly added path must route on first sighting.
     fn seed(&mut self, paths: &[String]) {
-        for path in paths {
-            let path = std::path::Path::new(path);
-            if path.is_file() {
-                let mtime = std::fs::metadata(path)
-                    .and_then(|meta| meta.modified())
-                    .ok();
-                if let Some(path) = path.to_str() {
-                    self.last_seen.entry(path.to_owned()).or_insert(mtime);
-                }
+        for configured_path in paths {
+            let configured_path = std::path::Path::new(configured_path);
+            if configured_path.is_file() {
+                self.record_baseline(configured_path);
                 continue;
             }
 
-            let Ok(entries) = std::fs::read_dir(path) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let mtime = std::fs::metadata(&path)
-                    .and_then(|meta| meta.modified())
-                    .ok();
-                match path.to_str() {
-                    Some(path) => {
-                        self.last_seen.entry(path.to_owned()).or_insert(mtime);
-                    }
-                    None => continue,
-                }
-                if path.is_dir() {
-                    self.seed(&[path.display().to_string()]);
-                }
+            let mut descendants = Vec::new();
+            watcher::walk_descendants(configured_path, &mut descendants);
+            for path in descendants {
+                self.record_baseline(&path);
             }
+        }
+    }
+
+    fn record_baseline(&mut self, path: &std::path::Path) {
+        let mtime = std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok();
+        if let Some(path) = path.to_str() {
+            self.last_seen.entry(path.to_owned()).or_insert(mtime);
         }
     }
 
@@ -1743,6 +1734,62 @@ mod modification_gate_seed_tests {
             gate.changed(vec![unrelated.display().to_string()]),
             vec![unrelated.display().to_string()],
             "an exact file baseline never traverses unrelated siblings"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Baseline seeding must not follow a directory symlink back to an
+    /// ancestor. Ordinary files are still recorded exactly once.
+    #[cfg(unix)]
+    #[test]
+    fn seed_terminates_on_directory_symlink_cycle() {
+        let dir = scratch("symlink-cycle");
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        let ordinary = dir.join("ordinary.txt");
+        let nested = dir.join("nested/inside.txt");
+        std::fs::write(&ordinary, "ordinary").unwrap();
+        std::fs::write(&nested, "nested").unwrap();
+        std::os::unix::fs::symlink(&dir, dir.join("nested/back-to-root")).unwrap();
+
+        let mut gate = ModificationGate::new();
+        gate.seed(&[dir.display().to_string()]);
+        assert!(
+            gate.changed(vec![
+                ordinary.display().to_string(),
+                nested.display().to_string()
+            ])
+            .is_empty(),
+            "seeded ordinary files must not route after a symlink cycle"
+        );
+        assert!(
+            !gate
+                .last_seen
+                .keys()
+                .any(|path| path.contains("back-to-root/")),
+            "directory symlink must be recorded but never traversed: {:?}",
+            gate.last_seen.keys().collect::<Vec<_>>()
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Broken symlink entries may disappear while a baseline is being read;
+    /// they must be skipped without panicking or retrying forever.
+    #[cfg(unix)]
+    #[test]
+    fn seed_ignores_broken_symlink_entries() {
+        let dir = scratch("broken-symlink");
+        let ordinary = dir.join("ordinary.txt");
+        std::fs::write(&ordinary, "ordinary").unwrap();
+        std::os::unix::fs::symlink(dir.join("missing"), dir.join("broken")).unwrap();
+
+        let mut gate = ModificationGate::new();
+        gate.seed(&[dir.display().to_string()]);
+        assert!(
+            gate.changed(vec![ordinary.display().to_string()])
+                .is_empty(),
+            "ordinary files remain baselined with broken entries"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

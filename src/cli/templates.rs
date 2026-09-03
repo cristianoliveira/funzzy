@@ -72,7 +72,8 @@ pub fn render_profile(raw: &str) -> Result<String, FzzError> {
 }
 
 fn minimal_yaml() -> &'static str {
-    r#"on:
+    r#"# Broad-root baseline is symlink-safe: directory symlinks are not traversed.
+on:
   change: "**/*"
 
 jobs:
@@ -104,6 +105,7 @@ jobs:
 
 fn agent_yaml() -> &'static str {
     r#"# Agent loop example: control socket + a verify-style job.
+# Broad-root baseline is symlink-safe: directory symlinks are not traversed.
 # Next commands:
 #   fzz check          # validate this config
 #   fzz list           # see the targets
@@ -203,6 +205,18 @@ mod tests {
                 profile.name()
             );
         }
+    }
+
+    #[test]
+    fn broad_root_profiles_document_symlink_safe_baseline() {
+        assert!(Profile::Minimal
+            .render()
+            .contains("Broad-root baseline is symlink-safe"));
+        assert!(Profile::Agent
+            .render()
+            .contains("Broad-root baseline is symlink-safe"));
+        assert!(crate::cli::init::render_init_template()
+            .contains("Broad-root baseline is symlink-safe"));
     }
 
     /// Rendering is deterministic: identical bytes on every call.
