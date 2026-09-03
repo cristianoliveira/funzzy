@@ -1630,6 +1630,66 @@ mod tests {
             .select_target_with_exclusions(None, &["finite".to_owned()], true)
             .expect_err("all jobs excluded");
         assert!(matches!(empty, ExclusionError::Empty { .. }));
+
+        let overlap = watches
+            .select_target_with_exclusions(
+                Some("legacy"),
+                &["legacy".to_owned(), "legacy service".to_owned()],
+                false,
+            )
+            .expect_err("overlapping exclusions leave no jobs");
+        assert!(matches!(overlap, ExclusionError::Empty { .. }));
+    }
+
+    #[test]
+    fn reload_candidate_reapplies_invocation_policy_before_lifecycle() {
+        let candidate_rules = vec![
+            Rules::new(
+                "finite".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "new service".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            )
+            .with_service(true)
+            .with_readiness(Some(crate::rules::Readiness::new(
+                "true".to_owned(),
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+            ))),
+        ];
+        let candidate = Watches::new(candidate_rules);
+        let filtered = candidate
+            .select_target_with_exclusions(None, &[], true)
+            .expect("candidate policy")
+            .expect("candidate watch");
+        assert_eq!(
+            filtered
+                .targets()
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["finite"]
+        );
+
+        let renamed = Watches::new(vec![Rules::new(
+            "finite".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )]);
+        assert!(matches!(
+            renamed.select_target_with_exclusions(None, &["new service".to_owned()], false),
+            Err(ExclusionError::Missing { .. })
+        ));
     }
 
     #[test]
