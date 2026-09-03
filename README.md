@@ -247,7 +247,9 @@ Filtering tasks by target:
 ```bash
 fzz list
 fzz watch "@quick"
+fzz -- "@quick"       # explicit watch shorthand; target follows `--`
 # Assuming one or more tasks contain `@quick`, only those tasks are watched.
+# `fzz --` alone keeps the zero-argument watch behavior.
 ```
 
 ### Keyboard trigger

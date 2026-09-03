@@ -116,7 +116,7 @@ candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
 
 Breaking CLI grammar/flags/exit behavior (migration: docs/MIGRATION.md):
 
-- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
+- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; explicit `fzz -- TARGET` watch shorthand requires the delimiter; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
 
 Preserved compatibility:
 

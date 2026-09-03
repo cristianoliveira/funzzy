@@ -115,6 +115,7 @@ fzz explain src/lib.rs   # which jobs match/ignore a path + the filtered plan
 ```bash
 fzz                 # zero-argument: configured watch (hero path)
 fzz watch "@quick"  # watch only matching targets
+fzz -- "@quick"     # equivalent watch shorthand; target follows `--`
 fzz watch --exclude docs
 fzz watch "@quick" --exclude lint --no-services
 ```
@@ -129,13 +130,20 @@ barriers. These options affect only `fzz`/`fzz watch`; they do not change the
 YAML file, `fzz run`, or control-socket requests, and the same invocation
 policy is reapplied to valid configuration reloads.
 
+The root shorthand accepts zero or one target only after the end-of-options
+delimiter. `fzz --` is equivalent to `fzz`; root watch options compose before
+the delimiter, for example `fzz --no-services -- @quick`. Everything after
+the delimiter is target data, so `fzz -- --service` selects a target named
+`--service`; extra values are usage errors. Without the delimiter, a word
+matching a subcommand still invokes that subcommand.
+
 This is the whole loop: config → check → run → watch.
 
 ## 2. Daily workflow decision table
 
 | Goal | Command | Watcher? | Side effects |
 | --- | --- | --- | --- |
-| Watch + run on change | `fzz` / `fzz watch [TARGET]` | yes | runs tasks, may open socket |
+| Watch + run on change | `fzz` / `fzz watch [TARGET]` / `fzz -- [TARGET]` | yes | runs tasks, may open socket |
 | Run once, finite | `fzz run TARGET` | no | runs tasks, exits |
 | Validate config | `fzz check [-c PATH]` | no | none |
 | List targets | `fzz list` | no | none |
