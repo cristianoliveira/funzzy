@@ -177,6 +177,7 @@ fn help_shows_usage_commands_and_options_for_both_binaries() {
             .stdout(predicate::str::contains("--verbose"))
             .stdout(predicate::str::contains("--on-busy"))
             .stdout(predicate::str::contains("--control-socket"))
+            .stdout(predicate::str::contains("Watch target after `--`"))
             // The clap-generated commands section lists every subcommand
             // (check/completions/config included) and `run` takes its
             // TARGET argument; `fzz run --help` shows the <TARGET> usage.

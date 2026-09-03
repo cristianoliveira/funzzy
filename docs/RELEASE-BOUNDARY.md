@@ -116,7 +116,7 @@ candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
 
 Breaking CLI grammar/flags/exit behavior (migration: docs/MIGRATION.md):
 
-- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
+- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; explicit `fzz -- TARGET` watch shorthand requires the delimiter; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
 
 Preserved compatibility:
 
@@ -133,6 +133,9 @@ New in 2.0.0:
 - Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
 - Configuration commands: `fzz init` is create-only with `--template comprehensive|minimal|parallel|agent` (default `comprehensive`); `fzz migrate` is the explicit, atomic, idempotent legacy rewrite (`fzz init --migrate` is removed) — CLI-V2-CONTRACT §3a (TASK-0096).
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
+- Invocation-only watch filters: repeatable `fzz watch --exclude TARGET` and
+  `fzz watch --no-services`; filters are applied before roots, process spawn,
+  readiness, and service-pool reconciliation, then reapplied on reload.
 - Managed long-running service tasks (`service: true`), run-level
   success/failure hooks (`on.success`/`on.failure`), watcher-session close hook
   (`on.close`, graceful ready-watcher shutdown only), task-aware output
