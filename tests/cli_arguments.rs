@@ -473,6 +473,58 @@ fn non_block_flag_is_rejected_with_hint() {
 }
 
 #[test]
+fn watch_exclusion_errors_are_usage_errors_and_do_not_start_work() {
+    with_tmp_dir("watch-exclusions-errors", |dir| {
+        std::fs::write(
+            dir.join(".watch.yaml"),
+            "jobs:\n  - name: build\n    run: echo build\n    change: src/**\n",
+        )
+        .unwrap();
+
+        fzz()
+            .args(["watch", "--exclude", "missing"])
+            .current_dir(dir)
+            .assert()
+            .code(2)
+            .stdout(predicate::str::contains(
+                "No target found for exclusion 'missing'",
+            ));
+        assert!(!dir.join(".watch.sock").exists());
+
+        fzz()
+            .args(["run", "build", "--exclude", "build"])
+            .current_dir(dir)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("unexpected argument '--exclude'"));
+    });
+}
+
+#[test]
+fn no_services_rejects_service_only_watch_before_startup() {
+    with_tmp_dir("watch-no-services-empty", |dir| {
+        let marker = dir.join("service-started");
+        std::fs::write(
+            dir.join(".watch.yaml"),
+            format!(
+                "jobs:\n  - name: server\n    run: echo started > {}\n    change: src/**\n    service: true\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+
+        fzz()
+            .args(["watch", "--no-services"])
+            .current_dir(dir)
+            .assert()
+            .code(2)
+            .stdout(predicate::str::contains("no runnable jobs"));
+        assert!(!marker.exists());
+        assert!(!dir.join(".watch.sock").exists());
+    });
+}
+
+#[test]
 fn watch_unknown_target_fails_listing_available_tasks() {
     fzz()
         .args(["-c", FILTER_EXAMPLE, "watch", "no-such-target"])
