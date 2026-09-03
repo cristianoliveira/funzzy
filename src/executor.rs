@@ -982,9 +982,6 @@ impl Executor {
                                 || run.active[index].readiness_ready)
                         {
                             let service = run.active.remove(index);
-                            if service.readiness.is_some() {
-                                self.record_promoted_service(run, &service);
-                            }
                             run.services.push(service);
                             continue;
                         }
@@ -1789,49 +1786,6 @@ impl Executor {
             self.record_task_outcome(run, task);
         }
         false
-    }
-
-    /// Records readiness promotion as the service task's immutable startup
-    /// outcome while retaining the live child in the managed set.
-    fn record_promoted_service(&self, run: &mut Run, service: &ActiveTask) {
-        if let (Some(outputs), Some(capture)) = (&self.outputs, &service.capture) {
-            outputs.record(
-                run.metadata.run_id,
-                service.name.clone(),
-                capture.finish(),
-                run.metadata.revision,
-                run.metadata.revision_hash.clone(),
-            );
-        }
-        if let (Some(outputs), Some(capture)) = (&self.outputs, &service.readiness_capture) {
-            outputs.record(
-                run.metadata.run_id,
-                format!("{}:readiness", service.name),
-                capture.finish(),
-                run.metadata.revision,
-                run.metadata.revision_hash.clone(),
-            );
-        }
-        let duration_ms = service
-            .started
-            .map(|started| self.clock.elapsed(started).as_millis() as u64);
-        self.record_task_snapshot(
-            run,
-            service.position,
-            &service.name,
-            service.group_occurrence.as_deref(),
-            TaskState::Passed,
-            duration_ms,
-        );
-        run.outcomes.push((
-            service.position,
-            service.name.clone(),
-            service.group_occurrence.clone(),
-            TaskOutcome::Passed,
-        ));
-        // A promoted readiness service is one completed task in the
-        // generation summary, even though its child remains worker-owned.
-        run.results.push(Ok(()));
     }
 
     fn record_task_outcome(&self, run: &mut Run, task: ActiveTask) {
@@ -4121,39 +4075,6 @@ mod tests {
             Duration::from_secs(30),
             Duration::from_millis(500),
         )))
-    }
-
-    #[test]
-    fn readiness_service_settles_once_probe_passes_while_service_stays_alive() {
-        let runner = FakeRunner::default();
-        runner.complete("probe", true);
-        let executor = fake_executor(runner.clone(), 1, false);
-        let mut run = executor.start(
-            RunMetadata::new(201, "test"),
-            RunPlan::from_rules(vec![readiness_service("api")]),
-        );
-        let mut settled = false;
-        for _ in 0..8 {
-            if matches!(executor.advance(&mut run), Step::Finished) {
-                settled = true;
-                break;
-            }
-        }
-        assert!(settled, "ready service must settle its generation");
-        assert!(
-            runner.started_commands().contains(&"serve".to_owned()),
-            "started: {:?}",
-            runner.started_commands()
-        );
-        assert!(runner.started_commands().contains(&"probe".to_owned()));
-        let completed = executor.finish(run);
-        assert!(completed.outcome.is_success());
-        assert_eq!(completed.tasks.len(), 1);
-        assert_eq!(completed.tasks[0].state, TaskState::Passed);
-        assert!(
-            runner.shutdown_commands().contains(&"serve".to_owned()),
-            "local one-shot finish must explicitly stop promoted services"
-        );
     }
 
     #[test]
