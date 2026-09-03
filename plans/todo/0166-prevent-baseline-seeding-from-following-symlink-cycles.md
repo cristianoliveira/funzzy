@@ -52,7 +52,7 @@ Baseline seeding terminates for every finite filesystem graph, including ancesto
 
 ## Operational precondition
 
-Before validating against the real `work/cells` workspace, terminate PIDs `67032` and `68510` gracefully, confirm they are gone, inspect `.tmp/.watch.yaml` before restoring any configuration, and start only one rebuilt watcher.
+A later inspection found no active `fzz`/`funzzy` process, so PIDs `67032` and `68510` no longer require termination. Before validating against the real `work/cells` workspace, confirm no watcher has reappeared, inspect `.tmp/.watch.yaml` before restoring any configuration, remove only the offending directory symlink if immediate mitigation is still needed (preserve its target), and start only one rebuilt watcher. Avoid broad-root watching there until the fix lands.
 
 ## Test constraints
 
