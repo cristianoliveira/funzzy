@@ -210,7 +210,7 @@ fn await_json(directory: &std::path::Path, generation: u64) -> (Output, serde_js
 fn write_service_script(directory: &std::path::Path) {
     std::fs::write(
         directory.join("api.sh"),
-        "#!/bin/sh\nif [ -f api.active ]; then echo overlap > api.overlap; exit 99; fi\ntouch api.active\necho $$ > api.pid\ntouch api.started\ntrap 'rm -f api.active' EXIT INT TERM\nwhile [ ! -f service.fail ]; do sleep 0.02; done\nexit 7\n",
+        "#!/bin/sh\nif [ -f api.pid ] && kill -0 \"$(cat api.pid)\" 2>/dev/null; then echo overlap > api.overlap; exit 99; fi\necho $$ > api.pid\ntouch api.started\nwhile [ ! -f service.fail ]; do sleep 0.02; done\nexit 7\n",
     )
     .unwrap();
     let mut permissions = std::fs::metadata(directory.join("api.sh"))
@@ -563,6 +563,10 @@ jobs:
                     .any(|service| service["name"] == "api" && service["state"] == "ready")
             })
     });
+    wait_until(
+        || directory.join("api.pid").exists(),
+        "first service PID marker",
+    );
     let first_pid = std::fs::read_to_string(directory.join("api.pid"))
         .unwrap()
         .trim()

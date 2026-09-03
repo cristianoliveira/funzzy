@@ -390,6 +390,31 @@ impl ManagedServiceCoordinator {
         authorized
     }
 
+    fn prepare_run_plan(&mut self, executor: &Executor, plan: &RunPlan, revision: u64) {
+        for spec in plan
+            .stages
+            .iter()
+            .flat_map(|stage| match stage {
+                crate::plan::Stage::Serial(task) => std::slice::from_ref(task),
+                crate::plan::Stage::Parallel { tasks, .. } => tasks.as_slice(),
+            })
+            .filter(|task| task.service && task.readiness.is_some())
+            .map(|task| crate::service_pool::ServiceSpec {
+                name: task.name.clone(),
+                revision,
+                signature: crate::config_revision::service_signature(&task.rule),
+                origin_generation: None,
+            })
+        {
+            let Some(crate::service_pool::PoolAction::Stop { name, instance_id }) =
+                self.reserve_service_replacement(executor, spec)
+            else {
+                continue;
+            };
+            let _ = self.authorize_service_replacement(&name, instance_id);
+        }
+    }
+
     fn select_generation(
         &mut self,
         specs: &[crate::service_pool::ServiceSpec],
@@ -978,6 +1003,11 @@ impl Worker {
                     // Promote the newest superseding run, or block on the next
                     // command when idle.
                     if let Some(req) = pending.take() {
+                        managed_services.prepare_run_plan(
+                            &executor,
+                            &req.plan,
+                            req.revision.unwrap_or(0),
+                        );
                         active = Some(
                             executor.start(
                                 RunMetadata::correlated(
@@ -1019,6 +1049,11 @@ impl Worker {
                                     // service-only reconciliation does not.
                                     settled_hook_owner.shutdown(&executor);
                                     consumer_scheduler.cancel_settlement();
+                                    managed_services.prepare_run_plan(
+                                        &executor,
+                                        &req.plan,
+                                        req.revision.unwrap_or(0),
+                                    );
                                     active = Some(
                                         executor.start(
                                             RunMetadata::correlated(
