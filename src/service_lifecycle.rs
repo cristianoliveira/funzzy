@@ -100,6 +100,136 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transition_matrix_covers_each_individual_lifecycle_outcome() {
+        let cases = [
+            (
+                "shutdown",
+                vec![ArbitrationCommand::Shutdown],
+                vec![],
+                ArbitrationDecision::Shutdown,
+            ),
+            (
+                "cancel",
+                vec![ArbitrationCommand::Cancel],
+                vec![],
+                ArbitrationDecision::Cancelled,
+            ),
+            (
+                "supersede",
+                vec![ArbitrationCommand::Supersede],
+                vec![],
+                ArbitrationDecision::Superseded,
+            ),
+            (
+                "reload replacement",
+                vec![ArbitrationCommand::ReloadReplacement],
+                vec![],
+                ArbitrationDecision::ReloadReplacement,
+            ),
+            (
+                "service exit",
+                vec![],
+                vec![ChildObservation::ServiceExit],
+                ArbitrationDecision::ServiceExited,
+            ),
+            (
+                "readiness timeout",
+                vec![],
+                vec![ChildObservation::ReadinessTimeout],
+                ArbitrationDecision::ReadinessTimedOut,
+            ),
+            (
+                "readiness passed",
+                vec![],
+                vec![ChildObservation::ReadinessExit { success: true }],
+                ArbitrationDecision::ReadinessPassed,
+            ),
+            (
+                "readiness retry",
+                vec![],
+                vec![ChildObservation::ReadinessExit { success: false }],
+                ArbitrationDecision::RetryReadiness,
+            ),
+            ("no-op", vec![], vec![], ArbitrationDecision::Noop),
+        ];
+
+        for (name, commands, observations, expected) in cases {
+            assert_eq!(
+                ReadinessArbiter::resolve(&commands, &observations),
+                expected,
+                "transition matrix case {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_precedence_beats_every_observation() {
+        let observations = vec![
+            ChildObservation::ReadinessExit { success: false },
+            ChildObservation::ReadinessExit { success: true },
+            ChildObservation::ReadinessTimeout,
+            ChildObservation::ServiceExit,
+        ];
+
+        for (command, expected) in [
+            (ArbitrationCommand::Shutdown, ArbitrationDecision::Shutdown),
+            (ArbitrationCommand::Cancel, ArbitrationDecision::Cancelled),
+            (
+                ArbitrationCommand::Supersede,
+                ArbitrationDecision::Superseded,
+            ),
+            (
+                ArbitrationCommand::ReloadReplacement,
+                ArbitrationDecision::ReloadReplacement,
+            ),
+        ] {
+            assert_eq!(
+                ReadinessArbiter::resolve(&[command], &observations),
+                expected,
+                "command must beat competing observations: {command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn competing_observations_follow_fixed_precedence_independent_of_order() {
+        let observations = [
+            ChildObservation::ReadinessExit { success: false },
+            ChildObservation::ReadinessExit { success: true },
+            ChildObservation::ReadinessTimeout,
+            ChildObservation::ServiceExit,
+        ];
+        let reverse = observations.into_iter().rev().collect::<Vec<_>>();
+
+        assert_eq!(
+            ReadinessArbiter::resolve(&[], &observations),
+            ArbitrationDecision::ServiceExited
+        );
+        assert_eq!(
+            ReadinessArbiter::resolve(&[], &reverse),
+            ArbitrationDecision::ServiceExited
+        );
+
+        let without_exit = [
+            ChildObservation::ReadinessExit { success: false },
+            ChildObservation::ReadinessExit { success: true },
+            ChildObservation::ReadinessTimeout,
+        ];
+        assert_eq!(
+            ReadinessArbiter::resolve(&[], &without_exit),
+            ArbitrationDecision::ReadinessTimedOut
+        );
+    }
+
+    #[test]
+    fn empty_inputs_are_a_noop() {
+        assert_eq!(
+            ReadinessArbiter::resolve(&[], &[]),
+            ArbitrationDecision::Noop
+        );
+    }
+
+    #[test]
     fn cancellation_wins_over_probe_success_in_the_same_cycle() {
         assert_eq!(
             ReadinessArbiter::resolve(
