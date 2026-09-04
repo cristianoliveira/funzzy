@@ -25,6 +25,7 @@ pub mod identity;
 pub mod logging;
 pub mod option_catalog;
 pub mod output;
+pub(crate) mod path_context;
 pub mod plan;
 pub mod process_owner;
 pub mod reload;

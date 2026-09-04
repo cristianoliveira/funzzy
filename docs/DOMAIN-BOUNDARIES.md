@@ -37,7 +37,7 @@ qualified, root-alias, and raw-byte-string behavior.
 | Readiness precedence | `service_lifecycle` | Pure lifecycle arbitration; worker owns process handles. |
 | Generation execution | `executor` | Transitional mixed module. TASK-0171 extracts pure transitions and makes it a port consumer. |
 | YAML/config/file discovery | `config` | Inbound adapter. TASK-0170 separates decode from domain validation. |
-| Filesystem watcher | `watcher`, `watch_loop` | Inbound adapter; emits normalized path observations. |
+| Filesystem/path adapters | `watcher`, `watch_loop`, `path_context` | Inbound adapters; emit normalized path observations and resolve filesystem-dependent task cwd containment. |
 | Process, output, and runtime worker | `cmd`, `event_stream`, `output`, `workers`, `workflow` | Outbound adapters and orchestration. |
 | Control socket and clients | `control`, `control_client`, `cli/control` | Inbound/outbound protocol adapters. |
 | CLI and presentation | `app`, `arguments`, `cli`, `stdout`, `logging`, `diagnostics` | Composition and presentation adapters. |
