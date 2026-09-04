@@ -17,11 +17,13 @@ watcher runtime.
 
 `tests/domain_boundaries.rs` recursively enumerates every Rust source file
 under `src/domain/` and checks it plus the current domain foundations: `rules`,
-`plan`, `template`, and `service_lifecycle`. Its token-aware scan ignores
-comments and strings, removes only `#[cfg(test)]` items (not later production
-items), and rejects both imports and fully-qualified `crate::…`/`super::…`
-references. Mutation cases prove direct, aliased, grouped/multiline, `super`,
-and compiling qualified infrastructure references fail.
+`plan`, `template`, and `service_lifecycle`. Its token-aware scan handles
+nested block comments and Rust lifetimes, ignores comments and strings, removes
+only `#[cfg(test)]` items (not later production items), and rejects both
+imports and fully-qualified `crate::…`/`super::…` references. Mutation cases
+prove direct, aliased, grouped/multiline, `super`, compiling qualified,
+lifetime-followed, and nested-comment infrastructure references behave as
+intended.
 
 ## Inventory
 

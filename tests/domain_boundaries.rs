@@ -99,6 +99,21 @@ fn domain_guard_skips_comments_strings_and_only_the_cfg_test_item() {
 }
 
 #[test]
+fn domain_guard_rejects_qualified_path_after_a_lifetime() {
+    let source = "fn production(value: &'static str) { let _ = value; crate::cmd::execute(); }";
+
+    let failure = forbidden_dependency(source).expect("lifetime must not hide a qualified path");
+    assert!(failure.contains("cmd"), "unexpected failure: {failure}");
+}
+
+#[test]
+fn domain_guard_ignores_nested_block_comments() {
+    let source = "/* outer comment /* nested */ crate::watcher::WatchBackend still outer */ fn production() { crate::plan::RunPlan::default(); }";
+
+    assert!(forbidden_dependency(source).is_none());
+}
+
+#[test]
 fn domain_boundary_does_not_publish_speculative_ports() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
@@ -266,15 +281,12 @@ fn tokens_without_comments_or_strings(source: &str) -> Vec<String> {
                 }
             }
             '/' if characters.get(index + 1) == Some(&'*') => {
-                index += 2;
-                while index + 1 < characters.len()
-                    && !(characters[index] == '*' && characters[index + 1] == '/')
-                {
-                    index += 1;
-                }
-                index = (index + 2).min(characters.len());
+                index = skip_nested_block_comment(&characters, index + 2);
             }
-            '"' | '\'' => index = skip_quoted(&characters, index),
+            '"' => index = skip_quoted(&characters, index),
+            '\'' if char_literal_end(&characters, index).is_some() => {
+                index = char_literal_end(&characters, index).expect("checked above");
+            }
             'r' if raw_string_end(&characters, index).is_some() => {
                 index = raw_string_end(&characters, index).expect("checked above");
             }
@@ -300,6 +312,37 @@ fn tokens_without_comments_or_strings(source: &str) -> Vec<String> {
         }
     }
     tokens
+}
+
+fn skip_nested_block_comment(characters: &[char], mut index: usize) -> usize {
+    let mut depth = 1;
+    while index < characters.len() {
+        match (characters.get(index), characters.get(index + 1)) {
+            (Some('/'), Some('*')) => {
+                depth += 1;
+                index += 2;
+            }
+            (Some('*'), Some('/')) => {
+                depth -= 1;
+                index += 2;
+                if depth == 0 {
+                    return index;
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    characters.len()
+}
+
+fn char_literal_end(characters: &[char], start: usize) -> Option<usize> {
+    let mut index = start + 1;
+    if characters.get(index) == Some(&'\\') {
+        index += 2;
+    } else {
+        index += 1;
+    }
+    (characters.get(index) == Some(&'\'')).then_some(index + 1)
 }
 
 fn skip_quoted(characters: &[char], mut index: usize) -> usize {
