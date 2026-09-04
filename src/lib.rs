@@ -9,6 +9,7 @@ pub mod cmd;
 pub mod config;
 pub mod config_lifecycle;
 pub mod config_revision;
+pub(crate) mod config_validation;
 pub mod control;
 pub mod control_client;
 pub mod diagnostics;

@@ -9,6 +9,7 @@
 extern crate yaml_rust2;
 
 use crate::cli;
+use crate::config_validation::{self, ManualTriggerInput, ManualTriggerViolation};
 use crate::errors;
 use crate::rules::{OutputPolicy, Readiness, Rules};
 use crate::yaml;
@@ -513,28 +514,35 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     };
     // MANUAL-TRIGGER-CONTRACT §4: ambiguous combinations are actionable
     // errors, never silent precedence.
-    if manual {
-        if !task_change.is_empty() {
-            return Err(errors::FzzError::InvalidConfigError(
-                format!("Job '{}' declares both 'trigger: manual' and 'change'", name),
-                None,
-                Some("Manual jobs never match filesystem events; remove 'change' or 'trigger: manual'.".to_owned()),
-            ));
-        }
-        if !task_ignore.is_empty() {
-            return Err(errors::FzzError::InvalidConfigError(
-                format!(
-                    "Job '{}' declares both 'trigger: manual' and 'ignore'",
-                    name
-                ),
-                None,
-                Some(
-                    "'ignore' is inert on a manual job; remove 'ignore' or 'trigger: manual'."
-                        .to_owned(),
-                ),
-            ));
-        }
-    }
+    config_validation::validate_manual_trigger(ManualTriggerInput {
+        manual,
+        change_patterns: &task_change,
+        ignore_patterns: &task_ignore,
+    })
+    .map_err(|violation| match violation {
+        ManualTriggerViolation::Change => errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' declares both 'trigger: manual' and 'change'",
+                name
+            ),
+            None,
+            Some(
+                "Manual jobs never match filesystem events; remove 'change' or 'trigger: manual'."
+                    .to_owned(),
+            ),
+        ),
+        ManualTriggerViolation::Ignore => errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' declares both 'trigger: manual' and 'ignore'",
+                name
+            ),
+            None,
+            Some(
+                "'ignore' is inert on a manual job; remove 'ignore' or 'trigger: manual'."
+                    .to_owned(),
+            ),
+        ),
+    })?;
 
     let (watch_patterns, ignore_patterns) = if manual {
         // MANUAL-TRIGGER-CONTRACT §3.1: root `on` scope never applies to a
@@ -1398,6 +1406,62 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
     }
 
     formatted_rules
+}
+
+#[cfg(test)]
+mod boundary_characterization_tests {
+    use super::from_yaml;
+    use crate::rules::OutputPolicy;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn preferred_jobs_decode_domain_fields_and_defaults() {
+        let rules = from_yaml(
+            "on:\n  change: [\"src/**\"]\nexecution:\n  output: capture\njobs:\n  - name: build\n    run: cargo build\n    env: {PROFILE: dev}\n",
+        )
+        .expect("preferred jobs config");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "build");
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].output(), OutputPolicy::Capture);
+        assert_eq!(
+            rules[0].environment(),
+            &BTreeMap::from([(String::from("PROFILE"), String::from("dev"))])
+        );
+        assert!(!rules[0].run_on_init());
+    }
+
+    #[test]
+    fn legacy_root_list_decodes_without_preferred_defaults() {
+        let rules =
+            from_yaml("- name: test\n  run: cargo test\n  change: tests/**\n  run_on_init: true\n")
+                .expect("legacy task-list config");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "test");
+        assert_eq!(rules[0].watch_patterns(), vec!["tests/**"]);
+        assert!(rules[0].run_on_init());
+        assert_eq!(rules[0].output(), OutputPolicy::Inherit);
+    }
+
+    #[test]
+    fn cross_field_error_order_keeps_manual_change_before_run_on_init() {
+        let error = from_yaml(
+            "jobs:\n  - name: manual\n    trigger: manual\n    change: src/**\n    run_on_init: true\n    run: ./wait.sh\n",
+        )
+        .expect_err("ambiguous manual job");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("both 'trigger: manual' and 'change'"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !message.contains("'trigger: manual' and 'run_on_init'"),
+            "later cross-field failure must not win: {message}"
+        );
+    }
 }
 
 #[cfg(test)]
