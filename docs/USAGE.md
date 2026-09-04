@@ -139,6 +139,10 @@ matching a subcommand still invokes that subcommand.
 
 This is the whole loop: config → check → run → watch.
 
+### Trigger the pipeline from the keyboard
+
+While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Ctrl-C starts a graceful shutdown. Piped input accepts the same Ctrl-G byte. Closed input does not cause an error.
+
 ## 2. Daily workflow decision table
 
 | Goal | Command | Watcher? | Side effects |

@@ -190,6 +190,9 @@ the `legacy` profile, never assumed facts.
 | Config reload | see §6.1 — four distinct behaviors, never guess from a single symptom |
 | Corrupt history | state file damaged → delete to reset, or rely on confidence=None |
 | Feedback loop | watcher noise from generated files → `ignore` or `respect_gitignore: true` |
+| Task runs more than expected after one editor save | backup or temporary files also matched → inspect with `fzz -v` / `fzz explain PATH`, then add a precise `ignore` rule |
+
+Some editors create a backup file when you save a file. For example, Vim can create a file that ends in `~`. One save can therefore cause events for different paths. Funzzy removes duplicate events for one path, but it keeps events for different paths. Add the generated file pattern to `ignore`. Do not disable event handling.
 
 ### 6.1 Config reload — four distinct behaviors
 
