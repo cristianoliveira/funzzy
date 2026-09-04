@@ -1,7 +1,7 @@
 ---
 id: TASK-0169
 title: Define FZZ domain ports and dependency boundaries
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [architecture, domain, ports, dependency-direction]
