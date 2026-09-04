@@ -17,10 +17,11 @@ watcher runtime.
 
 `tests/domain_boundaries.rs` recursively enumerates every Rust source file
 under `src/domain/` and checks it plus the current domain foundations: `rules`,
-`plan`, `template`, and `service_lifecycle`. The check reads production source
-only, so adapter use in a module's tests does not weaken the rule. Mutation
-cases prove direct, aliased, grouped/multiline, and `super` infrastructure
-imports fail.
+`plan`, `template`, and `service_lifecycle`. Its token-aware scan ignores
+comments and strings, removes only `#[cfg(test)]` items (not later production
+items), and rejects both imports and fully-qualified `crate::…`/`super::…`
+references. Mutation cases prove direct, aliased, grouped/multiline, `super`,
+and compiling qualified infrastructure references fail.
 
 ## Inventory
 
