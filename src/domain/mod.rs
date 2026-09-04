@@ -9,3 +9,5 @@
 //! TASK-0170, execution transitions in TASK-0171, or control/output queries
 //! in TASK-0173. Keeping this module private prevents an unused architecture
 //! sketch from becoming a public compatibility surface.
+
+pub(crate) mod finite_lifecycle;
