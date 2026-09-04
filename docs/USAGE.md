@@ -139,6 +139,10 @@ matching a subcommand still invokes that subcommand.
 
 This is the whole loop: config → check → run → watch.
 
+### Trigger the pipeline from the keyboard
+
+While watching, press **Ctrl-G** once to run the complete configured pipeline through the normal scheduler. A press during an active generation is latched and runs once after it finishes; additional presses are ignored. Ctrl-C remains graceful shutdown. Piped stdin accepts the same Ctrl-G byte, and closed stdin is consumed safely.
+
 ## 2. Daily workflow decision table
 
 | Goal | Command | Watcher? | Side effects |
