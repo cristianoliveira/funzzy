@@ -83,8 +83,7 @@ scope reduction before cut:
 ## 4. Supported environment and install matrix
 
 - Minimum supported Rust version: the Clap-4.6 toolchain (see `nix/` and CI).
-- Install channels: Cargo (`cargo install funzzy`), crates.io, GitHub release
-  binaries, Nix (stable package), source builds.
+- Install channels: Cargo (`cargo install funzzy`; the first-party `fzz` alias package publishes after the canonical crate), crates.io, GitHub release binaries, Nix (stable package), source builds.
 - Config formats: preferred `jobs:` list, accepted legacy task forms.
 - Protocol/schema versions: declared in `capabilities` (protocolVersion,
   schemaVersion); additive evolution only.
@@ -96,14 +95,16 @@ scope reduction before cut:
 
 ```text
 candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
-  -> GitHub release -> crates.io publish -> stable Nix update -> verify
+  -> GitHub release -> crates.io publish `funzzy`
+  -> crates.io publish exact-version `fzz` alias -> stable Nix update -> verify
 ```
 
 - Ownership: planning and CI **cannot** publish implicitly. The irreversible
   step (TASK-0063) requires exact SHA approval from the maintainer.
 - Tags and releases are immutable; never amended, moved, or recreated.
 - Partial release resumes channel-aware; never blindly republishes a channel
-  that already succeeded.
+  that already succeeded. If canonical `funzzy` succeeds and the `fzz` alias
+  fails, verify registry state, fix forward, and publish only the missing alias.
 
 ## 6. Roll-forward policy
 

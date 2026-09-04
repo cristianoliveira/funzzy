@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Verifies that the first-party `fzz` package installs the canonical short-name
+# binary and contains no repository-local artifacts.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALL_ROOT="$(mktemp -d)"
+ALIAS_MANIFEST="$ROOT/crates/fzz/Cargo.toml"
+trap 'rm -rf "$INSTALL_ROOT"' EXIT
+
+cargo install --quiet --path "$ROOT/crates/fzz" --root "$INSTALL_ROOT"
+ALIAS_BIN="$INSTALL_ROOT/bin/fzz"
+
+"$ALIAS_BIN" --version > "$INSTALL_ROOT/alias-version"
+cargo run --quiet --manifest-path "$ROOT/Cargo.toml" --bin fzz -- --version \
+  > "$INSTALL_ROOT/canonical-version"
+diff -u "$INSTALL_ROOT/canonical-version" "$INSTALL_ROOT/alias-version"
+
+"$ALIAS_BIN" --help > "$INSTALL_ROOT/alias-help"
+cargo run --quiet --manifest-path "$ROOT/Cargo.toml" --bin fzz -- --help \
+  > "$INSTALL_ROOT/canonical-help"
+diff -u "$INSTALL_ROOT/canonical-help" "$INSTALL_ROOT/alias-help"
+
+set +e
+"$ALIAS_BIN" run > "$INSTALL_ROOT/alias-error-out" 2> "$INSTALL_ROOT/alias-error"
+alias_status=$?
+cargo run --quiet --manifest-path "$ROOT/Cargo.toml" --bin fzz -- run \
+  > "$INSTALL_ROOT/canonical-error-out" 2> "$INSTALL_ROOT/canonical-error"
+canonical_status=$?
+set -e
+
+if [ "$alias_status" -ne 2 ] || [ "$canonical_status" -ne 2 ]; then
+  echo "alias and canonical missing-target errors must both exit 2" >&2
+  exit 1
+fi
+diff -u "$INSTALL_ROOT/canonical-error-out" "$INSTALL_ROOT/alias-error-out"
+diff -u "$INSTALL_ROOT/canonical-error" "$INSTALL_ROOT/alias-error"
+
+package_files="$(cargo package --quiet --manifest-path "$ALIAS_MANIFEST" --list --allow-dirty)"
+if grep -Eq '(^|/)(plans|reports|pi-watcher|\.tmp)(/|$)|\.(log|sock)$' <<< "$package_files"; then
+  echo "fzz package contains a forbidden repository artifact:" >&2
+  echo "$package_files" >&2
+  exit 1
+fi
+
+python3 - "$ALIAS_MANIFEST" <<'PY'
+import json
+import subprocess
+import sys
+
+manifest = sys.argv[1]
+data = json.loads(subprocess.check_output([
+    "cargo", "metadata", "--manifest-path", manifest,
+    "--no-deps", "--format-version", "1",
+]))
+package = data["packages"][0]
+assert package["name"] == "fzz"
+assert [target["name"] for target in package["targets"] if "bin" in target["kind"]] == ["fzz"]
+assert [(dependency["name"], dependency["req"]) for dependency in package["dependencies"]] == [("funzzy", f"={package['version']}")]
+PY
+
+echo "fzz-alias-check OK"

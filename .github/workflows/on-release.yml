@@ -32,19 +32,58 @@ jobs:
       - name: Version identity gate (exact tag/version/package equality)
         run: |
           git fetch --tags --force
-          # Self-contained identity gate. Runs from the immutable tag checkout
-          # (RELEASE-BOUNDARY §5); the stable Nix package is the FINAL channel
-          # and is enforced by its own gate at promotion, so it is intentionally
-          # not part of this check.
-          CARGO="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
-          LOCK="$(grep -A1 'name = "funzzy"' Cargo.lock | grep '^version' | head -1 | sed 's/^version = "\(.*\)"/\1/')"
-          test "$CARGO" = "$LOCK" || { echo "Cargo.toml ($CARGO) != Cargo.lock ($LOCK)"; exit 1; }
-          echo "Cargo version:   $CARGO"
-          echo "Lock version:    $LOCK"
-          test "v${CARGO}" = "$(git describe --tags --exact-match HEAD)" || \
-            { echo "tag must equal v<Cargo version>"; exit 1; }
+          scripts/version-check --release
 
-      - name: Publish crate
-        run: cargo publish --token ${CRATES_TOKEN}
+      - name: Verify the fzz alias package
+        run: scripts/fzz-alias-check
+
+      - name: Publish canonical crate, then exact-version alias
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
+
+          crate_version_exists() {
+            curl --fail --silent --show-error \
+              "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1
+          }
+
+          verify_owner() {
+            curl --fail --silent --show-error \
+              "https://crates.io/api/v1/crates/$1/owners" |
+              python3 -c 'import json,sys; users=json.load(sys.stdin)["users"]; assert any(user["login"] == "cristianoliveira" for user in users)'
+          }
+
+          if crate_version_exists funzzy; then
+            echo "funzzy $VERSION already exists; verifying owner and resuming."
+            verify_owner funzzy
+          else
+            cargo publish --token "$CRATES_TOKEN"
+          fi
+
+          # The alias has an exact registry dependency. Wait until a newly
+          # published canonical version is visible before publishing it.
+          for attempt in $(seq 1 60); do
+            if crate_version_exists funzzy; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "funzzy $VERSION did not become visible within five minutes" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+
+          if crate_version_exists fzz; then
+            echo "fzz $VERSION already exists; verifying owner and resuming."
+            verify_owner fzz
+          else
+            cargo publish --manifest-path crates/fzz/Cargo.toml --dry-run
+            cargo publish --manifest-path crates/fzz/Cargo.toml --token "$CRATES_TOKEN"
+          fi
+
+          verify_owner fzz
+          curl --fail --silent --show-error \
+            "https://crates.io/api/v1/crates/fzz/$VERSION/dependencies" |
+            python3 -c 'import json,sys; version=sys.argv[1]; deps=json.load(sys.stdin)["dependencies"]; assert any(dep["crate_id"] == "funzzy" and dep["req"] == f"={version}" for dep in deps)' "$VERSION"

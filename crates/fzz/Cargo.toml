@@ -1,0 +1,24 @@
+[package]
+name = "fzz"
+version = "2.0.0"
+authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
+description = "Official short-name installer for the Funzzy file watcher"
+license = "MIT"
+repository = "https://github.com/cristianoliveira/funzzy"
+readme = "README.md"
+keywords = ["watcher", "workflow", "cli", "development"]
+categories = ["command-line-utilities", "development-tools"]
+edition = "2021"
+rust-version = "1.97"
+publish = ["crates-io"]
+default-run = "fzz"
+include = ["src/**", "Cargo.toml", "README.md", "LICENSE"]
+
+[[bin]]
+name = "fzz"
+path = "src/main.rs"
+
+[dependencies]
+# The path supports repository tests. Cargo removes it from the published
+# manifest and uses the exact crates.io version.
+funzzy = { version = "=2.0.0", path = "../.." }
