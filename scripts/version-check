@@ -4,6 +4,7 @@
 # Inventories every version-bearing surface and verifies they agree:
 #   - Cargo.toml (source of truth for built binary/crate)
 #   - Cargo.lock package version
+#   - crates/fzz alias package version + exact canonical dependency
 #   - `fzz --version` / `funzzy --version` (built from Cargo metadata)
 #   - capabilities watcherVersion (built from Cargo metadata at compile time)
 #   - pi-watcher golden fixtures (protocol snapshot) — additive, checked for drift
@@ -41,6 +42,10 @@ fi
 
 CARGO_VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
 LOCK_VERSION="$(grep -A1 'name = "funzzy"' Cargo.lock | grep '^version' | head -1 | sed 's/^version = "\(.*\)"/\1/')"
+ALIAS_MANIFEST="crates/fzz/Cargo.toml"
+ALIAS_NAME="$(grep -m1 '^name' "$ALIAS_MANIFEST" | sed 's/^name = "\(.*\)"/\1/')"
+ALIAS_VERSION="$(grep -m1 '^version' "$ALIAS_MANIFEST" | sed 's/^version = "\(.*\)"/\1/')"
+ALIAS_DEPENDENCY="$(sed -n 's/^funzzy = { version = "\(=[^"]*\)".*/\1/p' "$ALIAS_MANIFEST")"
 
 errors=0
 
@@ -48,13 +53,27 @@ fail() { echo "INCONSISTENT: $*" >&2; errors=$((errors + 1)); }
 
 echo "Cargo version:   $CARGO_VERSION"
 echo "Lock version:    $LOCK_VERSION"
+echo "fzz alias:       $ALIAS_VERSION (funzzy $ALIAS_DEPENDENCY)"
 
 # 1. Cargo.toml == Cargo.lock
 if [ "$CARGO_VERSION" != "$LOCK_VERSION" ]; then
   fail "Cargo.toml ($CARGO_VERSION) != Cargo.lock ($LOCK_VERSION)"
 fi
 
-# 2. Built binaries report the Cargo version (cargo metadata is source of truth).
+# 2. The short-name installer and its canonical dependency stay in exact
+#    release lockstep. `cargo install fzz` must never resolve different
+#    product behavior from `cargo install funzzy`.
+if [ "$ALIAS_NAME" != "fzz" ]; then
+  fail "$ALIAS_MANIFEST package name ($ALIAS_NAME) != fzz"
+fi
+if [ "$CARGO_VERSION" != "$ALIAS_VERSION" ]; then
+  fail "$ALIAS_MANIFEST version ($ALIAS_VERSION) != Cargo ($CARGO_VERSION)"
+fi
+if [ "$ALIAS_DEPENDENCY" != "=$CARGO_VERSION" ]; then
+  fail "$ALIAS_MANIFEST funzzy dependency ($ALIAS_DEPENDENCY) != =$CARGO_VERSION"
+fi
+
+# 3. Built binaries report the Cargo version (cargo metadata is source of truth).
 if command -v cargo >/dev/null 2>&1; then
   BIN_VERSION="$(cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")"
   if [ "$CARGO_VERSION" != "$BIN_VERSION" ]; then
@@ -62,7 +81,7 @@ if command -v cargo >/dev/null 2>&1; then
   fi
 fi
 
-# 3. Stable Nix package must point at a tag equal to Cargo version (release only).
+# 4. Stable Nix package must point at a tag equal to Cargo version (release only).
 #    Prerelease Cargo versions (2.0.0-beta.N) are checked only for template
 #    sanity; the stable Nix package intentionally stays on the last stable tag
 #    until the candidate cut (RELEASE-BOUNDARY §4).
@@ -88,7 +107,7 @@ if [ -f nix/package.nix ]; then
   fi
 fi
 
-# 4. Tag: for a stable release the tag must exist and match exactly. The
+# 5. Tag: for a stable release the tag must exist and match exactly. The
 #    candidate prep (TASK-0062) is pre-tag by design: --candidate skips the
 #    existence check (the tag is created at publication, TASK-0063) while
 #    still enforcing everything else.
@@ -104,7 +123,7 @@ else
   echo "Tag:             (prerelease $CARGO_VERSION, tag not required)"
 fi
 
-# 5. README release label, when a version marker is present. Prerelease
+# 6. README release label, when a version marker is present. Prerelease
 #    versions may be labeled by their major (e.g. "Version 2.0.0" for
 #    2.0.0-beta.1); stable versions must match exactly.
 if grep -qE 'Version 2\.0\.0|v2\.0\.0|### Version' README.md; then
@@ -118,7 +137,7 @@ if grep -qE 'Version 2\.0\.0|v2\.0\.0|### Version' README.md; then
   fi
 fi
 
-# 6. pi-watcher fixtures carry no hardcoded funzzy version (they use tokens).
+# 7. pi-watcher fixtures carry no hardcoded funzzy version (they use tokens).
 if grep -qE '"watcherVersion"' pi-watcher/src/domain/fixtures/*.json 2>/dev/null; then
   fail "pi-watcher fixtures must not hardcode watcherVersion (stale on release)"
 fi
