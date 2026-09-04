@@ -1,7 +1,7 @@
 ---
 id: TASK-0171
 title: Isolate execution domain state transitions from process adapters
-status: todo
+status: doing
 depends_on: [TASK-0169]
 priority: high
 tags: [architecture, domain, executor, services, state-machine]
