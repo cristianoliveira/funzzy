@@ -14,6 +14,9 @@ use crate::plan::{
 use crate::rules::CommandLine;
 use crate::stdout;
 
+/// Compatibility re-export for callers that inject a deterministic clock.
+pub use crate::domain::ports::Clock;
+
 /// Bounded service restart attempts on unexpected exit (TASK-0035).
 pub const SERVICE_MAX_RESTARTS: usize = 3;
 /// Backoff between service restarts (TASK-0035).
@@ -293,12 +296,6 @@ impl ProcessRunner for SystemProcessRunner {
         }?;
         Ok(Box::new(child))
     }
-}
-
-pub trait Clock: Send + Sync {
-    fn now(&self) -> Instant;
-    fn elapsed(&self, started: Instant) -> Duration;
-    fn sleep(&self, duration: Duration);
 }
 
 pub struct SystemClock;
