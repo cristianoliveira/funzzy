@@ -7,18 +7,18 @@
 
 **One reliable edit loop for developers and coding agents.**
 
-Funzzy is a fast Rust file watcher and local workflow runner. Define checks once, run them when files change, and inspect the exact result without scraping logs or trusting stale green output.
+Funzzy is a fast Rust file watcher and local workflow runner. You define checks in one YAML file. Funzzy runs matching jobs when files change. It reports the state of each run, so you do not have to inspect logs or reuse an old result.
 
 ```text
-edit -> match changed paths -> run configured jobs -> inspect fresh result -> repeat
+edit -> match changed files -> run jobs -> inspect result -> repeat
 ```
 
 ## Why Funzzy?
 
-- **One workflow:** use the same YAML for watching, one-shot local runs, editors, CI, and agents.
-- **Predictable execution:** declaration order, explicit parallel groups, debounced generations, cancellation, and process-tree cleanup.
-- **Useful long-running services:** readiness-enabled services can stay alive after their startup generation settles.
-- **Exact feedback:** a local control socket exposes current status, generation identity, bounded output, and cancellation.
+- **One workflow:** use the same YAML file for watch mode, local runs, editors, CI, and agents.
+- **Predictable execution:** Funzzy runs jobs in declared order. Named groups enable parallel work. Cancellation stops the complete process tree.
+- **Long-running services:** a readiness check confirms that a service started correctly. The service can then stay active.
+- **Exact feedback:** local tools can use a control socket. They can read status and output or cancel a specific run.
 
 Funzzy has two equivalent binary names: `funzzy` and the shorter `fzz`. This README uses `fzz`.
 
@@ -62,13 +62,13 @@ fzz -- "@quick"           # concise alias for: fzz watch "@quick"
 fzz run "@quick"          # run once and exit
 ```
 
-A secondary worktree can keep finite checks while omitting services:
+A secondary worktree can run checks without starting services:
 
 ```bash
 fzz --no-services -- "@quick"
 ```
 
-Declaration order matters. Only consecutive jobs with the same `parallel` name may overlap; other jobs create serial barriers.
+Declaration order is important. Consecutive jobs with the same `parallel` name can run at the same time. Other jobs run in sequence.
 
 ## Start in one minute
 
@@ -94,24 +94,24 @@ fzz run build                    # finite local run
 fzz                              # start watching
 ```
 
-`fzz init` never overwrites an existing configuration. Use `fzz migrate` to rewrite an accepted legacy configuration into the preferred `jobs:` form.
+`fzz init` does not overwrite an existing configuration. Use `fzz migrate` to convert an accepted old configuration to the `jobs:` form.
 
 > [!NOTE]
 > V2 (`2.0.0`) is the current line. Version 1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1). See the [migration guide](docs/MIGRATION.md).
 
-## Mental model
+## How it works
 
-- A filesystem batch creates one numbered **generation**.
-- Matching jobs form an ordered plan. Consecutive named parallel groups may overlap.
-- A newer generation can wait for or replace active work according to the busy policy.
-- Finite job timeouts terminate and reap the complete process group.
-- Service readiness settles startup; service health remains a separate status view.
-- Valid configuration changes reload in place. Invalid changes fail visibly instead of keeping stale behavior.
-- Control clients operate on exact generations, so freshness is explicit.
+- Funzzy groups file events into a batch. Each batch gets a **generation** number.
+- Matching jobs form an ordered plan. Consecutive jobs in the same named group can run in parallel.
+- The busy policy controls what happens when a new generation starts. Funzzy waits for active work or replaces it.
+- A finite job must exit. Its timeout stops and reaps the complete process group.
+- A readiness check confirms service startup. Service health then has a separate status.
+- Funzzy reloads valid configuration changes. It stops with a clear error for an invalid change.
+- Control clients use an exact generation number. This number identifies one result.
 
-## Humans and agents use the same loop
+## People and agents use the same loop
 
-Humans can watch terminal output and press **Ctrl-G** to trigger the full pipeline. Automation can use the control socket:
+You can read terminal output and press **Ctrl-G** to start all configured jobs. An agent can use the control socket:
 
 ```bash
 fzz ctl capabilities --format toon
@@ -120,7 +120,7 @@ fzz ctl run "@quick" --wait --timeout 5m --format toon
 fzz ctl output --generation 12 --tail 80 --format toon
 ```
 
-Funzzy remains local and provider-neutral. It runs your commands; scripts own external services, credentials, and provider-specific polling.
+Funzzy runs local commands and does not depend on a CI provider. Your scripts manage external services, credentials, and provider requests.
 
 ## Learn more
 
@@ -139,7 +139,7 @@ Funzzy remains local and provider-neutral. It runs your commands; scripts own ex
 
 ## Why it exists
 
-Traditional watchers optimize for a person reading a terminal. Coding agents also need exact run identity, freshness, bounded evidence, and safe cancellation. Funzzy provides both without replacing the fast local workflow developers already know.
+Traditional file watchers show output in a terminal. Coding agents also need an exact run number, current results, short failure output, and safe cancellation. Funzzy provides these functions in the same local workflow.
 
 Inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr).
 

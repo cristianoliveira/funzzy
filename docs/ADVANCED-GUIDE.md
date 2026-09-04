@@ -192,7 +192,7 @@ the `legacy` profile, never assumed facts.
 | Feedback loop | watcher noise from generated files → `ignore` or `respect_gitignore: true` |
 | Task runs more than expected after one editor save | backup or temporary files also matched → inspect with `fzz -v` / `fzz explain PATH`, then add a precise `ignore` rule |
 
-Editors that create backup siblings—such as Vim `~` files—can produce several legitimate filesystem events for one save. Funzzy deduplicates one batch, but distinct matching paths remain distinct facts. Prefer ignoring the generated filename pattern rather than disabling event handling.
+Some editors create a backup file when you save a file. For example, Vim can create a file that ends in `~`. One save can therefore cause events for different paths. Funzzy removes duplicate events for one path, but it keeps events for different paths. Add the generated file pattern to `ignore`. Do not disable event handling.
 
 ### 6.1 Config reload — four distinct behaviors
 

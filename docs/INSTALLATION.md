@@ -18,7 +18,7 @@ brew install cristianoliveira/tap/funzzy
 
 ## Linux
 
-The installer detects `x86_64` or `aarch64`, verifies the published SHA-256 checksum, and installs both binaries into `/usr/local/bin`:
+The installer supports `x86_64` and `aarch64`. It verifies the published SHA-256 checksum. It installs both binaries in `/usr/local/bin`:
 
 ```bash
 curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/main/linux-install.sh | sh
@@ -74,7 +74,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ## From source
 
-Funzzy requires Rust and Cargo. The minimum supported Rust version is declared by `rust-version` in `Cargo.toml`.
+Funzzy requires Rust and Cargo. The `rust-version` value in `Cargo.toml` specifies the minimum Rust version.
 
 Install from GitHub:
 
