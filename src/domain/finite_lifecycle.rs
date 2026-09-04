@@ -7,6 +7,8 @@
 /// Result of observing one finite-job command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProcessResult {
+    /// The task has work ready to spawn.
+    NotStarted,
     /// The command is still running.
     Running,
     /// The command exited successfully.
@@ -44,6 +46,7 @@ pub(crate) enum FailureAction {
 pub(crate) enum Decision {
     Cancelled,
     TimedOut,
+    Start,
     Continue,
     Passed,
     Failed(FailureAction),
@@ -68,6 +71,7 @@ pub(crate) fn resolve(
         return Decision::TimedOut;
     }
     match observation.process {
+        ProcessResult::NotStarted => Decision::Start,
         ProcessResult::Running => Decision::Continue,
         ProcessResult::Succeeded => Decision::Passed,
         ProcessResult::Failed => Decision::Failed(match (fail_fast, recovery_eligible) {
@@ -94,6 +98,10 @@ mod tests {
     #[test]
     fn each_process_result_has_a_decision() {
         assert_eq!(
+            resolve(observation(ProcessResult::NotStarted), false, false),
+            Decision::Start
+        );
+        assert_eq!(
             resolve(observation(ProcessResult::Running), false, false),
             Decision::Continue
         );
@@ -110,6 +118,7 @@ mod tests {
     #[test]
     fn cancellation_wins_over_timeout_and_process_result() {
         for process in [
+            ProcessResult::NotStarted,
             ProcessResult::Running,
             ProcessResult::Succeeded,
             ProcessResult::Failed,
@@ -132,6 +141,7 @@ mod tests {
     #[test]
     fn timeout_wins_over_process_result() {
         for process in [
+            ProcessResult::NotStarted,
             ProcessResult::Running,
             ProcessResult::Succeeded,
             ProcessResult::Failed,
