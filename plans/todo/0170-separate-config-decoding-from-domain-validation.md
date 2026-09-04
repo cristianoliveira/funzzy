@@ -1,7 +1,7 @@
 ---
 id: TASK-0170
 title: Separate configuration decoding from domain validation
-status: todo
+status: doing
 depends_on: [TASK-0169]
 priority: high
 tags: [architecture, config, domain, validation]
