@@ -12,7 +12,7 @@ pub mod config_revision;
 pub mod control;
 pub mod control_client;
 pub mod diagnostics;
-pub mod domain;
+mod domain;
 pub mod duration_history;
 pub mod duration_recorder;
 pub mod duration_store;

@@ -1,14 +1,11 @@
-//! Domain contracts and ports.
+//! FZZ's internal domain-boundary marker.
 //!
-//! This module is the dependency boundary for FZZ's domain behavior. Domain
-//! planning, matching, lifecycle decisions, generation state, and outcomes may
-//! depend on domain values and the ports declared here. They must not depend on
-//! CLI parsing, filesystem watcher implementations, child-process APIs,
-//! control transport, or terminal/logging adapters.
+//! Domain planning, matching, lifecycle decisions, generation state, and
+//! outcomes must not depend on CLI, filesystem watching, process execution,
+//! control transport, stdout/logging, or watcher runtime modules.
 //!
-//! Adapters implement these ports at the application edge. The port traits do
-//! not require `Send`, `Sync`, sockets, threads, OS paths, process signals, or
-//! concrete serialization formats; those are runtime choices, not domain
-//! policy.
-
-pub mod ports;
+//! No port API is declared here yet. A port becomes real only when its first
+//! domain consumer and adapter land together: configuration validation in
+//! TASK-0170, execution transitions in TASK-0171, or control/output queries
+//! in TASK-0173. Keeping this module private prevents an unused architecture
+//! sketch from becoming a public compatibility surface.
