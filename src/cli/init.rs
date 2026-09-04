@@ -145,6 +145,9 @@ pub fn render_init_template() -> String {
     out.push_str("    run: echo \"Funzzy hello world! Next step, add rules into .watch.yaml\"\n");
 
     out.push_str("\n  - name: list files\n");
+    out.push_str(
+        "    # Broad-root baseline is symlink-safe: directory symlinks are not traversed.\n",
+    );
     let change = find_in(option_catalog::Owner::Job, "change").expect("catalog change");
     out.push_str(&comment_for(change, "    "));
     out.push_str("\n    change: '**/*.txt'\n");
