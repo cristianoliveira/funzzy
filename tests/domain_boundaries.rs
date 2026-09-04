@@ -128,15 +128,15 @@ fn domain_guard_rejects_root_alias_qualified_reference() {
 }
 
 #[test]
-fn domain_boundary_does_not_publish_speculative_ports() {
+fn domain_boundary_keeps_domain_module_private() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
 
     assert!(lib.contains("mod domain;"));
     assert!(!lib.contains("pub mod domain;"));
     assert!(
-        !root.join("src/domain/ports.rs").exists(),
-        "a port becomes public only with its first consumer/adapter"
+        root.join("src/domain/ports.rs").exists(),
+        "the clock port has a real executor consumer and runtime adapter"
     );
 }
 
