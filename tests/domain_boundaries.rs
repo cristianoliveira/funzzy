@@ -1,4 +1,8 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+use syn::visit::{self, Visit};
+use syn::{Attribute, Item, Path as SynPath, UseTree};
 
 mod cmd {
     pub fn execute() {}
@@ -82,15 +86,16 @@ fn domain_guard_continues_after_a_cfg_test_item() {
 }
 
 #[test]
-fn domain_guard_skips_comments_strings_and_only_the_cfg_test_item() {
+fn domain_guard_ignores_comments_strings_lifetimes_and_nested_comments() {
     let source = r#"
         const DESCRIPTION: &str = "crate::watcher::WatchBackend";
-        // crate::cmd::execute();
+        /* outer comment /* nested */ crate::watcher::WatchBackend still outer */
         #[cfg(test)]
         mod tests {
             use crate::watcher;
         }
-        fn production() {
+        fn production(value: &'static str) {
+            let _ = value;
             crate::plan::RunPlan::default();
         }
     "#;
@@ -99,18 +104,22 @@ fn domain_guard_skips_comments_strings_and_only_the_cfg_test_item() {
 }
 
 #[test]
-fn domain_guard_rejects_qualified_path_after_a_lifetime() {
-    let source = "fn production(value: &'static str) { let _ = value; crate::cmd::execute(); }";
+fn domain_guard_ignores_raw_byte_strings() {
+    let source = "const DESCRIPTION: &[u8] = br#\"crate::cmd::execute()\"#; fn production() { crate::plan::RunPlan::default(); }";
 
-    let failure = forbidden_dependency(source).expect("lifetime must not hide a qualified path");
-    assert!(failure.contains("cmd"), "unexpected failure: {failure}");
+    assert!(forbidden_dependency(source).is_none());
 }
 
 #[test]
-fn domain_guard_ignores_nested_block_comments() {
-    let source = "/* outer comment /* nested */ crate::watcher::WatchBackend still outer */ fn production() { crate::plan::RunPlan::default(); }";
-
-    assert!(forbidden_dependency(source).is_none());
+fn domain_guard_rejects_root_alias_qualified_reference() {
+    for source in [
+        "use crate as root; fn production() { root::cmd::execute(); }",
+        "use super as parent; fn production() { parent::cmd::execute(); }",
+    ] {
+        let failure =
+            forbidden_dependency(source).expect("root alias must resolve to crate or super");
+        assert!(failure.contains("cmd"), "unexpected failure: {failure}");
+    }
 }
 
 #[test]
@@ -149,238 +158,142 @@ fn assert_domain_dependencies_are_isolated(file: &Path, source: &str) {
 }
 
 fn forbidden_dependency(source: &str) -> Option<String> {
-    let tokens = production_tokens(source);
-
-    if let Some(module) = forbidden_module_in_imports(&tokens) {
+    let file = syn::parse_file(source).expect("boundary source must parse as Rust");
+    let mut imports = ImportCollector::default();
+    imports.visit_file(&file);
+    if let Some(module) = imports.forbidden {
         return Some(format!("imports infrastructure module {module}"));
     }
-    forbidden_module_in_qualified_paths(&tokens)
+
+    let mut paths = PathCollector {
+        root_aliases: imports.root_aliases,
+        forbidden: None,
+    };
+    paths.visit_file(&file);
+    paths
+        .forbidden
         .map(|module| format!("references infrastructure module {module}"))
 }
 
-fn forbidden_module_in_imports(tokens: &[String]) -> Option<&'static str> {
-    let mut start = 0;
-    while let Some(use_index) = tokens[start..].iter().position(|token| token == "use") {
-        let use_index = start + use_index;
-        let end = tokens[use_index..]
-            .iter()
-            .position(|token| token == ";")
-            .map(|offset| use_index + offset)
-            .unwrap_or(tokens.len());
-        let statement = &tokens[use_index..end];
-        if statement
-            .iter()
-            .any(|token| matches!(token.as_str(), "crate" | "super"))
-        {
-            if let Some(module) = forbidden_module(statement) {
-                return Some(module);
-            }
-        }
-        start = end.saturating_add(1);
-    }
-    None
+#[derive(Default)]
+struct ImportCollector {
+    root_aliases: BTreeSet<String>,
+    forbidden: Option<&'static str>,
 }
 
-fn forbidden_module_in_qualified_paths(tokens: &[String]) -> Option<&'static str> {
-    for (index, token) in tokens.iter().enumerate() {
-        if !matches!(token.as_str(), "crate" | "super") {
-            continue;
-        }
-        let mut path = Vec::new();
-        for token in &tokens[index + 1..] {
-            if matches!(token.as_str(), "::" | "super") {
-                continue;
-            }
-            if is_identifier(token) {
-                path.push(token.clone());
-                continue;
-            }
-            break;
-        }
-        if let Some(module) = forbidden_module(&path) {
-            return Some(module);
+impl<'ast> Visit<'ast> for ImportCollector {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !item_is_cfg_test(item) {
+            visit::visit_item(self, item);
         }
     }
-    None
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        inspect_use_tree(&item.tree, false, self);
+    }
 }
 
-fn forbidden_module(tokens: &[String]) -> Option<&'static str> {
+struct PathCollector {
+    root_aliases: BTreeSet<String>,
+    forbidden: Option<&'static str>,
+}
+
+impl<'ast> Visit<'ast> for PathCollector {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !item_is_cfg_test(item) {
+            visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_path(&mut self, path: &'ast SynPath) {
+        if self.forbidden.is_none() {
+            let mut segments = path.segments.iter();
+            if let Some(first) = segments.next() {
+                let rooted = is_root(&first.ident.to_string())
+                    || self.root_aliases.contains(&first.ident.to_string());
+                if rooted {
+                    self.forbidden = segments
+                        .map(|segment| segment.ident.to_string())
+                        .find_map(|segment| infrastructure_module(&segment));
+                }
+            }
+        }
+        visit::visit_path(self, path);
+    }
+}
+
+fn inspect_use_tree(tree: &UseTree, rooted: bool, collector: &mut ImportCollector) {
+    if collector.forbidden.is_some() {
+        return;
+    }
+    match tree {
+        UseTree::Path(path) => {
+            let name = path.ident.to_string();
+            let rooted = rooted || is_root(&name);
+            if rooted {
+                collector.forbidden = infrastructure_module(&name);
+            }
+            inspect_use_tree(&path.tree, rooted, collector);
+        }
+        UseTree::Name(name) if rooted => {
+            collector.forbidden = infrastructure_module(&name.ident.to_string());
+        }
+        UseTree::Rename(rename) => {
+            let name = rename.ident.to_string();
+            if is_root(&name) || (rooted && name == "self") {
+                collector.root_aliases.insert(rename.rename.to_string());
+            } else if rooted {
+                collector.forbidden = infrastructure_module(&name);
+            }
+        }
+        UseTree::Group(group) => {
+            for tree in &group.items {
+                inspect_use_tree(tree, rooted, collector);
+            }
+        }
+        UseTree::Glob(_) => {}
+        UseTree::Name(_) => {}
+    }
+}
+
+fn item_is_cfg_test(item: &Item) -> bool {
+    let attrs = match item {
+        Item::Const(item) => &item.attrs,
+        Item::Enum(item) => &item.attrs,
+        Item::ExternCrate(item) => &item.attrs,
+        Item::Fn(item) => &item.attrs,
+        Item::ForeignMod(item) => &item.attrs,
+        Item::Impl(item) => &item.attrs,
+        Item::Macro(item) => &item.attrs,
+        Item::Mod(item) => &item.attrs,
+        Item::Static(item) => &item.attrs,
+        Item::Struct(item) => &item.attrs,
+        Item::Trait(item) => &item.attrs,
+        Item::TraitAlias(item) => &item.attrs,
+        Item::Type(item) => &item.attrs,
+        Item::Union(item) => &item.attrs,
+        Item::Use(item) => &item.attrs,
+        Item::Verbatim(_) => return false,
+        _ => return false,
+    };
+    attrs.iter().any(attribute_is_cfg_test)
+}
+
+fn attribute_is_cfg_test(attribute: &Attribute) -> bool {
+    attribute.path().is_ident("cfg")
+        && attribute
+            .meta
+            .require_list()
+            .is_ok_and(|list| list.tokens.to_string() == "test")
+}
+
+fn is_root(name: &str) -> bool {
+    matches!(name, "crate" | "super")
+}
+
+fn infrastructure_module(name: &str) -> Option<&'static str> {
     INFRASTRUCTURE_MODULES
         .iter()
         .copied()
-        .find(|module| tokens.iter().any(|token| token == module))
-}
-
-fn is_identifier(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
-}
-
-fn production_tokens(source: &str) -> Vec<String> {
-    let tokens = tokens_without_comments_or_strings(source);
-    let mut production = Vec::new();
-    let mut index = 0;
-
-    while index < tokens.len() {
-        if tokens[index..].starts_with(&[
-            "#".to_owned(),
-            "[".to_owned(),
-            "cfg".to_owned(),
-            "(".to_owned(),
-            "test".to_owned(),
-            ")".to_owned(),
-            "]".to_owned(),
-        ]) {
-            index = skip_cfg_test_item(&tokens, index + 7);
-        } else {
-            production.push(tokens[index].clone());
-            index += 1;
-        }
-    }
-    production
-}
-
-fn skip_cfg_test_item(tokens: &[String], mut index: usize) -> usize {
-    while index < tokens.len() && !matches!(tokens[index].as_str(), "{" | ";") {
-        index += 1;
-    }
-    if index == tokens.len() || tokens[index] == ";" {
-        return index.saturating_add(1);
-    }
-
-    let mut depth = 0;
-    while index < tokens.len() {
-        match tokens[index].as_str() {
-            "{" => depth += 1,
-            "}" => {
-                depth -= 1;
-                if depth == 0 {
-                    return index + 1;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    tokens.len()
-}
-
-fn tokens_without_comments_or_strings(source: &str) -> Vec<String> {
-    let characters: Vec<char> = source.chars().collect();
-    let mut tokens = Vec::new();
-    let mut index = 0;
-
-    while index < characters.len() {
-        match characters[index] {
-            '/' if characters.get(index + 1) == Some(&'/') => {
-                index += 2;
-                while index < characters.len() && characters[index] != '\n' {
-                    index += 1;
-                }
-            }
-            '/' if characters.get(index + 1) == Some(&'*') => {
-                index = skip_nested_block_comment(&characters, index + 2);
-            }
-            '"' => index = skip_quoted(&characters, index),
-            '\'' if char_literal_end(&characters, index).is_some() => {
-                index = char_literal_end(&characters, index).expect("checked above");
-            }
-            'r' if raw_string_end(&characters, index).is_some() => {
-                index = raw_string_end(&characters, index).expect("checked above");
-            }
-            character if character == '_' || character.is_ascii_alphanumeric() => {
-                let start = index;
-                index += 1;
-                while index < characters.len()
-                    && (characters[index] == '_' || characters[index].is_ascii_alphanumeric())
-                {
-                    index += 1;
-                }
-                tokens.push(characters[start..index].iter().collect());
-            }
-            ':' if characters.get(index + 1) == Some(&':') => {
-                tokens.push("::".to_owned());
-                index += 2;
-            }
-            character if matches!(character, '#' | '[' | ']' | '(' | ')' | '{' | '}' | ';') => {
-                tokens.push(character.to_string());
-                index += 1;
-            }
-            _ => index += 1,
-        }
-    }
-    tokens
-}
-
-fn skip_nested_block_comment(characters: &[char], mut index: usize) -> usize {
-    let mut depth = 1;
-    while index < characters.len() {
-        match (characters.get(index), characters.get(index + 1)) {
-            (Some('/'), Some('*')) => {
-                depth += 1;
-                index += 2;
-            }
-            (Some('*'), Some('/')) => {
-                depth -= 1;
-                index += 2;
-                if depth == 0 {
-                    return index;
-                }
-            }
-            _ => index += 1,
-        }
-    }
-    characters.len()
-}
-
-fn char_literal_end(characters: &[char], start: usize) -> Option<usize> {
-    let mut index = start + 1;
-    if characters.get(index) == Some(&'\\') {
-        index += 2;
-    } else {
-        index += 1;
-    }
-    (characters.get(index) == Some(&'\'')).then_some(index + 1)
-}
-
-fn skip_quoted(characters: &[char], mut index: usize) -> usize {
-    let quote = characters[index];
-    index += 1;
-    while index < characters.len() {
-        if characters[index] == '\\' {
-            index += 2;
-        } else if characters[index] == quote {
-            return index + 1;
-        } else {
-            index += 1;
-        }
-    }
-    characters.len()
-}
-
-fn raw_string_end(characters: &[char], start: usize) -> Option<usize> {
-    let mut quote = start + 1;
-    while characters.get(quote) == Some(&'#') {
-        quote += 1;
-    }
-    if characters.get(quote) != Some(&'"') {
-        return None;
-    }
-    let hashes = quote - start - 1;
-    let mut index = quote + 1;
-    while index < characters.len() {
-        if characters[index] == '"'
-            && characters[index + 1..]
-                .iter()
-                .take(hashes)
-                .all(|char| *char == '#')
-            && index + hashes < characters.len()
-        {
-            return Some(index + hashes + 1);
-        }
-        index += 1;
-    }
-    Some(characters.len())
+        .find(|module| *module == name)
 }
