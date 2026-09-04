@@ -53,6 +53,8 @@ sha2 = "0.11"
 assert_cmd = "=2.2.2"
 predicates = "3.1"
 pretty_assertions = "1.4.1"
+# Parse Rust syntax for architecture-boundary tests; never ship this dependency.
+syn = { version = "2.0", features = ["full", "visit"] }
 
 [[bin]]
 name = "funzzy"
