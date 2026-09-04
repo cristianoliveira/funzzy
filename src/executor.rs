@@ -1315,9 +1315,27 @@ impl Executor {
                 // ORIGINAL deadline governs the job's whole invocation —
                 // recheck it BEFORE any continuation spawn so an expired
                 // budget never starts a command it must immediately kill.
-                if let Some(deadline) = task.deadline {
-                    if self.clock.now() >= deadline {
+                let deadline_elapsed = task
+                    .deadline
+                    .is_some_and(|deadline| self.clock.now() >= deadline);
+                match crate::domain::finite_lifecycle::resolve(
+                    crate::domain::finite_lifecycle::Observation {
+                        cancellation_requested: false,
+                        deadline_elapsed,
+                        process: crate::domain::finite_lifecycle::ProcessResult::NotStarted,
+                    },
+                    fail_fast,
+                    task.recovery_commands.is_some(),
+                ) {
+                    crate::domain::finite_lifecycle::Decision::Start => {}
+                    crate::domain::finite_lifecycle::Decision::TimedOut => {
                         return self.expire_task(task, results);
+                    }
+                    crate::domain::finite_lifecycle::Decision::Cancelled
+                    | crate::domain::finite_lifecycle::Decision::Continue
+                    | crate::domain::finite_lifecycle::Decision::Passed
+                    | crate::domain::finite_lifecycle::Decision::Failed(_) => {
+                        unreachable!("unstarted task resolved unexpectedly")
                     }
                 }
                 let Some(command) = task.commands.pop_front() else {
@@ -1516,6 +1534,7 @@ impl Executor {
                         }
                         crate::domain::finite_lifecycle::Decision::Cancelled
                         | crate::domain::finite_lifecycle::Decision::TimedOut
+                        | crate::domain::finite_lifecycle::Decision::Start
                         | crate::domain::finite_lifecycle::Decision::Continue => {
                             unreachable!("terminal process result resolved unexpectedly")
                         }
