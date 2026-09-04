@@ -3,6 +3,7 @@ use crate::executor::{
     SystemClock, SystemProcessRunner,
 };
 use crate::output::OutputRegistry;
+use crate::path_context;
 use crate::plan::{ExecutionSignature, RunPlan};
 use crate::rules::Rules;
 use crate::stdout;
@@ -1674,7 +1675,7 @@ impl Worker {
         changed: Vec<String>,
         caller_revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<RunRequest, String> {
-        let plan = plan.resolve_context(&self.root)?;
+        let plan = path_context::resolve_context(&plan, &self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_string),
             // TASK-0031: the complete normalized changed-path set rides the

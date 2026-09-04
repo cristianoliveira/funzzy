@@ -18,6 +18,7 @@ use crate::errors::FzzError;
 use crate::executor::RunMetadata;
 use crate::identity::{Batch, BatchId};
 use crate::output::OutputRegistry;
+use crate::path_context;
 use crate::plan::RunPlan;
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
@@ -757,7 +758,7 @@ impl NonBlockStrategy {
             let root = self.shared.lock().unwrap().root().to_path_buf();
             let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
                 let plan = shared.lock().unwrap().target_plan(&target.name)?;
-                let plan = plan.resolve_context(&root).ok()?;
+                let plan = path_context::resolve_context(&plan, &root).ok()?;
                 let signature = plan.execution_signature(concurrency, fail_fast);
                 recorder.estimate(&signature, None)
             });
