@@ -35,6 +35,15 @@ Document and enforce a dependency direction in which domain planning, rules, gen
 - Fresh integration evidence: generation 42, `integration @agent-final`, passed in 400053ms with fingerprint `aa824bbc9dd9`.
 - AST module graph scanned 57 Rust files. It found only the pre-existing `executor` ↔ `stdout` cycle; the private `domain` marker has no outgoing edge. Boundary test complexity is 1.3 average with no high-complexity function; its three SRP findings are test-helper heuristics. The private marker has zero DI violations (the analyzer's no-injection style result is not a violation).
 
+## Current close-out evidence (TASK-0169 slice, commit `828ceaf`)
+
+- Inventory and allowed dependency direction remain documented in `docs/DOMAIN-BOUNDARIES.md` and `.tmp/reports/04-09-26/task-0169-domain-inventory.md`.
+- `src/plan.rs` now keeps cwd policy filesystem-free; `src/path_context.rs` is the crate-private filesystem adapter for existence and symlink containment. No clock/process/output/control ports were added.
+- Focused tests cover absolute paths, parent traversal, workspace root, missing paths, in-workspace paths, and symlink escape. `plan::tests::` passed 37 and `path_context::tests::` passed 3.
+- Static boundary guard passed: `cargo test --test domain_boundaries` (8 tests). Task-context integration passed: `cargo test --features test-integration --test task_execution_context` (2 tests).
+- Fresh configured watcher gates for current HEAD passed: format generation 75 (fingerprint `9ae1c747ce47`), unit generation 73 (same fingerprint), and integration generation 74 (same fingerprint).
+- The pre-existing dirty `pi-watcher` submodule was not modified by this task.
+
 ## Handoff
 
 TASK-0170 may now separate YAML decoding from domain validation. TASK-0171 may now consume the port boundary while extracting execution transitions. TASK-0172 and TASK-0173 remain blocked by their declared dependencies.
