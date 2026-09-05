@@ -100,7 +100,6 @@ impl Startup {
 pub fn run() {
     let args = Arguments::parse();
     let startup = Startup::from_args(&args);
-    let workspace_root = startup.workspace_root.clone();
 
     match args.action {
         // Commands
@@ -171,78 +170,7 @@ pub fn run() {
             target: ref wanted,
             exclude: ref exclusions,
             no_services,
-        } => {
-            let rules = load_rules(&args.config);
-            let concurrency = effective_concurrency(&args, &args.config);
-            let debounce = load_debounce(&args.config);
-            let backend = load_watch_backend(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                concurrency,
-            )
-            .with_debounce(debounce)
-            .with_backend(backend)
-            .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_hooks(load_hooks(&args.config))
-            .with_session_hooks(load_session_hooks(&args.config));
-            // TASK-0092: resolve the config-declared control socket BEFORE
-            // freezing the initial revision so the startup revision's semantic
-            // surface matches every reload candidate (which always carries
-            // `on.socket`). Otherwise a config-declared socket makes every
-            // valid save — even a formatting-only rewrite — look like a
-            // semantic change and commit a new revision.
-            let control_socket = args
-                .control_socket
-                .clone()
-                .or_else(|| config_control_socket(&args.config, &workspace_root));
-            // TASK-0089: freeze the initial immutable revision before any
-            // plan is created; reload (TASK-0090) observes candidates through
-            // the same tracker and only commits on semantic change.
-            let watches = {
-                let mut tracker = crate::config_revision::RevisionTracker::new();
-                let runtime = crate::config_revision::RuntimeConfig::capture(
-                    workspace_root.clone(),
-                    rules.clone(),
-                    concurrency,
-                    debounce,
-                    backend,
-                    load_respect_gitignore(&args.config),
-                    effective_recovery_policy(&args, &args.config),
-                    load_recovery_timeout(&args.config),
-                    load_hooks(&args.config),
-                    load_session_hooks(&args.config),
-                    control_socket.as_deref().map(std::path::PathBuf::from),
-                );
-                match tracker.observe(&runtime) {
-                    crate::config_revision::RevisionDecision::New(revision) => {
-                        watches.with_revision(revision)
-                    }
-                    crate::config_revision::RevisionDecision::NoOp => watches,
-                }
-            };
-            match watches.select_target_with_exclusions(wanted.as_deref(), exclusions, no_services)
-            {
-                Ok(Some(selected)) => {
-                    execute_watch_command(selected, args, startup.event_stream.clone())
-                }
-                Ok(None) => {
-                    let target = wanted.as_deref().unwrap_or_default();
-                    stdout::failure(
-                        &format!("No target found for '{}'", target),
-                        rules::available_targets(&rules),
-                    )
-                }
-                Err(error) => {
-                    stdout::usage_failure("Cannot apply watch exclusions", error.to_string())
-                }
-            }
-        }
+        } => watch_action(&args, &startup, wanted, exclusions, no_services),
         Action::List => {
             let rules = load_rules(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
@@ -250,136 +178,214 @@ pub fn run() {
             }
             stdout::info(&rules::available_targets(&rules));
         }
-        Action::Run { ref target } => {
-            let rules = load_rules(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let concurrency = effective_concurrency(&args, &args.config);
-            let debounce = load_debounce(&args.config);
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                concurrency,
-            )
-            .with_debounce(debounce)
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config));
-            let plan = match watches.run_target_plan(target) {
-                Ok(plan) => plan,
-                Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
-                    &format!("No target found for '{}'", target),
-                    rules::available_targets(&rules),
-                ),
-                Err(error) => stdout::failure("Cannot run target", error.to_string()),
-            };
-
-            let shutdown = install_shutdown_signal_handler(None);
-            let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
-            let command = RunCommand::with_recorder_and_events(
-                workspace_root.clone(),
-                args.verbose,
-                fail_fast,
-                concurrency,
-                Some(Arc::new(DurationRecorder::new(DurationStore::new(
-                    state_file_path(
-                        &std::fs::canonicalize(&workspace_root)
-                            .unwrap_or_else(|_| workspace_root.clone()),
-                        STATE_SCHEMA_VERSION,
-                    ),
-                )))),
-                startup.event_stream.clone(),
-            )
-            .with_hooks(load_hooks(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
-            let result = command.execute(plan, target);
-            let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
-            if signal_exit != 0 {
-                process::exit(signal_exit);
-            }
-            match result {
-                Ok(true) => {}
-                Ok(false) => process::exit(1),
-                Err(error) => stdout::failure("Configured run failed", error),
-            }
-        }
-        Action::Explain { ref path } => {
-            let rules = load_rules(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                effective_concurrency(&args, &args.config),
-            )
-            .with_debounce(load_debounce(&args.config))
-            .with_backend(load_watch_backend(&args.config))
-            .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_hooks(load_hooks(&args.config));
-            let result = watches.explain(path);
-            let facts = crate::watches::ExplainFacts {
-                concurrency: watches.concurrency(),
-                debounce: watches.debounce(),
-            };
-            stdout::info(&explain_output(path, &result, &facts, &watches));
-        }
+        Action::Run { ref target } => run_target_action(&args, &startup, target),
+        Action::Explain { ref path } => explain_action(&args, &startup.workspace_root, path),
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
         // is preserved end to end: it is never joined and re-parsed through a
         // shell. Shell operators only work when the caller explicitly invokes
         // a shell (e.g. `fzz exec -- sh -c '...'`).
-        Action::Exec { command: ref cmd } => {
-            match from_stdin() {
-                Ok(StdinRead::NoPipe) => {
-                    // No stdin and no config -> help and exit 1
-                    println!("{}", Arguments::help_text());
-                    process::exit(1);
-                }
-                Ok(StdinRead::PipeEmpty) => {
-                    stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
-                }
-                Ok(StdinRead::Data(content)) => {
-                    let patterns = match config::extract_paths(content) {
-                        Ok(patterns) => patterns,
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    let watch_rules = match config::from_argv(patterns, cmd.clone()) {
-                        Ok(rules) => {
-                            stdout::info(&format!(
-                                "watching patterns\r{}",
-                                rules[0].watch_patterns().join("\n")
-                            ));
-                            rules
-                        }
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    if let Err(err) = rules::validate_rules(&watch_rules) {
-                        stdout::failure("Invalid config file.", err);
-                    }
-
-                    execute_watch_command(
-                        Watches::with_root(watch_rules, workspace_root),
-                        args,
-                        startup.event_stream.clone(),
-                    );
-                }
-                Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
-            };
-        }
+        Action::Exec { command: ref cmd } => exec_action(&args, &startup, cmd),
     }
 }
 
+/// `fzz watch [-- TARGET]`: build the watch topology from the selected
+/// config, freeze the initial immutable revision, and start the watch command.
+fn watch_action(
+    args: &Arguments,
+    startup: &Startup,
+    wanted: &Option<String>,
+    exclusions: &[String],
+    no_services: bool,
+) {
+    let workspace_root = &startup.workspace_root;
+    let rules = load_rules(&args.config);
+    let concurrency = effective_concurrency(&args, &args.config);
+    let debounce = load_debounce(&args.config);
+    let backend = load_watch_backend(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let watches =
+        Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
+            .with_debounce(debounce)
+            .with_backend(backend)
+            .with_gitignore(load_respect_gitignore(&args.config))
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config))
+            .with_hooks(load_hooks(&args.config))
+            .with_session_hooks(load_session_hooks(&args.config));
+    // TASK-0092: resolve the config-declared control socket BEFORE
+    // freezing the initial revision so the startup revision's semantic
+    // surface matches every reload candidate (which always carries
+    // `on.socket`). Otherwise a config-declared socket makes every
+    // valid save — even a formatting-only rewrite — look like a
+    // semantic change and commit a new revision.
+    let control_socket = args
+        .control_socket
+        .clone()
+        .or_else(|| config_control_socket(&args.config, workspace_root));
+    // TASK-0089: freeze the initial immutable revision before any
+    // plan is created; reload (TASK-0090) observes candidates through
+    // the same tracker and only commits on semantic change.
+    let watches = {
+        let mut tracker = crate::config_revision::RevisionTracker::new();
+        let runtime = crate::config_revision::RuntimeConfig::capture(
+            workspace_root.clone(),
+            rules.clone(),
+            concurrency,
+            debounce,
+            backend,
+            load_respect_gitignore(&args.config),
+            effective_recovery_policy(&args, &args.config),
+            load_recovery_timeout(&args.config),
+            load_hooks(&args.config),
+            load_session_hooks(&args.config),
+            control_socket.as_deref().map(std::path::PathBuf::from),
+        );
+        match tracker.observe(&runtime) {
+            crate::config_revision::RevisionDecision::New(revision) => {
+                watches.with_revision(revision)
+            }
+            crate::config_revision::RevisionDecision::NoOp => watches,
+        }
+    };
+    match watches.select_target_with_exclusions(wanted.as_deref(), exclusions, no_services) {
+        Ok(Some(selected)) => {
+            execute_watch_command(selected, args.clone(), startup.event_stream.clone())
+        }
+        Ok(None) => {
+            let target = wanted.as_deref().unwrap_or_default();
+            stdout::failure(
+                &format!("No target found for '{}'", target),
+                rules::available_targets(&rules),
+            )
+        }
+        Err(error) => stdout::usage_failure("Cannot apply watch exclusions", error.to_string()),
+    }
+}
+
+/// `fzz run TARGET`: execute one target once without watcher IPC.
+fn run_target_action(args: &Arguments, startup: &Startup, target: &str) {
+    let workspace_root = &startup.workspace_root;
+    let rules = load_rules(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let concurrency = effective_concurrency(&args, &args.config);
+    let debounce = load_debounce(&args.config);
+    let watches =
+        Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
+            .with_debounce(debounce)
+            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config));
+    let plan = match watches.run_target_plan(target) {
+        Ok(plan) => plan,
+        Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
+            &format!("No target found for '{}'", target),
+            rules::available_targets(&rules),
+        ),
+        Err(error) => stdout::failure("Cannot run target", error.to_string()),
+    };
+
+    let shutdown = install_shutdown_signal_handler(None);
+    let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
+    let command = RunCommand::with_recorder_and_events(
+        workspace_root.clone(),
+        args.verbose,
+        fail_fast,
+        concurrency,
+        Some(Arc::new(DurationRecorder::new(DurationStore::new(
+            state_file_path(
+                &std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.clone()),
+                STATE_SCHEMA_VERSION,
+            ),
+        )))),
+        startup.event_stream.clone(),
+    )
+    .with_hooks(load_hooks(&args.config))
+    .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+    .with_recovery_timeout(load_recovery_timeout(&args.config))
+    .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
+    let result = command.execute(plan, target);
+    let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
+    if signal_exit != 0 {
+        process::exit(signal_exit);
+    }
+    match result {
+        Ok(true) => {}
+        Ok(false) => process::exit(1),
+        Err(error) => stdout::failure("Configured run failed", error),
+    }
+}
+
+/// `fzz explain PATH`: report which tasks match a path and why.
+fn explain_action(args: &Arguments, workspace_root: &std::path::Path, path: &str) {
+    let rules = load_rules(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let watches = Watches::with_root_and_concurrency(
+        rules.clone(),
+        workspace_root.to_path_buf(),
+        effective_concurrency(&args, &args.config),
+    )
+    .with_debounce(load_debounce(&args.config))
+    .with_backend(load_watch_backend(&args.config))
+    .with_gitignore(load_respect_gitignore(&args.config))
+    .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+    .with_recovery_timeout(load_recovery_timeout(&args.config))
+    .with_hooks(load_hooks(&args.config));
+    let result = watches.explain(path);
+    let facts = crate::watches::ExplainFacts {
+        concurrency: watches.concurrency(),
+        debounce: watches.debounce(),
+    };
+    stdout::info(&explain_output(path, &result, &facts, &watches));
+}
+
+/// `fzz exec -- PROGRAM ARG...`: ad-hoc watch over stdin patterns.
+fn exec_action(args: &Arguments, startup: &Startup, cmd: &[String]) {
+    let workspace_root = &startup.workspace_root;
+    match from_stdin() {
+        Ok(StdinRead::NoPipe) => {
+            // No stdin and no config -> help and exit 1
+            println!("{}", Arguments::help_text());
+            process::exit(1);
+        }
+        Ok(StdinRead::PipeEmpty) => {
+            stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
+        }
+        Ok(StdinRead::Data(content)) => {
+            let patterns = match config::extract_paths(content) {
+                Ok(patterns) => patterns,
+                Err(err) => stdout::failure("Failed to get rules from stdin", err.to_string()),
+            };
+
+            let watch_rules = match config::from_argv(patterns, cmd.to_vec()) {
+                Ok(rules) => {
+                    stdout::info(&format!(
+                        "watching patterns\r{}",
+                        rules[0].watch_patterns().join("\n")
+                    ));
+                    rules
+                }
+                Err(err) => stdout::failure("Failed to get rules from stdin", err.to_string()),
+            };
+
+            if let Err(err) = rules::validate_rules(&watch_rules) {
+                stdout::failure("Invalid config file.", err);
+            }
+
+            execute_watch_command(
+                Watches::with_root(watch_rules, workspace_root.clone()),
+                args.clone(),
+                startup.event_stream.clone(),
+            );
+        }
+        Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
+    }
+}
 /// Renders a deterministic human summary of which tasks a path matches.
 /// Reuses the structured `ExplainResult`; no matching logic lives here.
 fn explain_output(
