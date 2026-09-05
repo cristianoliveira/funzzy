@@ -200,7 +200,7 @@ fn watch_action(
 ) {
     let workspace_root = &startup.workspace_root;
     let rules = load_rules(&args.config);
-    let concurrency = effective_concurrency(&args, &args.config);
+    let concurrency = effective_concurrency(args, &args.config);
     let debounce = load_debounce(&args.config);
     let backend = load_watch_backend(&args.config);
     if let Err(err) = rules::validate_rules(&rules) {
@@ -211,7 +211,7 @@ fn watch_action(
             .with_debounce(debounce)
             .with_backend(backend)
             .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_policy(effective_recovery_policy(args, &args.config))
             .with_recovery_timeout(load_recovery_timeout(&args.config))
             .with_hooks(load_hooks(&args.config))
             .with_session_hooks(load_session_hooks(&args.config));
@@ -237,7 +237,7 @@ fn watch_action(
             debounce,
             backend,
             load_respect_gitignore(&args.config),
-            effective_recovery_policy(&args, &args.config),
+            effective_recovery_policy(args, &args.config),
             load_recovery_timeout(&args.config),
             load_hooks(&args.config),
             load_session_hooks(&args.config),
@@ -272,12 +272,12 @@ fn run_target_action(args: &Arguments, startup: &Startup, target: &str) {
     if let Err(err) = rules::validate_rules(&rules) {
         stdout::failure("Invalid config file.", err);
     }
-    let concurrency = effective_concurrency(&args, &args.config);
+    let concurrency = effective_concurrency(args, &args.config);
     let debounce = load_debounce(&args.config);
     let watches =
         Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
             .with_debounce(debounce)
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+            .with_recovery_policy(effective_recovery_policy(args, &args.config))
             .with_recovery_timeout(load_recovery_timeout(&args.config));
     let plan = match watches.run_target_plan(target) {
         Ok(plan) => plan,
@@ -304,7 +304,7 @@ fn run_target_action(args: &Arguments, startup: &Startup, target: &str) {
         startup.event_stream.clone(),
     )
     .with_hooks(load_hooks(&args.config))
-    .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+    .with_recovery_policy(effective_recovery_policy(args, &args.config))
     .with_recovery_timeout(load_recovery_timeout(&args.config))
     .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
     let result = command.execute(plan, target);
@@ -328,12 +328,12 @@ fn explain_action(args: &Arguments, workspace_root: &std::path::Path, path: &str
     let watches = Watches::with_root_and_concurrency(
         rules.clone(),
         workspace_root.to_path_buf(),
-        effective_concurrency(&args, &args.config),
+        effective_concurrency(args, &args.config),
     )
     .with_debounce(load_debounce(&args.config))
     .with_backend(load_watch_backend(&args.config))
     .with_gitignore(load_respect_gitignore(&args.config))
-    .with_recovery_policy(effective_recovery_policy(&args, &args.config))
+    .with_recovery_policy(effective_recovery_policy(args, &args.config))
     .with_recovery_timeout(load_recovery_timeout(&args.config))
     .with_hooks(load_hooks(&args.config));
     let result = watches.explain(path);
