@@ -45,7 +45,8 @@ qualified, root-alias, and raw-byte-string behavior.
 | YAML/config/file discovery | `config` | Inbound adapter. TASK-0170 separates decode from domain validation. |
 | Filesystem/path adapters | `watcher`, `watch_loop`, `path_context` | Inbound adapters; emit normalized path observations and resolve filesystem-dependent task cwd containment. |
 | Process, output, and runtime worker | `cmd`, `event_stream`, `output`, `workers`, `workflow` | Outbound adapters and orchestration. |
-| Control socket and clients | `control`, `control_client`, `cli/control` | Inbound/outbound protocol adapters. |
+| Control socket and clients | `control`, `control_client`, `cli/control` | Inbound/outbound protocol adapters. Typed internal requests/results (`RetrievalRequest`/`RetrievalError` in `output`, `AwaitParams`/`AwaitSnapshot`, `CancelResult`, `WatcherState`+`FailureEvidence`) keep JSON-RPC/socket shaping at this edge only (TASK-0173). |
+| Output retention and retrieval | `output` | Adapter-owned store with typed retrieval contracts: budgets, cursors, eviction, page math, and request validation (`RetrievalRequest`) are pure value rules; capture buffers remain `cmd` process types. |
 | CLI and presentation | `app`, `arguments`, `cli`, `stdout`, `logging`, `diagnostics` | Composition and presentation adapters. |
 
 ## Port introduction rule
@@ -66,7 +67,11 @@ The next consumers define the smallest port at the point of need:
   application/runtime seams because no domain consumer needs their concrete
   contracts.
 - TASK-0173: typed control/output requests and results belong at the protocol
-  edge; control transport itself remains an inbound adapter.
+  edge; control transport itself remains an inbound adapter. The typed
+  request/result values already live beside their owning modules (`output`,
+  `awaiting`, `workers`); no new `src/domain` module was introduced because
+  no pure-domain consumer exists beyond those adapters, and the boundary
+  guard already proves the direction: domain modules import no transport.
 
 A filesystem watcher registration port is not expected: domain planning needs
 normalized path observations, while recursive registration, debounce mechanics,
