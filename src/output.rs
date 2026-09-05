@@ -879,6 +879,224 @@ pub struct OutputRef {
     pub retrieve: String,
 }
 
+/// Typed retrieval request (TASK-0173): validated options for one `output`
+/// retrieval. JSON extraction stays at the control edge; these rules are the
+/// domain contract for mode/tail/full/cursor exclusivity (contract §2/§5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetrievalRequest {
+    pub generation: u64,
+    pub task: Option<String>,
+    pub stream: Option<RetrievalStream>,
+    pub mode: RetrievalMode,
+}
+
+/// Selected output stream; `None` in the request means both streams.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetrievalStream {
+    Stdout,
+    Stderr,
+}
+
+impl RetrievalStream {
+    /// The wire name of this stream.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stdout => "stdout",
+            Self::Stderr => "stderr",
+        }
+    }
+}
+
+/// Retrieval mode (contract §5): tail returns the last N lines per stream;
+/// page returns a deterministic continuation below the negotiated budget.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RetrievalMode {
+    Tail {
+        lines: Option<usize>,
+    },
+    Page {
+        budget: usize,
+        cursor: Option<String>,
+    },
+}
+
+/// Typed request validation failure. Each variant maps 1:1 to one stable
+/// wire error produced at the control edge; the domain layer never builds
+/// JSON.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RequestError {
+    /// `mode` was neither `tail` nor `page`.
+    InvalidMode { got: String },
+    /// Tail mode cannot carry page/full or cursor options (contract §2).
+    TailCannotCarryPageOptions,
+    /// A cursor was sent outside page mode.
+    CursorRequiresPage,
+    /// Page mode cannot carry `tail` (contract §2).
+    PageCannotCarryTail,
+}
+
+impl RetrievalRequest {
+    /// Validates the raw option set from one request. `mode` is the raw
+    /// trimmed string (empty = legacy client); `full` and `tail`/`cursor`/
+    /// `max_bytes` are the optional wire fields. The page budget is clamped
+    /// to [`OUTPUT_PAGE_MAX_BYTES`] with [`DEFAULT_PAGE_BYTES`] as default,
+    /// so a hostile `max_bytes` can never defeat the transport guarantee.
+    pub fn build(
+        generation: u64,
+        task: Option<String>,
+        stream: Option<RetrievalStream>,
+        mode: Option<&str>,
+        tail: Option<usize>,
+        full: bool,
+        max_bytes: Option<usize>,
+        cursor: Option<String>,
+    ) -> Result<Self, RequestError> {
+        if let Some(mode) = mode {
+            if mode != "tail" && mode != "page" {
+                return Err(RequestError::InvalidMode {
+                    got: mode.to_owned(),
+                });
+            }
+        }
+        let is_page = mode == Some("page") || full;
+        if mode == Some("tail") && (is_page || cursor.is_some()) {
+            return Err(RequestError::TailCannotCarryPageOptions);
+        }
+        if !is_page && cursor.is_some() {
+            return Err(RequestError::CursorRequiresPage);
+        }
+        if is_page && tail.is_some() {
+            return Err(RequestError::PageCannotCarryTail);
+        }
+        let mode = if is_page {
+            let budget = max_bytes
+                .unwrap_or(DEFAULT_PAGE_BYTES)
+                .min(OUTPUT_PAGE_MAX_BYTES);
+            RetrievalMode::Page { budget, cursor }
+        } else {
+            RetrievalMode::Tail { lines: tail }
+        };
+        Ok(Self {
+            generation,
+            task,
+            stream,
+            mode,
+        })
+    }
+}
+
+#[cfg(test)]
+mod request_tests {
+    use super::*;
+
+    #[test]
+    fn builds_a_default_tail_request_without_options() {
+        let request = RetrievalRequest::build(7, None, None, None, None, false, None, None)
+            .expect("legacy shape is valid");
+        assert_eq!(
+            request,
+            RetrievalRequest {
+                generation: 7,
+                task: None,
+                stream: None,
+                mode: RetrievalMode::Tail { lines: None },
+            }
+        );
+    }
+
+    #[test]
+    fn builds_a_page_request_with_clamped_budget() {
+        let request = RetrievalRequest::build(
+            7,
+            Some("build".to_owned()),
+            Some(RetrievalStream::Stderr),
+            Some("page"),
+            None,
+            false,
+            Some(OUTPUT_PAGE_MAX_BYTES * 10),
+            Some("cursor".to_owned()),
+        )
+        .expect("page shape is valid");
+        assert_eq!(
+            request.mode,
+            RetrievalMode::Page {
+                budget: OUTPUT_PAGE_MAX_BYTES,
+                cursor: Some("cursor".to_owned()),
+            }
+        );
+        assert_eq!(request.stream, Some(RetrievalStream::Stderr));
+    }
+
+    #[test]
+    fn legacy_full_translates_to_a_bounded_first_page() {
+        let request = RetrievalRequest::build(7, None, None, None, None, true, None, None)
+            .expect("full defaults to page");
+        assert_eq!(
+            request.mode,
+            RetrievalMode::Page {
+                budget: DEFAULT_PAGE_BYTES,
+                cursor: None,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_mode() {
+        assert_eq!(
+            RetrievalRequest::build(7, None, None, Some("all"), None, false, None, None),
+            Err(RequestError::InvalidMode {
+                got: "all".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn tail_mode_rejects_page_and_cursor_options() {
+        assert_eq!(
+            RetrievalRequest::build(7, None, None, Some("tail"), Some(5), true, None, None),
+            Err(RequestError::TailCannotCarryPageOptions)
+        );
+        assert_eq!(
+            RetrievalRequest::build(
+                7,
+                None,
+                None,
+                Some("tail"),
+                None,
+                false,
+                None,
+                Some("cursor".to_owned())
+            ),
+            Err(RequestError::TailCannotCarryPageOptions)
+        );
+    }
+
+    #[test]
+    fn cursor_requires_page_mode() {
+        assert_eq!(
+            RetrievalRequest::build(
+                7,
+                None,
+                None,
+                None,
+                None,
+                false,
+                None,
+                Some("cursor".to_owned())
+            ),
+            Err(RequestError::CursorRequiresPage)
+        );
+    }
+
+    #[test]
+    fn page_mode_rejects_tail() {
+        assert_eq!(
+            RetrievalRequest::build(7, None, None, Some("page"), Some(5), false, None, None),
+            Err(RequestError::PageCannotCarryTail)
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
