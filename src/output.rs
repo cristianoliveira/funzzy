@@ -935,22 +935,39 @@ pub enum RequestError {
     PageCannotCarryTail,
 }
 
+/// Raw wire fields for one retrieval request, extracted by the control
+/// edge before typed validation. Grouping keeps `RetrievalRequest::build`
+/// explicit without long argument lists.
+#[derive(Clone, Debug, Default)]
+pub struct RetrievalFields {
+    pub generation: u64,
+    pub task: Option<String>,
+    pub stream: Option<RetrievalStream>,
+    /// Raw trimmed `mode` string; `None` for legacy clients.
+    pub mode: Option<String>,
+    pub tail: Option<usize>,
+    pub full: bool,
+    pub max_bytes: Option<usize>,
+    pub cursor: Option<String>,
+}
+
 impl RetrievalRequest {
-    /// Validates the raw option set from one request. `mode` is the raw
-    /// trimmed string (empty = legacy client); `full` and `tail`/`cursor`/
-    /// `max_bytes` are the optional wire fields. The page budget is clamped
-    /// to [`OUTPUT_PAGE_MAX_BYTES`] with [`DEFAULT_PAGE_BYTES`] as default,
-    /// so a hostile `max_bytes` can never defeat the transport guarantee.
-    pub fn build(
-        generation: u64,
-        task: Option<String>,
-        stream: Option<RetrievalStream>,
-        mode: Option<&str>,
-        tail: Option<usize>,
-        full: bool,
-        max_bytes: Option<usize>,
-        cursor: Option<String>,
-    ) -> Result<Self, RequestError> {
+    /// Validates the raw option set from one request. The page budget is
+    /// clamped to [`OUTPUT_PAGE_MAX_BYTES`] with [`DEFAULT_PAGE_BYTES`] as
+    /// default, so a hostile `max_bytes` can never defeat the transport
+    /// guarantee.
+    pub fn build(fields: RetrievalFields) -> Result<Self, RequestError> {
+        let RetrievalFields {
+            generation,
+            task,
+            stream,
+            mode,
+            tail,
+            full,
+            max_bytes,
+            cursor,
+        } = fields;
+        let mode = mode.as_deref();
         if let Some(mode) = mode {
             if mode != "tail" && mode != "page" {
                 return Err(RequestError::InvalidMode {
@@ -989,10 +1006,16 @@ impl RetrievalRequest {
 mod request_tests {
     use super::*;
 
+    fn fields() -> RetrievalFields {
+        RetrievalFields {
+            generation: 7,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn builds_a_default_tail_request_without_options() {
-        let request = RetrievalRequest::build(7, None, None, None, None, false, None, None)
-            .expect("legacy shape is valid");
+        let request = RetrievalRequest::build(fields()).expect("legacy shape is valid");
         assert_eq!(
             request,
             RetrievalRequest {
@@ -1006,16 +1029,14 @@ mod request_tests {
 
     #[test]
     fn builds_a_page_request_with_clamped_budget() {
-        let request = RetrievalRequest::build(
-            7,
-            Some("build".to_owned()),
-            Some(RetrievalStream::Stderr),
-            Some("page"),
-            None,
-            false,
-            Some(OUTPUT_PAGE_MAX_BYTES * 10),
-            Some("cursor".to_owned()),
-        )
+        let request = RetrievalRequest::build(RetrievalFields {
+            task: Some("build".to_owned()),
+            stream: Some(RetrievalStream::Stderr),
+            mode: Some("page".to_owned()),
+            max_bytes: Some(OUTPUT_PAGE_MAX_BYTES * 10),
+            cursor: Some("cursor".to_owned()),
+            ..fields()
+        })
         .expect("page shape is valid");
         assert_eq!(
             request.mode,
@@ -1029,8 +1050,11 @@ mod request_tests {
 
     #[test]
     fn legacy_full_translates_to_a_bounded_first_page() {
-        let request = RetrievalRequest::build(7, None, None, None, None, true, None, None)
-            .expect("full defaults to page");
+        let request = RetrievalRequest::build(RetrievalFields {
+            full: true,
+            ..fields()
+        })
+        .expect("full defaults to page");
         assert_eq!(
             request.mode,
             RetrievalMode::Page {
@@ -1043,7 +1067,10 @@ mod request_tests {
     #[test]
     fn rejects_an_unknown_mode() {
         assert_eq!(
-            RetrievalRequest::build(7, None, None, Some("all"), None, false, None, None),
+            RetrievalRequest::build(RetrievalFields {
+                mode: Some("all".to_owned()),
+                ..fields()
+            }),
             Err(RequestError::InvalidMode {
                 got: "all".to_owned()
             })
@@ -1053,20 +1080,20 @@ mod request_tests {
     #[test]
     fn tail_mode_rejects_page_and_cursor_options() {
         assert_eq!(
-            RetrievalRequest::build(7, None, None, Some("tail"), Some(5), true, None, None),
+            RetrievalRequest::build(RetrievalFields {
+                mode: Some("tail".to_owned()),
+                tail: Some(5),
+                full: true,
+                ..fields()
+            }),
             Err(RequestError::TailCannotCarryPageOptions)
         );
         assert_eq!(
-            RetrievalRequest::build(
-                7,
-                None,
-                None,
-                Some("tail"),
-                None,
-                false,
-                None,
-                Some("cursor".to_owned())
-            ),
+            RetrievalRequest::build(RetrievalFields {
+                mode: Some("tail".to_owned()),
+                cursor: Some("cursor".to_owned()),
+                ..fields()
+            }),
             Err(RequestError::TailCannotCarryPageOptions)
         );
     }
@@ -1074,16 +1101,10 @@ mod request_tests {
     #[test]
     fn cursor_requires_page_mode() {
         assert_eq!(
-            RetrievalRequest::build(
-                7,
-                None,
-                None,
-                None,
-                None,
-                false,
-                None,
-                Some("cursor".to_owned())
-            ),
+            RetrievalRequest::build(RetrievalFields {
+                cursor: Some("cursor".to_owned()),
+                ..fields()
+            }),
             Err(RequestError::CursorRequiresPage)
         );
     }
@@ -1091,7 +1112,11 @@ mod request_tests {
     #[test]
     fn page_mode_rejects_tail() {
         assert_eq!(
-            RetrievalRequest::build(7, None, None, Some("page"), Some(5), false, None, None),
+            RetrievalRequest::build(RetrievalFields {
+                mode: Some("page".to_owned()),
+                tail: Some(5),
+                ..fields()
+            }),
             Err(RequestError::PageCannotCarryTail)
         );
     }
