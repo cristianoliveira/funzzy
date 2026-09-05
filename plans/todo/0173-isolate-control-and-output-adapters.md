@@ -1,7 +1,7 @@
 ---
 id: TASK-0173
 title: Isolate control protocol and output adapters from domain
-status: todo
+status: doing
 depends_on: [TASK-0171, TASK-0172]
 priority: normal
 tags: [architecture, control, output, ports, protocol]
