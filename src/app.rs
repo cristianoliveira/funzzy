@@ -1223,3 +1223,134 @@ fn from_stdin() -> errors::Result<StdinRead> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_prefix_extracts_the_longest_non_wildcard_prefix() {
+        assert_eq!(literal_prefix("src/**/*.rs"), Some("src".to_owned()));
+        assert_eq!(literal_prefix("docs/*.md"), Some("docs".to_owned()));
+        assert_eq!(
+            literal_prefix("src/main.rs"),
+            Some("src/main.rs".to_owned())
+        );
+        assert_eq!(literal_prefix("*.log"), None);
+        assert_eq!(literal_prefix("**/*.rs"), None);
+        assert_eq!(
+            literal_prefix("trailing/dir/"),
+            Some("trailing/dir".to_owned())
+        );
+    }
+
+    #[test]
+    fn explain_output_names_covering_roots_for_unmatched_paths() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-app-explain-{}-{}",
+            std::process::id(),
+            "roots"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("future")).unwrap();
+
+        let rules = vec![rules::Rules::new(
+            "future build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["future/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        // The path is not matched (only future/** is watched) but is covered
+        // by the future subscription root, so explain names the root.
+        let result = watches.explain("docs/never.txt");
+        assert!(
+            result.matched.is_empty() && result.ignored.is_empty(),
+            "expected an unmatched path, got {result:?}"
+        );
+        let covering = watches.covering_roots("docs/never.txt");
+        assert!(
+            covering.is_empty(),
+            "docs/never.txt must not be covered by future/**: {covering:?}"
+        );
+
+        // For a future path inside a watched root, the root is named.
+        let future_result = watches.explain("future/deep/nested/out.txt");
+        assert!(
+            !future_result.matched.is_empty(),
+            "future/** must match future/deep/nested/out.txt: {future_result:?}"
+        );
+        let facts = crate::watches::ExplainFacts {
+            concurrency: watches.concurrency(),
+            debounce: watches.debounce(),
+        };
+        let output = explain_output(
+            "future/deep/nested/out.txt",
+            &future_result,
+            &facts,
+            &watches,
+        );
+        assert!(output.contains("    - future build"));
+
+        // And the unmatched case renders the covering-root guidance for a
+        // path under an existing root without a matching rule.
+        let docs = rules::Rules::new(
+            "docs watch".to_owned(),
+            vec!["echo docs".to_owned()],
+            vec!["docs/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Watches::with_root(vec![docs], scratch.clone());
+        let result = watches.explain("docs/never.txt");
+        assert!(
+            !result.matched.is_empty(),
+            "docs/** must match docs/never.txt: {result:?}"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn explain_output_reports_matched_and_ignored_tasks() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-app-explain-{}-{}",
+            std::process::id(),
+            "matched"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).unwrap();
+        std::fs::create_dir_all(scratch.join("ignored")).unwrap();
+
+        let rules = vec![
+            rules::Rules::new(
+                "build".to_owned(),
+                vec!["echo build".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            rules::Rules::new(
+                "lint".to_owned(),
+                vec!["echo lint".to_owned()],
+                vec!["**".to_owned()],
+                vec!["ignored/**".to_owned()],
+                false,
+            ),
+        ];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let result = watches.explain("src/main.rs");
+        let facts = crate::watches::ExplainFacts {
+            concurrency: watches.concurrency(),
+            debounce: watches.debounce(),
+        };
+        let output = explain_output("src/main.rs", &result, &facts, &watches);
+
+        assert!(output.contains("Explain path src/main.rs"));
+        assert!(output.contains("- build"));
+        assert!(output.contains("- lint"));
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+}
