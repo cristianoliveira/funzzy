@@ -23,60 +23,84 @@ use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 
+/// Process-wide startup settings resolved once in the composition root.
+///
+/// Bundles the cross-cutting setup every action shares: the diagnostics
+/// sink (gated on `--verbose`), the optional mirrored log file, the optional
+/// NDJSON run-event stream, and the workspace root that anchors config
+/// discovery and command template preparation. Setup failures exit with the
+/// same messages and codes as before; no action-specific policy lives here.
+struct Startup {
+    event_stream: Option<Arc<crate::event_stream::EventStream>>,
+    workspace_root: std::path::PathBuf,
+}
+
+impl Startup {
+    fn from_args(args: &Arguments) -> Self {
+        // Diagnostics (TASK-0023): one process-wide sink gated on the verbose
+        // flag; records render identically to terminal and log file.
+        diagnostics::init(args.verbose);
+
+        if args.log_truncate_on_change && args.log_file.is_none() {
+            stdout::failure(
+                "`--log-truncate-on-change` requires `--log-file`",
+                "Provide a log file path before enabling truncation.".to_string(),
+            );
+        }
+
+        if let Some(ref log_file) = args.log_file {
+            if log_file.trim().is_empty() {
+                stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
+            }
+
+            let log_path = std::path::PathBuf::from(log_file);
+            if let Some(parent) = log_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    stdout::failure(
+                        "Failed to prepare log file",
+                        format!("directory does not exist: {}", parent.display()),
+                    );
+                }
+            }
+
+            logging::init(log_path.clone()).unwrap_or_else(|err| {
+                stdout::failure("Failed to prepare log file", err.to_string())
+            });
+
+            stdout::info(&format!("Logging output to {}", log_path.display()));
+        }
+
+        // NDJSON run-event stream (TASK-0039): opened once, shared by every
+        // executor sink in this process; None keeps behavior byte-identical.
+        let event_stream = match args.events_file.as_deref() {
+            Some(path) if !path.trim().is_empty() => {
+                let stream = crate::event_stream::EventStream::open(std::path::Path::new(path))
+                    .unwrap_or_else(|err| {
+                        stdout::failure("Failed to open run event stream", err.to_string())
+                    });
+                stdout::info(&format!("Appending run events to {}", path));
+                Some(Arc::new(stream))
+            }
+            _ => None,
+        };
+
+        // Resolve the workspace root once and anchor all watch planning,
+        // config discovery, and command template preparation to it.
+        let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+
+        Self {
+            event_stream,
+            workspace_root,
+        }
+    }
+}
+
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
 pub fn run() {
     let args = Arguments::parse();
-
-    // Diagnostics (TASK-0023): one process-wide sink gated on the verbose
-    // flag; records render identically to terminal and log file.
-    diagnostics::init(args.verbose);
-
-    if args.log_truncate_on_change && args.log_file.is_none() {
-        stdout::failure(
-            "`--log-truncate-on-change` requires `--log-file`",
-            "Provide a log file path before enabling truncation.".to_string(),
-        );
-    }
-
-    if let Some(ref log_file) = args.log_file {
-        if log_file.trim().is_empty() {
-            stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
-        }
-
-        let log_path = std::path::PathBuf::from(log_file);
-        if let Some(parent) = log_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                stdout::failure(
-                    "Failed to prepare log file",
-                    format!("directory does not exist: {}", parent.display()),
-                );
-            }
-        }
-
-        logging::init(log_path.clone())
-            .unwrap_or_else(|err| stdout::failure("Failed to prepare log file", err.to_string()));
-
-        stdout::info(&format!("Logging output to {}", log_path.display()));
-    }
-
-    // NDJSON run-event stream (TASK-0039): opened once, shared by every
-    // executor sink in this process; None keeps behavior byte-identical.
-    let event_stream = match args.events_file.as_deref() {
-        Some(path) if !path.trim().is_empty() => {
-            let stream = crate::event_stream::EventStream::open(std::path::Path::new(path))
-                .unwrap_or_else(|err| {
-                    stdout::failure("Failed to open run event stream", err.to_string())
-                });
-            stdout::info(&format!("Appending run events to {}", path));
-            Some(Arc::new(stream))
-        }
-        _ => None,
-    };
-
-    // Resolve the workspace root once and anchor all watch planning,
-    // config discovery, and command template preparation to it.
-    let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+    let startup = Startup::from_args(&args);
+    let workspace_root = startup.workspace_root.clone();
 
     match args.action {
         // Commands
@@ -204,7 +228,9 @@ pub fn run() {
             };
             match watches.select_target_with_exclusions(wanted.as_deref(), exclusions, no_services)
             {
-                Ok(Some(selected)) => execute_watch_command(selected, args, event_stream.clone()),
+                Ok(Some(selected)) => {
+                    execute_watch_command(selected, args, startup.event_stream.clone())
+                }
                 Ok(None) => {
                     let target = wanted.as_deref().unwrap_or_default();
                     stdout::failure(
@@ -262,7 +288,7 @@ pub fn run() {
                         STATE_SCHEMA_VERSION,
                     ),
                 )))),
-                event_stream.clone(),
+                startup.event_stream.clone(),
             )
             .with_hooks(load_hooks(&args.config))
             .with_recovery_policy(effective_recovery_policy(&args, &args.config))
@@ -345,7 +371,7 @@ pub fn run() {
                     execute_watch_command(
                         Watches::with_root(watch_rules, workspace_root),
                         args,
-                        event_stream.clone(),
+                        startup.event_stream.clone(),
                     );
                 }
                 Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
