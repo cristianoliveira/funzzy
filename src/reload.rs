@@ -318,6 +318,49 @@ mod tests {
     }
 
     #[test]
+    fn decide_commits_a_legacy_candidate_without_changing_compatibility() {
+        let mut tracker = RevisionTracker::new();
+        let legacy = "- name: test\n  run: cargo test\n  change: tests/**\n";
+
+        let decision = decide(
+            &mut tracker,
+            legacy,
+            std::env::current_dir().unwrap(),
+            &defaults(),
+        );
+        let ReloadDecision::Commit(revision) = decision else {
+            panic!("valid legacy candidate must commit");
+        };
+
+        assert_eq!(revision.number, 1);
+        assert_eq!(tracker.current(), Some(&revision));
+    }
+
+    #[test]
+    fn decide_reports_cross_field_candidate_errors_before_later_policy_errors() {
+        let mut tracker = RevisionTracker::new();
+        let invalid = "jobs:\n  - name: manual\n    trigger: manual\n    change: src/**\n    run_on_init: true\n    run: ./wait.sh\n";
+
+        let decision = decide(
+            &mut tracker,
+            invalid,
+            std::env::current_dir().unwrap(),
+            &defaults(),
+        );
+        let ReloadDecision::Fatal(error) = decision else {
+            panic!("invalid candidate must be fatal");
+        };
+
+        assert_eq!(error.gate, ValidationGate::Syntactic);
+        assert!(
+            error.reason.contains("both 'trigger: manual' and 'change'"),
+            "unexpected error: {}",
+            error.reason
+        );
+        assert!(tracker.current().is_none());
+    }
+
+    #[test]
     fn decide_commits_on_semantic_change_and_noops_on_identical() {
         let mut tracker = RevisionTracker::new();
         let content = "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n";

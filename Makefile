@@ -7,6 +7,8 @@ help: ## Lists the available commands. Add a comment with '##' to describe a com
 .PHONY: tests
 tests: ## Execute all the tests
 	@cargo test --verbose
+	@./scripts/version-check-test
+	@./scripts/fzz-alias-check
 
 .PHONY: build
 build: tests ## Execute all the tests and build funzzy binary
@@ -46,7 +48,9 @@ fmt: ## Format the code (with cargo fmt) and add the changes to the git stage
 .PHONY: lint
 lint: ## Check formatting and fail on Rust or Clippy warnings
 	@cargo fmt -- --check
+	@cargo fmt --manifest-path crates/fzz/Cargo.toml -- --check
 	@cargo clippy --locked --all-targets -- -D warnings
+	@cargo clippy --manifest-path crates/fzz/Cargo.toml --all-targets -- -D warnings
 
 .PHONY: linter
 linter: lint
@@ -105,6 +109,10 @@ version-check: ## Verify release version identity across packages (TASK-0061)
 .PHONY: version-check-test
 version-check-test: ## Test the version consistency check (TASK-0061)
 	@./scripts/version-check-test
+
+.PHONY: fzz-alias-check
+fzz-alias-check: ## Verify the first-party fzz installer package
+	@./scripts/fzz-alias-check
 
 .PHONY: verify-release
 verify-release: ## Verify the published release end-to-end (TASK-0064)

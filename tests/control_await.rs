@@ -236,7 +236,7 @@ fn write_service_script(directory: &std::path::Path) {
 fn write_stubborn_service_script(directory: &std::path::Path) {
     std::fs::write(
         directory.join("stubborn.sh"),
-        "#!/bin/sh\necho $$ > stubborn.pid\ntouch stubborn.started\ntrap '' TERM\ntrap '' INT\nwhile :; do sleep 0.02; done\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" > \"stubborn.pid.tmp.$$\" && mv \"stubborn.pid.tmp.$$\" stubborn.pid\ntouch stubborn.started\ntrap '' TERM\ntrap '' INT\nwhile :; do sleep 0.02; done\n",
     )
     .unwrap();
     let mut permissions = std::fs::metadata(directory.join("stubborn.sh"))
@@ -246,16 +246,41 @@ fn write_stubborn_service_script(directory: &std::path::Path) {
     std::fs::set_permissions(directory.join("stubborn.sh"), permissions).unwrap();
 }
 
+/// Reads a service PID marker. The marker is written by the service
+/// process, which may not have started yet (or may still be mid-write for
+/// non-atomic shells), so this waits — bounded — until the file exists and
+/// parses. Never unwrap a possibly-absent marker directly; call sites that
+/// need the file before any service started should gate on the service's
+/// own `.started` marker instead.
 fn service_pid(directory: &std::path::Path, marker: &str) -> u32 {
-    std::fs::read_to_string(directory.join(marker))
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap()
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let read = std::fs::read_to_string(directory.join(marker));
+        match read {
+            Ok(content) => {
+                if let Ok(pid) = content.trim().parse() {
+                    return pid;
+                }
+                // Torn/empty write: keep waiting until the writer commits.
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Service not started yet: keep waiting.
+            }
+            Err(err) => panic!("reading {marker} in {}: {err}", directory.display()),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for a parseable {marker} in {}",
+            directory.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn wait_until<F: FnMut() -> bool>(mut condition: F, description: &str) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    // 60s is a load upper bound (not a sleep): parallel integration runs on
+    // a busy machine can exceed 20s without indicating a real failure.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
         if condition() {
             return;

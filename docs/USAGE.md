@@ -115,15 +115,39 @@ fzz explain src/lib.rs   # which jobs match/ignore a path + the filtered plan
 ```bash
 fzz                 # zero-argument: configured watch (hero path)
 fzz watch "@quick"  # watch only matching targets
+fzz -- "@quick"     # equivalent watch shorthand; target follows `--`
+fzz watch --exclude docs
+fzz watch "@quick" --exclude lint --no-services
 ```
 
+Watch filters are invocation-only: `TARGET` is selected first, then each
+repeatable `--exclude TARGET` removes an exact job name, every job carrying an
+`@tag`, or one unambiguous name substring. `--no-services` is the shortcut for
+excluding every `service: true` job, including readiness-enabled services.
+Selectors are validated before watcher roots, service processes, or readiness
+probes start. The filtered plan keeps declaration order and parallel-group
+barriers. These options affect only `fzz`/`fzz watch`; they do not change the
+YAML file, `fzz run`, or control-socket requests, and the same invocation
+policy is reapplied to valid configuration reloads.
+
+The root shorthand accepts zero or one target only after the end-of-options
+delimiter. `fzz --` is equivalent to `fzz`; root watch options compose before
+the delimiter, for example `fzz --no-services -- @quick`. Everything after
+the delimiter is target data, so `fzz -- --service` selects a target named
+`--service`; extra values are usage errors. Without the delimiter, a word
+matching a subcommand still invokes that subcommand.
+
 This is the whole loop: config → check → run → watch.
+
+### Trigger the pipeline from the keyboard
+
+While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Ctrl-C starts a graceful shutdown. Piped input accepts the same Ctrl-G byte. Closed input does not cause an error.
 
 ## 2. Daily workflow decision table
 
 | Goal | Command | Watcher? | Side effects |
 | --- | --- | --- | --- |
-| Watch + run on change | `fzz` / `fzz watch [TARGET]` | yes | runs tasks, may open socket |
+| Watch + run on change | `fzz` / `fzz watch [TARGET]` / `fzz -- [TARGET]` | yes | runs tasks, may open socket |
 | Run once, finite | `fzz run TARGET` | no | runs tasks, exits |
 | Validate config | `fzz check [-c PATH]` | no | none |
 | List targets | `fzz list` | no | none |

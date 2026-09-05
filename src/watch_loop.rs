@@ -18,6 +18,7 @@ use crate::errors::FzzError;
 use crate::executor::RunMetadata;
 use crate::identity::{Batch, BatchId};
 use crate::output::OutputRegistry;
+use crate::path_context;
 use crate::plan::RunPlan;
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
@@ -139,36 +140,27 @@ impl ModificationGate {
     /// already-tracked write. Live reloads deliberately do NOT re-seed: a
     /// file created under a newly added path must route on first sighting.
     fn seed(&mut self, paths: &[String]) {
-        for path in paths {
-            let path = std::path::Path::new(path);
-            if path.is_file() {
-                let mtime = std::fs::metadata(path)
-                    .and_then(|meta| meta.modified())
-                    .ok();
-                if let Some(path) = path.to_str() {
-                    self.last_seen.entry(path.to_owned()).or_insert(mtime);
-                }
+        for configured_path in paths {
+            let configured_path = std::path::Path::new(configured_path);
+            if configured_path.is_file() {
+                self.record_baseline(configured_path);
                 continue;
             }
 
-            let Ok(entries) = std::fs::read_dir(path) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let mtime = std::fs::metadata(&path)
-                    .and_then(|meta| meta.modified())
-                    .ok();
-                match path.to_str() {
-                    Some(path) => {
-                        self.last_seen.entry(path.to_owned()).or_insert(mtime);
-                    }
-                    None => continue,
-                }
-                if path.is_dir() {
-                    self.seed(&[path.display().to_string()]);
-                }
+            let mut descendants = Vec::new();
+            watcher::walk_descendants(configured_path, &mut descendants);
+            for path in descendants {
+                self.record_baseline(&path);
             }
+        }
+    }
+
+    fn record_baseline(&mut self, path: &std::path::Path) {
+        let mtime = std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok();
+        if let Some(path) = path.to_str() {
+            self.last_seen.entry(path.to_owned()).or_insert(mtime);
         }
     }
 
@@ -766,7 +758,7 @@ impl NonBlockStrategy {
             let root = self.shared.lock().unwrap().root().to_path_buf();
             let provider: TargetEstimateProvider = Arc::new(move |target: &ControlTarget| {
                 let plan = shared.lock().unwrap().target_plan(&target.name)?;
-                let plan = plan.resolve_context(&root).ok()?;
+                let plan = path_context::resolve_context(&plan, &root).ok()?;
                 let signature = plan.execution_signature(concurrency, fail_fast);
                 recorder.estimate(&signature, None)
             });
@@ -1743,6 +1735,27 @@ mod modification_gate_seed_tests {
             gate.changed(vec![unrelated.display().to_string()]),
             vec![unrelated.display().to_string()],
             "an exact file baseline never traverses unrelated siblings"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Broken symlink entries may disappear while a baseline is being read;
+    /// they must be skipped without panicking or retrying forever.
+    #[cfg(unix)]
+    #[test]
+    fn seed_ignores_broken_symlink_entries() {
+        let dir = scratch("broken-symlink");
+        let ordinary = dir.join("ordinary.txt");
+        std::fs::write(&ordinary, "ordinary").unwrap();
+        std::os::unix::fs::symlink(dir.join("missing"), dir.join("broken")).unwrap();
+
+        let mut gate = ModificationGate::new();
+        gate.seed(&[dir.display().to_string()]);
+        assert!(
+            gate.changed(vec![ordinary.display().to_string()])
+                .is_empty(),
+            "ordinary files remain baselined with broken entries"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

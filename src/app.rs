@@ -23,60 +23,83 @@ use std::sync::mpsc;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 
+/// Process-wide startup settings resolved once in the composition root.
+///
+/// Bundles the cross-cutting setup every action shares: the diagnostics
+/// sink (gated on `--verbose`), the optional mirrored log file, the optional
+/// NDJSON run-event stream, and the workspace root that anchors config
+/// discovery and command template preparation. Setup failures exit with the
+/// same messages and codes as before; no action-specific policy lives here.
+struct Startup {
+    event_stream: Option<Arc<crate::event_stream::EventStream>>,
+    workspace_root: std::path::PathBuf,
+}
+
+impl Startup {
+    fn from_args(args: &Arguments) -> Self {
+        // Diagnostics (TASK-0023): one process-wide sink gated on the verbose
+        // flag; records render identically to terminal and log file.
+        diagnostics::init(args.verbose);
+
+        if args.log_truncate_on_change && args.log_file.is_none() {
+            stdout::failure(
+                "`--log-truncate-on-change` requires `--log-file`",
+                "Provide a log file path before enabling truncation.".to_string(),
+            );
+        }
+
+        if let Some(ref log_file) = args.log_file {
+            if log_file.trim().is_empty() {
+                stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
+            }
+
+            let log_path = std::path::PathBuf::from(log_file);
+            if let Some(parent) = log_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    stdout::failure(
+                        "Failed to prepare log file",
+                        format!("directory does not exist: {}", parent.display()),
+                    );
+                }
+            }
+
+            logging::init(log_path.clone()).unwrap_or_else(|err| {
+                stdout::failure("Failed to prepare log file", err.to_string())
+            });
+
+            stdout::info(&format!("Logging output to {}", log_path.display()));
+        }
+
+        // NDJSON run-event stream (TASK-0039): opened once, shared by every
+        // executor sink in this process; None keeps behavior byte-identical.
+        let event_stream = match args.events_file.as_deref() {
+            Some(path) if !path.trim().is_empty() => {
+                let stream = crate::event_stream::EventStream::open(std::path::Path::new(path))
+                    .unwrap_or_else(|err| {
+                        stdout::failure("Failed to open run event stream", err.to_string())
+                    });
+                stdout::info(&format!("Appending run events to {}", path));
+                Some(Arc::new(stream))
+            }
+            _ => None,
+        };
+
+        // Resolve the workspace root once and anchor all watch planning,
+        // config discovery, and command template preparation to it.
+        let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+
+        Self {
+            event_stream,
+            workspace_root,
+        }
+    }
+}
+
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
 pub fn run() {
     let args = Arguments::parse();
-
-    // Diagnostics (TASK-0023): one process-wide sink gated on the verbose
-    // flag; records render identically to terminal and log file.
-    diagnostics::init(args.verbose);
-
-    if args.log_truncate_on_change && args.log_file.is_none() {
-        stdout::failure(
-            "`--log-truncate-on-change` requires `--log-file`",
-            "Provide a log file path before enabling truncation.".to_string(),
-        );
-    }
-
-    if let Some(ref log_file) = args.log_file {
-        if log_file.trim().is_empty() {
-            stdout::failure("Invalid log file path", "Path cannot be empty".to_string());
-        }
-
-        let log_path = std::path::PathBuf::from(log_file);
-        if let Some(parent) = log_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                stdout::failure(
-                    "Failed to prepare log file",
-                    format!("directory does not exist: {}", parent.display()),
-                );
-            }
-        }
-
-        logging::init(log_path.clone())
-            .unwrap_or_else(|err| stdout::failure("Failed to prepare log file", err.to_string()));
-
-        stdout::info(&format!("Logging output to {}", log_path.display()));
-    }
-
-    // NDJSON run-event stream (TASK-0039): opened once, shared by every
-    // executor sink in this process; None keeps behavior byte-identical.
-    let event_stream = match args.events_file.as_deref() {
-        Some(path) if !path.trim().is_empty() => {
-            let stream = crate::event_stream::EventStream::open(std::path::Path::new(path))
-                .unwrap_or_else(|err| {
-                    stdout::failure("Failed to open run event stream", err.to_string())
-                });
-            stdout::info(&format!("Appending run events to {}", path));
-            Some(Arc::new(stream))
-        }
-        _ => None,
-    };
-
-    // Resolve the workspace root once and anchor all watch planning,
-    // config discovery, and command template preparation to it.
-    let workspace_root = std::env::current_dir().expect("Failed to get current directory");
+    let startup = Startup::from_args(&args);
 
     match args.action {
         // Commands
@@ -143,72 +166,11 @@ pub fn run() {
             execute(command);
         }
 
-        Action::Watch { target: ref wanted } => {
-            let rules = load_rules(&args.config);
-            let concurrency = effective_concurrency(&args, &args.config);
-            let debounce = load_debounce(&args.config);
-            let backend = load_watch_backend(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                concurrency,
-            )
-            .with_debounce(debounce)
-            .with_backend(backend)
-            .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_hooks(load_hooks(&args.config))
-            .with_session_hooks(load_session_hooks(&args.config));
-            // TASK-0092: resolve the config-declared control socket BEFORE
-            // freezing the initial revision so the startup revision's semantic
-            // surface matches every reload candidate (which always carries
-            // `on.socket`). Otherwise a config-declared socket makes every
-            // valid save — even a formatting-only rewrite — look like a
-            // semantic change and commit a new revision.
-            let control_socket = args
-                .control_socket
-                .clone()
-                .or_else(|| config_control_socket(&args.config, &workspace_root));
-            // TASK-0089: freeze the initial immutable revision before any
-            // plan is created; reload (TASK-0090) observes candidates through
-            // the same tracker and only commits on semantic change.
-            let watches = {
-                let mut tracker = crate::config_revision::RevisionTracker::new();
-                let runtime = crate::config_revision::RuntimeConfig::capture(
-                    workspace_root.clone(),
-                    rules.clone(),
-                    concurrency,
-                    debounce,
-                    backend,
-                    load_respect_gitignore(&args.config),
-                    effective_recovery_policy(&args, &args.config),
-                    load_recovery_timeout(&args.config),
-                    load_hooks(&args.config),
-                    load_session_hooks(&args.config),
-                    control_socket.as_deref().map(std::path::PathBuf::from),
-                );
-                match tracker.observe(&runtime) {
-                    crate::config_revision::RevisionDecision::New(revision) => {
-                        watches.with_revision(revision)
-                    }
-                    crate::config_revision::RevisionDecision::NoOp => watches,
-                }
-            };
-            match wanted {
-                Some(target) => match watches.select_target(target) {
-                    Some(selected) => execute_watch_command(selected, args, event_stream.clone()),
-                    None => stdout::failure(
-                        &format!("No target found for '{}'", target),
-                        rules::available_targets(&rules),
-                    ),
-                },
-                None => execute_watch_command(watches, args, event_stream.clone()),
-            }
-        }
+        Action::Watch {
+            target: ref wanted,
+            exclude: ref exclusions,
+            no_services,
+        } => watch_action(&args, &startup, wanted, exclusions, no_services),
         Action::List => {
             let rules = load_rules(&args.config);
             if let Err(err) = rules::validate_rules(&rules) {
@@ -216,136 +178,214 @@ pub fn run() {
             }
             stdout::info(&rules::available_targets(&rules));
         }
-        Action::Run { ref target } => {
-            let rules = load_rules(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let concurrency = effective_concurrency(&args, &args.config);
-            let debounce = load_debounce(&args.config);
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                concurrency,
-            )
-            .with_debounce(debounce)
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config));
-            let plan = match watches.run_target_plan(target) {
-                Ok(plan) => plan,
-                Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
-                    &format!("No target found for '{}'", target),
-                    rules::available_targets(&rules),
-                ),
-                Err(error) => stdout::failure("Cannot run target", error.to_string()),
-            };
-
-            let shutdown = install_shutdown_signal_handler(None);
-            let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
-            let command = RunCommand::with_recorder_and_events(
-                workspace_root.clone(),
-                args.verbose,
-                fail_fast,
-                concurrency,
-                Some(Arc::new(DurationRecorder::new(DurationStore::new(
-                    state_file_path(
-                        &std::fs::canonicalize(&workspace_root)
-                            .unwrap_or_else(|_| workspace_root.clone()),
-                        STATE_SCHEMA_VERSION,
-                    ),
-                )))),
-                event_stream.clone(),
-            )
-            .with_hooks(load_hooks(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
-            let result = command.execute(plan, target);
-            let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
-            if signal_exit != 0 {
-                process::exit(signal_exit);
-            }
-            match result {
-                Ok(true) => {}
-                Ok(false) => process::exit(1),
-                Err(error) => stdout::failure("Configured run failed", error),
-            }
-        }
-        Action::Explain { ref path } => {
-            let rules = load_rules(&args.config);
-            if let Err(err) = rules::validate_rules(&rules) {
-                stdout::failure("Invalid config file.", err);
-            }
-            let watches = Watches::with_root_and_concurrency(
-                rules.clone(),
-                workspace_root.clone(),
-                effective_concurrency(&args, &args.config),
-            )
-            .with_debounce(load_debounce(&args.config))
-            .with_backend(load_watch_backend(&args.config))
-            .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(&args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_hooks(load_hooks(&args.config));
-            let result = watches.explain(path);
-            let facts = crate::watches::ExplainFacts {
-                concurrency: watches.concurrency(),
-                debounce: watches.debounce(),
-            };
-            stdout::info(&explain_output(path, &result, &facts, &watches));
-        }
+        Action::Run { ref target } => run_target_action(&args, &startup, target),
+        Action::Explain { ref path } => explain_action(&args, &startup.workspace_root, path),
 
         // Ad-hoc command provided via `fzz exec -- PROGRAM ARG...`. The argv
         // is preserved end to end: it is never joined and re-parsed through a
         // shell. Shell operators only work when the caller explicitly invokes
         // a shell (e.g. `fzz exec -- sh -c '...'`).
-        Action::Exec { command: ref cmd } => {
-            match from_stdin() {
-                Ok(StdinRead::NoPipe) => {
-                    // No stdin and no config -> help and exit 1
-                    println!("{}", Arguments::help_text());
-                    process::exit(1);
-                }
-                Ok(StdinRead::PipeEmpty) => {
-                    stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
-                }
-                Ok(StdinRead::Data(content)) => {
-                    let patterns = match config::extract_paths(content) {
-                        Ok(patterns) => patterns,
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    let watch_rules = match config::from_argv(patterns, cmd.clone()) {
-                        Ok(rules) => {
-                            stdout::info(&format!(
-                                "watching patterns\r{}",
-                                rules[0].watch_patterns().join("\n")
-                            ));
-                            rules
-                        }
-                        Err(err) => {
-                            stdout::failure("Failed to get rules from stdin", err.to_string())
-                        }
-                    };
-
-                    if let Err(err) = rules::validate_rules(&watch_rules) {
-                        stdout::failure("Invalid config file.", err);
-                    }
-
-                    execute_watch_command(
-                        Watches::with_root(watch_rules, workspace_root),
-                        args,
-                        event_stream.clone(),
-                    );
-                }
-                Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
-            };
-        }
+        Action::Exec { command: ref cmd } => exec_action(&args, &startup, cmd),
     }
 }
 
+/// `fzz watch [-- TARGET]`: build the watch topology from the selected
+/// config, freeze the initial immutable revision, and start the watch command.
+fn watch_action(
+    args: &Arguments,
+    startup: &Startup,
+    wanted: &Option<String>,
+    exclusions: &[String],
+    no_services: bool,
+) {
+    let workspace_root = &startup.workspace_root;
+    let rules = load_rules(&args.config);
+    let concurrency = effective_concurrency(args, &args.config);
+    let debounce = load_debounce(&args.config);
+    let backend = load_watch_backend(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let watches =
+        Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
+            .with_debounce(debounce)
+            .with_backend(backend)
+            .with_gitignore(load_respect_gitignore(&args.config))
+            .with_recovery_policy(effective_recovery_policy(args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config))
+            .with_hooks(load_hooks(&args.config))
+            .with_session_hooks(load_session_hooks(&args.config));
+    // TASK-0092: resolve the config-declared control socket BEFORE
+    // freezing the initial revision so the startup revision's semantic
+    // surface matches every reload candidate (which always carries
+    // `on.socket`). Otherwise a config-declared socket makes every
+    // valid save — even a formatting-only rewrite — look like a
+    // semantic change and commit a new revision.
+    let control_socket = args
+        .control_socket
+        .clone()
+        .or_else(|| config_control_socket(&args.config, workspace_root));
+    // TASK-0089: freeze the initial immutable revision before any
+    // plan is created; reload (TASK-0090) observes candidates through
+    // the same tracker and only commits on semantic change.
+    let watches = {
+        let mut tracker = crate::config_revision::RevisionTracker::new();
+        let runtime = crate::config_revision::RuntimeConfig::capture(
+            workspace_root.clone(),
+            rules.clone(),
+            concurrency,
+            debounce,
+            backend,
+            load_respect_gitignore(&args.config),
+            effective_recovery_policy(args, &args.config),
+            load_recovery_timeout(&args.config),
+            load_hooks(&args.config),
+            load_session_hooks(&args.config),
+            control_socket.as_deref().map(std::path::PathBuf::from),
+        );
+        match tracker.observe(&runtime) {
+            crate::config_revision::RevisionDecision::New(revision) => {
+                watches.with_revision(revision)
+            }
+            crate::config_revision::RevisionDecision::NoOp => watches,
+        }
+    };
+    match watches.select_target_with_exclusions(wanted.as_deref(), exclusions, no_services) {
+        Ok(Some(selected)) => {
+            execute_watch_command(selected, args.clone(), startup.event_stream.clone())
+        }
+        Ok(None) => {
+            let target = wanted.as_deref().unwrap_or_default();
+            stdout::failure(
+                &format!("No target found for '{}'", target),
+                rules::available_targets(&rules),
+            )
+        }
+        Err(error) => stdout::usage_failure("Cannot apply watch exclusions", error.to_string()),
+    }
+}
+
+/// `fzz run TARGET`: execute one target once without watcher IPC.
+fn run_target_action(args: &Arguments, startup: &Startup, target: &str) {
+    let workspace_root = &startup.workspace_root;
+    let rules = load_rules(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let concurrency = effective_concurrency(args, &args.config);
+    let debounce = load_debounce(&args.config);
+    let watches =
+        Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
+            .with_debounce(debounce)
+            .with_recovery_policy(effective_recovery_policy(args, &args.config))
+            .with_recovery_timeout(load_recovery_timeout(&args.config));
+    let plan = match watches.run_target_plan(target) {
+        Ok(plan) => plan,
+        Err(crate::watches::RunTargetError::Missing(_)) => stdout::failure(
+            &format!("No target found for '{}'", target),
+            rules::available_targets(&rules),
+        ),
+        Err(error) => stdout::failure("Cannot run target", error.to_string()),
+    };
+
+    let shutdown = install_shutdown_signal_handler(None);
+    let fail_fast = args.fail_fast || environment::is_enabled("FUNZZY_BAIL");
+    let command = RunCommand::with_recorder_and_events(
+        workspace_root.clone(),
+        args.verbose,
+        fail_fast,
+        concurrency,
+        Some(Arc::new(DurationRecorder::new(DurationStore::new(
+            state_file_path(
+                &std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.clone()),
+                STATE_SCHEMA_VERSION,
+            ),
+        )))),
+        startup.event_stream.clone(),
+    )
+    .with_hooks(load_hooks(&args.config))
+    .with_recovery_policy(effective_recovery_policy(args, &args.config))
+    .with_recovery_timeout(load_recovery_timeout(&args.config))
+    .with_recovery_approval(Arc::new(crate::approval::TtyRecoveryApproval));
+    let result = command.execute(plan, target);
+    let signal_exit = shutdown.load(std::sync::atomic::Ordering::SeqCst);
+    if signal_exit != 0 {
+        process::exit(signal_exit);
+    }
+    match result {
+        Ok(true) => {}
+        Ok(false) => process::exit(1),
+        Err(error) => stdout::failure("Configured run failed", error),
+    }
+}
+
+/// `fzz explain PATH`: report which tasks match a path and why.
+fn explain_action(args: &Arguments, workspace_root: &std::path::Path, path: &str) {
+    let rules = load_rules(&args.config);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let watches = Watches::with_root_and_concurrency(
+        rules.clone(),
+        workspace_root.to_path_buf(),
+        effective_concurrency(args, &args.config),
+    )
+    .with_debounce(load_debounce(&args.config))
+    .with_backend(load_watch_backend(&args.config))
+    .with_gitignore(load_respect_gitignore(&args.config))
+    .with_recovery_policy(effective_recovery_policy(args, &args.config))
+    .with_recovery_timeout(load_recovery_timeout(&args.config))
+    .with_hooks(load_hooks(&args.config));
+    let result = watches.explain(path);
+    let facts = crate::watches::ExplainFacts {
+        concurrency: watches.concurrency(),
+        debounce: watches.debounce(),
+    };
+    stdout::info(&explain_output(path, &result, &facts, &watches));
+}
+
+/// `fzz exec -- PROGRAM ARG...`: ad-hoc watch over stdin patterns.
+fn exec_action(args: &Arguments, startup: &Startup, cmd: &[String]) {
+    let workspace_root = &startup.workspace_root;
+    match from_stdin() {
+        Ok(StdinRead::NoPipe) => {
+            // No stdin and no config -> help and exit 1
+            println!("{}", Arguments::help_text());
+            process::exit(1);
+        }
+        Ok(StdinRead::PipeEmpty) => {
+            stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
+        }
+        Ok(StdinRead::Data(content)) => {
+            let patterns = match config::extract_paths(content) {
+                Ok(patterns) => patterns,
+                Err(err) => stdout::failure("Failed to get rules from stdin", err.to_string()),
+            };
+
+            let watch_rules = match config::from_argv(patterns, cmd.to_vec()) {
+                Ok(rules) => {
+                    stdout::info(&format!(
+                        "watching patterns\r{}",
+                        rules[0].watch_patterns().join("\n")
+                    ));
+                    rules
+                }
+                Err(err) => stdout::failure("Failed to get rules from stdin", err.to_string()),
+            };
+
+            if let Err(err) = rules::validate_rules(&watch_rules) {
+                stdout::failure("Invalid config file.", err);
+            }
+
+            execute_watch_command(
+                Watches::with_root(watch_rules, workspace_root.clone()),
+                args.clone(),
+                startup.event_stream.clone(),
+            );
+        }
+        Err(err) => stdout::failure("Failed to read stdin", err.to_string()),
+    }
+}
 /// Renders a deterministic human summary of which tasks a path matches.
 /// Reuses the structured `ExplainResult`; no matching logic lives here.
 fn explain_output(
@@ -775,6 +815,28 @@ fn execute_watch_command(
     mut args: Arguments,
     event_stream: Option<Arc<crate::event_stream::EventStream>>,
 ) {
+    let (watch_target, watch_exclusions, watch_no_services) = match &args.action {
+        Action::Watch {
+            target,
+            exclude,
+            no_services,
+        } => (target.clone(), exclude.clone(), *no_services),
+        _ => (None, Vec::new(), false),
+    };
+    let startup_exclusion_note = if watch_exclusions.is_empty() && !watch_no_services {
+        None
+    } else {
+        Some(format!(
+            "exclusions={} no_services={}",
+            if watch_exclusions.is_empty() {
+                "none".to_owned()
+            } else {
+                watch_exclusions.join(",")
+            },
+            watch_no_services
+        ))
+    };
+
     // MANUAL-TRIGGER-CONTRACT §3.5: a watch selection containing only manual
     // jobs is a usage error unless the control socket is enabled (a
     // control-only watcher serving `fzz ctl run` is valid).
@@ -853,6 +915,9 @@ fn execute_watch_command(
         debounce,
         truncate_on_config_change,
         current_socket: args.control_socket.clone(),
+        target: watch_target,
+        exclusions: watch_exclusions.clone(),
+        no_services: watch_no_services,
     };
     let mut reload_session = ReloadSession::start(
         reload_settings,
@@ -876,6 +941,7 @@ fn execute_watch_command(
             args.log_file.as_deref(),
             run_on_init,
             non_block,
+            startup_exclusion_note.as_deref(),
         );
     }
     // Both wait and restart watch modes share one signal notification and
@@ -950,8 +1016,8 @@ fn report_shutdown_completion(completion: &crate::shutdown::ShutdownCompletion) 
 
 /// One deterministic startup record (TASK-0023): config path, workspace
 /// root, watch roots, task count, busy policy, run-on-init state, log
-/// destination, and control socket. The summary is compact and never dumps
-/// the full configuration.
+/// destination, control socket, and (when requested) invocation exclusions.
+/// The summary is compact and never dumps the full configuration.
 fn emit_startup_record(
     watches: &Watches,
     config_file_paths: &[String],
@@ -959,6 +1025,7 @@ fn emit_startup_record(
     log_file: Option<&str>,
     run_on_init: bool,
     non_block: bool,
+    invocation_note: Option<&str>,
 ) {
     let config_path = config_file_paths
         .first()
@@ -966,12 +1033,15 @@ fn emit_startup_record(
         .unwrap_or_else(|| "default".to_owned());
     let watch_roots = watches.paths_to_watch().unwrap_or_default().join(",");
     let policy = if non_block { "restart" } else { "wait" };
+    let invocation_note = invocation_note
+        .map(|note| format!(" {note}"))
+        .unwrap_or_default();
     diagnostics::debug(&diagnostics::Record {
         source: Some("config"),
         decision: Some("startup"),
         path: Some(config_path),
         note: Some(format!(
-            "workspace={} tasks={} policy={} run_on_init={} log={} socket={} watch_roots={}",
+            "workspace={} tasks={} policy={} run_on_init={} log={} socket={} watch_roots={}{}",
             watches.root().display(),
             watches.targets().len(),
             policy,
@@ -979,6 +1049,7 @@ fn emit_startup_record(
             log_file.unwrap_or("none"),
             control_socket.unwrap_or("none"),
             watch_roots,
+            invocation_note,
         )),
         ..Default::default()
     });
@@ -1182,5 +1253,136 @@ fn from_stdin() -> errors::Result<StdinRead> {
                 None,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_prefix_extracts_the_longest_non_wildcard_prefix() {
+        assert_eq!(literal_prefix("src/**/*.rs"), Some("src".to_owned()));
+        assert_eq!(literal_prefix("docs/*.md"), Some("docs".to_owned()));
+        assert_eq!(
+            literal_prefix("src/main.rs"),
+            Some("src/main.rs".to_owned())
+        );
+        assert_eq!(literal_prefix("*.log"), None);
+        assert_eq!(literal_prefix("**/*.rs"), None);
+        assert_eq!(
+            literal_prefix("trailing/dir/"),
+            Some("trailing/dir".to_owned())
+        );
+    }
+
+    #[test]
+    fn explain_output_names_covering_roots_for_unmatched_paths() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-app-explain-{}-{}",
+            std::process::id(),
+            "roots"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("future")).unwrap();
+
+        let rules = vec![rules::Rules::new(
+            "future build".to_owned(),
+            vec!["echo build".to_owned()],
+            vec!["future/**".to_owned()],
+            vec![],
+            false,
+        )];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        // The path is not matched (only future/** is watched) but is covered
+        // by the future subscription root, so explain names the root.
+        let result = watches.explain("docs/never.txt");
+        assert!(
+            result.matched.is_empty() && result.ignored.is_empty(),
+            "expected an unmatched path, got {result:?}"
+        );
+        let covering = watches.covering_roots("docs/never.txt");
+        assert!(
+            covering.is_empty(),
+            "docs/never.txt must not be covered by future/**: {covering:?}"
+        );
+
+        // For a future path inside a watched root, the root is named.
+        let future_result = watches.explain("future/deep/nested/out.txt");
+        assert!(
+            !future_result.matched.is_empty(),
+            "future/** must match future/deep/nested/out.txt: {future_result:?}"
+        );
+        let facts = crate::watches::ExplainFacts {
+            concurrency: watches.concurrency(),
+            debounce: watches.debounce(),
+        };
+        let output = explain_output(
+            "future/deep/nested/out.txt",
+            &future_result,
+            &facts,
+            &watches,
+        );
+        assert!(output.contains("    - future build"));
+
+        // And the unmatched case renders the covering-root guidance for a
+        // path under an existing root without a matching rule.
+        let docs = rules::Rules::new(
+            "docs watch".to_owned(),
+            vec!["echo docs".to_owned()],
+            vec!["docs/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Watches::with_root(vec![docs], scratch.clone());
+        let result = watches.explain("docs/never.txt");
+        assert!(
+            !result.matched.is_empty(),
+            "docs/** must match docs/never.txt: {result:?}"
+        );
+        std::fs::remove_dir_all(&scratch).unwrap();
+    }
+
+    #[test]
+    fn explain_output_reports_matched_and_ignored_tasks() {
+        let scratch = std::env::temp_dir().join(format!(
+            "funzzy-app-explain-{}-{}",
+            std::process::id(),
+            "matched"
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).unwrap();
+        std::fs::create_dir_all(scratch.join("ignored")).unwrap();
+
+        let rules = vec![
+            rules::Rules::new(
+                "build".to_owned(),
+                vec!["echo build".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            rules::Rules::new(
+                "lint".to_owned(),
+                vec!["echo lint".to_owned()],
+                vec!["**".to_owned()],
+                vec!["ignored/**".to_owned()],
+                false,
+            ),
+        ];
+        let watches = Watches::with_root(rules, scratch.clone());
+
+        let result = watches.explain("src/main.rs");
+        let facts = crate::watches::ExplainFacts {
+            concurrency: watches.concurrency(),
+            debounce: watches.debounce(),
+        };
+        let output = explain_output("src/main.rs", &result, &facts, &watches);
+
+        assert!(output.contains("Explain path src/main.rs"));
+        assert!(output.contains("- build"));
+        assert!(output.contains("- lint"));
+        std::fs::remove_dir_all(&scratch).unwrap();
     }
 }

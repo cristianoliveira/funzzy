@@ -170,6 +170,38 @@ impl TaskPlan {
     }
 }
 
+/// Builds a task's workspace-relative cwd candidate using only path policy.
+///
+/// This is deliberately filesystem-free: lexical safety (relative path and no
+/// parent traversal) belongs to planning, while symlink containment and
+/// existence observation belong to the runtime adapter below.
+fn task_cwd_candidate(
+    task_name: &str,
+    workspace_root: &Path,
+    requested: Option<&Path>,
+) -> Result<PathBuf, String> {
+    match requested {
+        None => Ok(workspace_root.to_path_buf()),
+        Some(cwd) if cwd.is_absolute() => Err(format!(
+            "Task '{}' cwd must be relative to workspace root: {}",
+            task_name,
+            cwd.display()
+        )),
+        Some(cwd)
+            if cwd
+                .components()
+                .any(|component| component == Component::ParentDir) =>
+        {
+            Err(format!(
+                "Task '{}' cwd cannot escape workspace root: {}",
+                task_name,
+                cwd.display()
+            ))
+        }
+        Some(cwd) => Ok(workspace_root.join(cwd)),
+    }
+}
+
 impl RunPlan {
     /// Resolves every task cwd from injected workspace root. Absolute paths
     /// and any `..` component are rejected; tasks cannot escape workspace.
@@ -177,56 +209,7 @@ impl RunPlan {
     pub fn resolve_context(&self, workspace_root: &Path) -> Result<RunPlan, String> {
         let resolve_task = |task: &TaskPlan| -> Result<TaskPlan, String> {
             let mut resolved = task.clone();
-            let cwd = match &task.context.cwd {
-                None => workspace_root.to_path_buf(),
-                Some(cwd) if cwd.is_absolute() => {
-                    return Err(format!(
-                        "Task '{}' cwd must be relative to workspace root: {}",
-                        task.name,
-                        cwd.display()
-                    ));
-                }
-                Some(cwd)
-                    if cwd
-                        .components()
-                        .any(|component| component == Component::ParentDir) =>
-                {
-                    return Err(format!(
-                        "Task '{}' cwd cannot escape workspace root: {}",
-                        task.name,
-                        cwd.display()
-                    ));
-                }
-                Some(cwd) => {
-                    let candidate = workspace_root.join(cwd);
-                    if candidate.symlink_metadata().is_ok() {
-                        let canonical_root = workspace_root.canonicalize().map_err(|error| {
-                            format!(
-                                "Task '{}' workspace root cannot be resolved: {} ({})",
-                                task.name,
-                                workspace_root.display(),
-                                error
-                            )
-                        })?;
-                        let canonical_candidate = candidate.canonicalize().map_err(|error| {
-                            format!(
-                                "Task '{}' cwd cannot be resolved: {} ({})",
-                                task.name,
-                                candidate.display(),
-                                error
-                            )
-                        })?;
-                        if !canonical_candidate.starts_with(&canonical_root) {
-                            return Err(format!(
-                                "Task '{}' cwd cannot escape workspace root through a symlink: {}",
-                                task.name,
-                                cwd.display()
-                            ));
-                        }
-                    }
-                    candidate
-                }
-            };
+            let cwd = task_cwd_candidate(&task.name, workspace_root, task.context.cwd.as_deref())?;
             resolved.context.cwd = Some(cwd);
             Ok(resolved)
         };
@@ -1036,6 +1019,38 @@ mod tests {
     }
 
     #[test]
+    fn cwd_policy_rejects_absolute_and_parent_paths_without_filesystem_observation() {
+        for cwd in [Path::new("/tmp/outside"), Path::new("../outside")] {
+            let error = task_cwd_candidate("unsafe", Path::new("/workspace"), Some(cwd))
+                .expect_err("unsafe cwd must fail before filesystem observation");
+            assert!(error.contains("Task 'unsafe' cwd"), "unexpected: {error}");
+        }
+    }
+
+    #[test]
+    fn cwd_policy_keeps_missing_relative_path_under_workspace() {
+        let candidate = task_cwd_candidate(
+            "missing",
+            Path::new("/workspace-that-does-not-exist"),
+            Some(Path::new("packages/missing")),
+        )
+        .expect("missing paths still have a deterministic candidate");
+
+        assert_eq!(
+            candidate,
+            PathBuf::from("/workspace-that-does-not-exist/packages/missing")
+        );
+    }
+
+    #[test]
+    fn cwd_policy_keeps_workspace_root_for_tasks_without_a_cwd() {
+        let candidate = task_cwd_candidate("default", Path::new("/workspace"), None)
+            .expect("default cwd must use workspace root");
+
+        assert_eq!(candidate, PathBuf::from("/workspace"));
+    }
+
+    #[test]
     fn resolves_task_context_and_expands_relative_path_from_task_cwd() {
         let mut environment = BTreeMap::new();
         environment.insert("ROLE".to_owned(), "web".to_owned());
@@ -1085,36 +1100,6 @@ mod tests {
                 .expect_err("cwd escape must fail");
             assert!(error.contains("Task 'unsafe' cwd"), "unexpected: {error}");
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rejects_task_working_directory_symlinks_outside_workspace() {
-        use std::os::unix::fs::symlink;
-
-        let fixture =
-            std::env::temp_dir().join(format!("funzzy-task-cwd-escape-{}", std::process::id()));
-        let workspace = fixture.join("workspace");
-        let outside = fixture.join("outside");
-        let _ = std::fs::remove_dir_all(&fixture);
-        std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, workspace.join("linked-outside")).unwrap();
-
-        let rule = Rules::new(
-            "unsafe".to_owned(),
-            vec!["true".to_owned()],
-            vec!["src/**".to_owned()],
-            vec![],
-            false,
-        )
-        .with_execution_context(Some("linked-outside".to_owned()), BTreeMap::new());
-        let error = RunPlan::from_rules(vec![rule])
-            .resolve_context(&workspace)
-            .expect_err("cwd symlink escape must fail");
-
-        assert!(error.contains("Task 'unsafe' cwd"), "unexpected: {error}");
-        std::fs::remove_dir_all(fixture).unwrap();
     }
 
     #[test]

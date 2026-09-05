@@ -31,7 +31,7 @@ expect_accept() {
 
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
-mkdir -p "$SCRATCH/scripts" "$SCRATCH/nix"
+mkdir -p "$SCRATCH/scripts" "$SCRATCH/nix" "$SCRATCH/crates/fzz"
 # Synthesize pinned-prerelease manifests instead of copying the live ones:
 # the real Cargo.toml drifts with the release cycle (2.0.0-beta.1 -> 2.0.0 ->
 # ...), which once broke case 1 when the repo reached a stable version and
@@ -46,6 +46,15 @@ edition = "2021"
 [[bin]]
 name = "fzz"
 path = "src/main.rs"
+FIXTURE
+cat > "$SCRATCH/crates/fzz/Cargo.toml" <<'FIXTURE'
+[package]
+name = "fzz"
+version = "9.9.9-beta.1"
+edition = "2021"
+
+[dependencies]
+funzzy = { version = "=9.9.9-beta.1", path = "../.." }
 FIXTURE
 mkdir -p "$SCRATCH/src"
 printf 'fn main() {}\n' > "$SCRATCH/src/main.rs"
@@ -67,15 +76,29 @@ mkdir -p "$SCRATCH/.git"
 expect_accept "healthy prerelease repo" "$SCRATCH/scripts/version-check"
 
 # 2. Cargo/lock mismatch is rejected: fake a lock with a different version.
-cp "$SCRATCH/Cargo.toml" "$SCRATCH/Cargo.toml.orig"
+cp "$SCRATCH/Cargo.lock" "$SCRATCH/Cargo.lock.orig"
 sed -i 's/^version = "9.9.9-beta.1"/version = "9.9.9-beta.2"/' "$SCRATCH/Cargo.lock"
 expect_reject "Cargo/lock version mismatch" "$SCRATCH/scripts/version-check"
-mv "$SCRATCH/Cargo.toml.orig" "$SCRATCH/Cargo.toml"
+mv "$SCRATCH/Cargo.lock.orig" "$SCRATCH/Cargo.lock"
 
-# 3. Stable version requires an exact v-prefixed tag: fake a stable Cargo
+# 3. The short-name installer must publish the same version and depend on
+#    that exact canonical version. A drift could install different behavior
+#    under `cargo install fzz`.
+cp "$SCRATCH/crates/fzz/Cargo.toml" "$SCRATCH/crates/fzz/Cargo.toml.orig"
+sed -i 's/version = "9.9.9-beta.1"/version = "9.9.8"/' "$SCRATCH/crates/fzz/Cargo.toml"
+expect_reject "fzz alias package version mismatch" "$SCRATCH/scripts/version-check"
+mv "$SCRATCH/crates/fzz/Cargo.toml.orig" "$SCRATCH/crates/fzz/Cargo.toml"
+
+sed -i 's/version = "=9.9.9-beta.1"/version = "=9.9.8"/' "$SCRATCH/crates/fzz/Cargo.toml"
+expect_reject "fzz alias dependency mismatch" "$SCRATCH/scripts/version-check"
+sed -i 's/version = "=9.9.8"/version = "=9.9.9-beta.1"/' "$SCRATCH/crates/fzz/Cargo.toml"
+
+# 4. Stable version requires an exact v-prefixed tag: fake a stable Cargo
 #    version and ensure the missing-tag branch fires.
 sed -i 's/^version = "9.9.9-beta.1"/version = "9.9.9"/' "$SCRATCH/Cargo.toml"
 sed -i 's/^version = "9.9.9-beta.1"/version = "9.9.9"/' "$SCRATCH/Cargo.lock"
+sed -i 's/^version = "9.9.9-beta.1"/version = "9.9.9"/' "$SCRATCH/crates/fzz/Cargo.toml"
+sed -i 's/version = "=9.9.9-beta.1"/version = "=9.9.9"/' "$SCRATCH/crates/fzz/Cargo.toml"
 expect_reject "stable version without v9.9.9 tag" "$SCRATCH/scripts/version-check"
 
 echo "version-check-test: $pass passed, $failc failed"

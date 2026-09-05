@@ -66,6 +66,44 @@ pub enum RunTargetError {
     },
 }
 
+/// Invalid invocation-level watch exclusion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExclusionError {
+    Missing {
+        selector: String,
+    },
+    Ambiguous {
+        selector: String,
+        matches: Vec<String>,
+    },
+    Empty {
+        selected: Vec<String>,
+    },
+}
+
+impl fmt::Display for ExclusionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExclusionError::Missing { selector } => write!(
+                formatter,
+                "No target found for exclusion '{}'; use a configured job name, @tag, or unambiguous name substring",
+                selector
+            ),
+            ExclusionError::Ambiguous { selector, matches } => write!(
+                formatter,
+                "Exclusion '{}' is ambiguous; matches: {}",
+                selector,
+                matches.join(", ")
+            ),
+            ExclusionError::Empty { selected } => write!(
+                formatter,
+                "Exclusions leave no runnable jobs (selected: {}). Remove an exclusion or choose a broader target",
+                selected.join(", ")
+            ),
+        }
+    }
+}
+
 impl fmt::Display for RunTargetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -268,23 +306,18 @@ impl Watches {
         self.revision.as_ref()
     }
 
-    /// Narrows visible rules while retaining barriers from original topology.
-    pub fn select_target(&self, target: &str) -> Option<Self> {
-        let rules: Vec<Rules> = self
-            .rules
-            .iter()
-            .filter(|rule| rule.name.contains(target))
-            .cloned()
-            .collect();
-        if rules.is_empty() {
-            return None;
-        }
-        Some(Self {
-            rules,
-            topology: self
-                .topology
-                .clone()
-                .filter(|rule| rule.name.contains(target)),
+    fn filter_rules<F>(&self, keep: F) -> Self
+    where
+        F: Fn(&Rules) -> bool,
+    {
+        Self {
+            rules: self
+                .rules
+                .iter()
+                .filter(|rule| keep(rule))
+                .cloned()
+                .collect(),
+            topology: self.topology.clone().filter(keep),
             root: self.root.clone(),
             concurrency: self.concurrency,
             debounce: self.debounce,
@@ -296,7 +329,93 @@ impl Watches {
             hooks: self.hooks.clone(),
             session_hooks: self.session_hooks.clone(),
             revision: self.revision.clone(),
-        })
+        }
+    }
+
+    /// Narrows visible rules while retaining barriers from original topology.
+    pub fn select_target(&self, target: &str) -> Option<Self> {
+        let selected = self.filter_rules(|rule| rule.name.contains(target));
+        (!selected.rules.is_empty()).then_some(selected)
+    }
+
+    /// Selects a watch target and applies invocation-only exclusions at the
+    /// shared planning boundary, before watch roots or executor lifecycle.
+    /// Exclusion selectors resolve against this instance's original rules;
+    /// positive selection is applied before the effective-plan empty check.
+    pub fn select_target_with_exclusions(
+        &self,
+        target: Option<&str>,
+        selectors: &[String],
+        no_services: bool,
+    ) -> Result<Option<Self>, ExclusionError> {
+        let selected = match target {
+            Some(target) => self.select_target(target),
+            None => Some(self.clone()),
+        };
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+
+        let mut excluded_names = Vec::new();
+        for selector in selectors {
+            let exact_matches: Vec<&Rules> = self
+                .rules
+                .iter()
+                .filter(|rule| rule.name == *selector)
+                .collect();
+            let matches: Vec<&Rules> = if !exact_matches.is_empty() {
+                exact_matches
+            } else if selector.starts_with('@') {
+                self.rules
+                    .iter()
+                    .filter(|rule| rule.name.contains(selector))
+                    .collect()
+            } else {
+                self.rules
+                    .iter()
+                    .filter(|rule| rule.name.contains(selector))
+                    .collect()
+            };
+            if matches.is_empty() {
+                return Err(ExclusionError::Missing {
+                    selector: selector.clone(),
+                });
+            }
+            if matches.len() > 1 && !selector.starts_with('@') {
+                return Err(ExclusionError::Ambiguous {
+                    selector: selector.clone(),
+                    matches: matches.iter().map(|rule| rule.name.clone()).collect(),
+                });
+            }
+            for rule in matches {
+                if !excluded_names.contains(&rule.name) {
+                    excluded_names.push(rule.name.clone());
+                }
+            }
+        }
+        if no_services {
+            for rule in &self.rules {
+                if rule.service() && !excluded_names.contains(&rule.name) {
+                    excluded_names.push(rule.name.clone());
+                }
+            }
+        }
+
+        if excluded_names.is_empty() {
+            return Ok(Some(selected));
+        }
+        let selected_names: Vec<String> = selected
+            .rules
+            .iter()
+            .map(|rule| rule.name.clone())
+            .collect();
+        let effective = selected.filter_rules(|rule| !excluded_names.contains(&rule.name));
+        if effective.rules.is_empty() {
+            return Err(ExclusionError::Empty {
+                selected: selected_names,
+            });
+        }
+        Ok(Some(effective))
     }
 
     /// The workspace root this watch planning is anchored to.
@@ -1383,6 +1502,227 @@ mod tests {
             watches.run_target_plan("missing"),
             Err(RunTargetError::Missing("missing".to_owned()))
         );
+    }
+
+    #[test]
+    fn watch_exclusions_resolve_names_tags_and_unambiguous_substrings() {
+        let rules = vec![
+            Rules::new(
+                "build".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "lint @quick".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "test @quick".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+        ];
+        let watches = Watches::new(rules);
+
+        let selected = watches
+            .select_target_with_exclusions(Some("@quick"), &["lint @quick".to_owned()], false)
+            .expect("valid exclusions")
+            .expect("positive target");
+        assert_eq!(
+            selected
+                .targets()
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test @quick"]
+        );
+
+        let substring = watches
+            .select_target_with_exclusions(None, &["buil".to_owned()], false)
+            .expect("unambiguous substring")
+            .expect("watch");
+        assert_eq!(
+            substring
+                .targets()
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lint @quick", "test @quick"]
+        );
+
+        assert!(matches!(
+            watches.select_target_with_exclusions(None, &["quick".to_owned()], false),
+            Err(ExclusionError::Ambiguous { .. })
+        ));
+        assert!(matches!(
+            watches.select_target_with_exclusions(None, &["missing".to_owned()], false),
+            Err(ExclusionError::Missing { selector }) if selector == "missing"
+        ));
+    }
+
+    #[test]
+    fn watch_exclusions_are_idempotent_and_no_services_filters_before_plan() {
+        let rules = vec![
+            Rules::new(
+                "finite".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "legacy service".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            )
+            .with_service(true),
+            Rules::new(
+                "ready service".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            )
+            .with_service(true)
+            .with_readiness(Some(crate::rules::Readiness::new(
+                "true".to_owned(),
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+            ))),
+        ];
+        let watches = Watches::new(rules);
+        let effective = watches.select_target_with_exclusions(
+            None,
+            &["legacy service".to_owned(), "@none".to_owned()],
+            true,
+        );
+        assert!(
+            matches!(effective, Err(ExclusionError::Missing { selector }) if selector == "@none")
+        );
+
+        let effective = watches
+            .select_target_with_exclusions(
+                None,
+                &["legacy service".to_owned(), "legacy service".to_owned()],
+                true,
+            )
+            .expect("repeated exclusions")
+            .expect("watch");
+        assert_eq!(
+            effective
+                .targets()
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["finite"]
+        );
+
+        let empty = watches
+            .select_target_with_exclusions(None, &["finite".to_owned()], true)
+            .expect_err("all jobs excluded");
+        assert!(matches!(empty, ExclusionError::Empty { .. }));
+
+        let overlap = watches
+            .select_target_with_exclusions(
+                Some("legacy"),
+                &["legacy".to_owned(), "legacy service".to_owned()],
+                false,
+            )
+            .expect_err("overlapping exclusions leave no jobs");
+        assert!(matches!(overlap, ExclusionError::Empty { .. }));
+    }
+
+    #[test]
+    fn reload_candidate_reapplies_invocation_policy_before_lifecycle() {
+        let candidate_rules = vec![
+            Rules::new(
+                "finite".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "new service".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            )
+            .with_service(true)
+            .with_readiness(Some(crate::rules::Readiness::new(
+                "true".to_owned(),
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+            ))),
+        ];
+        let candidate = Watches::new(candidate_rules);
+        let filtered = candidate
+            .select_target_with_exclusions(None, &[], true)
+            .expect("candidate policy")
+            .expect("candidate watch");
+        assert_eq!(
+            filtered
+                .targets()
+                .iter()
+                .map(|rule| rule.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["finite"]
+        );
+
+        let renamed = Watches::new(vec![Rules::new(
+            "finite".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )]);
+        assert!(matches!(
+            renamed.select_target_with_exclusions(None, &["new service".to_owned()], false),
+            Err(ExclusionError::Missing { .. })
+        ));
+
+        let ambiguous_candidate = Watches::new(vec![
+            Rules::new(
+                "lint".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+            Rules::new(
+                "lint docs".to_owned(),
+                vec!["true".to_owned()],
+                vec!["src/**".to_owned()],
+                vec![],
+                false,
+            ),
+        ]);
+        assert!(matches!(
+            ambiguous_candidate.select_target_with_exclusions(None, &["lin".to_owned()], false),
+            Err(ExclusionError::Ambiguous { .. })
+        ));
+
+        let empty_candidate = Watches::new(vec![Rules::new(
+            "service".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )]);
+        assert!(matches!(
+            empty_candidate.select_target_with_exclusions(None, &["service".to_owned()], false),
+            Err(ExclusionError::Empty { .. })
+        ));
     }
 
     #[test]

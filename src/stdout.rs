@@ -55,6 +55,16 @@ pub fn show_and_exit(text: &str) -> ! {
 }
 
 pub fn failure(text: &str, err: String) -> ! {
+    failure_with_exit_code(text, err, 1)
+}
+
+/// Reports an invalid invocation while preserving the CLI usage-error exit
+/// status (2), rather than conflating it with an operational failure.
+pub fn usage_failure(text: &str, err: String) -> ! {
+    failure_with_exit_code(text, err, 2)
+}
+
+fn failure_with_exit_code(text: &str, err: String, code: i32) -> ! {
     let header = if is_colored() {
         format!("{}Error{}: {}", RED, RESET, text)
     } else {
@@ -66,7 +76,7 @@ pub fn failure(text: &str, err: String) -> ! {
 
     println!("{}", err);
     logging::log_line(&err);
-    std::process::exit(1)
+    std::process::exit(code)
 }
 
 /// Operational/config failure for commands whose contract requires stderr.

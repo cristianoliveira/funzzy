@@ -9,6 +9,9 @@
 extern crate yaml_rust2;
 
 use crate::cli;
+use crate::config_validation::{
+    self, ManualTriggerInput, ManualTriggerViolation, RuleInput, ValidationError,
+};
 use crate::errors;
 use crate::rules::{OutputPolicy, Readiness, Rules};
 use crate::yaml;
@@ -178,6 +181,10 @@ struct CommonRules {
     /// own `output:`.
     output_policy: OutputPolicy,
     timeout: Option<Duration>,
+}
+
+fn invalid_config_from_validation(error: ValidationError) -> errors::FzzError {
+    errors::FzzError::InvalidConfigError(error.message, None, error.hint)
 }
 
 fn validate_section(
@@ -513,28 +520,35 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     };
     // MANUAL-TRIGGER-CONTRACT §4: ambiguous combinations are actionable
     // errors, never silent precedence.
-    if manual {
-        if !task_change.is_empty() {
-            return Err(errors::FzzError::InvalidConfigError(
-                format!("Job '{}' declares both 'trigger: manual' and 'change'", name),
-                None,
-                Some("Manual jobs never match filesystem events; remove 'change' or 'trigger: manual'.".to_owned()),
-            ));
-        }
-        if !task_ignore.is_empty() {
-            return Err(errors::FzzError::InvalidConfigError(
-                format!(
-                    "Job '{}' declares both 'trigger: manual' and 'ignore'",
-                    name
-                ),
-                None,
-                Some(
-                    "'ignore' is inert on a manual job; remove 'ignore' or 'trigger: manual'."
-                        .to_owned(),
-                ),
-            ));
-        }
-    }
+    config_validation::validate_manual_trigger(ManualTriggerInput {
+        manual,
+        change_patterns: &task_change,
+        ignore_patterns: &task_ignore,
+    })
+    .map_err(|violation| match violation {
+        ManualTriggerViolation::Change => errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' declares both 'trigger: manual' and 'change'",
+                name
+            ),
+            None,
+            Some(
+                "Manual jobs never match filesystem events; remove 'change' or 'trigger: manual'."
+                    .to_owned(),
+            ),
+        ),
+        ManualTriggerViolation::Ignore => errors::FzzError::InvalidConfigError(
+            format!(
+                "Job '{}' declares both 'trigger: manual' and 'ignore'",
+                name
+            ),
+            None,
+            Some(
+                "'ignore' is inert on a manual job; remove 'ignore' or 'trigger: manual'."
+                    .to_owned(),
+            ),
+        ),
+    })?;
 
     let (watch_patterns, ignore_patterns) = if manual {
         // MANUAL-TRIGGER-CONTRACT §3.1: root `on` scope never applies to a
@@ -569,47 +583,12 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         }
     };
     let readiness = readiness_from_yaml(yaml, &name, service)?;
-    if service && recovery.is_some() {
-        return Err(errors::FzzError::InvalidConfigError(
-            format!(
-                "Job '{}' cannot declare recovery when service is true",
-                name
-            ),
-            None,
-            Some(
-                "A service has no finite verification boundary; remove `recovery` or `service`."
-                    .to_owned(),
-            ),
-        ));
-    }
+    config_validation::validate_service_recovery(&name, service, recovery.is_some())
+        .map_err(invalid_config_from_validation)?;
     // MANUAL-TRIGGER-CONTRACT §4: reject ambiguous manual combinations with
     // actionable errors rather than inventing precedence.
-    if trigger.is_some() && run_on_init {
-        return Err(errors::FzzError::InvalidConfigError(
-            format!(
-                "Job '{}' cannot declare both 'trigger: manual' and 'run_on_init'",
-                name
-            ),
-            None,
-            Some(
-                "Manual jobs never run at watcher initialization; remove 'run_on_init' or 'trigger: manual'."
-                    .to_owned(),
-            ),
-        ));
-    }
-    if trigger.is_some() && service {
-        return Err(errors::FzzError::InvalidConfigError(
-            format!(
-                "Job '{}' cannot declare both 'trigger: manual' and 'service: true'",
-                name
-            ),
-            None,
-            Some(
-                "Services start on init and restart on change; that contradicts 'trigger: manual'. Remove one."
-                    .to_owned(),
-            ),
-        ));
-    }
+    config_validation::validate_manual_lifecycle(&name, trigger, run_on_init, service)
+        .map_err(invalid_config_from_validation)?;
     // FINITE-JOB-TIMEOUT-CONTRACT §7: a managed service is intentionally
     // unbounded; a finite deadline contradicts the service contract.
     let timeout = match &yaml["timeout"] {
@@ -650,17 +629,9 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
             ));
         }
     };
-    if yaml["timeout"] != Yaml::BadValue && timeout.is_some() && service {
-        return Err(errors::FzzError::InvalidConfigError(
-            format!(
-                "Job '{}' cannot declare both 'timeout' and 'service: true'",
-                name
-            ),
-            None,
-            Some("A service is intentionally unbounded; remove 'timeout' or 'service'.".to_owned()),
-        ));
-    }
-    let timeout = if service { None } else { timeout };
+    let timeout_declared = yaml["timeout"] != Yaml::BadValue;
+    config_validation::validate_service_timeout(&name, timeout_declared, timeout, service)
+        .map_err(invalid_config_from_validation)?;
 
     let output = match yaml::extract_optional_string(yaml, "output")? {
         None => common.output_policy,
@@ -682,22 +653,25 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
         },
     };
 
-    let rule = Rules::new(name, commands, watch_patterns, ignore_patterns, run_on_init)
-        .with_execution_context(cwd, environment)
-        .with_inherited_patterns(inherited_patterns(common))
-        .with_output(output)
-        .with_service(service)
-        .with_trigger(trigger)
-        .with_timeout(timeout)
-        .with_readiness(readiness);
-    let rule = match recovery {
-        Some(commands) => rule.with_recovery(commands),
-        None => rule,
-    };
-    Ok(match parallel {
-        Some(group) => rule.with_parallel(group),
-        None => rule,
+    config_validation::build_rule(RuleInput {
+        name,
+        commands,
+        watch_patterns,
+        ignore_patterns,
+        run_on_init,
+        parallel,
+        cwd,
+        environment,
+        inherited_patterns: inherited_patterns(common),
+        output,
+        service,
+        trigger,
+        timeout,
+        timeout_declared,
+        recovery,
+        readiness,
     })
+    .map_err(invalid_config_from_validation)
 }
 
 /// Parse the explicit service readiness policy. The object is intentionally
@@ -1398,6 +1372,76 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
     }
 
     formatted_rules
+}
+
+#[cfg(test)]
+mod boundary_characterization_tests {
+    use super::from_yaml;
+    use crate::rules::OutputPolicy;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn preferred_jobs_decode_domain_fields_and_defaults() {
+        let rules = from_yaml(
+            "on:\n  change: [\"src/**\"]\nexecution:\n  output: capture\njobs:\n  - name: build\n    run: cargo build\n    env: {PROFILE: dev}\n",
+        )
+        .expect("preferred jobs config");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "build");
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**"]);
+        assert_eq!(rules[0].output(), OutputPolicy::Capture);
+        assert_eq!(
+            rules[0].environment(),
+            &BTreeMap::from([(String::from("PROFILE"), String::from("dev"))])
+        );
+        assert!(!rules[0].run_on_init());
+    }
+
+    #[test]
+    fn legacy_root_list_decodes_without_preferred_defaults() {
+        let rules =
+            from_yaml("- name: test\n  run: cargo test\n  change: tests/**\n  run_on_init: true\n")
+                .expect("legacy task-list config");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "test");
+        assert_eq!(rules[0].watch_patterns(), vec!["tests/**"]);
+        assert!(rules[0].run_on_init());
+        assert_eq!(rules[0].output(), OutputPolicy::Inherit);
+    }
+
+    #[test]
+    fn cross_field_error_order_keeps_manual_change_before_run_on_init() {
+        let error = from_yaml(
+            "jobs:\n  - name: manual\n    trigger: manual\n    change: src/**\n    run_on_init: true\n    run: ./wait.sh\n",
+        )
+        .expect_err("ambiguous manual job");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("both 'trigger: manual' and 'change'"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            !message.contains("'trigger: manual' and 'run_on_init'"),
+            "later cross-field failure must not win: {message}"
+        );
+    }
+
+    #[test]
+    fn cross_field_error_precedes_later_output_parse_error() {
+        let error = from_yaml(
+            "jobs:\n  - name: manual\n    trigger: manual\n    run_on_init: true\n    output: loud\n    run: ./wait.sh\n",
+        )
+        .expect_err("ambiguous manual job");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("'trigger: manual' and 'run_on_init'"),
+            "cross-field policy must retain precedence: {message}"
+        );
+    }
 }
 
 #[cfg(test)]

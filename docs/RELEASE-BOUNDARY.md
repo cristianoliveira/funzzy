@@ -83,8 +83,7 @@ scope reduction before cut:
 ## 4. Supported environment and install matrix
 
 - Minimum supported Rust version: the Clap-4.6 toolchain (see `nix/` and CI).
-- Install channels: Cargo (`cargo install funzzy`), crates.io, GitHub release
-  binaries, Nix (stable package), source builds.
+- Install channels: Cargo (`cargo install funzzy`; the first-party `fzz` alias package publishes after the canonical crate), crates.io, GitHub release binaries, Nix (stable package), source builds.
 - Config formats: preferred `jobs:` list, accepted legacy task forms.
 - Protocol/schema versions: declared in `capabilities` (protocolVersion,
   schemaVersion); additive evolution only.
@@ -96,14 +95,16 @@ scope reduction before cut:
 
 ```text
 candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
-  -> GitHub release -> crates.io publish -> stable Nix update -> verify
+  -> GitHub release -> crates.io publish `funzzy`
+  -> crates.io publish exact-version `fzz` alias -> stable Nix update -> verify
 ```
 
 - Ownership: planning and CI **cannot** publish implicitly. The irreversible
   step (TASK-0063) requires exact SHA approval from the maintainer.
 - Tags and releases are immutable; never amended, moved, or recreated.
 - Partial release resumes channel-aware; never blindly republishes a channel
-  that already succeeded.
+  that already succeeded. If canonical `funzzy` succeeds and the `fzz` alias
+  fails, verify registry state, fix forward, and publish only the missing alias.
 
 ## 6. Roll-forward policy
 
@@ -116,7 +117,7 @@ candidate commit (2.0.0) -> dry-run publish -> tag v2.0.0 (immutable)
 
 Breaking CLI grammar/flags/exit behavior (migration: docs/MIGRATION.md):
 
-- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
+- Real subcommands (`watch`/`list`/`run`/`explain`/`check`/`config`/`exec`/`control`); removed `--target`/`-t` → `watch TARGET`/`run TARGET`; explicit `fzz -- TARGET` watch shorthand requires the delimiter; removed `--non-block`/`-n` → `--on-busy restart`; `exec` preserves argv; exit codes stable (0 success, 1 workflow/operational, 2 usage).
 
 Preserved compatibility:
 
@@ -133,6 +134,9 @@ New in 2.0.0:
 - Configuration discovery: `fzz config schema|example`, `fzz check`, `fzz explain`.
 - Configuration commands: `fzz init` is create-only with `--template comprehensive|minimal|parallel|agent` (default `comprehensive`); `fzz migrate` is the explicit, atomic, idempotent legacy rewrite (`fzz init --migrate` is removed) — CLI-V2-CONTRACT §3a (TASK-0096).
 - Watcher: `on.debounce`, `on.watch_backend` (native/poll/auto), `on.respect_gitignore`.
+- Invocation-only watch filters: repeatable `fzz watch --exclude TARGET` and
+  `fzz watch --no-services`; filters are applied before roots, process spawn,
+  readiness, and service-pool reconciliation, then reapplied on reload.
 - Managed long-running service tasks (`service: true`), run-level
   success/failure hooks (`on.success`/`on.failure`), watcher-session close hook
   (`on.close`, graceful ready-watcher shutdown only), task-aware output

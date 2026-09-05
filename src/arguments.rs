@@ -27,7 +27,11 @@ pub enum OnBusy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// `fzz` (no subcommand) or `fzz watch [TARGET]`: run configured tasks.
-    Watch { target: Option<String> },
+    Watch {
+        target: Option<String>,
+        exclude: Vec<String>,
+        no_services: bool,
+    },
     /// `fzz list`: print configured tasks.
     List,
     /// `fzz check`: validate configuration without starting a watcher.
@@ -135,10 +139,29 @@ impl Arguments {
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
         let action = match matches.subcommand() {
-            None => Action::Watch { target: None },
+            None => Action::Watch {
+                target: matches.get_one::<String>("root_target").cloned(),
+                exclude: matches
+                    .get_many::<String>("root_exclude")
+                    .map(|values| values.cloned().collect())
+                    .unwrap_or_default(),
+                no_services: matches.get_flag("root_no_services"),
+            },
             Some(("watch", sub)) => {
                 let target = sub.get_one::<String>("target").cloned();
-                Action::Watch { target }
+                let mut exclude = matches
+                    .get_many::<String>("root_exclude")
+                    .map(|values| values.cloned().collect::<Vec<_>>())
+                    .unwrap_or_default();
+                if let Some(values) = sub.get_many::<String>("exclude") {
+                    exclude.extend(values.cloned());
+                }
+                Action::Watch {
+                    target,
+                    exclude,
+                    no_services: sub.get_flag("no_services")
+                        || matches.get_flag("root_no_services"),
+                }
             }
             Some(("list", _)) => Action::List,
             Some(("check", _)) => Action::Check,
@@ -287,6 +310,18 @@ impl Arguments {
                 unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
             }
         };
+
+        // Exclusions are a watch-only policy. Root-level spellings are
+        // accepted so the zero-argument `fzz --exclude ...` alias works, but
+        // reject them explicitly for every other action (including `run`).
+        if !matches!(action, Action::Watch { .. })
+            && (matches.contains_id("root_exclude") || matches.get_flag("root_no_services"))
+        {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::UnknownArgument,
+                "watch-only options `--exclude` and `--no-services` are only valid with `fzz watch`",
+            ));
+        }
 
         Ok(Arguments {
             action,
@@ -456,6 +491,28 @@ pub fn command() -> Command {
                 .help("Expose watcher status over a Unix socket (implies --on-busy restart)."),
         )
         .arg(
+            Arg::new("root_exclude")
+                .long("exclude")
+                .value_name("TARGET")
+                .action(ArgAction::Append)
+                .value_parser(clap::builder::ValueParser::string())
+                .help("Watch-only exclusion; repeat to exclude named targets."),
+        )
+        .arg(
+            Arg::new("root_no_services")
+                .long("no-services")
+                .action(ArgAction::SetTrue)
+                .help("Watch-only shortcut to exclude all service jobs."),
+        )
+        .arg(
+            Arg::new("root_target")
+                .value_name("TARGET")
+                .num_args(0..=1)
+                .last(true)
+                .value_parser(clap::builder::ValueParser::string())
+                .help("Watch target after `--` (for example, `fzz -- @quick`)."),
+        )
+        .arg(
             Arg::new("no_run_on_init")
                 .long("no-run-on-init")
                 .global(true)
@@ -497,6 +554,9 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("watch")
                 .about("Watch for file changes and run configured tasks.")
+                .long_about(
+                    "Watch for file changes and run configured tasks. TARGET narrows the watch; repeat --exclude TARGET to omit jobs, or use --no-services to omit every service job. Examples: `fzz watch @quick --exclude docs` and `fzz watch --no-services`.",
+                )
                 .version(env!("CARGO_PKG_VERSION"))
                 .arg(
                     Arg::new("sequential")
@@ -510,6 +570,20 @@ pub fn command() -> Command {
                         .num_args(0..=1)
                         .value_parser(clap::builder::ValueParser::string())
                         .help("Optional task name/@tag substring; only matching tasks run."),
+                )
+                .arg(
+                    Arg::new("exclude")
+                        .long("exclude")
+                        .value_name("TARGET")
+                        .action(ArgAction::Append)
+                        .value_parser(clap::builder::ValueParser::string())
+                        .help("Exclude a target by name, @tag, or unambiguous name substring; repeatable."),
+                )
+                .arg(
+                    Arg::new("no_services")
+                        .long("no-services")
+                        .action(ArgAction::SetTrue)
+                        .help("Exclude all jobs with service: true before watcher startup."),
                 ),
         )
         .subcommand(
@@ -955,12 +1029,26 @@ mod tests {
 
     #[test]
     fn no_arguments_selects_configured_watch() {
-        assert_eq!(parse_action(&[]), Action::Watch { target: None });
+        assert_eq!(
+            parse_action(&[]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
     fn watch_subcommand_selects_configured_watch() {
-        assert_eq!(parse_action(&["watch"]), Action::Watch { target: None });
+        assert_eq!(
+            parse_action(&["watch"]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
@@ -969,8 +1057,127 @@ mod tests {
             parse_action(&["watch", "@quick"]),
             Action::Watch {
                 target: Some("@quick".to_string()),
+                exclude: vec![],
+                no_services: false,
             }
         );
+    }
+
+    #[test]
+    fn delimiter_target_is_the_existing_watch_action() {
+        assert_eq!(
+            parse_action(&["--", "@quick"]),
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_without_target_keeps_zero_argument_watch() {
+        assert_eq!(
+            parse_action(&["--"]),
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_target_composes_root_watch_options() {
+        assert_eq!(
+            parse_action(&["--exclude", "lint", "--no-services", "--", "@quick"]),
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec!["lint".to_owned()],
+                no_services: true,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_preserves_subcommand_and_hyphen_shaped_targets() {
+        assert_eq!(
+            parse_action(&["--", "watch"]),
+            Action::Watch {
+                target: Some("watch".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+        assert_eq!(
+            parse_action(&["--", "--service"]),
+            Action::Watch {
+                target: Some("--service".to_owned()),
+                exclude: vec![],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn delimiter_rejects_multiple_targets() {
+        assert!(parse(&["--", "@quick", "@slow"]).is_err());
+    }
+
+    #[test]
+    fn delimiter_target_is_incompatible_with_other_actions() {
+        assert!(parse(&["run", "@quick", "--", "@slow"]).is_err());
+        assert!(parse(&["list", "--", "@slow"]).is_err());
+    }
+
+    #[test]
+    fn watch_exclusions_are_repeatable_and_no_services_is_explicit() {
+        let args = parse(&[
+            "watch",
+            "@quick",
+            "--exclude",
+            "lint",
+            "--exclude",
+            "@slow",
+            "--no-services",
+        ])
+        .expect("watch exclusions parse");
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: Some("@quick".to_owned()),
+                exclude: vec!["lint".to_owned(), "@slow".to_owned()],
+                no_services: true,
+            }
+        );
+
+        let alias = parse(&["--exclude", "lint", "--no-services"]).expect("alias options parse");
+        assert_eq!(
+            alias.action,
+            Action::Watch {
+                target: None,
+                exclude: vec!["lint".to_owned()],
+                no_services: true,
+            }
+        );
+
+        let mixed = parse(&["--exclude", "before", "watch", "--exclude", "after"])
+            .expect("mixed placement remains deterministic");
+        assert_eq!(
+            mixed.action,
+            Action::Watch {
+                target: None,
+                exclude: vec!["before".to_owned(), "after".to_owned()],
+                no_services: false,
+            }
+        );
+    }
+
+    #[test]
+    fn run_rejects_watch_only_exclusion_options() {
+        assert!(parse(&["run", "build", "--exclude", "lint"]).is_err());
+        assert!(parse(&["run", "build", "--no-services"]).is_err());
+        assert!(parse(&["--exclude", "lint", "run", "build"]).is_err());
     }
 
     #[test]
@@ -981,6 +1188,8 @@ mod tests {
             args.action,
             Action::Watch {
                 target: Some("@quick".to_string()),
+                exclude: vec![],
+                no_services: false,
             }
         );
         let args = parse(&["watch", "--sequential"]).expect("parse");
@@ -1755,7 +1964,14 @@ mod tests {
     fn verbose_short_flag_is_verbose_not_version() {
         let args = parse(&["-v"]).expect("parse");
         assert!(args.verbose);
-        assert_eq!(args.action, Action::Watch { target: None });
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
@@ -1774,7 +1990,14 @@ mod tests {
     fn global_config_propagates_to_subcommand() {
         let args = parse(&["watch", "-c", "/some/path"]).expect("parse");
         assert_eq!(args.config.as_deref(), Some("/some/path"));
-        assert_eq!(args.action, Action::Watch { target: None });
+        assert_eq!(
+            args.action,
+            Action::Watch {
+                target: None,
+                exclude: vec![],
+                no_services: false,
+            }
+        );
     }
 
     #[test]
@@ -2034,6 +2257,7 @@ mod config_command_tests {
         assert!(help.contains("fzz config"));
         assert!(help.contains("schema"));
         assert!(help.contains("examples"));
+        assert!(help.contains("Watch target after `--`"));
     }
 }
 
