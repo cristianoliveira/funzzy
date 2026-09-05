@@ -1036,9 +1036,16 @@ fn output_retrieval(
     // Contract §2: `tail` and page/full variants are structurally exclusive
     // and invalid shapes are rejected before transport — never exposed as a
     // combination the server would have to resolve ambiguously.
-    let request = crate::output::RetrievalRequest::build(
-        generation, task, stream, mode, tail, full, max_bytes, cursor,
-    )
+    let request = crate::output::RetrievalRequest::build(crate::output::RetrievalFields {
+        generation,
+        task,
+        stream,
+        mode: mode.map(str::to_owned),
+        tail,
+        full,
+        max_bytes,
+        cursor,
+    })
     .map_err(request_error_to_rpc)?;
 
     match request.mode {
