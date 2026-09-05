@@ -1,7 +1,7 @@
 ---
 id: TASK-0172
 title: Thin application composition and CLI boundary
-status: todo
+status: doing
 depends_on: [TASK-0170, TASK-0171]
 priority: normal
 tags: [architecture, app, cli, composition-root]
