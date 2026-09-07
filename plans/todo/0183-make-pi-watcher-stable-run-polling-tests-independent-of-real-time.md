@@ -1,7 +1,7 @@
 ---
 id: TASK-0183
 title: Make Pi watcher stable-run polling tests independent of real time
-status: todo
+status: doing
 depends_on: []
 priority: normal
 tags: [pi-watcher, typescript, determinism, tests]
