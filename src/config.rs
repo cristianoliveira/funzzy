@@ -654,6 +654,82 @@ mod v2_section_tests {
     }
 }
 
+#[cfg(test)]
+mod catalog_allowlist_tests {
+    use super::*;
+
+    /// Allowlist rejection = an "Invalid property" error; value-shape errors
+    /// are separate.
+    fn allowlist_rejects(msg: &errors::FzzError) -> bool {
+        matches!(
+            msg,
+            errors::FzzError::InvalidConfigError(m, _, _) if m.contains("Invalid property")
+        )
+    }
+
+    /// TASK-0094: parser allowlists consume the canonical option catalog
+    /// (INIT-TEMPLATE-CONTRACT §10).
+    #[test]
+    fn on_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\n  {name}: x\njobs:\n  - name: a\n    run: echo a\n"
+            );
+            // Keys with a fixed shape accept a probing scalar; the allowlist
+            // itself must never reject a catalog property by name.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in 'on'"
+            );
+        }
+    }
+
+    #[test]
+    fn on_section_error_lists_every_catalog_property() {
+        let err =
+            from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
+                .expect_err("unknown on property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'on.bogus'"));
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            assert!(
+                message.contains(name),
+                "error must name allowed '{name}': {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn job_section_rejects_unknown_properties_actionably() {
+        // JOBS-CONFIG-CONTRACT §5: unknown job property must be an actionable
+        // error, not a silent accept (schema declares additionalProperties: false).
+        let err = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    bogus_key: 1\n",
+        )
+        .expect_err("unknown job property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'bogus_key' in job"));
+        assert!(message.contains("a"), "error must name the job: {message}");
+    }
+
+    #[test]
+    fn job_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::Job) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    {name}: x\n"
+            );
+            // Probe with a scalar; value-shape errors are separate from the
+            // allowlist and must not be raised here.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in job"
+            );
+        }
+    }
+}
+
 fn output_policy_from_root(root: &Yaml) -> errors::Result<OutputPolicy> {
     let execution = &root["execution"];
     let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
@@ -3472,82 +3548,6 @@ mod jobs_tests {
         assert!(
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
-    }
-}
-
-#[cfg(test)]
-mod catalog_allowlist_tests {
-    use super::*;
-
-    /// Allowlist rejection = an "Invalid property" error; value-shape errors
-    /// are separate.
-    fn allowlist_rejects(msg: &errors::FzzError) -> bool {
-        matches!(
-            msg,
-            errors::FzzError::InvalidConfigError(m, _, _) if m.contains("Invalid property")
-        )
-    }
-
-    /// TASK-0094: parser allowlists consume the canonical option catalog
-    /// (INIT-TEMPLATE-CONTRACT §10).
-    #[test]
-    fn on_section_accepts_every_catalog_property() {
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
-            let yaml = format!(
-                "on:\n  change: '**/*'\n  {name}: x\njobs:\n  - name: a\n    run: echo a\n"
-            );
-            // Keys with a fixed shape accept a probing scalar; the allowlist
-            // itself must never reject a catalog property by name.
-            let result = from_yaml(&yaml);
-            assert!(
-                !result.as_ref().is_err_and(allowlist_rejects),
-                "{name} must be allowed in 'on'"
-            );
-        }
-    }
-
-    #[test]
-    fn on_section_error_lists_every_catalog_property() {
-        let err =
-            from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
-                .expect_err("unknown on property must fail");
-        let message = format!("{:?}", err);
-        assert!(message.contains("Invalid property 'on.bogus'"));
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
-            assert!(
-                message.contains(name),
-                "error must name allowed '{name}': {message}"
-            );
-        }
-    }
-
-    #[test]
-    fn job_section_rejects_unknown_properties_actionably() {
-        // JOBS-CONFIG-CONTRACT §5: unknown job property must be an actionable
-        // error, not a silent accept (schema declares additionalProperties: false).
-        let err = from_yaml(
-            "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    bogus_key: 1\n",
-        )
-        .expect_err("unknown job property must fail");
-        let message = format!("{:?}", err);
-        assert!(message.contains("Invalid property 'bogus_key' in job"));
-        assert!(message.contains("a"), "error must name the job: {message}");
-    }
-
-    #[test]
-    fn job_section_accepts_every_catalog_property() {
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::Job) {
-            let yaml = format!(
-                "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    {name}: x\n"
-            );
-            // Probe with a scalar; value-shape errors are separate from the
-            // allowlist and must not be raised here.
-            let result = from_yaml(&yaml);
-            assert!(
-                !result.as_ref().is_err_and(allowlist_rejects),
-                "{name} must be allowed in job"
-            );
-        }
     }
 }
 
