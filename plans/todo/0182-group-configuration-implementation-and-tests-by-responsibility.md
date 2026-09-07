@@ -71,3 +71,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 - Source locations and move proof: `.tmp/reports/04-09-26/task-0182-v2-layout.md`.
 - Commit `e34acdf` moves `v2_section_tests` directly after `validate_v2_sections`; test path, assertions, comments, visibility, parser results, and contract/error checks are unchanged.
 - Config tests 127, architecture guard 8, AST map parsing, and fresh watcher gen218 pass. Remaining clusters: catalog/allowlist, manual trigger, and timeout.
+
+## Catalog/allowlist layout increment evidence
+
+- Source locations and move proof: `.tmp/reports/04-09-26/task-0182-catalog-layout.md`.
+- Commit `59de8b0` moves `catalog_allowlist_tests` directly after V2 validation tests; test path, assertions, comments, visibility, catalog contracts, parser results, and errors are unchanged.
+- Config tests 127, architecture guard 8, and fresh watcher gen219 pass. Remaining clusters: manual trigger and timeout.
