@@ -9,8 +9,8 @@
 use crate::awaiting::{classify, AwaitCoordinator};
 use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::duration_history::RunEstimate;
-use crate::executor::TaskSnapshot;
 use crate::output::DEFAULT_FAILURE_EVIDENCE_LINES;
+use crate::task_result::{TaskSnapshot, TaskState};
 use crate::watcher_state::{WatcherExecutionState, WatcherInstance, WatcherState};
 use serde::Serialize;
 use std::sync::mpsc::{self, Receiver, SyncSender};
@@ -205,12 +205,7 @@ impl SnapshotBroker {
             let failed_tasks: Vec<String> = state
                 .tasks()
                 .iter()
-                .filter(|task| {
-                    matches!(
-                        task.state,
-                        crate::executor::TaskState::Failed | crate::executor::TaskState::TimedOut
-                    )
-                })
+                .filter(|task| matches!(task.state, TaskState::Failed | TaskState::TimedOut))
                 .map(|task| task.name.clone())
                 .collect();
             self.outputs.as_ref().and_then(|outputs| {
@@ -396,7 +391,7 @@ mod tests {
                 position: 0,
                 id: "checks#1".to_owned(),
                 name: "check".to_owned(),
-                state: crate::executor::TaskState::Passed,
+                state: TaskState::Passed,
                 duration_ms: Some(42),
             },
         });
@@ -541,7 +536,7 @@ mod tests {
                 position: 0,
                 id: "t-1".to_owned(),
                 name: "test @agent-final".to_owned(),
-                state: crate::executor::TaskState::Passed,
+                state: TaskState::Passed,
                 duration_ms: Some(42),
             },
         });
