@@ -1,7 +1,7 @@
 ---
 id: TASK-0175
 title: Characterize worker runtime ordering before extraction
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [rust, architecture, worker, tests]
