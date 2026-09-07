@@ -1281,6 +1281,16 @@ impl Executor {
             return self.advance_starting_service(task, results, run_id, fail_fast);
         }
 
+        return self.advance_finite_task(task, results, run_id, fail_fast);
+    }
+
+    fn advance_finite_task(
+        &self,
+        task: &mut ActiveTask,
+        results: &mut Vec<Result<(), String>>,
+        run_id: u64,
+        fail_fast: bool,
+    ) -> TaskStep {
         loop {
             if task.child.is_none() {
                 // FINITE-JOB-TIMEOUT-CONTRACT §3 sequential recheck: the
