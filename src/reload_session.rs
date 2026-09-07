@@ -7,7 +7,7 @@
 use crate::reload_coordinator::ReloadCoordinator;
 use crate::shutdown::ShutdownCoordinator;
 use crate::watches::Watches;
-use crate::{config, logging, stdout, watcher};
+use crate::{logging, stdout, watcher};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
