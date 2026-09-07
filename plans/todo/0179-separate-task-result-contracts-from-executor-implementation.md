@@ -37,6 +37,16 @@ stdout imports executor-owned task snapshots while executor calls stdout. Shared
 
 Characterize serialization and presentation before the move. Run focused stdout, snapshot, watcher-state, event-stream, and control tests, plus feature-enabled report/control tests and the fresh watcher final gate. Record actual consumer impact; do not rely on a failed semantic index.
 
+## Progress evidence
+
+- Inventory and pre-move characterization: `.tmp/reports/04-09-26/task-0179-pre-move-inventory.md`.
+- Characterization commit `4426abb`: serialization shape test (1 passed) and empty/populated duration-table tests (2 passed) landed before production move.
+- Type-owner seam `fa967b4`: `src/task_result.rs` owns both result contracts; `executor` re-exports both compatibility paths; stdout and internal projections import the actual owner. Pi watcher was not changed because it uses independent decoder types.
+- Dependency proof: after the move, `ast_module_graph` reports no direct `executor↔stdout` cycle; only pre-existing `cli↔config` remains. `git diff --check` is clean.
+- Focused results: executor 67, stdout 2, snapshot 8, watcher_state 9, event_stream 6, duration_recorder 12, control 60, control_client 32; feature `control_output` 11, `control_socket` 14, and serial `finite_job_timeouts` 9; domain boundaries 8. The parallel finite-timeout run exposed two existing process-tree timing failures; both affected tests passed individually and in serial, with no changes to runtime behavior.
+- Full consumer and compatibility mapping: `.tmp/reports/04-09-26/task-0179-result-contract-seam.md`.
+
+
 ## Likely files
 
 `src/executor.rs`, `src/stdout.rs`, `src/lib.rs`, one focused contract module, consuming adapters as needed, and boundary/compatibility tests.
