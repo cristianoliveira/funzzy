@@ -16,7 +16,6 @@ use std::path::PathBuf;
 
 use crate::config::{GenerationHooks, SessionHooks};
 use crate::config_revision::{ConfigRevision, RevisionTracker, RuntimeConfig};
-use crate::rules::Rules;
 use crate::watcher::WatchBackend;
 use std::time::Duration;
 

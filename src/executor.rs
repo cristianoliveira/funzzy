@@ -1286,7 +1286,7 @@ impl Executor {
             return self.advance_starting_service(task, results, run_id, fail_fast);
         }
 
-        return self.advance_finite_task(task, results, run_id, fail_fast);
+        self.advance_finite_task(task, results, run_id, fail_fast)
     }
 
     /// Handles a terminal status for a managed service after its child has
