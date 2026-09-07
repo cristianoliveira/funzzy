@@ -44,6 +44,12 @@ Run focused executor/domain/service tests and feature-enabled timeout, process-g
 - Focused characterization after extraction: executor fake-runner/clock tests 67 passed; serial `finite_job_timeouts` 9 passed; serial `control_await` 24 passed. Fresh watcher generation 191 passed (`cargo fmt --all -- --check && cargo test`).
 - Remaining criteria: service-specific advancement still shares the moved loop's restart branch; output/recovery/fail-fast/service effects remain shared and must be preserved in the next bounded seam. No policy or process abstraction changes were introduced.
 
+## Service-exit seam evidence
+
+- Pre-extraction characterization found no observable gap: `service_restarts_on_unexpected_exit_up_to_the_bound`, `polling_handoff_reports_deliberate_exit_and_detaches_handle`, `handoff_deliberate_zero_exit_reports_stopped_without_restart`, `handoff_advancement_restarts_nonzero_service_and_reprobes`, `polling_handoff_restarts_and_reprobes_readiness_without_generation_event`, and `ready_service_reprobes_after_an_unexpected_restart` already cover restart budget/exhaustion, deliberate zero exit, and reprobe behavior.
+- Commit `1bf40e5` extracts only the `task.service` terminal-status branch into private `advance_service_exit`; `ServiceExitAction` preserves restart `continue` versus terminal `return`. The task detach/current-command clearing remains before the helper call; all policy, adapter, output/recovery/fail-fast, snapshot, terminal, and background-service code remains unchanged.
+- Verification details: `.tmp/reports/04-09-26/task-0180-service-exit.md`. Executor 67 passed; serial `control_await` 24 passed; all finite timeout cases passed individually after a known local process-marker flake affected one serial suite invocation; watcher gen194 passed fresh.
+
 ## Discovery evidence
 
 - Criterion matrix and responsibility inventory: `.tmp/reports/04-09-26/task-0180-discovery.md`.
