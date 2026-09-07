@@ -124,7 +124,7 @@ fn load_startup_document(config_file: &Option<String>) -> config::ConfigDocument
     }
 }
 
-fn load_watch_config(args: &Arguments, root: &std::path::Path) -> LoadedWatchConfig {
+fn load_watch_config(args: &Arguments) -> LoadedWatchConfig {
     let document = load_startup_document(&args.config);
     let config_error_title = if args.config.is_some() {
         "Failed to read config file"
@@ -296,7 +296,7 @@ fn watch_action(
     no_services: bool,
 ) {
     let workspace_root = &startup.workspace_root;
-    let loaded = load_watch_config(args, workspace_root);
+    let loaded = load_watch_config(args);
     let rules = loaded.rules;
     let concurrency = loaded.concurrency;
     let debounce = loaded.debounce;
@@ -769,26 +769,6 @@ fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
     };
     config::generation_hooks_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid hooks config", err))
-}
-
-/// Watcher-session close hook from `on.close` (TASK-0101). Kept separate
-/// from generation hooks so finite runners never receive it.
-fn load_session_hooks(config_file: &Option<String>) -> config::SessionHooks {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
-    let Some(path) = path else {
-        return config::SessionHooks::default();
-    };
-    config::session_hooks_from_file(&path)
-        .unwrap_or_else(|err| stdout::failure("Invalid session hooks config", err))
 }
 
 /// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.
