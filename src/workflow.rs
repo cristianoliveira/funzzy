@@ -7,6 +7,7 @@
 use crate::diagnostics;
 use crate::duration_recorder::DurationRecorder;
 use crate::executor::{CompletedRun, Executor, RunMetadata, SystemClock, SystemProcessRunner};
+use crate::path_context;
 use crate::plan::RunPlan;
 use crate::stdout;
 use crate::template::TemplateOptions;
@@ -134,7 +135,7 @@ impl WorkflowRunner {
         metadata: RunMetadata,
         filepath: Option<&str>,
     ) -> Result<CompletedRun, String> {
-        let plan = plan.resolve_context(&self.root)?;
+        let plan = path_context::resolve_context(&plan, &self.root)?;
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_owned),
             paths: vec![],
