@@ -14,6 +14,9 @@ use crate::plan::{
 use crate::rules::CommandLine;
 use crate::stdout;
 
+/// Compatibility re-export for callers that inject a deterministic clock.
+pub use crate::domain::ports::Clock;
+
 /// Bounded service restart attempts on unexpected exit (TASK-0035).
 pub const SERVICE_MAX_RESTARTS: usize = 3;
 /// Backoff between service restarts (TASK-0035).
@@ -293,12 +296,6 @@ impl ProcessRunner for SystemProcessRunner {
         }?;
         Ok(Box::new(child))
     }
-}
-
-pub trait Clock: Send + Sync {
-    fn now(&self) -> Instant;
-    fn elapsed(&self, started: Instant) -> Duration;
-    fn sleep(&self, duration: Duration);
 }
 
 pub struct SystemClock;
@@ -922,7 +919,19 @@ impl Executor {
     }
 
     pub fn advance(&self, run: &mut Run) -> Step {
-        if run.cancellation_requested() {
+        let cancellation = crate::domain::finite_lifecycle::resolve(
+            crate::domain::finite_lifecycle::Observation {
+                cancellation_requested: run.cancellation_requested(),
+                deadline_elapsed: false,
+                process: crate::domain::finite_lifecycle::ProcessResult::Running,
+            },
+            false,
+            false,
+        );
+        if matches!(
+            cancellation,
+            crate::domain::finite_lifecycle::Decision::Cancelled
+        ) {
             return Step::Running;
         }
 
@@ -1303,9 +1312,27 @@ impl Executor {
                 // ORIGINAL deadline governs the job's whole invocation —
                 // recheck it BEFORE any continuation spawn so an expired
                 // budget never starts a command it must immediately kill.
-                if let Some(deadline) = task.deadline {
-                    if self.clock.now() >= deadline {
+                let deadline_elapsed = task
+                    .deadline
+                    .is_some_and(|deadline| self.clock.now() >= deadline);
+                match crate::domain::finite_lifecycle::resolve(
+                    crate::domain::finite_lifecycle::Observation {
+                        cancellation_requested: false,
+                        deadline_elapsed,
+                        process: crate::domain::finite_lifecycle::ProcessResult::NotStarted,
+                    },
+                    fail_fast,
+                    task.recovery_commands.is_some(),
+                ) {
+                    crate::domain::finite_lifecycle::Decision::Start => {}
+                    crate::domain::finite_lifecycle::Decision::TimedOut => {
                         return self.expire_task(task, results);
+                    }
+                    crate::domain::finite_lifecycle::Decision::Cancelled
+                    | crate::domain::finite_lifecycle::Decision::Continue
+                    | crate::domain::finite_lifecycle::Decision::Passed
+                    | crate::domain::finite_lifecycle::Decision::Failed(_) => {
+                        unreachable!("unstarted task resolved unexpectedly")
                     }
                 }
                 let Some(command) = task.commands.pop_front() else {
@@ -1391,13 +1418,39 @@ impl Executor {
             // timeout check precedes try_wait in every iteration, so a
             // child that exited at deadline−ε but is reaped in a later poll
             // is a timeout outcome (indeterminism bounded by one interval).
-            if let Some(deadline) = task.deadline {
-                if self.clock.now() >= deadline {
-                    return self.expire_task(task, results);
-                }
+            let deadline_elapsed = task
+                .deadline
+                .is_some_and(|deadline| self.clock.now() >= deadline);
+            let deadline_decision = crate::domain::finite_lifecycle::resolve(
+                crate::domain::finite_lifecycle::Observation {
+                    cancellation_requested: false,
+                    deadline_elapsed,
+                    process: crate::domain::finite_lifecycle::ProcessResult::Running,
+                },
+                fail_fast,
+                task.recovery_commands.is_some(),
+            );
+            if matches!(
+                deadline_decision,
+                crate::domain::finite_lifecycle::Decision::TimedOut
+            ) {
+                return self.expire_task(task, results);
             }
             match task.child.as_mut().expect("child is running").try_wait() {
                 Ok(None) => {
+                    let decision = crate::domain::finite_lifecycle::resolve(
+                        crate::domain::finite_lifecycle::Observation {
+                            cancellation_requested: false,
+                            deadline_elapsed: false,
+                            process: crate::domain::finite_lifecycle::ProcessResult::Running,
+                        },
+                        fail_fast,
+                        task.recovery_commands.is_some(),
+                    );
+                    debug_assert!(matches!(
+                        decision,
+                        crate::domain::finite_lifecycle::Decision::Continue
+                    ));
                     self.events.emit(Event::Tick {
                         task: task.name.clone(),
                         group_occurrence: task.group_occurrence.clone(),
@@ -1444,29 +1497,71 @@ impl Executor {
                         return TaskStep::Finished;
                     }
 
-                    if status.success() {
-                        results.push(Ok(()));
-                        continue;
-                    }
-
-                    let failure = format!("Command {} has failed with {}", display, status);
-                    task.failures.push(failure.clone());
-                    if !task.defer_failure {
-                        results.push(Err(failure));
-                    }
-                    if fail_fast {
-                        return TaskStep::FailedFast;
+                    let process = if status.success() {
+                        crate::domain::finite_lifecycle::ProcessResult::Succeeded
+                    } else {
+                        crate::domain::finite_lifecycle::ProcessResult::Failed
+                    };
+                    match crate::domain::finite_lifecycle::resolve(
+                        crate::domain::finite_lifecycle::Observation {
+                            cancellation_requested: false,
+                            deadline_elapsed: false,
+                            process,
+                        },
+                        fail_fast,
+                        task.recovery_commands.is_some(),
+                    ) {
+                        crate::domain::finite_lifecycle::Decision::Passed => {
+                            results.push(Ok(()));
+                            continue;
+                        }
+                        crate::domain::finite_lifecycle::Decision::Failed(action) => {
+                            let failure = format!("Command {} has failed with {}", display, status);
+                            task.failures.push(failure.clone());
+                            if !task.defer_failure {
+                                results.push(Err(failure));
+                            }
+                            if matches!(
+                                action,
+                                crate::domain::finite_lifecycle::FailureAction::FailFast
+                                    | crate::domain::finite_lifecycle::FailureAction::FailFastAndRecover
+                            ) {
+                                return TaskStep::FailedFast;
+                            }
+                        }
+                        crate::domain::finite_lifecycle::Decision::Cancelled
+                        | crate::domain::finite_lifecycle::Decision::TimedOut
+                        | crate::domain::finite_lifecycle::Decision::Start
+                        | crate::domain::finite_lifecycle::Decision::Continue => {
+                            unreachable!("terminal process result resolved unexpectedly")
+                        }
                     }
                 }
                 Err(err) => {
                     task.child = None;
                     task.current_command = None;
+                    let decision = crate::domain::finite_lifecycle::resolve(
+                        crate::domain::finite_lifecycle::Observation {
+                            cancellation_requested: false,
+                            deadline_elapsed: false,
+                            process: crate::domain::finite_lifecycle::ProcessResult::Failed,
+                        },
+                        fail_fast,
+                        task.recovery_commands.is_some(),
+                    );
+                    let crate::domain::finite_lifecycle::Decision::Failed(action) = decision else {
+                        unreachable!("observation error must resolve to failure")
+                    };
                     let failure = format!("Command {} has errored with {}", display, err);
                     task.failures.push(failure.clone());
                     if !task.defer_failure {
                         results.push(Err(failure));
                     }
-                    if fail_fast {
+                    if matches!(
+                        action,
+                        crate::domain::finite_lifecycle::FailureAction::FailFast
+                            | crate::domain::finite_lifecycle::FailureAction::FailFastAndRecover
+                    ) {
                         return TaskStep::FailedFast;
                     }
                 }

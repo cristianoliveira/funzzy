@@ -3,17 +3,20 @@
 ## Dependency direction
 
 ```text
-CLI / configuration / watcher / process / control / stdout / logging adapters
+CLI / configuration / watcher / control / stdout / logging adapters
+                              ↓
+             application ports and runtime adapters
                               ↓
                       domain ports and values
 ```
 
 Domain planning, matching, generation state, lifecycle arbitration, and
 outcomes may depend only on domain values and ports introduced with their first
-real consumer. Adapters may depend on domain values and implement those ports.
-A domain module must not import a CLI command, YAML/file adapter, filesystem
-watcher, process adapter, control-socket transport, stdout/logging adapter, or
-watcher runtime.
+real consumer. Application ports translate runtime facts and capabilities for
+those consumers; runtime adapters implement the ports and own process handles,
+signals, capture, and cleanup. A domain module must not import a CLI command,
+YAML/file adapter, filesystem watcher, process adapter, control-socket
+transport, stdout/logging adapter, or watcher runtime.
 
 `tests/domain_boundaries.rs` recursively enumerates every Rust source file
 under `src/domain/` and checks it plus the current domain foundations: `rules`,
@@ -36,7 +39,9 @@ qualified, root-alias, and raw-byte-string behavior.
 | Template expansion | `template` | Pure transformation used by planning; no shell or process ownership. |
 | Target selection and explain plan | `watches` | Transitional planning/watcher adapter: it still carries watcher backend and config-policy types. Extract its pure selection values before classifying it as domain. |
 | Readiness precedence | `service_lifecycle` | Pure lifecycle arbitration; worker owns process handles. |
-| Generation execution | `executor` | Transitional mixed module. TASK-0171 extracts pure transitions and makes it a port consumer. |
+| Finite lifecycle transitions | `domain::finite_lifecycle` | Pure start/continue/pass/fail/timeout/cancel decisions; executor translates runtime observations and applies cleanup. |
+| Monotonic execution time | `domain::ports::Clock` | Domain-facing time contract; `SystemClock` remains an executor/runtime adapter and `FixedClock`/`ManualClock` provide deterministic fakes. |
+| Generation execution | `executor` | Application adapter/orchestrator consuming domain decisions and owning process, output, event, and cleanup mechanics. |
 | YAML/config/file discovery | `config` | Inbound adapter. TASK-0170 separates decode from domain validation. |
 | Filesystem/path adapters | `watcher`, `watch_loop`, `path_context` | Inbound adapters; emit normalized path observations and resolve filesystem-dependent task cwd containment. |
 | Process, output, and runtime worker | `cmd`, `event_stream`, `output`, `workers`, `workflow` | Outbound adapters and orchestration. |
@@ -51,11 +56,15 @@ compatibility surface.
 
 The next consumers define the smallest port at the point of need:
 
-- TASK-0170: configuration validation may need pure input/error values; YAML
+- TASK-0170: configuration validation uses pure input/error values; YAML
   decoding and file discovery stay adapters.
-- TASK-0171: execution transitions may need monotonic time, process start/
-  observation/stop, and event publication; signals, process groups, sleeping,
-  serialization, and output retention stay adapters.
+- TASK-0171: finite/readiness transitions consume semantic observations and
+  return decisions. `domain::ports::Clock` is the only extracted execution
+  port: lifecycle policy needs monotonic time without runtime types. Process
+  start/observation/stop, readiness probes, event publication, signals,
+  process groups, sleeping, serialization, and output retention remain
+  application/runtime seams because no domain consumer needs their concrete
+  contracts.
 - TASK-0173: typed control/output requests and results belong at the protocol
   edge; control transport itself remains an inbound adapter.
 
@@ -70,12 +79,18 @@ and reload handoff belong to the watcher runtime.
   transitions do not initiate control requests; adding a transport port would
   invert that responsibility. TASK-0173 will add typed domain requests/results
   at the protocol edge instead.
-- **Speculative clock/process/event ports:** rejected for now. The current
-  execution model still mixes shell, argv, labels, output capture, readiness,
-  process groups, and scheduling in `executor`/`cmd`. Copying a generic subset
-  into a public shared type would preserve the coupling and create unused API.
-  TASK-0171 owns the transition model and will introduce only the port shapes
-  its domain consumer uses.
+- **Generic process or event ports:** rejected for TASK-0171. `ProcessRunner`
+  and `ChildProcess` are consumed by the executor/runtime orchestration and
+  expose shell/argv commands, task context, capture handles, exit statuses,
+  shutdown outcomes, and Unix signals. `EventSink` publishes the executor's
+  runtime-shaped events. Moving these contracts into `domain`, or wrapping
+  them without changing their vocabulary, would import infrastructure or
+  merely rename it. Pure transitions instead consume semantic observations
+  (`ProcessResult`, readiness facts) and return decisions. This preserves the
+  application-port boundary without creating a false abstraction.
+- **Generic clock port:** not rejected. `domain::ports::Clock` is narrow and has
+  a real lifecycle consumer; `SystemClock` is its runtime adapter and existing
+  fixed/manual clocks prove deterministic injection.
 - **Filesystem registration port:** rejected. Root registration, recursive
   mode, debounce implementation, and hot-reload handoff are watcher runtime
   concerns. The domain needs normalized observations, not an OS watcher.
