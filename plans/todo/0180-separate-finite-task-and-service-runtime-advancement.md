@@ -37,6 +37,13 @@ At review baseline, `src/executor.rs::advance_task` spans about 297 lines, handl
 
 Run focused executor/domain/service tests and feature-enabled timeout, process-group, recovery, cancellation, service, and output suites. Use the fresh watcher final gate. Compare responsibilities and dependencies before/after; Rust AST complexity scores that omit branches are not acceptance evidence.
 
+## First bounded seam evidence
+
+- Method ownership and criterion matrix: `.tmp/reports/04-09-26/task-0180-finite-dispatch.md`.
+- Mechanical extraction commit `08d40eb`: `advance_task` retains context validation and readiness-start dispatch; the former inline 261-line execution loop is now `advance_finite_task`. Exact old/new loop comparison is byte-identical. `advance_starting_service`, `advance_services`, policy resolvers, adapters, public APIs, events, and state representation are unchanged.
+- Focused characterization after extraction: executor fake-runner/clock tests 67 passed; serial `finite_job_timeouts` 9 passed; serial `control_await` 24 passed. Fresh watcher generation 191 passed (`cargo fmt --all -- --check && cargo test`).
+- Remaining criteria: service-specific advancement still shares the moved loop's restart branch; output/recovery/fail-fast/service effects remain shared and must be preserved in the next bounded seam. No policy or process abstraction changes were introduced.
+
 ## Discovery evidence
 
 - Criterion matrix and responsibility inventory: `.tmp/reports/04-09-26/task-0180-discovery.md`.
