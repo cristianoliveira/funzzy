@@ -1,7 +1,7 @@
 ---
 id: TASK-0176
 title: Extract worker consumer runtime from construction
-status: todo
+status: doing
 depends_on: [TASK-0175]
 priority: high
 tags: [rust, architecture, worker, cohesion]
