@@ -1,7 +1,7 @@
 ---
 id: TASK-0179
 title: Separate task result contracts from executor implementation
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [rust, executor, output, architecture]
