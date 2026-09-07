@@ -7,7 +7,7 @@
 //! `-v`/`--verbose` is the verbose flag; parse errors use Clap's native
 //! handling (stderr, exit 2).
 
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 
 use crate::cli::templates::Profile;
 use crate::cli::{ControlAction, OutputFormat};
@@ -24,6 +24,52 @@ pub enum OnBusy {
 }
 
 /// Semantic application action selected from the parsed subcommand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ConfigAction {
+    Schema {
+        section: Option<String>,
+        format: OutputFormat,
+    },
+    Example {
+        profile: String,
+        format: OutputFormat,
+    },
+}
+
+/// Normalize the legacy public `Action::Config` fields before dispatch.
+///
+/// `Action::Config` remains public for source compatibility, but only these
+/// two internally valid states may reach the config use case.
+pub(crate) fn normalize_config_action(
+    schema_section: Option<Option<String>>,
+    example_profile: Option<String>,
+    format: OutputFormat,
+) -> Result<ConfigAction, &'static str> {
+    match (schema_section, example_profile) {
+        (Some(section), None) => Ok(ConfigAction::Schema { section, format }),
+        (None, Some(profile)) => Ok(ConfigAction::Example { profile, format }),
+        (None, None) => Err("missing config action"),
+        (Some(_), Some(_)) => Err("conflicting config actions"),
+    }
+}
+
+impl ConfigAction {
+    fn into_public_action(self) -> Action {
+        match self {
+            Self::Schema { section, format } => Action::Config {
+                schema_section: Some(section),
+                example_profile: None,
+                format,
+            },
+            Self::Example { profile, format } => Action::Config {
+                schema_section: None,
+                example_profile: Some(profile),
+                format,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// `fzz` (no subcommand) or `fzz watch [TARGET]`: run configured tasks.
@@ -95,6 +141,32 @@ fn parse_config_format(raw: Option<&str>) -> OutputFormat {
         "json" => OutputFormat::Json,
         _ => OutputFormat::Human,
     }
+}
+
+fn parse_config_subcommand(sub: &ArgMatches) -> Action {
+    let action = match sub.subcommand() {
+        Some(("schema", schema_sub)) => ConfigAction::Schema {
+            section: schema_sub.get_one::<String>("section").cloned(),
+            format: parse_config_format(
+                schema_sub
+                    .get_one::<String>("config_format")
+                    .map(String::as_str),
+            ),
+        },
+        Some(("example", example_sub)) => ConfigAction::Example {
+            profile: example_sub
+                .get_one::<String>("profile")
+                .cloned()
+                .expect("profile is required by clap"),
+            format: parse_config_format(
+                example_sub
+                    .get_one::<String>("config_format")
+                    .map(String::as_str),
+            ),
+        },
+        _ => unreachable!("clap rejects unknown config subcommand"),
+    };
+    action.into_public_action()
 }
 
 impl Arguments {
@@ -171,36 +243,7 @@ impl Arguments {
                     .cloned()
                     .expect("shell is required by clap"),
             },
-            Some(("config", sub)) => {
-                let action = match sub.subcommand() {
-                    Some(("schema", schema_sub)) => {
-                        let format = parse_config_format(
-                            schema_sub
-                                .get_one::<String>("config_format")
-                                .map(String::as_str),
-                        );
-                        Action::Config {
-                            schema_section: Some(schema_sub.get_one::<String>("section").cloned()),
-                            example_profile: None,
-                            format,
-                        }
-                    }
-                    Some(("example", example_sub)) => {
-                        let format = parse_config_format(
-                            example_sub
-                                .get_one::<String>("config_format")
-                                .map(String::as_str),
-                        );
-                        Action::Config {
-                            schema_section: None,
-                            example_profile: example_sub.get_one::<String>("profile").cloned(),
-                            format,
-                        }
-                    }
-                    _ => unreachable!("clap rejects unknown config subcommand"),
-                };
-                action
-            }
+            Some(("config", sub)) => parse_config_subcommand(sub),
             Some(("run", sub)) => {
                 let target = sub
                     .get_one::<String>("target")
@@ -2177,7 +2220,7 @@ mod format_tests {
 #[cfg(test)]
 mod config_command_tests {
     use super::tests::parse;
-    use super::Action;
+    use super::{normalize_config_action, Action, ConfigAction};
     use crate::cli::OutputFormat;
 
     #[test]
@@ -2213,6 +2256,47 @@ mod config_command_tests {
             } => assert_eq!(profile, "agent"),
             other => panic!("expected config example, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn config_action_normalization_preserves_explicit_variants() {
+        assert_eq!(
+            normalize_config_action(Some(None), None, OutputFormat::Human),
+            Ok(ConfigAction::Schema {
+                section: None,
+                format: OutputFormat::Human,
+            })
+        );
+        assert_eq!(
+            normalize_config_action(Some(Some("parallel".to_owned())), None, OutputFormat::Toon,),
+            Ok(ConfigAction::Schema {
+                section: Some("parallel".to_owned()),
+                format: OutputFormat::Toon,
+            })
+        );
+        assert_eq!(
+            normalize_config_action(None, Some("agent".to_owned()), OutputFormat::Json),
+            Ok(ConfigAction::Example {
+                profile: "agent".to_owned(),
+                format: OutputFormat::Json,
+            })
+        );
+    }
+
+    #[test]
+    fn config_action_normalization_rejects_ambiguous_legacy_states() {
+        assert_eq!(
+            normalize_config_action(None, None, OutputFormat::Human),
+            Err("missing config action")
+        );
+        assert_eq!(
+            normalize_config_action(
+                Some(Some("parallel".to_owned())),
+                Some("agent".to_owned()),
+                OutputFormat::Human,
+            ),
+            Err("conflicting config actions")
+        );
     }
 
     #[test]
