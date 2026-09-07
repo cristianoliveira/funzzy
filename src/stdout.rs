@@ -285,6 +285,11 @@ mod tests {
     use crate::executor::{TaskSnapshot, TaskState};
 
     #[test]
+    fn job_duration_rows_are_empty_for_no_tasks() {
+        assert!(job_duration_rows(&[]).is_empty());
+    }
+
+    #[test]
     fn job_duration_rows_preserve_declaration_order_and_absent_duration() {
         let rows = job_duration_rows(&[
             TaskSnapshot {

@@ -3302,6 +3302,27 @@ mod tests {
     }
 
     #[test]
+    fn task_result_serialization_preserves_wire_names_and_hides_position() {
+        let snapshot = TaskSnapshot {
+            position: 7,
+            id: "checks#1".to_owned(),
+            name: "lint".to_owned(),
+            state: TaskState::TimedOut,
+            duration_ms: Some(120),
+        };
+        let json = serde_json::to_value(&snapshot).expect("task snapshot serializes");
+        assert_eq!(json["id"], "checks#1");
+        assert_eq!(json["name"], "lint");
+        assert_eq!(json["state"], "timedout");
+        assert_eq!(json["durationMs"], 120);
+        assert!(json.get("position").is_none());
+        assert_eq!(
+            serde_json::to_value(TaskState::Cancelled).expect("state serializes"),
+            "cancelled"
+        );
+    }
+
+    #[test]
     fn completed_run_carries_executor_snapshots_for_failed_and_skipped_jobs() {
         let executor = Executor::new(
             Arc::new(SystemProcessRunner),
