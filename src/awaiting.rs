@@ -9,6 +9,7 @@
 use crate::config_lifecycle::{ConfigLifecycle, ConfigTransition};
 use crate::executor::Event;
 use crate::output::{FailureEvidence, OutputRegistry, DEFAULT_FAILURE_EVIDENCE_LINES};
+use crate::task_result::TaskState;
 use crate::watcher_state::{WatcherExecutionState, WatcherState};
 use serde::Serialize;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -322,12 +323,7 @@ impl AwaitCoordinator {
             let failed_tasks: Vec<String> = snapshot
                 .tasks()
                 .iter()
-                .filter(|task| {
-                    matches!(
-                        task.state,
-                        crate::executor::TaskState::Failed | crate::executor::TaskState::TimedOut
-                    )
-                })
+                .filter(|task| matches!(task.state, TaskState::Failed | TaskState::TimedOut))
                 .map(|task| task.name.clone())
                 .collect();
             outputs.and_then(|outputs| {

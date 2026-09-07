@@ -39,6 +39,7 @@ pub mod shortcut;
 pub mod shutdown;
 pub mod snapshot;
 pub mod stdout;
+pub mod task_result;
 pub mod template;
 pub mod watch_loop;
 pub mod watcher;
