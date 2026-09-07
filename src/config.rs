@@ -1712,6 +1712,156 @@ pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
 }
 
 #[cfg(test)]
+mod hooks_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_default_to_none() {
+        let hooks = generation_hooks_from_yaml("hooks: {}\n").unwrap();
+        assert_eq!(hooks.success, None);
+        assert_eq!(hooks.failure, None);
+    }
+
+    #[test]
+    fn hooks_parse_success_and_failure_commands() {
+        let hooks = generation_hooks_from_yaml(
+            "hooks:\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
+        )
+        .unwrap();
+        assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
+        assert_eq!(hooks.failure.as_deref(), Some("echo failed > failed.txt"));
+    }
+
+    #[test]
+    fn legacy_grouped_tasks_keep_historical_on_hook_placement() {
+        let yaml = "on:\n  success: echo ok\n  close: echo closed\ntasks:\n  - name: test\n    run: cargo test\n";
+        assert_eq!(
+            generation_hooks_from_yaml(yaml).unwrap().success.as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(yaml).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
+    fn hooks_reject_non_string_values() {
+        assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
+        assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
+        let settled =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n")
+                .unwrap();
+        assert_eq!(settled.failure.as_deref(), Some("notify"));
+        assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
+        let boundary =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1440m\n")
+                .unwrap();
+        assert_eq!(
+            boundary.failure_settle,
+            Some(Duration::from_secs(24 * 60 * 60))
+        );
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
+        )
+        .is_err());
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
+        )
+        .is_err());
+        let over_bound =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1441m\n")
+                .expect_err("settle over 24h must be rejected");
+        assert!(over_bound.contains("must not exceed 24h"));
+        let non_string_key = generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    ? [bad]\n    : nope\n",
+        )
+        .expect_err("non-string key must be rejected");
+        assert!(non_string_key.contains("keys must be run or settle"));
+    }
+
+    #[test]
+    fn session_hook_defaults_to_none_and_parses_close_command() {
+        assert_eq!(
+            session_hooks_from_yaml("hooks: {}\n").unwrap(),
+            SessionHooks::default()
+        );
+        assert_eq!(
+            session_hooks_from_yaml("hooks:\n  close: './scripts/cleanup'\n")
+                .unwrap()
+                .close
+                .as_deref(),
+            Some("./scripts/cleanup")
+        );
+    }
+
+    #[test]
+    fn session_hook_rejects_non_string_empty_and_trigger_templates() {
+        for yaml in [
+            "hooks:\n  close: [a, b]\n",
+            "hooks:\n  close: ''\n",
+            "hooks:\n  close: 'echo {{filepath}}'\n",
+            "hooks:\n  close: 'echo {{paths}}'\n",
+        ] {
+            assert!(
+                session_hooks_from_yaml(yaml).is_err(),
+                "must reject: {yaml}"
+            );
+        }
+    }
+}
+
+/// Generation terminal hooks (`on.success` / `on.failure`), TASK-0040.
+/// Kept distinct from [`SessionHooks`] so finite runners cannot execute the
+/// watcher lifecycle hook accidentally.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerationHooks {
+    // failure_settle defaults to None for legacy callers
+    pub success: Option<String>,
+    pub failure: Option<String>,
+    /// Optional asynchronous settlement window for failure hooks.
+    pub failure_settle: Option<Duration>,
+}
+
+/// Watcher-session lifecycle hook (`on.close`), TASK-0101.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionHooks {
+    pub close: Option<String>,
+}
+
+/// Parses `on.success` / `on.failure` hook commands; absent = None,
+/// non-string values are rejected loudly.
+const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
+
+pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.generation_hooks()
+}
+
+pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    generation_hooks_from_yaml(&content)
+}
+
+/// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
+/// templates are rejected at config validation instead of expanding to empty.
+pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.session_hooks()
+}
+
+pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    session_hooks_from_yaml(&content)
+}
+
+#[cfg(test)]
 mod boundary_characterization_tests {
     use super::from_yaml;
     use crate::rules::OutputPolicy;
@@ -3131,156 +3281,6 @@ mod jobs_tests {
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
     }
-}
-
-#[cfg(test)]
-mod hooks_tests {
-    use super::*;
-
-    #[test]
-    fn hooks_default_to_none() {
-        let hooks = generation_hooks_from_yaml("hooks: {}\n").unwrap();
-        assert_eq!(hooks.success, None);
-        assert_eq!(hooks.failure, None);
-    }
-
-    #[test]
-    fn hooks_parse_success_and_failure_commands() {
-        let hooks = generation_hooks_from_yaml(
-            "hooks:\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
-        )
-        .unwrap();
-        assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
-        assert_eq!(hooks.failure.as_deref(), Some("echo failed > failed.txt"));
-    }
-
-    #[test]
-    fn legacy_grouped_tasks_keep_historical_on_hook_placement() {
-        let yaml = "on:\n  success: echo ok\n  close: echo closed\ntasks:\n  - name: test\n    run: cargo test\n";
-        assert_eq!(
-            generation_hooks_from_yaml(yaml).unwrap().success.as_deref(),
-            Some("echo ok")
-        );
-        assert_eq!(
-            session_hooks_from_yaml(yaml).unwrap().close.as_deref(),
-            Some("echo closed")
-        );
-    }
-
-    #[test]
-    fn hooks_reject_non_string_values() {
-        assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
-        assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
-        let settled =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n")
-                .unwrap();
-        assert_eq!(settled.failure.as_deref(), Some("notify"));
-        assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
-        let boundary =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1440m\n")
-                .unwrap();
-        assert_eq!(
-            boundary.failure_settle,
-            Some(Duration::from_secs(24 * 60 * 60))
-        );
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
-        )
-        .is_err());
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
-        )
-        .is_err());
-        let over_bound =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1441m\n")
-                .expect_err("settle over 24h must be rejected");
-        assert!(over_bound.contains("must not exceed 24h"));
-        let non_string_key = generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    ? [bad]\n    : nope\n",
-        )
-        .expect_err("non-string key must be rejected");
-        assert!(non_string_key.contains("keys must be run or settle"));
-    }
-
-    #[test]
-    fn session_hook_defaults_to_none_and_parses_close_command() {
-        assert_eq!(
-            session_hooks_from_yaml("hooks: {}\n").unwrap(),
-            SessionHooks::default()
-        );
-        assert_eq!(
-            session_hooks_from_yaml("hooks:\n  close: './scripts/cleanup'\n")
-                .unwrap()
-                .close
-                .as_deref(),
-            Some("./scripts/cleanup")
-        );
-    }
-
-    #[test]
-    fn session_hook_rejects_non_string_empty_and_trigger_templates() {
-        for yaml in [
-            "hooks:\n  close: [a, b]\n",
-            "hooks:\n  close: ''\n",
-            "hooks:\n  close: 'echo {{filepath}}'\n",
-            "hooks:\n  close: 'echo {{paths}}'\n",
-        ] {
-            assert!(
-                session_hooks_from_yaml(yaml).is_err(),
-                "must reject: {yaml}"
-            );
-        }
-    }
-}
-
-/// Generation terminal hooks (`on.success` / `on.failure`), TASK-0040.
-/// Kept distinct from [`SessionHooks`] so finite runners cannot execute the
-/// watcher lifecycle hook accidentally.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GenerationHooks {
-    // failure_settle defaults to None for legacy callers
-    pub success: Option<String>,
-    pub failure: Option<String>,
-    /// Optional asynchronous settlement window for failure hooks.
-    pub failure_settle: Option<Duration>,
-}
-
-/// Watcher-session lifecycle hook (`on.close`), TASK-0101.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionHooks {
-    pub close: Option<String>,
-}
-
-/// Parses `on.success` / `on.failure` hook commands; absent = None,
-/// non-string values are rejected loudly.
-const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
-
-pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.generation_hooks()
-}
-
-pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    generation_hooks_from_yaml(&content)
-}
-
-/// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
-/// templates are rejected at config validation instead of expanding to empty.
-pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.session_hooks()
-}
-
-pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    session_hooks_from_yaml(&content)
 }
 
 #[cfg(test)]
