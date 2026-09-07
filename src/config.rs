@@ -87,90 +87,404 @@ pub fn commands(rules: Vec<Rules>) -> Vec<String> {
         .flat_map(|rule| rule.to_vec())
         .collect::<Vec<String>>()
 }
-pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
-    let items = match YamlLoader::load_from_str(file_content) {
-        Ok(val) => val,
-        Err(err) => {
-            let lines: Vec<&str> = file_content.lines().collect();
-            let marker = err.marker();
+#[derive(Debug)]
+pub(crate) struct ConfigDocument {
+    documents: Vec<Yaml>,
+}
 
-            let line_before = if marker.line() > 1 {
-                lines[marker.line() - 2]
-            } else {
-                ""
-            };
-            let error_line = if marker.line() > lines.len() {
-                lines[lines.len() - 1]
-            } else {
-                lines[marker.line() - 1]
-            };
-            let line_after = if marker.line() < lines.len() {
-                lines[marker.line()]
-            } else {
-                ""
-            };
-
-            return Err(errors::FzzError::InvalidConfigError(
-                format!(
-                    "Failed to load configuration at line:\n| {}\n|>{}\n| {}",
-                    line_before,
-                    error_line,
-                    line_after
-                ),
-                Some(err),
-                Some(
-                    "Check for wrong types, any missing quotes for glob pattern or incorrect identation".to_owned(),
-                ),
-            ));
-        }
-    };
-
-    if items.is_empty() {
-        return Err(errors::FzzError::InvalidConfigError(
-            "Configuration file is invalid! There are no rules to watch".to_owned(),
-            None,
-            Some("Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch".to_owned()),
-        ));
+impl ConfigDocument {
+    pub(crate) fn parse(content: &str) -> Result<Self, yaml_rust2::ScanError> {
+        YamlLoader::load_from_str(content).map(|documents| Self { documents })
     }
 
-    match &items[0] {
-        Yaml::Array(ref items) => {
-            let mut rules = vec![];
-            for item in items {
-                // Check if this item is a group (hash with 'tasks' key)
-                match item {
-                    Yaml::Hash(_) if item["tasks"] != Yaml::BadValue => {
-                        // This is a group with on/tasks format
-                        {
+    fn root(&self) -> Result<&Yaml, String> {
+        self.documents
+            .first()
+            .ok_or_else(|| "Configuration file is empty".to_owned())
+    }
+
+    pub(crate) fn rules(&self) -> errors::Result<Vec<Rules>> {
+        let items = &self.documents;
+        if items.is_empty() {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Configuration file is invalid! There are no rules to watch".to_owned(),
+                None,
+                Some("Make sure to declare at least one rule. Try to run `fzz init` to generate a new configuration from scratch".to_owned()),
+            ));
+        }
+
+        match &items[0] {
+            Yaml::Array(items) => {
+                let mut rules = vec![];
+                for item in items {
+                    // Check if this item is a group (hash with 'tasks' key)
+                    match item {
+                        Yaml::Hash(_) if item["tasks"] != Yaml::BadValue => {
+                            // This is a group with on/tasks format
                             let group_rules = parse_hash_format(item, true)?;
-                            rules.extend(group_rules)
+                            rules.extend(group_rules);
                         }
-                    }
-                    _ => {
-                        // This is a regular task
-                        {
+                        _ => {
+                            // This is a regular task
                             let rule = rule_from(item)?;
-                            rules.push(rule)
+                            rules.push(rule);
                         }
                     }
                 }
+                Ok(rules)
             }
-            Ok(rules)
-        },
-        Yaml::Hash(ref _hash) => {
-            // New format: { on: {...}, tasks: [...] }
-            parse_hash_format(&items[0], false)
-        },
-        other => Err(errors::FzzError::InvalidConfigError(
-            format!(
-                "Configuration file is invalid. Expected an Array/List of rules got: {}\n```yaml\n{}\n```",
-                yaml::get_type(other),
-                yaml::yaml_to_string(other, 0),
-            ),
-            None,
-            Some("Make sure to declare the rules as a list without any root property".to_owned()),
-        )),
+            Yaml::Hash(_) => {
+                // New format: { on: {...}, tasks: [...] }
+                parse_hash_format(&items[0], false)
+            }
+            other => Err(errors::FzzError::InvalidConfigError(
+                format!(
+                    "Configuration file is invalid. Expected an Array/List of rules got: {}\n```yaml\n{}\n```",
+                    yaml::get_type(other),
+                    yaml::yaml_to_string(other, 0),
+                ),
+                None,
+                Some("Make sure to declare the rules as a list without any root property".to_owned()),
+            )),
+        }
     }
+
+    pub(crate) fn control_socket(&self) -> Result<Option<String>, String> {
+        let root = self.root()?;
+        let on = &root["on"];
+
+        if on == &Yaml::BadValue {
+            return Ok(None);
+        }
+
+        if !matches!(on, Yaml::Hash(_)) {
+            return Err("Property 'on' must be an object".to_owned());
+        }
+
+        match &on["socket"] {
+            Yaml::BadValue => Ok(None),
+            Yaml::String(path) if !path.trim().is_empty() => Ok(Some(path.to_owned())),
+            Yaml::String(_) => Err("Property 'on.socket' cannot be empty".to_owned()),
+            _ => Err("Property 'on.socket' must be a string".to_owned()),
+        }
+    }
+
+    pub(crate) fn recovery_policy(
+        &self,
+        default: RecoveryPolicy,
+    ) -> Result<RecoveryPolicy, String> {
+        let root = self.root()?;
+        if root["execution"] == Yaml::BadValue
+            || root["execution"]["recovery_policy"] == Yaml::BadValue
+        {
+            return Ok(default);
+        }
+        recovery_policy_from_root(root)
+    }
+
+    pub(crate) fn recovery_timeout(&self, default: Duration) -> Result<Duration, String> {
+        let root = self.root()?;
+        let execution = &root["execution"];
+        if *execution == Yaml::BadValue || execution["recovery_timeout"] == Yaml::BadValue {
+            return Ok(default);
+        }
+        if !matches!(execution, Yaml::Hash(_)) {
+            return Err("Property 'execution' must be an object".to_owned());
+        }
+        let raw = match &execution["recovery_timeout"] {
+            Yaml::Integer(value) => value.to_string(),
+            Yaml::String(value) => value.clone(),
+            _ => {
+                return Err(
+                    "Property 'execution.recovery_timeout' must be a duration string or number"
+                        .to_owned(),
+                )
+            }
+        };
+        parse_recovery_timeout(&raw)
+    }
+
+    pub(crate) fn concurrency(&self) -> Result<Option<usize>, String> {
+        let root = self.root()?;
+        let execution = &root["execution"];
+        let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+            &root["on"]
+        } else {
+            execution
+        };
+        if policy == &Yaml::BadValue {
+            return Ok(None);
+        }
+        if !matches!(policy, Yaml::Hash(_)) {
+            return Err("Property 'execution' must be an object".to_owned());
+        }
+        match &policy["concurrency"] {
+        Yaml::BadValue => Ok(None),
+        Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
+        Yaml::Integer(_) => Err(
+            "Property 'execution.concurrency' must be a positive integer (got zero or negative)"
+                .to_owned(),
+        ),
+        _ => Err("Property 'execution.concurrency' must be a positive integer".to_owned()),
+    }
+    }
+
+    pub(crate) fn debounce(&self) -> Result<Option<Duration>, String> {
+        let root = self.root()?;
+        let on = &root["on"];
+
+        if on == &Yaml::BadValue {
+            return Ok(None);
+        }
+
+        if !matches!(on, Yaml::Hash(_)) {
+            return Err("Property 'on' must be an object".to_owned());
+        }
+
+        if on["debounce"] == Yaml::BadValue {
+            return Ok(None);
+        }
+
+        let raw = match &on["debounce"] {
+            Yaml::Integer(value) => value.to_string(),
+            Yaml::String(value) => value.clone(),
+            _ => {
+                return Err("Property 'on.debounce' must be a duration string or number".to_owned())
+            }
+        };
+        parse_debounce(&raw)
+    }
+
+    pub(crate) fn watch_backend(&self) -> Result<Option<crate::watcher::WatchBackend>, String> {
+        let root = self.root()?;
+        let on = &root["on"];
+
+        if on == &Yaml::BadValue {
+            return Ok(None);
+        }
+        if !matches!(on, Yaml::Hash(_)) {
+            return Err("Property 'on' must be an object".to_owned());
+        }
+        if on["watch_backend"] == Yaml::BadValue {
+            return Ok(None);
+        }
+
+        let backend = match &on["watch_backend"] {
+            Yaml::String(value) => value.clone(),
+            _ => return Err("Property 'on.watch_backend' must be a string".to_owned()),
+        };
+        let poll_interval = match &on["poll_interval"] {
+            Yaml::BadValue => None,
+            Yaml::Integer(value) => Some(value.to_string()),
+            Yaml::String(value) => Some(value.clone()),
+            _ => return Err("Property 'on.poll_interval' must be a duration".to_owned()),
+        };
+        let poll_interval = match poll_interval {
+            None => None,
+            Some(raw) => parse_debounce(&raw)?.map(|d| d.max(Duration::from_millis(20))),
+        };
+        crate::watcher::WatchBackend::parse(Some(&backend), poll_interval).map(Some)
+    }
+
+    pub(crate) fn respect_gitignore(&self) -> Result<bool, String> {
+        let root = self.root()?;
+        let on = &root["on"];
+        if on == &Yaml::BadValue || on["respect_gitignore"] == Yaml::BadValue {
+            return Ok(false);
+        }
+        match &on["respect_gitignore"] {
+            Yaml::Boolean(value) => Ok(*value),
+            _ => Err("Property 'on.respect_gitignore' must be a boolean".to_owned()),
+        }
+    }
+
+    pub(crate) fn generation_hooks(&self) -> Result<GenerationHooks, String> {
+        let root = self.root()?;
+        let hooks = &root["hooks"];
+        let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+            &root["on"]
+        } else {
+            hooks
+        };
+        if hooks == &Yaml::BadValue {
+            return Ok(GenerationHooks::default());
+        }
+        if !matches!(hooks, Yaml::Hash(_)) {
+            return Err("Property 'hooks' must be an object".to_owned());
+        }
+        let read_hook = |key: &str| -> Result<Option<String>, String> {
+            match &hooks[key] {
+                Yaml::BadValue => Ok(None),
+                Yaml::String(value) if value.trim().is_empty() => Err(format!(
+                    "Property 'hooks.{}' must be a non-empty command string",
+                    key
+                )),
+                Yaml::String(value) => Ok(Some(value.clone())),
+                _ => Err(format!("Property 'hooks.{}' must be a command string", key)),
+            }
+        };
+        let failure_value = &hooks["failure"];
+        let (failure, failure_settle) = match failure_value {
+            Yaml::Hash(map) => {
+                let run = match map.get(&Yaml::String("run".into())) {
+                    Some(Yaml::String(value)) if !value.trim().is_empty() => value.clone(),
+                    _ => {
+                        return Err(
+                            "Property 'hooks.failure.run' must be a non-empty command string"
+                                .into(),
+                        )
+                    }
+                };
+                let settle = match map.get(&Yaml::String("settle".into())) {
+                    Some(Yaml::String(value)) => parse_duration("hooks.failure.settle", value)?,
+                    Some(Yaml::Integer(value)) => {
+                        parse_duration("hooks.failure.settle", &format!("{value}s"))?
+                    }
+                    _ => {
+                        return Err(
+                            "Property 'hooks.failure.settle' must be a positive duration".into(),
+                        )
+                    }
+                };
+                let settle = settle.ok_or_else(|| {
+                    "Property 'hooks.failure.settle' must be greater than zero".to_owned()
+                })?;
+                if settle.is_zero() {
+                    return Err("Property 'hooks.failure.settle' must be greater than zero".into());
+                }
+                if settle > MAX_FAILURE_SETTLE {
+                    return Err("Property 'hooks.failure.settle' must not exceed 24h".into());
+                }
+                for key in map.keys() {
+                    let Yaml::String(key) = key else {
+                        return Err(
+                            "Unknown property 'hooks.failure' (keys must be run or settle)".into(),
+                        );
+                    };
+                    if key != "run" && key != "settle" {
+                        return Err(format!(
+                            "Unknown property 'hooks.failure.{key}' (expected run or settle)"
+                        ));
+                    }
+                }
+                (Some(run), Some(settle))
+            }
+            _ => (read_hook("failure")?, None),
+        };
+        Ok(GenerationHooks {
+            // failure_settle defaults to None for legacy callers
+            success: read_hook("success")?,
+            failure,
+            failure_settle,
+        })
+    }
+
+    pub(crate) fn session_hooks(&self) -> Result<SessionHooks, String> {
+        let root = self.root()?;
+        let hooks = &root["hooks"];
+        let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
+            &root["on"]
+        } else {
+            hooks
+        };
+        if hooks == &Yaml::BadValue {
+            return Ok(SessionHooks::default());
+        }
+        if !matches!(hooks, Yaml::Hash(_)) {
+            return Err("Property 'hooks' must be an object".to_owned());
+        }
+        let close = match &hooks["close"] {
+            Yaml::BadValue => None,
+            Yaml::String(value) if value.trim().is_empty() => {
+                return Err("Property 'hooks.close' must be a non-empty command string".to_owned())
+            }
+            Yaml::String(value) => Some(value.clone()),
+            _ => return Err("Property 'hooks.close' must be a command string".to_owned()),
+        };
+        if let Some(command) = &close {
+            for template in [
+                "{{filepath}}",
+                "{{absolute_path}}",
+                "{{relative_filepath}}",
+                "{{relative_path}}",
+                "{{paths}}",
+            ] {
+                if command.contains(template) {
+                    return Err(format!(
+                        "Property 'hooks.close' cannot use {template}: close has no trigger path"
+                    ));
+                }
+            }
+        }
+        Ok(SessionHooks { close })
+    }
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+
+    #[test]
+    fn one_document_derives_rules_and_runtime_fields() {
+        let document = ConfigDocument::parse(
+            "on:\n  socket: sock\n  debounce: 250ms\nexecution:\n  concurrency: 3\nhooks:\n  success: echo done\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n",
+        )
+        .expect("document parses once");
+
+        assert_eq!(document.rules().unwrap().len(), 1);
+        assert_eq!(document.concurrency().unwrap(), Some(3));
+        assert_eq!(
+            document.debounce().unwrap(),
+            Some(Duration::from_millis(250))
+        );
+        assert_eq!(document.control_socket().unwrap().as_deref(), Some("sock"));
+        assert_eq!(
+            document.generation_hooks().unwrap().success.as_deref(),
+            Some("echo done")
+        );
+    }
+}
+
+pub(crate) fn yaml_config_error(
+    file_content: &str,
+    err: yaml_rust2::ScanError,
+) -> errors::FzzError {
+    let lines: Vec<&str> = file_content.lines().collect();
+    let marker = err.marker();
+
+    let line_before = if marker.line() > 1 {
+        lines[marker.line() - 2]
+    } else {
+        ""
+    };
+    let error_line = if marker.line() > lines.len() {
+        lines[lines.len() - 1]
+    } else {
+        lines[marker.line() - 1]
+    };
+    let line_after = if marker.line() < lines.len() {
+        lines[marker.line()]
+    } else {
+        ""
+    };
+
+    errors::FzzError::InvalidConfigError(
+        format!(
+            "Failed to load configuration at line:\n| {}\n|>{}\n| {}",
+            line_before, error_line, line_after
+        ),
+        Some(err),
+        Some(
+            "Check for wrong types, any missing quotes for glob pattern or incorrect identation"
+                .to_owned(),
+        ),
+    )
+}
+
+pub fn from_yaml(file_content: &str) -> errors::Result<Vec<Rules>> {
+    let document =
+        ConfigDocument::parse(file_content).map_err(|err| yaml_config_error(file_content, err))?;
+    document.rules()
 }
 
 /// Represents common rules that can be shared across tasks
@@ -1006,26 +1320,8 @@ pub fn from_argv(patterns: Vec<String>, argv: Vec<String>) -> errors::Result<Vec
     )])
 }
 pub fn control_socket_from_yaml(content: &str) -> Result<Option<String>, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-
-    if on == &Yaml::BadValue {
-        return Ok(None);
-    }
-
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
-    }
-
-    match &on["socket"] {
-        Yaml::BadValue => Ok(None),
-        Yaml::String(path) if !path.trim().is_empty() => Ok(Some(path.to_owned())),
-        Yaml::String(_) => Err("Property 'on.socket' cannot be empty".to_owned()),
-        _ => Err("Property 'on.socket' must be a string".to_owned()),
-    }
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.control_socket()
 }
 
 pub fn control_socket_from_file(filename: &str) -> Result<Option<String>, String> {
@@ -1055,15 +1351,8 @@ pub fn recovery_policy_from_yaml_with_default(
     content: &str,
     default: RecoveryPolicy,
 ) -> Result<RecoveryPolicy, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    if root["execution"] == Yaml::BadValue || root["execution"]["recovery_policy"] == Yaml::BadValue
-    {
-        return Ok(default);
-    }
-    recovery_policy_from_root(root)
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.recovery_policy(default)
 }
 
 fn recovery_policy_from_root(root: &Yaml) -> Result<RecoveryPolicy, String> {
@@ -1108,28 +1397,8 @@ pub fn recovery_timeout_from_yaml_with_default(
     content: &str,
     default: Duration,
 ) -> Result<Duration, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let execution = &root["execution"];
-    if *execution == Yaml::BadValue || execution["recovery_timeout"] == Yaml::BadValue {
-        return Ok(default);
-    }
-    if !matches!(execution, Yaml::Hash(_)) {
-        return Err("Property 'execution' must be an object".to_owned());
-    }
-    let raw = match &execution["recovery_timeout"] {
-        Yaml::Integer(value) => value.to_string(),
-        Yaml::String(value) => value.clone(),
-        _ => {
-            return Err(
-                "Property 'execution.recovery_timeout' must be a duration string or number"
-                    .to_owned(),
-            )
-        }
-    };
-    parse_recovery_timeout(&raw)
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.recovery_timeout(default)
 }
 
 pub fn recovery_timeout_from_yaml(content: &str) -> Result<Duration, String> {
@@ -1143,31 +1412,8 @@ fn parse_recovery_timeout(raw: &str) -> Result<Duration, String> {
 }
 
 pub fn concurrency_from_yaml(content: &str) -> Result<Option<usize>, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let execution = &root["execution"];
-    let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
-        &root["on"]
-    } else {
-        execution
-    };
-    if policy == &Yaml::BadValue {
-        return Ok(None);
-    }
-    if !matches!(policy, Yaml::Hash(_)) {
-        return Err("Property 'execution' must be an object".to_owned());
-    }
-    match &policy["concurrency"] {
-        Yaml::BadValue => Ok(None),
-        Yaml::Integer(value) if *value > 0 => Ok(Some(*value as usize)),
-        Yaml::Integer(_) => Err(
-            "Property 'execution.concurrency' must be a positive integer (got zero or negative)"
-                .to_owned(),
-        ),
-        _ => Err("Property 'execution.concurrency' must be a positive integer".to_owned()),
-    }
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.concurrency()
 }
 
 pub fn concurrency_from_file(filename: &str) -> Result<Option<usize>, String> {
@@ -1183,30 +1429,8 @@ pub fn concurrency_from_file(filename: &str) -> Result<Option<usize>, String> {
 /// one-second behavior (contract keeps it unless explicitly configured);
 /// zero and invalid values are rejected.
 pub fn debounce_from_yaml(content: &str) -> Result<Option<Duration>, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-
-    if on == &Yaml::BadValue {
-        return Ok(None);
-    }
-
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
-    }
-
-    if on["debounce"] == Yaml::BadValue {
-        return Ok(None);
-    }
-
-    let raw = match &on["debounce"] {
-        Yaml::Integer(value) => value.to_string(),
-        Yaml::String(value) => value.clone(),
-        _ => return Err("Property 'on.debounce' must be a duration string or number".to_owned()),
-    };
-    parse_debounce(&raw)
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.debounce()
 }
 
 /// Parses one debounce duration: `<number>` (seconds), or `<number>ms|s|m`.
@@ -2843,37 +3067,8 @@ mod backend_tests {
 pub fn watch_backend_from_yaml(
     content: &str,
 ) -> Result<Option<crate::watcher::WatchBackend>, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-
-    if on == &Yaml::BadValue {
-        return Ok(None);
-    }
-    if !matches!(on, Yaml::Hash(_)) {
-        return Err("Property 'on' must be an object".to_owned());
-    }
-    if on["watch_backend"] == Yaml::BadValue {
-        return Ok(None);
-    }
-
-    let backend = match &on["watch_backend"] {
-        Yaml::String(value) => value.clone(),
-        _ => return Err("Property 'on.watch_backend' must be a string".to_owned()),
-    };
-    let poll_interval = match &on["poll_interval"] {
-        Yaml::BadValue => None,
-        Yaml::Integer(value) => Some(value.to_string()),
-        Yaml::String(value) => Some(value.clone()),
-        _ => return Err("Property 'on.poll_interval' must be a duration".to_owned()),
-    };
-    let poll_interval = match poll_interval {
-        None => None,
-        Some(raw) => parse_debounce(&raw)?.map(|d| d.max(Duration::from_millis(20))),
-    };
-    crate::watcher::WatchBackend::parse(Some(&backend), poll_interval).map(Some)
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.watch_backend()
 }
 
 pub fn watch_backend_from_file(
@@ -2909,18 +3104,8 @@ mod gitignore_config_tests {
 
 /// Parses the optional `on.respect_gitignore` boolean (default false).
 pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let on = &root["on"];
-    if on == &Yaml::BadValue || on["respect_gitignore"] == Yaml::BadValue {
-        return Ok(false);
-    }
-    match &on["respect_gitignore"] {
-        Yaml::Boolean(value) => Ok(*value),
-        _ => Err("Property 'on.respect_gitignore' must be a boolean".to_owned()),
-    }
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.respect_gitignore()
 }
 
 pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
@@ -3054,86 +3239,8 @@ pub struct SessionHooks {
 const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
 
 pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let hooks = &root["hooks"];
-    let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
-        &root["on"]
-    } else {
-        hooks
-    };
-    if hooks == &Yaml::BadValue {
-        return Ok(GenerationHooks::default());
-    }
-    if !matches!(hooks, Yaml::Hash(_)) {
-        return Err("Property 'hooks' must be an object".to_owned());
-    }
-    let read_hook = |key: &str| -> Result<Option<String>, String> {
-        match &hooks[key] {
-            Yaml::BadValue => Ok(None),
-            Yaml::String(value) if value.trim().is_empty() => Err(format!(
-                "Property 'hooks.{}' must be a non-empty command string",
-                key
-            )),
-            Yaml::String(value) => Ok(Some(value.clone())),
-            _ => Err(format!("Property 'hooks.{}' must be a command string", key)),
-        }
-    };
-    let failure_value = &hooks["failure"];
-    let (failure, failure_settle) = match failure_value {
-        Yaml::Hash(map) => {
-            let run = match map.get(&Yaml::String("run".into())) {
-                Some(Yaml::String(value)) if !value.trim().is_empty() => value.clone(),
-                _ => {
-                    return Err(
-                        "Property 'hooks.failure.run' must be a non-empty command string".into(),
-                    )
-                }
-            };
-            let settle = match map.get(&Yaml::String("settle".into())) {
-                Some(Yaml::String(value)) => parse_duration("hooks.failure.settle", value)?,
-                Some(Yaml::Integer(value)) => {
-                    parse_duration("hooks.failure.settle", &format!("{value}s"))?
-                }
-                _ => {
-                    return Err(
-                        "Property 'hooks.failure.settle' must be a positive duration".into(),
-                    )
-                }
-            };
-            let settle = settle.ok_or_else(|| {
-                "Property 'hooks.failure.settle' must be greater than zero".to_owned()
-            })?;
-            if settle.is_zero() {
-                return Err("Property 'hooks.failure.settle' must be greater than zero".into());
-            }
-            if settle > MAX_FAILURE_SETTLE {
-                return Err("Property 'hooks.failure.settle' must not exceed 24h".into());
-            }
-            for key in map.keys() {
-                let Yaml::String(key) = key else {
-                    return Err(
-                        "Unknown property 'hooks.failure' (keys must be run or settle)".into(),
-                    );
-                };
-                if key != "run" && key != "settle" {
-                    return Err(format!(
-                        "Unknown property 'hooks.failure.{key}' (expected run or settle)"
-                    ));
-                }
-            }
-            (Some(run), Some(settle))
-        }
-        _ => (read_hook("failure")?, None),
-    };
-    Ok(GenerationHooks {
-        // failure_settle defaults to None for legacy callers
-        success: read_hook("success")?,
-        failure,
-        failure_settle,
-    })
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.generation_hooks()
 }
 
 pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
@@ -3147,46 +3254,8 @@ pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, Str
 /// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
 /// templates are rejected at config validation instead of expanding to empty.
 pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    let hooks = &root["hooks"];
-    let hooks = if hooks == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
-        &root["on"]
-    } else {
-        hooks
-    };
-    if hooks == &Yaml::BadValue {
-        return Ok(SessionHooks::default());
-    }
-    if !matches!(hooks, Yaml::Hash(_)) {
-        return Err("Property 'hooks' must be an object".to_owned());
-    }
-    let close = match &hooks["close"] {
-        Yaml::BadValue => None,
-        Yaml::String(value) if value.trim().is_empty() => {
-            return Err("Property 'hooks.close' must be a non-empty command string".to_owned())
-        }
-        Yaml::String(value) => Some(value.clone()),
-        _ => return Err("Property 'hooks.close' must be a command string".to_owned()),
-    };
-    if let Some(command) = &close {
-        for template in [
-            "{{filepath}}",
-            "{{absolute_path}}",
-            "{{relative_filepath}}",
-            "{{relative_path}}",
-            "{{paths}}",
-        ] {
-            if command.contains(template) {
-                return Err(format!(
-                    "Property 'hooks.close' cannot use {template}: close has no trigger path"
-                ));
-            }
-        }
-    }
-    Ok(SessionHooks { close })
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.session_hooks()
 }
 
 pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
