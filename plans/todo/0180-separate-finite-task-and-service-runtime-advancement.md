@@ -37,6 +37,12 @@ At review baseline, `src/executor.rs::advance_task` spans about 297 lines, handl
 
 Run focused executor/domain/service tests and feature-enabled timeout, process-group, recovery, cancellation, service, and output suites. Use the fresh watcher final gate. Compare responsibilities and dependencies before/after; Rust AST complexity scores that omit branches are not acceptance evidence.
 
+## Discovery evidence
+
+- Criterion matrix and responsibility inventory: `.tmp/reports/04-09-26/task-0180-discovery.md`.
+- Pre-move characterization: executor fake-runner/clock suite 67 passed; serial feature `finite_job_timeouts` 9 passed; serial feature `control_await` 24 passed. These constrain sequential continuation, spawn/poll failure, timeout/cancellation precedence, service restart/readiness/handoff, reaping, and recovery-adjacent worker behavior.
+- Existing pure policy owners are preserved: `src/domain/finite_lifecycle.rs` and `src/service_lifecycle.rs`; no missing characterization test was identified and no production code was changed in this discovery slice.
+
 ## Likely files
 
 `src/executor.rs`, private executor submodules if justified, existing output/diagnostic adapter wiring, and colocated tests.
