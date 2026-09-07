@@ -18,6 +18,21 @@ Own black-box behavior of compiled `fzz` binary across CLI, filesystem, processe
 - Assert observable output/state, not internal implementation.
 - Cover success and failure paths. Mocked behavior must not claim to verify real process, filesystem, or socket integration.
 
+### Service PID marker pattern (TASK-0174)
+
+A test that needs a service child's PID must never `unwrap` a PID file the
+service itself writes: the file may not exist yet, and `echo $$ > pid` is a
+truncate-then-write (a concurrent reader can observe an empty file).
+
+- Service scripts write their PID atomically: `printf '%s\n' "$$" > "pid.tmp.$$" && mv "pid.tmp.$$" pid`, then `touch` their `.started` marker.
+- Tests read PIDs only through a bounded wait-for-valid helper
+  (`control_await.rs::service_pid`): poll until the file exists AND parses,
+  with a load-tolerant deadline and a descriptive panic.
+- Gate on the service's own `.started`/ready marker when ordering matters;
+  existence of the PID file alone is not a readiness signal for torn writes
+  in scripts that have not migrated to atomic writes.
+- Wait deadlines are load upper bounds (60s), not sleeps tuned to a machine.
+
 Some tests compile in default runs but skip filesystem behavior unless feature is enabled. Do not accept a default `cargo test` pass as proof of integration behavior.
 
 ## Verification
