@@ -1,0 +1,46 @@
+---
+id: TASK-0180
+title: Separate finite task and service runtime advancement
+status: todo
+depends_on: [TASK-0179]
+priority: high
+tags: [rust, executor, services, cohesion]
+---
+
+# Separate finite task and service runtime advancement
+
+## Problem
+Executor advance_task combines finite deadlines and outcomes with service restart handling, process adaptation, capture, and presentation, making lifecycle changes hard to review.
+
+## Context
+
+At review baseline, `src/executor.rs::advance_task` spans about 297 lines, handling working-directory validation, capture, spawn/poll, deadlines, service restart/backoff, and failures. TASK-0171 already extracted pure finite/service decisions. Extend those seams instead of creating another state machine. TASK-0179 establishes the result-contract owner before reorganizing executor internals.
+
+## Scope and approach
+
+- Map current finite-job versus service advancement and shared process effects. Characterize any missing cases before extraction.
+- Split private runtime methods/modules by finite execution and service lifecycle responsibilities, leaving shared process mechanics explicitly shared.
+- Keep cancellation/deadline precedence in existing domain resolvers; keep runtime process types out of domain modules.
+- Isolate presentation through a narrow injected diagnostic sink or existing suitable internal contract only where direct output prevents testing. Do not invent public wire events.
+- Coordinate touched executor methods with worker-runtime work; unrelated task dependencies are not required merely because both use the executor.
+
+## Acceptance criteria
+
+- [ ] Top-level advancement exposes finite/service intent without inlining both lifecycle implementations.
+- [ ] There is one owner for each policy; no duplicate finite lifecycle resolver or replacement scheduler is introduced.
+- [ ] Fake runner/clock tests cover sequential continuation, successful completion, spawn/poll failure, timeout, cancellation, service restart exhaustion, and readiness handoff.
+- [ ] Job-wide deadlines do not reset on continuation; cancellation/timeout precedence remains unchanged.
+- [ ] Output capture, live messages, result attribution, recovery, fail-fast, and service reaping/replacement semantics remain unchanged.
+- [ ] Public executor paths, wire types, and event ordering remain compatible.
+
+## Verification
+
+Run focused executor/domain/service tests and feature-enabled timeout, process-group, recovery, cancellation, service, and output suites. Use the fresh watcher final gate. Compare responsibilities and dependencies before/after; Rust AST complexity scores that omit branches are not acceptance evidence.
+
+## Likely files
+
+`src/executor.rs`, private executor submodules if justified, existing output/diagnostic adapter wiring, and colocated tests.
+
+## Non-goals
+
+No second execution engine, new crates, timeout policy changes, service algorithm changes, or relocation of runtime-specific process traits into the domain.
