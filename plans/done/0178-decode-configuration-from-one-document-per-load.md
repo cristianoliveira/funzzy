@@ -1,7 +1,7 @@
 ---
 id: TASK-0178
 title: Decode configuration from one document per load
-status: doing
+status: done
 depends_on: []
 priority: high
 tags: [rust, config, architecture, readability]
@@ -70,6 +70,13 @@ Pre-move characterization commands/results are recorded in `.tmp/reports/04-09-2
 - Reload now performs one candidate read and one parse per attempt, carries the resulting `RuntimeConfig` through revision observation, and builds `Watches` without reparsing. Rules parse remains syntactic; later policy errors remain semantic and ordered.
 - Pre-move config/reload/migration characterization passed: config 126, reload 16, config reload lifecycle 14, reload matrix 7, invalid reload 2, config workflow 6, migration 6. Fresh watcher gen205 passed.
 - Task remains `doing`: startup `watch_action` and `check_config` still call independent file accessors, so aggregate one-read/one-parse is only partial. No closure until those paths are migrated or a follow-up boundary is explicitly accepted.
+
+## Startup/check seam evidence
+
+- Characterization and implementation report: `.tmp/reports/04-09-26/task-0178-startup-seam.md`.
+- Commit `e492d9d` routes watcher startup through `LoadedWatchConfig` backed by one `ConfigDocument::from_file`; `check_config` now derives all checks from one document in the historical order. `1cffbf6` preserves relative default-config error paths; `4037e2b` removes an obsolete import.
+- Default `.watch.yaml` → `.watch.yml` fallback, missing/explicit defaults, CLI overrides, compatibility wrappers, validation purity, and revision/socket paths remain unchanged. Focused suites and fresh watcher gen213 pass.
+- Narrower `list`/`run`/`explain` actions still use purpose-specific accessors to avoid expanding their error surface by parsing unrelated policies; this is the only remaining scope decision, and no further refactor is made speculatively.
 
 ## Non-goals
 
