@@ -1616,6 +1616,102 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
 }
 
 #[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    fn watch_backend_defaults_to_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            None
+        );
+        assert_eq!(watch_backend_from_yaml("tasks: []\n").unwrap(), None);
+    }
+
+    #[test]
+    fn watch_backend_accepts_native_poll_and_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: native\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Native)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: auto\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Auto)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 200ms\n")
+                .unwrap(),
+            Some(crate::watcher::WatchBackend::Poll {
+                interval: Duration::from_millis(200)
+            })
+        );
+    }
+
+    #[test]
+    fn watch_backend_rejects_invalid_values() {
+        assert!(watch_backend_from_yaml("on:\n  watch_backend: bogus\n").is_err());
+        assert!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 0\n").is_err()
+        );
+    }
+}
+
+/// Parses the optional `on.watch_backend` (native|poll|auto) plus
+/// `on.poll_interval` duration. Absent defaults to auto (native first, poll
+/// fallback). Zero/invalid values are rejected loudly.
+pub fn watch_backend_from_yaml(
+    content: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.watch_backend()
+}
+
+pub fn watch_backend_from_file(
+    filename: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    watch_backend_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod gitignore_config_tests {
+    use super::*;
+
+    #[test]
+    fn respect_gitignore_defaults_to_false() {
+        assert!(!respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap());
+    }
+
+    #[test]
+    fn respect_gitignore_parses_boolean() {
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap());
+        assert!(!respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap());
+    }
+
+    #[test]
+    fn respect_gitignore_rejects_non_boolean() {
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: yes-please\n").is_err());
+    }
+}
+
+/// Parses the optional `on.respect_gitignore` boolean (default false).
+pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.respect_gitignore()
+}
+
+pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    respect_gitignore_from_yaml(&content)
+}
+
+#[cfg(test)]
 mod boundary_characterization_tests {
     use super::from_yaml;
     use crate::rules::OutputPolicy;
@@ -3035,102 +3131,6 @@ mod jobs_tests {
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
     }
-}
-
-#[cfg(test)]
-mod backend_tests {
-    use super::*;
-
-    #[test]
-    fn watch_backend_defaults_to_auto() {
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  change: '**/*'\n").unwrap(),
-            None
-        );
-        assert_eq!(watch_backend_from_yaml("tasks: []\n").unwrap(), None);
-    }
-
-    #[test]
-    fn watch_backend_accepts_native_poll_and_auto() {
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: native\n").unwrap(),
-            Some(crate::watcher::WatchBackend::Native)
-        );
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: auto\n").unwrap(),
-            Some(crate::watcher::WatchBackend::Auto)
-        );
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 200ms\n")
-                .unwrap(),
-            Some(crate::watcher::WatchBackend::Poll {
-                interval: Duration::from_millis(200)
-            })
-        );
-    }
-
-    #[test]
-    fn watch_backend_rejects_invalid_values() {
-        assert!(watch_backend_from_yaml("on:\n  watch_backend: bogus\n").is_err());
-        assert!(
-            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 0\n").is_err()
-        );
-    }
-}
-
-/// Parses the optional `on.watch_backend` (native|poll|auto) plus
-/// `on.poll_interval` duration. Absent defaults to auto (native first, poll
-/// fallback). Zero/invalid values are rejected loudly.
-pub fn watch_backend_from_yaml(
-    content: &str,
-) -> Result<Option<crate::watcher::WatchBackend>, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.watch_backend()
-}
-
-pub fn watch_backend_from_file(
-    filename: &str,
-) -> Result<Option<crate::watcher::WatchBackend>, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    watch_backend_from_yaml(&content)
-}
-
-#[cfg(test)]
-mod gitignore_config_tests {
-    use super::*;
-
-    #[test]
-    fn respect_gitignore_defaults_to_false() {
-        assert!(!respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap());
-    }
-
-    #[test]
-    fn respect_gitignore_parses_boolean() {
-        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap());
-        assert!(!respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap());
-    }
-
-    #[test]
-    fn respect_gitignore_rejects_non_boolean() {
-        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: yes-please\n").is_err());
-    }
-}
-
-/// Parses the optional `on.respect_gitignore` boolean (default false).
-pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.respect_gitignore()
-}
-
-pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    respect_gitignore_from_yaml(&content)
 }
 
 #[cfg(test)]
