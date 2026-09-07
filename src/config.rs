@@ -97,6 +97,23 @@ impl ConfigDocument {
         YamlLoader::load_from_str(content).map(|documents| Self { documents })
     }
 
+    pub(crate) fn from_file(filename: &str) -> errors::Result<Self> {
+        let mut file = File::open(filename).map_err(|err| {
+            errors::FzzError::IoConfigError(
+                format!("Couldn't open configuration file: '{}'", filename),
+                Some(err),
+            )
+        })?;
+        let mut content = String::new();
+        file.read_to_string(&mut content).map_err(|err| {
+            errors::FzzError::IoConfigError(
+                format!("Couldn't read configuration file: '{}'", filename),
+                Some(err),
+            )
+        })?;
+        Self::parse(&content).map_err(|err| yaml_config_error(&content, err))
+    }
+
     fn root(&self) -> Result<&Yaml, String> {
         self.documents
             .first()
