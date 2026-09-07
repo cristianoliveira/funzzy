@@ -1,7 +1,7 @@
 ---
 id: TASK-0178
 title: Decode configuration from one document per load
-status: todo
+status: doing
 depends_on: []
 priority: high
 tags: [rust, config, architecture, readability]
