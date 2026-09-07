@@ -1,7 +1,7 @@
 ---
 id: TASK-0177
 title: Make worker runtime iterations deterministic to test
-status: todo
+status: doing
 depends_on: [TASK-0176]
 priority: high
 tags: [rust, worker, determinism, tests]
