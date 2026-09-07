@@ -1,7 +1,7 @@
 ---
 id: TASK-0181
 title: Represent config CLI subcommands with explicit action variants
-status: doing
+status: done
 depends_on: []
 priority: normal
 tags: [rust, cli, types, readability]
@@ -25,11 +25,11 @@ Action::Config encodes schema and example commands as combinations of optional f
 
 ## Acceptance criteria
 
-- [ ] Internal config dispatch represents exactly one command; contradictory optional-field combinations do not flow through use-case execution.
-- [ ] Tests cover schema with/without section, example profiles, supported formats, and invalid section/profile/format or missing arguments according to the existing contract.
-- [ ] Help text, stdout/stderr channels, exit codes, default format/profile, and unrelated CLI precedence remain unchanged.
-- [ ] Public Rust API compatibility is assessed and either preserved or an explicit breaking decision is requested before implementation.
-- [ ] No configuration file reads or watcher startup are introduced into schema/example commands.
+- [x] Internal config dispatch represents exactly one command; contradictory optional-field combinations do not flow through use-case execution.
+- [x] Tests cover schema with/without section, example profiles, supported formats, and invalid section/profile/format or missing arguments according to the existing contract.
+- [x] Help text, stdout/stderr channels, exit codes, default format/profile, and unrelated CLI precedence remain unchanged.
+- [x] Public Rust API compatibility is assessed and preserved: `Action::Config` and `cli::config::execute_config` remain compatible facades.
+- [x] No configuration file reads or watcher startup are introduced into schema/example commands.
 
 ## Verification
 
@@ -38,6 +38,14 @@ Characterize parser/dispatch behavior first. Run focused arguments and config-co
 ## Likely files
 
 `src/arguments.rs`, `src/app.rs`, `src/cli/config.rs` if required, and corresponding tests.
+
+## Evidence and closure
+
+- Characterization/inventory: `.tmp/reports/04-09-26/task-0181-characterization.md`.
+- Implementation/criterion matrix: `.tmp/reports/04-09-26/task-0181-config-action-normalization.md`.
+- Implementation commit: `92124ad`; invalid-format test coverage: `e9ef845`.
+- Focused verification: config action unit 6, CLI config filter 12, config workflow 6, CLI config module 10, agent config loop 5, and domain boundary guard 8 all passed.
+- Fresh watcher generation 228 passed with the current source fingerprint.
 
 ## Non-goals
 
