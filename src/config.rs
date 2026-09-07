@@ -591,6 +591,69 @@ fn validate_v2_sections(root: &Yaml) -> errors::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod v2_section_tests {
+    use super::*;
+
+    const CANONICAL: &str = "on:\n  change: 'src/**'\n  socket: .tmp/fzz.sock\n  debounce: 500ms\nexecution:\n  concurrency: 2\n  output: show-on-failure\nhooks:\n  success: echo ok\n  failure: echo failed\n  close: echo closed\njobs:\n  - name: test\n    run: cargo test\n";
+
+    #[test]
+    fn parses_canonical_v2_sections_into_existing_runtime_policies() {
+        let rules = from_yaml(CANONICAL).expect("canonical V2 config parses");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].output(), OutputPolicy::ShowOnFailure);
+        assert_eq!(concurrency_from_yaml(CANONICAL), Ok(Some(2)));
+        assert_eq!(
+            control_socket_from_yaml(CANONICAL),
+            Ok(Some(".tmp/fzz.sock".to_owned()))
+        );
+        assert_eq!(
+            generation_hooks_from_yaml(CANONICAL)
+                .unwrap()
+                .success
+                .as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(CANONICAL).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
+    fn rejects_old_grouped_v2_placements_instead_of_aliasing_them() {
+        for yaml in [
+            "on:\n  concurrency: 2\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  output: quiet\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n",
+        ] {
+            assert!(from_yaml(yaml).is_err(), "old placement must fail: {yaml}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
+        let unknown =
+            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
+                .expect_err("unknown execution property must fail");
+        assert!(format!("{unknown:?}").contains("execution.parallelism"));
+        let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
+            .expect_err("unknown root property must fail");
+        assert!(format!("{root:?}").contains("at configuration root"));
+
+        assert_eq!(
+            concurrency_from_yaml(
+                "execution:\n  concurrency: many\njobs:\n  - name: test\n    run: cargo test\n"
+            ),
+            Err("Property 'execution.concurrency' must be a positive integer".to_owned())
+        );
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  success: [echo, ok]\njobs:\n  - name: test\n    run: cargo test\n"
+        )
+        .is_err());
+    }
+}
+
 fn output_policy_from_root(root: &Yaml) -> errors::Result<OutputPolicy> {
     let execution = &root["execution"];
     let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
@@ -3409,69 +3472,6 @@ mod jobs_tests {
         assert!(
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
-    }
-}
-
-#[cfg(test)]
-mod v2_section_tests {
-    use super::*;
-
-    const CANONICAL: &str = "on:\n  change: 'src/**'\n  socket: .tmp/fzz.sock\n  debounce: 500ms\nexecution:\n  concurrency: 2\n  output: show-on-failure\nhooks:\n  success: echo ok\n  failure: echo failed\n  close: echo closed\njobs:\n  - name: test\n    run: cargo test\n";
-
-    #[test]
-    fn parses_canonical_v2_sections_into_existing_runtime_policies() {
-        let rules = from_yaml(CANONICAL).expect("canonical V2 config parses");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].output(), OutputPolicy::ShowOnFailure);
-        assert_eq!(concurrency_from_yaml(CANONICAL), Ok(Some(2)));
-        assert_eq!(
-            control_socket_from_yaml(CANONICAL),
-            Ok(Some(".tmp/fzz.sock".to_owned()))
-        );
-        assert_eq!(
-            generation_hooks_from_yaml(CANONICAL)
-                .unwrap()
-                .success
-                .as_deref(),
-            Some("echo ok")
-        );
-        assert_eq!(
-            session_hooks_from_yaml(CANONICAL).unwrap().close.as_deref(),
-            Some("echo closed")
-        );
-    }
-
-    #[test]
-    fn rejects_old_grouped_v2_placements_instead_of_aliasing_them() {
-        for yaml in [
-            "on:\n  concurrency: 2\njobs:\n  - name: test\n    run: cargo test\n",
-            "on:\n  output: quiet\njobs:\n  - name: test\n    run: cargo test\n",
-            "on:\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n",
-        ] {
-            assert!(from_yaml(yaml).is_err(), "old placement must fail: {yaml}");
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
-        let unknown =
-            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
-                .expect_err("unknown execution property must fail");
-        assert!(format!("{unknown:?}").contains("execution.parallelism"));
-        let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
-            .expect_err("unknown root property must fail");
-        assert!(format!("{root:?}").contains("at configuration root"));
-
-        assert_eq!(
-            concurrency_from_yaml(
-                "execution:\n  concurrency: many\njobs:\n  - name: test\n    run: cargo test\n"
-            ),
-            Err("Property 'execution.concurrency' must be a positive integer".to_owned())
-        );
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  success: [echo, ok]\njobs:\n  - name: test\n    run: cargo test\n"
-        )
-        .is_err());
     }
 }
 
