@@ -2302,6 +2302,8 @@ mod config_command_tests {
     #[test]
     fn config_rejects_unknown_section_and_profile() {
         assert!(parse(&["config", "schema", "--section", "bogus"]).is_err());
+        assert!(parse(&["config", "schema", "--format", "xml"]).is_err());
+        assert!(parse(&["config", "example", "--format", "xml", "agent"]).is_err());
         assert!(parse(&["config", "example", "bogus"]).is_err());
         assert!(parse(&["config", "example"]).is_err());
     }
