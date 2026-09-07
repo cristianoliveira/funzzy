@@ -1815,6 +1815,124 @@ pub fn parse_duration(field: &str, raw: &str) -> Result<Option<Duration>, String
     Ok(Some(Duration::from_millis(millis)))
 }
 
+#[cfg(test)]
+mod timeout_config_tests {
+    use super::from_yaml;
+    use std::time::Duration;
+
+    #[test]
+    fn timeout_parses_ms_s_m_and_bare_seconds() {
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 200ms\n    change: a/**\n")
+                .expect("ms parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_millis(200))
+        );
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 45s\n    change: a/**\n")
+                .expect("s parses");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(45)));
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    change: a/**\n")
+                .expect("m parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_secs(1800))
+        );
+
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 2\n    change: a/**\n")
+            .expect("bare = seconds");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn timeout_rejects_zero_negative_garbage_and_hours() {
+        for bad in ["0s", "0", "-5s", "banana", "1h", "1h30m"] {
+            let err = from_yaml(&format!(
+                "jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: {bad}\n"
+            ))
+            .expect_err(&format!("'{bad}' must be rejected"));
+            assert!(
+                err.to_string().contains("timeout"),
+                "error names the field for '{bad}': {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_rejects_service_and_non_string() {
+        let err = from_yaml(
+            "jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    service: true\n    change: a/**\n",
+        )
+        .expect_err("timeout+service rejected");
+        assert!(err.to_string().contains("'timeout' and 'service: true'"));
+
+        let err =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: true\n")
+                .expect_err("non-duration type rejected");
+        assert!(err.to_string().contains("duration string"));
+    }
+
+    #[test]
+    fn timeout_rejected_at_both_legacy_sites() {
+        let err = from_yaml("- name: a\n  run: x\n  timeout: 30m\n  change: a/**\n")
+            .expect_err("root-list legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+
+        let err = from_yaml(
+            "on:\n  change: [\"a/**\"]\ntasks:\n  - name: a\n    run: x\n    timeout: 30m\n",
+        )
+        .expect_err("grouped legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn absent_timeout_means_unbounded() {
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
+        assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
+    fn execution_timeout_is_inherited_and_job_override_wins() {
+        let rules = from_yaml("execution:\n  timeout: 10m\njobs:\n  - name: a\n    run: x\n  - name: b\n    timeout: 30s\n    run: y\n").unwrap();
+        assert_eq!(rules[0].timeout(), Some(Duration::from_secs(600)));
+        assert_eq!(rules[1].timeout(), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn execution_timeout_does_not_bound_services() {
+        let rules = from_yaml(
+            "execution:\n  timeout: 10m\njobs:\n  - name: svc\n    service: true\n    run: x\n",
+        )
+        .unwrap();
+        assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
+    fn execution_timeout_rejects_legacy_and_invalid_values() {
+        assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
+        assert!(
+            from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err()
+        );
+        for sentinel in ["inherit", "unbounded"] {
+            assert!(from_yaml(&format!(
+                "execution:\n  timeout: {sentinel}\njobs:\n  - name: a\n    run: x\n"
+            ))
+            .is_err());
+        }
+        assert!(
+            from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err()
+        );
+    }
+}
+
 pub fn debounce_from_file(filename: &str) -> Result<Option<Duration>, String> {
     let mut file = File::open(filename).map_err(|err| err.to_string())?;
     let mut content = String::new();
@@ -3657,124 +3775,6 @@ mod jobs_tests {
         assert!(from_yaml("- name: check\n  run: check\n  recovery: repair\n").is_err());
         assert!(
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
-        );
-    }
-}
-
-#[cfg(test)]
-mod timeout_config_tests {
-    use super::from_yaml;
-    use std::time::Duration;
-
-    #[test]
-    fn timeout_parses_ms_s_m_and_bare_seconds() {
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 200ms\n    change: a/**\n")
-                .expect("ms parses");
-        assert_eq!(
-            rules[0].timeout(),
-            Some(std::time::Duration::from_millis(200))
-        );
-
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 45s\n    change: a/**\n")
-                .expect("s parses");
-        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(45)));
-
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    change: a/**\n")
-                .expect("m parses");
-        assert_eq!(
-            rules[0].timeout(),
-            Some(std::time::Duration::from_secs(1800))
-        );
-
-        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 2\n    change: a/**\n")
-            .expect("bare = seconds");
-        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(2)));
-    }
-
-    #[test]
-    fn timeout_rejects_zero_negative_garbage_and_hours() {
-        for bad in ["0s", "0", "-5s", "banana", "1h", "1h30m"] {
-            let err = from_yaml(&format!(
-                "jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: {bad}\n"
-            ))
-            .expect_err(&format!("'{bad}' must be rejected"));
-            assert!(
-                err.to_string().contains("timeout"),
-                "error names the field for '{bad}': {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn timeout_rejects_service_and_non_string() {
-        let err = from_yaml(
-            "jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    service: true\n    change: a/**\n",
-        )
-        .expect_err("timeout+service rejected");
-        assert!(err.to_string().contains("'timeout' and 'service: true'"));
-
-        let err =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: true\n")
-                .expect_err("non-duration type rejected");
-        assert!(err.to_string().contains("duration string"));
-    }
-
-    #[test]
-    fn timeout_rejected_at_both_legacy_sites() {
-        let err = from_yaml("- name: a\n  run: x\n  timeout: 30m\n  change: a/**\n")
-            .expect_err("root-list legacy rejects timeout");
-        assert!(err
-            .to_string()
-            .contains("'timeout' is supported only in preferred V2 jobs"));
-
-        let err = from_yaml(
-            "on:\n  change: [\"a/**\"]\ntasks:\n  - name: a\n    run: x\n    timeout: 30m\n",
-        )
-        .expect_err("grouped legacy rejects timeout");
-        assert!(err
-            .to_string()
-            .contains("'timeout' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn absent_timeout_means_unbounded() {
-        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
-        assert_eq!(rules[0].timeout(), None);
-    }
-
-    #[test]
-    fn execution_timeout_is_inherited_and_job_override_wins() {
-        let rules = from_yaml("execution:\n  timeout: 10m\njobs:\n  - name: a\n    run: x\n  - name: b\n    timeout: 30s\n    run: y\n").unwrap();
-        assert_eq!(rules[0].timeout(), Some(Duration::from_secs(600)));
-        assert_eq!(rules[1].timeout(), Some(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn execution_timeout_does_not_bound_services() {
-        let rules = from_yaml(
-            "execution:\n  timeout: 10m\njobs:\n  - name: svc\n    service: true\n    run: x\n",
-        )
-        .unwrap();
-        assert_eq!(rules[0].timeout(), None);
-    }
-
-    #[test]
-    fn execution_timeout_rejects_legacy_and_invalid_values() {
-        assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
-        assert!(
-            from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err()
-        );
-        for sentinel in ["inherit", "unbounded"] {
-            assert!(from_yaml(&format!(
-                "execution:\n  timeout: {sentinel}\njobs:\n  - name: a\n    run: x\n"
-            ))
-            .is_err());
-        }
-        assert!(
-            from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err()
         );
     }
 }
