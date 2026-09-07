@@ -1,7 +1,7 @@
 ---
 id: TASK-0181
 title: Represent config CLI subcommands with explicit action variants
-status: todo
+status: doing
 depends_on: []
 priority: normal
 tags: [rust, cli, types, readability]
