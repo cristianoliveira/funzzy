@@ -10,6 +10,7 @@ use super::*;
 /// Deterministic input accepted by one runtime iteration. The production
 /// loop still owns process polling and command transport; this value object
 /// owns the ordering decision between accepted commands and child facts.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IterationCommand {
     Start(u64),
@@ -18,6 +19,7 @@ enum IterationCommand {
     Shutdown,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChildFact {
     Succeeded(u64),
@@ -26,6 +28,7 @@ enum ChildFact {
     Reaped(u64),
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IterationAction {
     Spawn(u64),
@@ -40,6 +43,7 @@ enum IterationAction {
 
 /// Small state owner for a deterministic runtime step. It deliberately
 /// models generation/replacement ownership, not process I/O or waiting.
+#[cfg(test)]
 #[derive(Default)]
 struct RuntimeIteration {
     active: Option<u64>,
@@ -47,6 +51,7 @@ struct RuntimeIteration {
     reaped_predecessor: Option<u64>,
 }
 
+#[cfg(test)]
 impl RuntimeIteration {
     /// Preserve the production cycle marker: accepted scheduler commands
     /// suppress child polling for this iteration.
@@ -130,6 +135,12 @@ impl RuntimeIteration {
     }
 }
 
+/// Preserve the production cycle marker: accepted scheduler commands
+/// suppress child polling for this iteration.
+fn may_observe_child_facts(scheduler_has_pending: bool) -> bool {
+    !scheduler_has_pending
+}
+
 /// Runtime state for the worker consumer loop. The `Worker` handle remains
 /// the submission/lifetime surface; this struct is the single owner of the
 /// loop-local state (active/pending runs, coordinator, hook owner).
@@ -176,7 +187,7 @@ impl WorkerRuntime {
             // Establish the cycle marker before polling pooled children:
             // commands already accepted by the scheduler must be handled
             // first so cancellation/shutdown/reload wins over child facts.
-            if RuntimeIteration::may_observe_child_facts(scheduler.has_pending()) {
+            if may_observe_child_facts(scheduler.has_pending()) {
                 for service in managed_services.poll(&executor) {
                     if service.state == crate::service_pool::ServiceState::Restarting {
                         stdout::warn(&format!(
