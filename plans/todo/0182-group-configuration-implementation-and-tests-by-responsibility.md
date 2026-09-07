@@ -59,3 +59,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 - Source locations and move proof: `.tmp/reports/04-09-26/task-0182-output-layout.md`.
 - Commit `230205d` moves `output_policy_tests` and `output_policy_from_yaml` adjacent to hooks/backend policy groups. Test path, assertions, comments, public signature/visibility, parser output, and errors are unchanged; service/readiness was not moved.
 - Config tests 127, architecture guard 8, and fresh watcher gen216 pass. Remaining clusters: service/readiness, V2, catalog/manual, and timeout.
+
+## Service/readiness layout increment evidence
+
+- Source locations and move proof: `.tmp/reports/04-09-26/task-0182-service-layout.md`.
+- Commit `406164f` moves only `service_tests` beside its existing `readiness_from_yaml` implementation; no service/readiness production code, test path, assertion, comment, visibility, or behavior changed.
+- Config tests 127, architecture guard 8, and fresh watcher gen217 pass. Remaining clusters: V2, catalog/manual, and timeout.
