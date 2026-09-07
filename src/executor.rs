@@ -751,6 +751,11 @@ enum TaskStep {
     TimedOut,
 }
 
+enum ServiceExitAction {
+    Restart,
+    Finish(TaskStep),
+}
+
 pub struct Executor {
     runner: Arc<dyn ProcessRunner>,
     clock: Arc<dyn Clock>,
@@ -1284,6 +1289,47 @@ impl Executor {
         return self.advance_finite_task(task, results, run_id, fail_fast);
     }
 
+    /// Handles a terminal status for a managed service after its child has
+    /// been detached. `Restart` preserves the caller's existing continuation
+    /// loop; `Finish` returns the terminal step without touching finite-task
+    /// policy.
+    fn advance_service_exit(
+        &self,
+        task: &mut ActiveTask,
+        service_command: Option<String>,
+        status: ExitStatus,
+        results: &mut Vec<Result<(), String>>,
+    ) -> ServiceExitAction {
+        if status.success() {
+            // Deliberate stop: the service is done for this generation (e.g.
+            // it exited on its own request).
+            results.push(Ok(()));
+            return ServiceExitAction::Finish(TaskStep::Finished);
+        }
+        if task.service_restarts_left > 0 {
+            task.service_restarts_left -= 1;
+            stdout::warn(&format!(
+                "service '{}' exited with {}; restarting ({} left)",
+                task.name, status, task.service_restarts_left
+            ));
+            self.clock
+                .sleep(Duration::from_millis(SERVICE_RESTART_BACKOFF_MS));
+            // The service command was consumed at spawn; put it back so the
+            // caller's existing loop immediately respawns it.
+            if let Some(cmd) = service_command {
+                task.commands.push_front(CommandLine::Shell(cmd));
+            }
+            return ServiceExitAction::Restart;
+        }
+        let failure = format!(
+            "Service {} has failed after {} restarts",
+            task.name, SERVICE_MAX_RESTARTS
+        );
+        task.failures.push(failure.clone());
+        results.push(Err(failure));
+        ServiceExitAction::Finish(TaskStep::Finished)
+    }
+
     fn advance_finite_task(
         &self,
         task: &mut ActiveTask,
@@ -1452,34 +1498,10 @@ impl Executor {
                     // finishes the generation — it returns Running until
                     // superseded or shut down.
                     if task.service {
-                        if status.success() {
-                            // Deliberate stop: the service is done for this
-                            // generation (e.g. it exited on its own request).
-                            results.push(Ok(()));
-                            return TaskStep::Finished;
+                        match self.advance_service_exit(task, service_command, status, results) {
+                            ServiceExitAction::Restart => continue,
+                            ServiceExitAction::Finish(step) => return step,
                         }
-                        if task.service_restarts_left > 0 {
-                            task.service_restarts_left -= 1;
-                            stdout::warn(&format!(
-                                "service '{}' exited with {}; restarting ({} left)",
-                                task.name, status, task.service_restarts_left
-                            ));
-                            self.clock
-                                .sleep(Duration::from_millis(SERVICE_RESTART_BACKOFF_MS));
-                            // The service command was consumed at spawn; put it
-                            // back so the next loop iteration respawns it.
-                            if let Some(cmd) = &service_command {
-                                task.commands.push_front(CommandLine::Shell(cmd.clone()));
-                            }
-                            continue;
-                        }
-                        let failure = format!(
-                            "Service {} has failed after {} restarts",
-                            task.name, SERVICE_MAX_RESTARTS
-                        );
-                        task.failures.push(failure.clone());
-                        results.push(Err(failure));
-                        return TaskStep::Finished;
                     }
 
                     let process = if status.success() {
