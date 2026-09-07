@@ -3,6 +3,7 @@
 //! `.watch.yaml`, starts a watcher, opens a socket, or spawns a subprocess.
 //! JSON Schema is the canonical output; TOON is additive (TASK-0048).
 
+use crate::arguments::ConfigAction;
 use crate::cli::format::render_document;
 use crate::cli::OutputFormat;
 use crate::errors::FzzError;
@@ -265,21 +266,39 @@ fn example_command(profile: &str) -> Result<(), FzzError> {
     Ok(())
 }
 
-/// Dispatches `fzz config`; both commands are non-interactive and
-/// side-effect-free, and never read a project config.
+/// Dispatches one normalized `fzz config` action. Both commands are
+/// non-interactive and side-effect-free, and never read a project config.
+pub(crate) fn execute_config_action(action: ConfigAction) -> Result<(), FzzError> {
+    match action {
+        ConfigAction::Schema { section, format } => schema_command(section.as_deref(), format),
+        ConfigAction::Example { profile, .. } => example_command(&profile),
+    }
+}
+
+/// Compatibility facade for callers using the pre-normalization argument
+/// shape. New internal dispatch uses [`execute_config_action`].
 pub fn execute_config(
     schema_section: Option<String>,
     example_profile: Option<String>,
     format: OutputFormat,
 ) -> Result<(), FzzError> {
-    match (schema_section, example_profile) {
-        // `fzz config schema` (no --section) is a full-schema request; the
-        // flattened section is None in both the full and no-section cases.
-        (None, None) => schema_command(None, format),
-        (Some(section), None) => schema_command(Some(&section), format),
-        (None, Some(profile)) => example_command(&profile),
-        (Some(_), Some(_)) => unreachable!("clap rejects mixed config subcommands"),
-    }
+    let action = match (schema_section, example_profile) {
+        (None, None) => ConfigAction::Schema {
+            section: None,
+            format,
+        },
+        (Some(section), None) => ConfigAction::Schema {
+            section: Some(section),
+            format,
+        },
+        (None, Some(profile)) => ConfigAction::Example { profile, format },
+        (Some(_), Some(_)) => {
+            return Err(FzzError::GenericError(
+                "conflicting config actions".to_owned(),
+            ));
+        }
+    };
+    execute_config_action(action)
 }
 
 #[cfg(test)]
