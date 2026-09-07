@@ -1144,6 +1144,116 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     .map_err(invalid_config_from_validation)
 }
 
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::from_yaml;
+
+    fn parse(yaml: &str) -> Result<Vec<crate::rules::Rules>, crate::errors::FzzError> {
+        from_yaml(yaml)
+    }
+
+    #[test]
+    fn manual_job_parses_with_empty_effective_surface() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n",
+        )
+        .expect("manual job is valid");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_manual());
+        assert!(rules[0].watch_patterns().is_empty(), "no root inheritance");
+        assert!(rules[0].ignore_glob_patterns().is_empty());
+        assert!(!rules[0].run_on_init());
+    }
+
+    #[test]
+    fn manual_rejects_own_change() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    change: \"a/**\"\n")
+                .expect_err("manual+change must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'change'"));
+    }
+
+    #[test]
+    fn manual_rejects_own_ignore() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    ignore: \"a/**\"\n")
+                .expect_err("manual+ignore must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'ignore'"));
+    }
+
+    #[test]
+    fn manual_rejects_run_on_init() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    run_on_init: true\n")
+                .expect_err("manual+run_on_init must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'run_on_init'"));
+    }
+
+    #[test]
+    fn manual_rejects_service() {
+        let err = parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    service: true\n")
+            .expect_err("manual+service must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'service: true'"));
+    }
+
+    #[test]
+    fn manual_allows_recovery_parallel_and_root_on() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: a\n    trigger: manual\n    run: x\n    parallel: checks\n    recovery: \"echo fix\"\n",
+        )
+        .expect("recovery/parallel/root-on are valid with manual");
+        assert!(rules[0].recovery_commands().is_some());
+        assert_eq!(rules[0].parallel(), Some("checks"));
+    }
+
+    #[test]
+    fn manual_rejects_unknown_value_and_non_string() {
+        let err = parse("jobs:\n  - name: a\n    trigger: cron\n    run: x\n")
+            .expect_err("unknown value rejected");
+        assert!(err.to_string().contains("must be one of: manual"));
+        let err = parse("jobs:\n  - name: a\n    trigger: 5\n    run: x\n")
+            .expect_err("non-string rejected");
+        assert!(err.to_string().contains("must be the string 'manual'"));
+    }
+
+    #[test]
+    fn manual_rejected_in_root_list_form() {
+        let err = parse("- name: a\n  trigger: manual\n  run: x\n  change: \"a/**\"\n")
+            .expect_err("legacy root-list form rejects trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn manual_rejected_in_grouped_legacy_tasks() {
+        let err = parse(
+            "on:\n  change: [\"src/**\"]\ntasks:\n  - name: a\n    trigger: manual\n    run: x\n",
+        )
+        .expect_err("grouped legacy tasks reject trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn non_manual_jobs_keep_root_inheritance_byte_identically() {
+        let rules =
+            parse("on:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build\n")
+                .expect("unchanged config parses");
+        assert!(!rules[0].is_manual());
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
+    }
+}
+
 /// Parse the explicit service readiness policy. The object is intentionally
 /// strict: a typo or null value must not silently disable health checking.
 fn readiness_from_yaml(
@@ -3548,116 +3658,6 @@ mod jobs_tests {
         assert!(
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
-    }
-}
-
-#[cfg(test)]
-mod manual_trigger_tests {
-    use super::from_yaml;
-
-    fn parse(yaml: &str) -> Result<Vec<crate::rules::Rules>, crate::errors::FzzError> {
-        from_yaml(yaml)
-    }
-
-    #[test]
-    fn manual_job_parses_with_empty_effective_surface() {
-        let rules = parse(
-            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n",
-        )
-        .expect("manual job is valid");
-        assert_eq!(rules.len(), 1);
-        assert!(rules[0].is_manual());
-        assert!(rules[0].watch_patterns().is_empty(), "no root inheritance");
-        assert!(rules[0].ignore_glob_patterns().is_empty());
-        assert!(!rules[0].run_on_init());
-    }
-
-    #[test]
-    fn manual_rejects_own_change() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    change: \"a/**\"\n")
-                .expect_err("manual+change must be rejected");
-        assert!(err
-            .to_string()
-            .contains("both 'trigger: manual' and 'change'"));
-    }
-
-    #[test]
-    fn manual_rejects_own_ignore() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    ignore: \"a/**\"\n")
-                .expect_err("manual+ignore must be rejected");
-        assert!(err
-            .to_string()
-            .contains("both 'trigger: manual' and 'ignore'"));
-    }
-
-    #[test]
-    fn manual_rejects_run_on_init() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    run_on_init: true\n")
-                .expect_err("manual+run_on_init must be rejected");
-        assert!(err
-            .to_string()
-            .contains("'trigger: manual' and 'run_on_init'"));
-    }
-
-    #[test]
-    fn manual_rejects_service() {
-        let err = parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    service: true\n")
-            .expect_err("manual+service must be rejected");
-        assert!(err
-            .to_string()
-            .contains("'trigger: manual' and 'service: true'"));
-    }
-
-    #[test]
-    fn manual_allows_recovery_parallel_and_root_on() {
-        let rules = parse(
-            "on:\n  change: [\"src/**\"]\njobs:\n  - name: a\n    trigger: manual\n    run: x\n    parallel: checks\n    recovery: \"echo fix\"\n",
-        )
-        .expect("recovery/parallel/root-on are valid with manual");
-        assert!(rules[0].recovery_commands().is_some());
-        assert_eq!(rules[0].parallel(), Some("checks"));
-    }
-
-    #[test]
-    fn manual_rejects_unknown_value_and_non_string() {
-        let err = parse("jobs:\n  - name: a\n    trigger: cron\n    run: x\n")
-            .expect_err("unknown value rejected");
-        assert!(err.to_string().contains("must be one of: manual"));
-        let err = parse("jobs:\n  - name: a\n    trigger: 5\n    run: x\n")
-            .expect_err("non-string rejected");
-        assert!(err.to_string().contains("must be the string 'manual'"));
-    }
-
-    #[test]
-    fn manual_rejected_in_root_list_form() {
-        let err = parse("- name: a\n  trigger: manual\n  run: x\n  change: \"a/**\"\n")
-            .expect_err("legacy root-list form rejects trigger");
-        assert!(err
-            .to_string()
-            .contains("'trigger' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn manual_rejected_in_grouped_legacy_tasks() {
-        let err = parse(
-            "on:\n  change: [\"src/**\"]\ntasks:\n  - name: a\n    trigger: manual\n    run: x\n",
-        )
-        .expect_err("grouped legacy tasks reject trigger");
-        assert!(err
-            .to_string()
-            .contains("'trigger' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn non_manual_jobs_keep_root_inheritance_byte_identically() {
-        let rules =
-            parse("on:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build\n")
-                .expect("unchanged config parses");
-        assert!(!rules[0].is_manual());
-        assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
     }
 }
 
