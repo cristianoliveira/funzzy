@@ -8,6 +8,7 @@
 
 use crate::executor::{Event, EventSink};
 use crate::stdout;
+use crate::task_result::TaskState;
 use serde_json::{json, Value};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -99,10 +100,10 @@ impl EventStream {
                 "task": task.name,
                 "group": task.id,
                 "state": match task.state {
-                    crate::executor::TaskState::Passed => "passed",
-                    crate::executor::TaskState::Failed => "failed",
-                    crate::executor::TaskState::Cancelled => "cancelled",
-                    crate::executor::TaskState::TimedOut => "timedout",
+                    TaskState::Passed => "passed",
+                    TaskState::Failed => "failed",
+                    TaskState::Cancelled => "cancelled",
+                    TaskState::TimedOut => "timedout",
                 },
                 "durationMs": task.duration_ms,
             }),
@@ -179,8 +180,8 @@ impl EventSink for EventStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::TaskSnapshot;
     use crate::plan::ExecutionSignature;
+    use crate::task_result::TaskSnapshot;
     use std::time::Duration;
 
     fn stream_in_temp(name: &str) -> (std::path::PathBuf, EventStream) {
@@ -261,7 +262,7 @@ mod tests {
                 position: 0,
                 id: "checks#1".to_owned(),
                 name: "test @quick".to_owned(),
-                state: crate::executor::TaskState::Passed,
+                state: TaskState::Passed,
                 duration_ms: Some(120),
             },
         });

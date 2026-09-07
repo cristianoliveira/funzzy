@@ -219,6 +219,7 @@ mod tests {
     use super::*;
     use crate::duration_store::DurationStore;
     use crate::executor::Event;
+    use crate::task_result::{TaskSnapshot, TaskState};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
 
@@ -417,11 +418,11 @@ mod tests {
         for task in ["a", "b", "c"] {
             recorder.observe(&Event::TaskTerminal {
                 run_id: 1,
-                task: crate::executor::TaskSnapshot {
+                task: TaskSnapshot {
                     position: 0,
                     id: task.to_owned(),
                     name: task.to_owned(),
-                    state: crate::executor::TaskState::Passed,
+                    state: TaskState::Passed,
                     duration_ms: Some(10_000),
                 },
             });

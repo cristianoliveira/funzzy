@@ -21,7 +21,6 @@ pub use crate::domain::ports::Clock;
 pub const SERVICE_MAX_RESTARTS: usize = 3;
 /// Backoff between service restarts (TASK-0035).
 pub const SERVICE_RESTART_BACKOFF_MS: u64 = 500;
-use serde::Serialize;
 use std::collections::VecDeque;
 use std::io;
 use std::process::ExitStatus;
@@ -51,33 +50,9 @@ impl CancellationToken {
     }
 }
 
-/// Wire-level task state for the correlated snapshot (contract §7). `Skipped`
-/// (fail-fast skipped work) collapses to `Cancelled` — never-started work is
-/// reported as cancelled, matching the pi-watcher decoder vocabulary.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskState {
-    Passed,
-    Failed,
-    Cancelled,
-    /// FINITE-JOB-TIMEOUT-CONTRACT §4: additive wire value `timedout` —
-    /// distinct from command failure and from client-await timeout.
-    TimedOut,
-}
-
-/// One task's terminal outcome for the correlated snapshot (TASK-0050).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskSnapshot {
-    /// Configured declaration position. It orders in-process report projections
-    /// but is intentionally absent from the additive control/event wire shape.
-    #[serde(skip)]
-    pub position: usize,
-    pub id: String,
-    pub name: String,
-    pub state: TaskState,
-    pub duration_ms: Option<u64>,
-}
+/// Compatibility paths for the task-result contract. The definitions live
+/// in `crate::task_result`; keep these re-exports for existing Rust callers.
+pub use crate::task_result::{TaskSnapshot, TaskState};
 
 /// One exact generation/job recovery approval request. Command text is
 /// rendered for the attached user but never used as an authorization key.

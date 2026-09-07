@@ -4,6 +4,7 @@ use crate::executor::CancelDisposition;
 use crate::output::{OutputRegistry, DEFAULT_FAILURE_EVIDENCE_LINES, OUTPUT_RETENTION_BYTES};
 use crate::snapshot::SnapshotBroker;
 use crate::stdout;
+use crate::task_result::TaskState;
 use crate::watcher_state::{WatcherExecutionState, WatcherInstance, WatcherState};
 use crate::workers::CancelResult;
 use serde::Serialize;
@@ -907,12 +908,7 @@ fn status_result(
         let failed_tasks: Vec<String> = snapshot
             .tasks()
             .iter()
-            .filter(|task| {
-                matches!(
-                    task.state,
-                    crate::executor::TaskState::Failed | crate::executor::TaskState::TimedOut
-                )
-            })
+            .filter(|task| matches!(task.state, TaskState::Failed | TaskState::TimedOut))
             .map(|task| task.name.clone())
             .collect();
         if let (Some(outputs), Some(evidence)) = (
