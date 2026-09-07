@@ -41,6 +41,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 
 `src/config.rs` and private configuration/test submodules established by TASK-0178.
 
-## Non-goals
+## First layout increment evidence
 
-No repository-wide style sweep, bulk deletion of contract comments, semantic renaming, or domain/application/infra directory migration.
+- Inventory and before/after source locations: `.tmp/reports/04-09-26/task-0182-backend-layout.md`.
+- Commit `c6f0743` moves backend/watch-backend and gitignore implementations together with their existing test modules from after `jobs_tests` to immediately before the characterization tests. Test module paths, assertions, comments, visibility, and parser behavior are unchanged.
+- Focused config tests: 127 passed; architecture guard `domain_boundaries`: 8 passed; fresh watcher gen214 passed.
+- Remaining layout gaps are explicitly tracked: hooks, output policy, service/readiness, V2 sections, catalog/manual, and timeout groups still follow broad test modules. No broad rewrite or semantic move was attempted.
