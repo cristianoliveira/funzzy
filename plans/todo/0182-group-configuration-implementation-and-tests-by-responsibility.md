@@ -1,7 +1,7 @@
 ---
 id: TASK-0182
 title: Group configuration implementation and tests by responsibility
-status: todo
+status: doing
 depends_on: [TASK-0178]
 priority: normal
 tags: [rust, config, readability]
