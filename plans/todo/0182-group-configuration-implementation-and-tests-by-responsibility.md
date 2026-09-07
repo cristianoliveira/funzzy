@@ -65,3 +65,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 - Source locations and move proof: `.tmp/reports/04-09-26/task-0182-service-layout.md`.
 - Commit `406164f` moves only `service_tests` beside its existing `readiness_from_yaml` implementation; no service/readiness production code, test path, assertion, comment, visibility, or behavior changed.
 - Config tests 127, architecture guard 8, and fresh watcher gen217 pass. Remaining clusters: V2, catalog/manual, and timeout.
+
+## V2 layout increment evidence
+
+- Source locations and move proof: `.tmp/reports/04-09-26/task-0182-v2-layout.md`.
+- Commit `e34acdf` moves `v2_section_tests` directly after `validate_v2_sections`; test path, assertions, comments, visibility, parser results, and contract/error checks are unchanged.
+- Config tests 127, architecture guard 8, AST map parsing, and fresh watcher gen218 pass. Remaining clusters: catalog/allowlist, manual trigger, and timeout.
