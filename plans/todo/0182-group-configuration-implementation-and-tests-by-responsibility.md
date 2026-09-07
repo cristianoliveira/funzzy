@@ -77,3 +77,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 - Source locations and move proof: `.tmp/reports/04-09-26/task-0182-catalog-layout.md`.
 - Commit `59de8b0` moves `catalog_allowlist_tests` directly after V2 validation tests; test path, assertions, comments, visibility, catalog contracts, parser results, and errors are unchanged.
 - Config tests 127, architecture guard 8, and fresh watcher gen219 pass. Remaining clusters: manual trigger and timeout.
+
+## Manual-trigger layout increment evidence
+
+- Source locations and move proof: `.tmp/reports/04-09-26/task-0182-manual-layout.md`.
+- Commit `71b8f54` moves `manual_trigger_tests` directly after `rule_from_with_common`; test path, assertions, comments, helper/signature, visibility, compatibility checks, and error contracts are unchanged.
+- Config tests 127, architecture guard 8, and fresh watcher gen220 pass. Remaining cluster: timeout.
