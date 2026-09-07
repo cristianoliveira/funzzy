@@ -1,7 +1,7 @@
 ---
 id: TASK-0180
 title: Separate finite task and service runtime advancement
-status: doing
+status: done
 depends_on: [TASK-0179]
 priority: high
 tags: [rust, executor, services, cohesion]
