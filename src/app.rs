@@ -108,28 +108,24 @@ struct LoadedWatchConfig {
     control_socket: Option<String>,
 }
 
-fn load_startup_document(
-    config_file: &Option<String>,
-    root: &std::path::Path,
-) -> config::ConfigDocument {
-    let yaml = root.join(cli::watch::DEFAULT_FILENAME);
-    let yml = root.join(cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml"));
+fn load_startup_document(config_file: &Option<String>) -> config::ConfigDocument {
+    let yaml = cli::watch::DEFAULT_FILENAME.to_owned();
+    let yml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
     match config_file {
         Some(path) => config::ConfigDocument::from_file(path).unwrap_or_else(|err| {
             stdout::failure("Failed to read config file", err.to_string());
         }),
-        None => match config::ConfigDocument::from_file(&yaml.to_string_lossy()) {
+        None => match config::ConfigDocument::from_file(&yaml) {
             Ok(document) => document,
-            Err(yaml_err) => config::ConfigDocument::from_file(&yml.to_string_lossy())
-                .unwrap_or_else(|_| {
-                    stdout::failure("Failed to read default config file", yaml_err.to_string())
-                }),
+            Err(yaml_err) => config::ConfigDocument::from_file(&yml).unwrap_or_else(|_| {
+                stdout::failure("Failed to read default config file", yaml_err.to_string())
+            }),
         },
     }
 }
 
 fn load_watch_config(args: &Arguments, root: &std::path::Path) -> LoadedWatchConfig {
-    let document = load_startup_document(&args.config, root);
+    let document = load_startup_document(&args.config);
     let config_error_title = if args.config.is_some() {
         "Failed to read config file"
     } else {
