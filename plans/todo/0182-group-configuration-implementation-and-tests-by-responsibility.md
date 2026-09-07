@@ -53,3 +53,9 @@ Review a move-aware diff, compare test inventory before/after, run focused confi
 - Source locations and move proof: `.tmp/reports/04-09-26/task-0182-hooks-layout.md`.
 - Commit `4a3eb5e` moves the complete hooks production/test cluster next to the backend/gitignore cluster. `config::hooks_tests::*` paths and all public symbols remain unchanged; no semantics or comments changed.
 - Config tests 127, architecture guard 8, and fresh watcher gen215 pass. Remaining clusters: output policy, service/readiness, V2, catalog/manual, and timeout.
+
+## Output layout increment evidence
+
+- Source locations and move proof: `.tmp/reports/04-09-26/task-0182-output-layout.md`.
+- Commit `230205d` moves `output_policy_tests` and `output_policy_from_yaml` adjacent to hooks/backend policy groups. Test path, assertions, comments, public signature/visibility, parser output, and errors are unchanged; service/readiness was not moved.
+- Config tests 127, architecture guard 8, and fresh watcher gen216 pass. Remaining clusters: service/readiness, V2, catalog/manual, and timeout.
