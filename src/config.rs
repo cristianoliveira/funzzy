@@ -1862,6 +1862,56 @@ pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
 }
 
 #[cfg(test)]
+mod output_policy_tests {
+    use super::*;
+
+    #[test]
+    fn output_policy_defaults_to_inherit() {
+        assert_eq!(
+            output_policy_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            OutputPolicy::Inherit
+        );
+        assert_eq!(
+            output_policy_from_yaml("jobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n")
+                .unwrap(),
+            OutputPolicy::Inherit
+        );
+    }
+
+    #[test]
+    fn output_policy_parses_all_values() {
+        for (raw, expected) in [
+            ("inherit", OutputPolicy::Inherit),
+            ("quiet", OutputPolicy::Quiet),
+            ("capture", OutputPolicy::Capture),
+            ("show-on-failure", OutputPolicy::ShowOnFailure),
+        ] {
+            let yaml = format!("execution:\n  output: {raw}\n");
+            assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn output_policy_rejects_unknown_values() {
+        assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
+        assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
+    }
+}
+
+/// Parses `output:` (on-level default or job-level) into an OutputPolicy;
+/// unknown values are rejected loudly.
+pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    output_policy_from_root(root).map_err(|error| match error {
+        errors::FzzError::InvalidConfigError(message, _, _) => message,
+        other => other.to_string(),
+    })
+}
+
+#[cfg(test)]
 mod boundary_characterization_tests {
     use super::from_yaml;
     use crate::rules::OutputPolicy;
@@ -3281,56 +3331,6 @@ mod jobs_tests {
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
         );
     }
-}
-
-#[cfg(test)]
-mod output_policy_tests {
-    use super::*;
-
-    #[test]
-    fn output_policy_defaults_to_inherit() {
-        assert_eq!(
-            output_policy_from_yaml("on:\n  change: '**/*'\n").unwrap(),
-            OutputPolicy::Inherit
-        );
-        assert_eq!(
-            output_policy_from_yaml("jobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n")
-                .unwrap(),
-            OutputPolicy::Inherit
-        );
-    }
-
-    #[test]
-    fn output_policy_parses_all_values() {
-        for (raw, expected) in [
-            ("inherit", OutputPolicy::Inherit),
-            ("quiet", OutputPolicy::Quiet),
-            ("capture", OutputPolicy::Capture),
-            ("show-on-failure", OutputPolicy::ShowOnFailure),
-        ] {
-            let yaml = format!("execution:\n  output: {raw}\n");
-            assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
-        }
-    }
-
-    #[test]
-    fn output_policy_rejects_unknown_values() {
-        assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
-        assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
-    }
-}
-
-/// Parses `output:` (on-level default or job-level) into an OutputPolicy;
-/// unknown values are rejected loudly.
-pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    output_policy_from_root(root).map_err(|error| match error {
-        errors::FzzError::InvalidConfigError(message, _, _) => message,
-        other => other.to_string(),
-    })
 }
 
 #[cfg(test)]
