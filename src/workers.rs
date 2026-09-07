@@ -2750,6 +2750,128 @@ mod tests {
         );
     }
 
+    /// FACT (characterization, TASK-0175): one normal generation emits its
+    /// lifecycle events in a strict order — `Started` strictly before every
+    /// `TaskTerminal`, task terminals strictly in declaration order for
+    /// barrier-separated serial stages, and exactly one `Finished` last.
+    /// Serial stages make completion order deterministic without sleeps.
+    #[test]
+    fn normal_generation_orders_started_terminals_and_finished_strictly() {
+        let (worker, rx) = worker_with_events(false, false);
+        let first_rule = Rules::new(
+            "alpha".to_string(),
+            vec!["echo one".to_string()],
+            vec![],
+            vec![],
+            false,
+        );
+        let second_rule = Rules::new(
+            "beta".to_string(),
+            vec!["echo two".to_string()],
+            vec![],
+            vec![],
+            false,
+        );
+        let run_id = worker
+            .schedule(vec![first_rule, second_rule], "a.txt")
+            .unwrap();
+
+        let events = collect_until_finished(&rx);
+        drop(worker);
+
+        let started = events
+            .iter()
+            .position(|e| matches!(e, WorkerEvent::Started { run_id: id, .. } if *id == run_id))
+            .expect("missing Started");
+        let alpha = events
+            .iter()
+            .position(
+                |e| matches!(e, WorkerEvent::TaskTerminal { task, .. } if task.name == "alpha"),
+            )
+            .expect("missing TaskTerminal alpha");
+        let beta = events
+            .iter()
+            .position(
+                |e| matches!(e, WorkerEvent::TaskTerminal { task, .. } if task.name == "beta"),
+            )
+            .expect("missing TaskTerminal beta");
+        let finished = events
+            .iter()
+            .position(|e| matches!(e, WorkerEvent::Finished { run_id: id, .. } if *id == run_id))
+            .expect("missing Finished");
+
+        assert!(started < alpha, "Started must precede every TaskTerminal");
+        assert!(
+            alpha < beta,
+            "serial stages must report task terminals in declaration order"
+        );
+        assert!(beta < finished, "Finished must follow every TaskTerminal");
+        assert_eq!(
+            finished,
+            events.len() - 1,
+            "Finished must be the terminal event of a normal generation"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, WorkerEvent::Finished { run_id: id, .. } if *id == run_id))
+                .count(),
+            1,
+            "a normal generation finishes exactly once"
+        );
+    }
+
+    /// FACT (characterization, TASK-0175): when a generation supersedes an
+    /// active one, the predecessor's terminal `Cancelled` event strictly
+    /// precedes the successor's `Started`, and the predecessor never emits
+    /// `Finished`. INTERPRETATION: this is the ordering TASK-0176 must
+    /// preserve when extracting the consumer loop — clients await an exact
+    /// generation and rely on terminal-before-successor visibility.
+    #[test]
+    fn supersession_terminal_precedes_successor_start_and_predecessor_never_finishes() {
+        let (worker, rx) = worker_with_events(false, false);
+        let slow = Rules::new(
+            "slow".to_string(),
+            vec!["sleep 5".to_string()],
+            vec![],
+            vec![],
+            false,
+        );
+        let predecessor = worker.schedule(vec![slow], "a.txt").unwrap();
+        expect_event(
+            &rx,
+            "predecessor to start",
+            |e| matches!(e, WorkerEvent::Started { run_id, .. } if *run_id == predecessor),
+        );
+
+        let successor = worker
+            .schedule(vec![rule(vec!["echo ok"])], "b.txt")
+            .unwrap();
+        let events = collect_until_finished(&rx);
+        drop(worker);
+
+        let cancelled = events
+            .iter()
+            .position(|e| {
+                matches!(e, WorkerEvent::Cancelled { run_id, superseded_by } if *run_id == predecessor && *superseded_by == Some(successor))
+            })
+            .expect("predecessor cancellation must be recorded with its successor");
+        let successor_started = events
+            .iter()
+            .position(|e| matches!(e, WorkerEvent::Started { run_id, .. } if *run_id == successor))
+            .expect("successor must start");
+        assert!(
+            cancelled < successor_started,
+            "predecessor terminal must precede successor start: cancelled@{cancelled} started@{successor_started}"
+        );
+        assert!(
+            !events.iter().any(
+                |e| matches!(e, WorkerEvent::Finished { run_id, .. } if *run_id == predecessor)
+            ),
+            "a superseded generation must never emit Finished"
+        );
+    }
+
     #[test]
     fn explicit_cancel_terminates_the_active_run() {
         let (worker, rx) = worker_with_events(false, false);
