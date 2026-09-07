@@ -42,6 +42,35 @@ Run focused config/config-validation/reload/app tests and feature-enabled config
 
 `src/config.rs` or private config submodules, `src/app.rs`, `src/reload.rs`, `src/cli/watch.rs` for a compatibility alias, and focused tests.
 
+## Pre-move criterion-to-evidence matrix and load inventory
+
+| Criterion | Current owner/path | Pre-move evidence or gap |
+| --- | --- | --- |
+| One read/parse per aggregate load | `reload_session::run` reads once, then `control_socket_from_yaml`; `reload::decide`/`validate_candidate` reparses each field; `build_watches_from_content` reparses again. `app::watch_action` calls `load_rules` plus independent policy accessors, each reopening the file. | Gap confirmed: reload and startup perform repeated parses/reads. |
+| Preferred/legacy/grouped and discovery | `config::from_yaml`/`from_file` plus `from_default_file_config`; `.watch.yaml` then `.watch.yml` fallback. | Existing config parser and migration tests characterize accepted shapes. |
+| Missing vs explicit values | Individual `*_from_yaml` accessors apply defaults independently (`Option`/default arguments). | Existing accessor tests; same-document aggregate must preserve distinction. |
+| Error precedence/messages | `reload::validate_candidate` parses rules, validates, then policy accessors in fixed order; startup calls accessors in action-specific order. | Existing reload/config error tests; preserve first-error order. |
+| Same text for rules/runtime | Reload has one `content` string but repeatedly reparses it; startup repeatedly rereads the path. | Structural gap; no behavior test can prove read count today. |
+| Pure validation boundary | `config_validation` is used by parser/rules validation; no filesystem there. | Existing domain-boundary tests; preserve imports. |
+| Revision/freezing/socket handoff | `reload_session` → `reload::decide` → `ReloadCoordinator`; startup freezes `RuntimeConfig` then reload commits candidate revision/socket. | Existing reload identity/lifecycle/socket tests. |
+
+Actual read/parse inventory (baseline):
+
+- `reload_session` performs one `read_to_string` per changed candidate, then parses socket once, `reload::validate_candidate` parses rules plus each runtime accessor, and `build_watches_from_content` parses rules plus each runtime accessor again.
+- `app::watch_action` first parses rules, then independently reads debounce/backend/gitignore/recovery policy/timeout/hooks/session hooks, socket, and later rereads several fields while capturing the initial revision.
+- `app::check_config` reads rules and then rereads hooks, session hooks, debounce, recovery policy, and concurrency.
+- `config::*_from_file` accessors are compatibility wrappers that each open/read and delegate to a `*_from_yaml` parser; `from_default_file_config` preserves `.yaml` then `.yml` fallback and first-error behavior.
+
+Pre-move characterization commands/results are recorded in `.tmp/reports/04-09-26/task-0178-discovery.md` before implementation.
+
+## First seam evidence
+
+- Inventory and criterion status: `.tmp/reports/04-09-26/task-0178-first-seam.md`.
+- Commit `3757b9b` introduces private `ConfigDocument`: one `YamlLoader` result supplies rules and all runtime policy readers. Existing YAML/file accessors remain compatibility wrappers.
+- Reload now performs one candidate read and one parse per attempt, carries the resulting `RuntimeConfig` through revision observation, and builds `Watches` without reparsing. Rules parse remains syntactic; later policy errors remain semantic and ordered.
+- Pre-move config/reload/migration characterization passed: config 126, reload 16, config reload lifecycle 14, reload matrix 7, invalid reload 2, config workflow 6, migration 6. Fresh watcher gen205 passed.
+- Task remains `doing`: startup `watch_action` and `check_config` still call independent file accessors, so aggregate one-read/one-parse is only partial. No closure until those paths are migrated or a follow-up boundary is explicitly accepted.
+
 ## Non-goals
 
 No YAML-library migration, schema redesign, changed defaults, changed semantic hashing, or replacement of `RuntimeConfig`.
