@@ -31,6 +31,7 @@ qualified, root-alias, and raw-byte-string behavior.
 | Area | Current owner | Boundary |
 | --- | --- | --- |
 | Task rules and matching | `rules` | Domain value and matching policy. YAML belongs in `config`. |
+| Configuration cross-field validation | `config_validation` | Pure validation of neutral inputs; YAML decoding and error presentation remain in `config`. |
 | Plan, stages, signatures, outcomes | `plan` | Domain planning and immutable outcome combination. |
 | Template expansion | `template` | Pure transformation used by planning; no shell or process ownership. |
 | Target selection and explain plan | `watches` | Transitional planning/watcher adapter: it still carries watcher backend and config-policy types. Extract its pure selection values before classifying it as domain. |

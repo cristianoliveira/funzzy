@@ -8,8 +8,13 @@ mod cmd {
     pub fn execute() {}
 }
 
-const DOMAIN_FOUNDATION_MODULES: &[&str] =
-    &["rules.rs", "plan.rs", "template.rs", "service_lifecycle.rs"];
+const DOMAIN_FOUNDATION_MODULES: &[&str] = &[
+    "rules.rs",
+    "plan.rs",
+    "template.rs",
+    "service_lifecycle.rs",
+    "config_validation.rs",
+];
 
 const INFRASTRUCTURE_MODULES: &[&str] = &[
     "app",
