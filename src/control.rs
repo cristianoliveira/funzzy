@@ -990,35 +990,29 @@ fn output_retrieval(
     let task = params
         .and_then(|params| params.get("task"))
         .and_then(serde_json::Value::as_str)
-        .filter(|task| !task.trim().is_empty());
+        .filter(|task| !task.trim().is_empty())
+        .map(str::to_owned);
     let stream = params
         .and_then(|params| params.get("stream"))
         .and_then(serde_json::Value::as_str)
-        .filter(|stream| matches!(*stream, "stdout" | "stderr"));
+        .and_then(|stream| match stream {
+            "stdout" => Some(crate::output::RetrievalStream::Stdout),
+            "stderr" => Some(crate::output::RetrievalStream::Stderr),
+            _ => None,
+        });
 
     // Retrieval mode (contract §5): `mode` selects tail (last N lines per
     // stream) or page (deterministic continuation below the negotiated
     // budget). Legacy clients omit `mode` and may send `tail`/`full`;
     // unsafe unpaged `full` is translated to a first bounded page with
     // continuation, never a response at or above the transport budget.
+    // Validation lives in the typed `RetrievalRequest` (TASK-0173); this
+    // edge only extracts raw fields and maps typed errors to wire codes.
     let mode = params
         .and_then(|params| params.get("mode"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|mode| !mode.is_empty());
-    if let Some(mode) = mode {
-        if mode != "tail" && mode != "page" {
-            return Err((
-                -32013,
-                "invalid_options",
-                Some(serde_json::json!({
-                    "field": "mode",
-                    "reason": format!("output mode must be 'tail' or 'page', got '{mode}'"),
-                    "valid": ["tail", "page"],
-                })),
-            ));
-        }
-    }
     let tail = params
         .and_then(|params| params.get("tail"))
         .and_then(serde_json::Value::as_u64)
@@ -1036,14 +1030,65 @@ fn output_retrieval(
     let cursor = params
         .and_then(|params| params.get("cursor"))
         .and_then(serde_json::Value::as_str)
-        .filter(|cursor| !cursor.trim().is_empty());
+        .filter(|cursor| !cursor.trim().is_empty())
+        .map(str::to_owned);
 
     // Contract §2: `tail` and page/full variants are structurally exclusive
     // and invalid shapes are rejected before transport — never exposed as a
     // combination the server would have to resolve ambiguously.
-    let is_page = mode == Some("page") || full;
-    if mode == Some("tail") && (is_page || cursor.is_some()) {
-        return Err((
+    let request = crate::output::RetrievalRequest::build(crate::output::RetrievalFields {
+        generation,
+        task,
+        stream,
+        mode: mode.map(str::to_owned),
+        tail,
+        full,
+        max_bytes,
+        cursor,
+    })
+    .map_err(request_error_to_rpc)?;
+
+    match request.mode {
+        crate::output::RetrievalMode::Page { budget, cursor } => outputs
+            .retrieve_page(
+                request.generation,
+                request.task.as_deref(),
+                request.stream.map(crate::output::RetrievalStream::as_str),
+                budget,
+                cursor.as_deref(),
+            )
+            .map_err(|error| typed_output_error(error, request.generation))
+            .and_then(serialize_retrieved),
+        crate::output::RetrievalMode::Tail { lines } => outputs
+            .retrieve(
+                request.generation,
+                request.task.as_deref(),
+                request.stream.map(crate::output::RetrievalStream::as_str),
+                lines,
+                false,
+            )
+            .map_err(|error| typed_output_error(error, request.generation))
+            .and_then(serialize_retrieved),
+    }
+}
+
+/// Maps one typed retrieval-request validation failure to its stable wire
+/// error (TASK-0173): codes and payloads are byte-identical to the previous
+/// inline JSON validation.
+fn request_error_to_rpc(
+    error: crate::output::RequestError,
+) -> (i64, &'static str, Option<serde_json::Value>) {
+    match error {
+        crate::output::RequestError::InvalidMode { got } => (
+            -32013,
+            "invalid_options",
+            Some(serde_json::json!({
+                "field": "mode",
+                "reason": format!("output mode must be 'tail' or 'page', got '{got}'"),
+                "valid": ["tail", "page"],
+            })),
+        ),
+        crate::output::RequestError::TailCannotCarryPageOptions => (
             -32013,
             "invalid_options",
             Some(serde_json::json!({
@@ -1051,10 +1096,8 @@ fn output_retrieval(
                 "reason": "tail mode cannot carry page/full or cursor options",
                 "valid": ["tail", "page"],
             })),
-        ));
-    }
-    if !is_page && cursor.is_some() {
-        return Err((
+        ),
+        crate::output::RequestError::CursorRequiresPage => (
             -32013,
             "invalid_options",
             Some(serde_json::json!({
@@ -1062,10 +1105,8 @@ fn output_retrieval(
                 "reason": "cursor requires page mode",
                 "valid": ["page"],
             })),
-        ));
-    }
-    if is_page && tail.is_some() {
-        return Err((
+        ),
+        crate::output::RequestError::PageCannotCarryTail => (
             -32013,
             "invalid_options",
             Some(serde_json::json!({
@@ -1073,24 +1114,7 @@ fn output_retrieval(
                 "reason": "page mode cannot carry params.tail",
                 "valid": ["page", "tail"],
             })),
-        ));
-    }
-
-    if is_page {
-        // Unsafe unpaged `full` translates to the first bounded page with a
-        // continuation cursor (contract §2), sharing one budget; the page
-        // default is conservative below the transport envelope.
-        let budget = max_bytes.unwrap_or(crate::output::DEFAULT_PAGE_BYTES);
-        let budget = budget.min(crate::output::OUTPUT_PAGE_MAX_BYTES);
-        outputs
-            .retrieve_page(generation, task, stream, budget, cursor)
-            .map_err(|error| typed_output_error(error, generation))
-            .and_then(serialize_retrieved)
-    } else {
-        outputs
-            .retrieve(generation, task, stream, tail, false)
-            .map_err(|error| typed_output_error(error, generation))
-            .and_then(serialize_retrieved)
+        ),
     }
 }
 
