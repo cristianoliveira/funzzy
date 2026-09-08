@@ -7,6 +7,140 @@
 
 use super::*;
 
+/// Deterministic input accepted by one runtime iteration. The production
+/// loop still owns process polling and command transport; this value object
+/// owns the ordering decision between accepted commands and child facts.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IterationCommand {
+    Start(u64),
+    Cancel(Option<u64>),
+    AuthorizeReplacement(u64),
+    Shutdown,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChildFact {
+    Succeeded(u64),
+    Failed(u64),
+    Cancelled(u64),
+    Reaped(u64),
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IterationAction {
+    Spawn(u64),
+    Cancel(u64),
+    Finished(u64),
+    Failed(u64),
+    Cancelled(u64),
+    Shutdown,
+    Wait,
+    Ignored,
+}
+
+/// Small state owner for a deterministic runtime step. It deliberately
+/// models generation/replacement ownership, not process I/O or waiting.
+#[cfg(test)]
+#[derive(Default)]
+struct RuntimeIteration {
+    active: Option<u64>,
+    pending: Option<u64>,
+    reaped_predecessor: Option<u64>,
+}
+
+#[cfg(test)]
+impl RuntimeIteration {
+    /// Preserve the production cycle marker: accepted scheduler commands
+    /// suppress child polling for this iteration.
+    fn may_observe_child_facts(scheduler_has_pending: bool) -> bool {
+        !scheduler_has_pending
+    }
+
+    /// Apply exactly one accepted command or one child fact. Commands win
+    /// when both arrive in a cycle; stale facts/commands are ignored.
+    fn apply(
+        &mut self,
+        command: Option<IterationCommand>,
+        fact: Option<ChildFact>,
+    ) -> IterationAction {
+        if let Some(command) = command {
+            return match command {
+                IterationCommand::Shutdown => {
+                    self.active = None;
+                    self.pending = None;
+                    IterationAction::Shutdown
+                }
+                IterationCommand::Cancel(generation) => {
+                    let Some(active) = self.active else {
+                        return IterationAction::Ignored;
+                    };
+                    if generation.is_none() || generation == Some(active) {
+                        self.active = None;
+                        self.pending = None;
+                        IterationAction::Cancel(active)
+                    } else {
+                        IterationAction::Ignored
+                    }
+                }
+                IterationCommand::Start(generation) => match self.active {
+                    Some(active) => {
+                        self.pending = Some(generation);
+                        IterationAction::Cancel(active)
+                    }
+                    None => {
+                        self.active = Some(generation);
+                        IterationAction::Spawn(generation)
+                    }
+                },
+                IterationCommand::AuthorizeReplacement(predecessor)
+                    if self.reaped_predecessor == Some(predecessor) =>
+                {
+                    let Some(generation) = self.pending.take() else {
+                        return IterationAction::Ignored;
+                    };
+                    self.reaped_predecessor = None;
+                    self.active = Some(generation);
+                    IterationAction::Spawn(generation)
+                }
+                IterationCommand::AuthorizeReplacement(_) => IterationAction::Ignored,
+            };
+        }
+
+        let Some(fact) = fact else {
+            return IterationAction::Wait;
+        };
+        match fact {
+            ChildFact::Reaped(generation) if self.active == Some(generation) => {
+                self.active = None;
+                self.reaped_predecessor = Some(generation);
+                IterationAction::Wait
+            }
+            ChildFact::Succeeded(generation) if self.active == Some(generation) => {
+                self.active = None;
+                IterationAction::Finished(generation)
+            }
+            ChildFact::Failed(generation) if self.active == Some(generation) => {
+                self.active = None;
+                IterationAction::Failed(generation)
+            }
+            ChildFact::Cancelled(generation) if self.active == Some(generation) => {
+                self.active = None;
+                IterationAction::Cancelled(generation)
+            }
+            _ => IterationAction::Ignored,
+        }
+    }
+}
+
+/// Preserve the production cycle marker: accepted scheduler commands
+/// suppress child polling for this iteration.
+fn may_observe_child_facts(scheduler_has_pending: bool) -> bool {
+    !scheduler_has_pending
+}
+
 /// Runtime state for the worker consumer loop. The `Worker` handle remains
 /// the submission/lifetime surface; this struct is the single owner of the
 /// loop-local state (active/pending runs, coordinator, hook owner).
@@ -53,7 +187,7 @@ impl WorkerRuntime {
             // Establish the cycle marker before polling pooled children:
             // commands already accepted by the scheduler must be handled
             // first so cancellation/shutdown/reload wins over child facts.
-            if !scheduler.has_pending() {
+            if may_observe_child_facts(scheduler.has_pending()) {
                 for service in managed_services.poll(&executor) {
                     if service.state == crate::service_pool::ServiceState::Restarting {
                         stdout::warn(&format!(
@@ -502,5 +636,124 @@ impl WorkerRuntime {
         }
 
         stdout::info("Consumer thread finished.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iteration_drives_success_without_a_worker_thread() {
+        let mut iteration = RuntimeIteration::default();
+
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::Start(7)), None),
+            IterationAction::Spawn(7)
+        );
+        assert_eq!(
+            iteration.apply(None, Some(ChildFact::Succeeded(7))),
+            IterationAction::Finished(7)
+        );
+        assert_eq!(iteration.active, None);
+    }
+
+    #[test]
+    fn iteration_drives_child_failure_without_sleeping() {
+        let mut iteration = RuntimeIteration::default();
+
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::Start(8)), None),
+            IterationAction::Spawn(8)
+        );
+        assert_eq!(
+            iteration.apply(None, Some(ChildFact::Failed(8))),
+            IterationAction::Failed(8)
+        );
+    }
+
+    #[test]
+    fn accepted_cancel_and_shutdown_beat_same_iteration_child_facts() {
+        let mut iteration = RuntimeIteration::default();
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::Start(9)), None),
+            IterationAction::Spawn(9)
+        );
+        assert_eq!(
+            iteration.apply(
+                Some(IterationCommand::Cancel(Some(9))),
+                Some(ChildFact::Succeeded(9)),
+            ),
+            IterationAction::Cancel(9)
+        );
+
+        let mut shutdown = RuntimeIteration {
+            active: Some(10),
+            ..RuntimeIteration::default()
+        };
+        assert_eq!(
+            shutdown.apply(
+                Some(IterationCommand::Shutdown),
+                Some(ChildFact::Succeeded(10)),
+            ),
+            IterationAction::Shutdown
+        );
+
+        let mut child_cancelled = RuntimeIteration {
+            active: Some(14),
+            ..RuntimeIteration::default()
+        };
+        assert_eq!(
+            child_cancelled.apply(None, Some(ChildFact::Cancelled(14))),
+            IterationAction::Cancelled(14)
+        );
+    }
+
+    #[test]
+    fn stale_commands_and_child_facts_are_ignored() {
+        let mut iteration = RuntimeIteration {
+            active: Some(11),
+            ..RuntimeIteration::default()
+        };
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::Cancel(Some(10))), None),
+            IterationAction::Ignored
+        );
+        assert_eq!(
+            iteration.apply(None, Some(ChildFact::Succeeded(10))),
+            IterationAction::Ignored
+        );
+        assert_eq!(iteration.active, Some(11));
+    }
+
+    #[test]
+    fn replacement_cannot_spawn_before_reaping_and_authorization() {
+        let mut iteration = RuntimeIteration {
+            active: Some(12),
+            ..RuntimeIteration::default()
+        };
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::Start(13)), None),
+            IterationAction::Cancel(12)
+        );
+        assert_eq!(iteration.active, Some(12));
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::AuthorizeReplacement(12)), None),
+            IterationAction::Ignored
+        );
+        assert_eq!(
+            iteration.apply(None, Some(ChildFact::Reaped(12))),
+            IterationAction::Wait
+        );
+        assert_eq!(
+            iteration.apply(Some(IterationCommand::AuthorizeReplacement(12)), None),
+            IterationAction::Spawn(13)
+        );
+    }
+
+    #[test]
+    fn cycle_marker_suppresses_child_facts_when_a_command_is_pending() {
+        assert!(!RuntimeIteration::may_observe_child_facts(true));
+        assert!(RuntimeIteration::may_observe_child_facts(false));
     }
 }
