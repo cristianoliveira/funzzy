@@ -57,8 +57,8 @@ if env "${common[@]}" "$WATCH" --once >"$SCRATCH/output" 2>&1; then
 fi
 grep -q 'CI Checks | failure | develop | change' "$SCRATCH/output"
 
-if env "${common[@]}" "$WATCH" --once >/dev/null 2>&1; then
-  echo "FAIL: an existing failed workflow was accepted" >&2
+if ! env "${common[@]}" "$WATCH" --once >/dev/null 2>&1; then
+  echo "FAIL: an already reported workflow failed repeatedly" >&2
   exit 1
 fi
 

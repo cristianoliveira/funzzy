@@ -62,13 +62,23 @@ poll() {
     return 1
   fi
 
-  failures="$(jq -r '
-    .[]
-    | select(.status == "completed" and .conclusion != "success")
-    | "\(.workflowName) | \(.conclusion) | \(.headBranch) | \(.displayTitle) | \(.url // "")"
+  reported="$(jq -c '(.reported // [])' "$STATE_FILE" 2>/dev/null || printf '[]')"
+  failures_json="$(jq -c --argjson reported "$reported" '
+    [
+      .[]
+      | select(.status == "completed" and .conclusion != "success")
+      | select((.databaseId | tostring) as $id | ($reported | index($id)) == null)
+    ]
   ' "$next")"
+  failures="$(jq -r '.[] | "\(.workflowName) | \(.conclusion) | \(.headBranch) | \(.displayTitle) | \(.url // "")"' <<< "$failures_json")"
+  reported="$(jq -c --argjson reported "$reported" --argjson failures "$failures_json" '
+    ($reported + ($failures | map(.databaseId | tostring))) | unique
+  ' <<< '{}')"
 
-  mv "$next" "$STATE_FILE"
+  jq -n --slurpfile runs "$next" --argjson reported "$reported" \
+    '{runs: $runs[0], reported: $reported}' > "$next.state"
+  mv "$next.state" "$STATE_FILE"
+  rm -f "$next"
 
   if [[ -n "$failures" ]]; then
     printf 'GitHub CI failed:\n%s\n' "$failures" >&2
