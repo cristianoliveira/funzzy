@@ -151,39 +151,40 @@ fn shutdown_signal(value: Option<&str>) -> Signal {
 mod tests {
     use super::*;
 
-    // A PID no real process occupies; unique to this test module so concurrent
-    // cmd/workers tests (which register real PIDs) cannot collide with it.
-    const OWNED_BY_THIS_TEST: i32 = 999_991;
+    // PIDs no real process occupies; unique per test so parallel tests cannot
+    // unregister another test's registry entry between its assertions.
+    const FORGET_GROUP_ID: i32 = 999_991;
+    const IDEMPOTENT_GROUP_ID: i32 = 999_992;
 
     #[test]
     fn register_then_unregister_forgets_the_group() {
-        register(OWNED_BY_THIS_TEST);
+        register(FORGET_GROUP_ID);
         let still_present = OWNED_GROUPS
             .lock()
             .expect("mutex")
-            .contains(&OWNED_BY_THIS_TEST);
+            .contains(&FORGET_GROUP_ID);
         assert!(still_present, "register must track the group");
 
-        unregister(OWNED_BY_THIS_TEST);
+        unregister(FORGET_GROUP_ID);
         let still_there = OWNED_GROUPS
             .lock()
             .expect("mutex")
-            .contains(&OWNED_BY_THIS_TEST);
+            .contains(&FORGET_GROUP_ID);
         assert!(!still_there, "unregister must forget the group");
     }
 
     #[test]
     fn register_is_idempotent() {
-        register(OWNED_BY_THIS_TEST);
-        register(OWNED_BY_THIS_TEST);
+        register(IDEMPOTENT_GROUP_ID);
+        register(IDEMPOTENT_GROUP_ID);
         let count = OWNED_GROUPS
             .lock()
             .expect("mutex")
             .iter()
-            .filter(|&&g| g == OWNED_BY_THIS_TEST)
+            .filter(|&&g| g == IDEMPOTENT_GROUP_ID)
             .count();
         assert_eq!(count, 1, "registering twice must not duplicate");
-        unregister(OWNED_BY_THIS_TEST);
+        unregister(IDEMPOTENT_GROUP_ID);
     }
 
     #[test]
