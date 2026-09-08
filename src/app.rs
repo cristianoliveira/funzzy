@@ -95,6 +95,103 @@ impl Startup {
     }
 }
 
+struct LoadedWatchConfig {
+    rules: Vec<rules::Rules>,
+    concurrency: usize,
+    debounce: std::time::Duration,
+    backend: crate::watcher::WatchBackend,
+    respect_gitignore: bool,
+    recovery_policy: config::RecoveryPolicy,
+    recovery_timeout: std::time::Duration,
+    hooks: config::GenerationHooks,
+    session_hooks: config::SessionHooks,
+    control_socket: Option<String>,
+}
+
+fn load_startup_document(config_file: &Option<String>) -> config::ConfigDocument {
+    let yaml = cli::watch::DEFAULT_FILENAME.to_owned();
+    let yml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
+    match config_file {
+        Some(path) => config::ConfigDocument::from_file(path).unwrap_or_else(|err| {
+            stdout::failure("Failed to read config file", err.to_string());
+        }),
+        None => match config::ConfigDocument::from_file(&yaml) {
+            Ok(document) => document,
+            Err(yaml_err) => config::ConfigDocument::from_file(&yml).unwrap_or_else(|_| {
+                stdout::failure("Failed to read default config file", yaml_err.to_string())
+            }),
+        },
+    }
+}
+
+fn load_watch_config(args: &Arguments) -> LoadedWatchConfig {
+    let document = load_startup_document(&args.config);
+    let config_error_title = if args.config.is_some() {
+        "Failed to read config file"
+    } else {
+        "Failed to read default config file"
+    };
+    let rules = document.rules().unwrap_or_else(|err| {
+        stdout::failure(config_error_title, err.to_string());
+    });
+    let concurrency_default = std::thread::available_parallelism()
+        .map(|parallelism| parallelism.get())
+        .unwrap_or(1);
+    let concurrency = if args.sequential {
+        1
+    } else {
+        document
+            .concurrency()
+            .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
+            .unwrap_or(concurrency_default)
+    };
+    let debounce = document
+        .debounce()
+        .unwrap_or_else(|err| stdout::failure("Invalid debounce config", err))
+        .unwrap_or_else(|| std::time::Duration::from_millis(1000));
+    let backend = document
+        .watch_backend()
+        .unwrap_or_else(|err| stdout::failure("Invalid watch backend config", err))
+        .unwrap_or(crate::watcher::WatchBackend::Auto);
+    if let Err(err) = rules::validate_rules(&rules) {
+        stdout::failure("Invalid config file.", err);
+    }
+    let respect_gitignore = document
+        .respect_gitignore()
+        .unwrap_or_else(|err| stdout::failure("Invalid gitignore config", err));
+    let recovery_policy = args.recovery_policy.unwrap_or_else(|| {
+        document
+            .recovery_policy(config::RecoveryPolicy::Prompt)
+            .unwrap_or_else(|err| stdout::failure("Invalid recovery policy config", err))
+    });
+    let recovery_timeout = document
+        .recovery_timeout(std::time::Duration::from_secs(60))
+        .unwrap_or_else(|err| stdout::failure("Invalid recovery timeout config", err));
+    let hooks = document
+        .generation_hooks()
+        .unwrap_or_else(|err| stdout::failure("Invalid hooks config", err));
+    let session_hooks = document
+        .session_hooks()
+        .unwrap_or_else(|err| stdout::failure("Invalid session hooks config", err));
+    let control_socket = args.control_socket.clone().or_else(|| {
+        document
+            .control_socket()
+            .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
+    });
+    LoadedWatchConfig {
+        rules,
+        concurrency,
+        debounce,
+        backend,
+        respect_gitignore,
+        recovery_policy,
+        recovery_timeout,
+        hooks,
+        session_hooks,
+        control_socket,
+    }
+}
+
 /// Runs the application: parse arguments, choose the execution path, and
 /// start the watcher or exit with a message.
 pub fn run() {
@@ -199,32 +296,24 @@ fn watch_action(
     no_services: bool,
 ) {
     let workspace_root = &startup.workspace_root;
-    let rules = load_rules(&args.config);
-    let concurrency = effective_concurrency(args, &args.config);
-    let debounce = load_debounce(&args.config);
-    let backend = load_watch_backend(&args.config);
-    if let Err(err) = rules::validate_rules(&rules) {
-        stdout::failure("Invalid config file.", err);
-    }
+    let loaded = load_watch_config(args);
+    let rules = loaded.rules;
+    let concurrency = loaded.concurrency;
+    let debounce = loaded.debounce;
+    let backend = loaded.backend;
     let watches =
         Watches::with_root_and_concurrency(rules.clone(), workspace_root.clone(), concurrency)
             .with_debounce(debounce)
             .with_backend(backend)
-            .with_gitignore(load_respect_gitignore(&args.config))
-            .with_recovery_policy(effective_recovery_policy(args, &args.config))
-            .with_recovery_timeout(load_recovery_timeout(&args.config))
-            .with_hooks(load_hooks(&args.config))
-            .with_session_hooks(load_session_hooks(&args.config));
-    // TASK-0092: resolve the config-declared control socket BEFORE
-    // freezing the initial revision so the startup revision's semantic
-    // surface matches every reload candidate (which always carries
-    // `on.socket`). Otherwise a config-declared socket makes every
-    // valid save — even a formatting-only rewrite — look like a
-    // semantic change and commit a new revision.
-    let control_socket = args
-        .control_socket
-        .clone()
-        .or_else(|| config_control_socket(&args.config, workspace_root));
+            .with_gitignore(loaded.respect_gitignore)
+            .with_recovery_policy(loaded.recovery_policy)
+            .with_recovery_timeout(loaded.recovery_timeout)
+            .with_hooks(loaded.hooks.clone())
+            .with_session_hooks(loaded.session_hooks.clone());
+    // TASK-0092: resolve the config-declared control socket BEFORE freezing
+    // the initial revision so the startup revision's semantic surface matches
+    // every reload candidate (which always carries `on.socket`).
+    let control_socket = loaded.control_socket;
     // TASK-0089: freeze the initial immutable revision before any
     // plan is created; reload (TASK-0090) observes candidates through
     // the same tracker and only commits on semantic change.
@@ -236,11 +325,11 @@ fn watch_action(
             concurrency,
             debounce,
             backend,
-            load_respect_gitignore(&args.config),
-            effective_recovery_policy(args, &args.config),
-            load_recovery_timeout(&args.config),
-            load_hooks(&args.config),
-            load_session_hooks(&args.config),
+            loaded.respect_gitignore,
+            loaded.recovery_policy,
+            loaded.recovery_timeout,
+            loaded.hooks,
+            loaded.session_hooks,
             control_socket.as_deref().map(std::path::PathBuf::from),
         );
         match tracker.observe(&runtime) {
@@ -525,28 +614,32 @@ fn check_config(config_file: &Option<String>) {
     let config_path = config_file
         .clone()
         .unwrap_or_else(|| cli::watch::DEFAULT_FILENAME.to_string());
-    let rules = match config::from_file(&config_path) {
-        Ok(rules) => rules,
-        Err(err) => stdout::failure("Invalid config file.", err.to_string()),
-    };
+    let document = config::ConfigDocument::from_file(&config_path)
+        .unwrap_or_else(|err| stdout::failure("Invalid config file.", err.to_string()));
+    let rules = document
+        .rules()
+        .unwrap_or_else(|err| stdout::failure("Invalid config file.", err.to_string()));
     if let Err(err) = rules::validate_rules(&rules) {
         stdout::failure("Invalid config file.", err);
     }
-    if let Err(err) = config::generation_hooks_from_file(&config_path) {
+    if let Err(err) = document.generation_hooks() {
         stdout::failure("Invalid hooks config", err);
     }
-    if let Err(err) = config::session_hooks_from_file(&config_path) {
+    if let Err(err) = document.session_hooks() {
         stdout::failure("Invalid watcher close hook.", err);
     }
     // Debounce and concurrency reuse the exact watch-time parsers.
-    if let Some(debounce) = config::debounce_from_file(&config_path)
+    if let Some(debounce) = document
+        .debounce()
         .unwrap_or_else(|err| stdout::failure("Invalid debounce config", err))
     {
         stdout::info(&format!("debounce: {:?}", debounce));
     }
-    let _recovery_policy = config::recovery_policy_from_file(&config_path)
+    let _recovery_policy = document
+        .recovery_policy(config::RecoveryPolicy::Prompt)
         .unwrap_or_else(|err| stdout::failure("Invalid recovery policy config", err));
-    let concurrency = config::concurrency_from_file(&config_path)
+    let concurrency = document
+        .concurrency()
         .unwrap_or_else(|err| stdout::failure("Invalid concurrency config", err))
         .unwrap_or_else(|| {
             std::thread::available_parallelism()
@@ -676,26 +769,6 @@ fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
     };
     config::generation_hooks_from_file(&path)
         .unwrap_or_else(|err| stdout::failure("Invalid hooks config", err))
-}
-
-/// Watcher-session close hook from `on.close` (TASK-0101). Kept separate
-/// from generation hooks so finite runners never receive it.
-fn load_session_hooks(config_file: &Option<String>) -> config::SessionHooks {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
-    let Some(path) = path else {
-        return config::SessionHooks::default();
-    };
-    config::session_hooks_from_file(&path)
-        .unwrap_or_else(|err| stdout::failure("Invalid session hooks config", err))
 }
 
 /// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.

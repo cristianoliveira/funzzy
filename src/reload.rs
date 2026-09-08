@@ -16,7 +16,6 @@ use std::path::PathBuf;
 
 use crate::config::{GenerationHooks, SessionHooks};
 use crate::config_revision::{ConfigRevision, RevisionTracker, RuntimeConfig};
-use crate::rules::Rules;
 use crate::watcher::WatchBackend;
 use std::time::Duration;
 
@@ -64,63 +63,11 @@ pub fn validate_candidate(
     root: PathBuf,
     defaults: &PolicyDefaults,
 ) -> Result<RuntimeConfig, ConfigError> {
-    // Syntactic gate: parses as YAML documents.
-    let rules: Vec<Rules> = crate::config::from_yaml(content).map_err(|err| ConfigError {
+    let document = crate::config::ConfigDocument::parse(content).map_err(|err| ConfigError {
         gate: ValidationGate::Syntactic,
-        reason: err.to_string(),
+        reason: crate::config::yaml_config_error(content, err).to_string(),
     })?;
-
-    // Schema + semantic gates: rule validation (globs, values, coherence).
-    crate::rules::validate_rules(&rules).map_err(|err| ConfigError {
-        gate: ValidationGate::Semantic,
-        reason: err.to_string(),
-    })?;
-
-    // TASK-0092: the candidate's policy surface (concurrency, debounce,
-    // backend, gitignore, hooks, control socket) is parsed from the
-    // candidate itself so a policy change is a real revision change.
-    // Missing keys fall back to the startup defaults so omitting them
-    // stays a no-op. Parse errors (e.g. `concurrency: 0`) are Semantic.
-    let semantic = |reason: String| ConfigError {
-        gate: ValidationGate::Semantic,
-        reason,
-    };
-    let concurrency = crate::config::concurrency_from_yaml(content)
-        .map_err(semantic)?
-        .unwrap_or(defaults.concurrency);
-    let debounce = crate::config::debounce_from_yaml(content)
-        .map_err(semantic)?
-        .unwrap_or(defaults.debounce);
-    let backend = crate::config::watch_backend_from_yaml(content)
-        .map_err(semantic)?
-        .unwrap_or(defaults.backend);
-    let respect_gitignore =
-        crate::config::respect_gitignore_from_yaml(content).map_err(semantic)?;
-    let recovery_policy =
-        crate::config::recovery_policy_from_yaml_with_default(content, defaults.recovery_policy)
-            .map_err(semantic)?;
-    let recovery_timeout =
-        crate::config::recovery_timeout_from_yaml_with_default(content, defaults.recovery_timeout)
-            .map_err(semantic)?;
-    let hooks = crate::config::generation_hooks_from_yaml(content).map_err(semantic)?;
-    let session_hooks = crate::config::session_hooks_from_yaml(content).map_err(semantic)?;
-    let control_socket = crate::config::control_socket_from_yaml(content)
-        .map_err(semantic)?
-        .map(std::path::PathBuf::from);
-
-    Ok(RuntimeConfig::capture(
-        root,
-        rules,
-        concurrency,
-        debounce,
-        backend,
-        respect_gitignore,
-        recovery_policy,
-        recovery_timeout,
-        hooks,
-        session_hooks,
-        control_socket,
-    ))
+    validate_document(&document, root, defaults)
 }
 
 /// One complete reload decision after observing a candidate: publish a new
@@ -140,6 +87,80 @@ pub enum ReloadDecision {
 /// (pure gates + candidate-declared policy), then asks the tracker whether it
 /// is a semantic change. Operational preparation is NOT part of this
 /// decision; the caller prepares roots before committing.
+fn validate_document(
+    document: &crate::config::ConfigDocument,
+    root: PathBuf,
+    defaults: &PolicyDefaults,
+) -> Result<RuntimeConfig, ConfigError> {
+    // Schema + semantic gates: rule validation (globs, values, coherence).
+    let rules = document.rules().map_err(|err| ConfigError {
+        gate: ValidationGate::Syntactic,
+        reason: err.to_string(),
+    })?;
+    crate::rules::validate_rules(&rules).map_err(|err| ConfigError {
+        gate: ValidationGate::Semantic,
+        reason: err.to_string(),
+    })?;
+
+    // TASK-0092: the candidate's policy surface (concurrency, debounce,
+    // backend, gitignore, hooks, control socket) is parsed from the same
+    // document as the rules. Missing keys fall back to startup defaults.
+    let semantic = |reason: String| ConfigError {
+        gate: ValidationGate::Semantic,
+        reason,
+    };
+    let concurrency = document
+        .concurrency()
+        .map_err(&semantic)?
+        .unwrap_or(defaults.concurrency);
+    let debounce = document
+        .debounce()
+        .map_err(&semantic)?
+        .unwrap_or(defaults.debounce);
+    let backend = document
+        .watch_backend()
+        .map_err(&semantic)?
+        .unwrap_or(defaults.backend);
+    let respect_gitignore = document.respect_gitignore().map_err(&semantic)?;
+    let recovery_policy = document
+        .recovery_policy(defaults.recovery_policy)
+        .map_err(&semantic)?;
+    let recovery_timeout = document
+        .recovery_timeout(defaults.recovery_timeout)
+        .map_err(&semantic)?;
+    let hooks = document.generation_hooks().map_err(&semantic)?;
+    let session_hooks = document.session_hooks().map_err(&semantic)?;
+    let control_socket = document
+        .control_socket()
+        .map_err(&semantic)?
+        .map(std::path::PathBuf::from);
+
+    Ok(RuntimeConfig::capture(
+        root,
+        rules,
+        concurrency,
+        debounce,
+        backend,
+        respect_gitignore,
+        recovery_policy,
+        recovery_timeout,
+        hooks,
+        session_hooks,
+        control_socket,
+    ))
+}
+
+pub(crate) fn validate_and_observe(
+    tracker: &mut RevisionTracker,
+    content: &str,
+    root: PathBuf,
+    defaults: &PolicyDefaults,
+) -> Result<(RuntimeConfig, crate::config_revision::RevisionDecision), ConfigError> {
+    let config = validate_candidate(content, root, defaults)?;
+    let decision = tracker.observe(&config);
+    Ok((config, decision))
+}
+
 pub fn decide(
     tracker: &mut RevisionTracker,
     content: &str,

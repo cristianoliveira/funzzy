@@ -7,7 +7,7 @@
 use crate::reload_coordinator::ReloadCoordinator;
 use crate::shutdown::ShutdownCoordinator;
 use crate::watches::Watches;
-use crate::{config, logging, stdout, watcher};
+use crate::{logging, stdout, watcher};
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
@@ -153,35 +153,47 @@ impl ReloadSession {
                         }
                     };
 
-                    // AC8: parse the candidate's control socket path up front so
-                    // it participates in the semantic decision (a socket move is
-                    // a real revision change, never a no-op).
-                    let candidate_socket = config::control_socket_from_yaml(&content)
-                        .unwrap_or_else(|err| {
-                            stdout::warn(&format!("Cannot read socket from candidate: {err}"));
-                            None
-                        })
-                        .map(std::path::PathBuf::from);
-
-                    match crate::reload::decide(
+                    // Decode the candidate once. Rules and every runtime
+                    // policy below are derived from this same parsed document;
+                    // a no-op or commit remains decided by the same tracker.
+                    let candidate = match crate::reload::validate_and_observe(
                         &mut tracker.lock().unwrap(),
                         &content,
                         reload_root.clone(),
                         &reload_defaults,
                     ) {
-                        crate::reload::ReloadDecision::NoOp => {
+                        Ok((runtime, decision)) => (runtime, decision),
+                        Err(error) => {
+                            fatal_reload(
+                                &reload_coordinator,
+                                &reload_shutdown,
+                                &format!(
+                                    "invalid config ({}): {}",
+                                    match error.gate {
+                                        crate::reload::ValidationGate::Syntactic => "syntax",
+                                        crate::reload::ValidationGate::Schema => "schema",
+                                        crate::reload::ValidationGate::Semantic => "semantics",
+                                        crate::reload::ValidationGate::Operational => "operational",
+                                    },
+                                    error.reason
+                                ),
+                            );
+                            return;
+                        }
+                    };
+                    let candidate_socket = candidate.0.control_socket.clone();
+                    match candidate.1 {
+                        crate::config_revision::RevisionDecision::NoOp => {
                             stdout::info("Config save has no semantic change; nothing to reload.");
                         }
-                        crate::reload::ReloadDecision::Commit(revision) => {
+                        crate::config_revision::RevisionDecision::New(revision) => {
                             // TASK-0091 AC3: the reload lifecycle transitions
                             // only when a candidate actually commits (never for a
                             // no-op save): `configReloading` before prepare,
                             // `configReloaded` after the commit boundary.
                             reload_coordinator.lifecycle().reloading(Some(&revision));
-                            let candidate_watches = build_watches_from_content(
-                                &content,
-                                &reload_root,
-                                &reload_defaults,
+                            let candidate_watches = build_watches_from_runtime(
+                                candidate.0,
                                 revision.clone(),
                             )
                             .and_then(|candidate| {
@@ -311,22 +323,6 @@ impl ReloadSession {
                                 }
                             }
                         }
-                        crate::reload::ReloadDecision::Fatal(error) => {
-                            fatal_reload(
-                                &reload_coordinator,
-                                &reload_shutdown,
-                                &format!(
-                                    "invalid config ({}): {}",
-                                    match error.gate {
-                                        crate::reload::ValidationGate::Syntactic => "syntax",
-                                        crate::reload::ValidationGate::Schema => "schema",
-                                        crate::reload::ValidationGate::Semantic => "semantics",
-                                        crate::reload::ValidationGate::Operational => "operational",
-                                    },
-                                    error.reason
-                                ),
-                            );
-                        }
                     }
                 },
                 debounce,
@@ -434,41 +430,19 @@ fn fatal_reload(
 ///
 /// Missing keys keep the startup defaults — so a policy change committed by
 /// the reload is actually applied to post-commit generations (TASK-0092).
-fn build_watches_from_content(
-    content: &str,
-    root: &std::path::Path,
-    defaults: &crate::reload::PolicyDefaults,
+fn build_watches_from_runtime(
+    runtime: crate::config_revision::RuntimeConfig,
     revision: crate::config_revision::ConfigRevision,
 ) -> Result<Watches, String> {
-    let rules = crate::config::from_yaml(content).map_err(|err| err.to_string())?;
-    crate::rules::validate_rules(&rules).map_err(|err| err.to_string())?;
-    let concurrency = crate::config::concurrency_from_yaml(content)
-        .map_err(|err| err.to_string())?
-        .unwrap_or(defaults.concurrency);
-    let debounce = crate::config::debounce_from_yaml(content)
-        .map_err(|err| err.to_string())?
-        .unwrap_or(defaults.debounce);
-    let backend = crate::config::watch_backend_from_yaml(content)
-        .map_err(|err| err.to_string())?
-        .unwrap_or(defaults.backend);
-    let respect_gitignore =
-        crate::config::respect_gitignore_from_yaml(content).map_err(|err| err.to_string())?;
-    let recovery_policy =
-        crate::config::recovery_policy_from_yaml_with_default(content, defaults.recovery_policy)
-            .map_err(|err| err.to_string())?;
-
-    let hooks =
-        crate::config::generation_hooks_from_yaml(content).map_err(|err| err.to_string())?;
-    let session_hooks =
-        crate::config::session_hooks_from_yaml(content).map_err(|err| err.to_string())?;
     Ok(
-        Watches::with_root_and_concurrency(rules, root.to_path_buf(), concurrency)
-            .with_debounce(debounce)
-            .with_backend(backend)
-            .with_gitignore(respect_gitignore)
-            .with_recovery_policy(recovery_policy)
-            .with_hooks(hooks)
-            .with_session_hooks(session_hooks)
+        Watches::with_root_and_concurrency(runtime.rules, runtime.root, runtime.concurrency)
+            .with_debounce(runtime.debounce)
+            .with_backend(runtime.backend)
+            .with_gitignore(runtime.respect_gitignore)
+            .with_recovery_policy(runtime.recovery_policy)
+            .with_recovery_timeout(runtime.recovery_timeout)
+            .with_hooks(runtime.hooks)
+            .with_session_hooks(runtime.session_hooks)
             .with_revision(revision),
     )
 }
