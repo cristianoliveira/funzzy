@@ -352,6 +352,9 @@ fn unmatched_ignored_and_escape_creations_do_not_run_jobs() {
 #[test]
 fn burst_in_one_window_is_one_generation_then_next_window_is_next() {
     let directory = setup_directory("burst", CAPTURE_CONFIG);
+    // Keep this batching assertion independent from native recursive child-watch
+    // registration; future-directory discovery is covered by the dedicated test.
+    std::fs::create_dir_all(directory.join("src")).unwrap();
     let _watcher = start_watcher(&directory);
     wait_until_socket(&directory);
     let socket = directory.join("sock");
@@ -359,7 +362,6 @@ fn burst_in_one_window_is_one_generation_then_next_window_is_next() {
 
     // Write several files rapidly (one debounce window).
     for i in 0..5 {
-        std::fs::create_dir_all(directory.join("src")).unwrap();
         std::fs::write(directory.join(format!("src/file{i}.rs")), "x").unwrap();
     }
     wait_until_or_dump(&directory, &socket, || {
