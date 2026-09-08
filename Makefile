@@ -9,6 +9,7 @@ tests: ## Execute all the tests
 	@cargo test --verbose
 	@./scripts/version-check-test
 	@./scripts/fzz-alias-check
+	@./scripts/gh-ci-watch-test
 
 .PHONY: build
 build: tests ## Execute all the tests and build funzzy binary

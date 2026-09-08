@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Deterministic tests for scripts/gh-ci-watch.sh.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WATCH="$ROOT/scripts/gh-ci-watch.sh"
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+
+cat > "$SCRATCH/gh" <<'EOF'
+#!/usr/bin/env bash
+cat "$GH_FIXTURE"
+EOF
+chmod +x "$SCRATCH/gh"
+
+state="$SCRATCH/state.json"
+fixture="$SCRATCH/runs.json"
+
+cat > "$fixture" <<'EOF'
+[
+  {
+    "databaseId": 42,
+    "status": "in_progress",
+    "conclusion": null,
+    "headBranch": "develop",
+    "workflowName": "CI Checks",
+    "displayTitle": "change",
+    "url": "https://example.test/runs/42"
+  }
+]
+EOF
+
+common=(GH_BIN="$SCRATCH/gh" GH_FIXTURE="$fixture" GH_CI_STATE_FILE="$state")
+env "${common[@]}" "$WATCH" --once >/dev/null
+
+cat > "$fixture" <<'EOF'
+[
+  {
+    "databaseId": 42,
+    "status": "completed",
+    "conclusion": "failure",
+    "headBranch": "develop",
+    "workflowName": "CI Checks",
+    "displayTitle": "change",
+    "url": "https://example.test/runs/42"
+  }
+]
+EOF
+
+if env "${common[@]}" "$WATCH" --once >"$SCRATCH/output" 2>&1; then
+  echo "FAIL: a newly failed workflow was accepted" >&2
+  exit 1
+fi
+grep -q 'CI Checks | failure | develop | change' "$SCRATCH/output"
+
+env "${common[@]}" "$WATCH" --once >/dev/null
+
+echo "gh-ci-watch-test: passed"

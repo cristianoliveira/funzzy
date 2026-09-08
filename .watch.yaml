@@ -26,6 +26,18 @@ hooks:
     settle: 2m
 
 jobs:
+  # Poll every GitHub Actions workflow and branch in the repository. The
+  # monitor is a service so a failed remote run fails the active watcher
+  # generation instead of being silently reduced to a notification.
+  # of being silently reduced to a notification.
+  - name: GitHub CI monitor
+    service: true
+    run_on_init: true
+    output: show-on-failure
+    run: direnv exec . scripts/gh-ci-watch.sh
+    change:
+      - ".github/workflows/**"
+
   # These two contiguous tasks overlap. Formatting is cheap while the test
   # task owns all compilation, avoiding the previous build/test duplication.
   - name: format @quick @agent-final
