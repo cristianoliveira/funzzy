@@ -591,6 +591,145 @@ fn validate_v2_sections(root: &Yaml) -> errors::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod v2_section_tests {
+    use super::*;
+
+    const CANONICAL: &str = "on:\n  change: 'src/**'\n  socket: .tmp/fzz.sock\n  debounce: 500ms\nexecution:\n  concurrency: 2\n  output: show-on-failure\nhooks:\n  success: echo ok\n  failure: echo failed\n  close: echo closed\njobs:\n  - name: test\n    run: cargo test\n";
+
+    #[test]
+    fn parses_canonical_v2_sections_into_existing_runtime_policies() {
+        let rules = from_yaml(CANONICAL).expect("canonical V2 config parses");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].output(), OutputPolicy::ShowOnFailure);
+        assert_eq!(concurrency_from_yaml(CANONICAL), Ok(Some(2)));
+        assert_eq!(
+            control_socket_from_yaml(CANONICAL),
+            Ok(Some(".tmp/fzz.sock".to_owned()))
+        );
+        assert_eq!(
+            generation_hooks_from_yaml(CANONICAL)
+                .unwrap()
+                .success
+                .as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(CANONICAL).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
+    fn rejects_old_grouped_v2_placements_instead_of_aliasing_them() {
+        for yaml in [
+            "on:\n  concurrency: 2\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  output: quiet\njobs:\n  - name: test\n    run: cargo test\n",
+            "on:\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n",
+        ] {
+            assert!(from_yaml(yaml).is_err(), "old placement must fail: {yaml}");
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
+        let unknown =
+            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
+                .expect_err("unknown execution property must fail");
+        assert!(format!("{unknown:?}").contains("execution.parallelism"));
+        let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
+            .expect_err("unknown root property must fail");
+        assert!(format!("{root:?}").contains("at configuration root"));
+
+        assert_eq!(
+            concurrency_from_yaml(
+                "execution:\n  concurrency: many\njobs:\n  - name: test\n    run: cargo test\n"
+            ),
+            Err("Property 'execution.concurrency' must be a positive integer".to_owned())
+        );
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  success: [echo, ok]\njobs:\n  - name: test\n    run: cargo test\n"
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod catalog_allowlist_tests {
+    use super::*;
+
+    /// Allowlist rejection = an "Invalid property" error; value-shape errors
+    /// are separate.
+    fn allowlist_rejects(msg: &errors::FzzError) -> bool {
+        matches!(
+            msg,
+            errors::FzzError::InvalidConfigError(m, _, _) if m.contains("Invalid property")
+        )
+    }
+
+    /// TASK-0094: parser allowlists consume the canonical option catalog
+    /// (INIT-TEMPLATE-CONTRACT §10).
+    #[test]
+    fn on_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\n  {name}: x\njobs:\n  - name: a\n    run: echo a\n"
+            );
+            // Keys with a fixed shape accept a probing scalar; the allowlist
+            // itself must never reject a catalog property by name.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in 'on'"
+            );
+        }
+    }
+
+    #[test]
+    fn on_section_error_lists_every_catalog_property() {
+        let err =
+            from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
+                .expect_err("unknown on property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'on.bogus'"));
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
+            assert!(
+                message.contains(name),
+                "error must name allowed '{name}': {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn job_section_rejects_unknown_properties_actionably() {
+        // JOBS-CONFIG-CONTRACT §5: unknown job property must be an actionable
+        // error, not a silent accept (schema declares additionalProperties: false).
+        let err = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    bogus_key: 1\n",
+        )
+        .expect_err("unknown job property must fail");
+        let message = format!("{:?}", err);
+        assert!(message.contains("Invalid property 'bogus_key' in job"));
+        assert!(message.contains("a"), "error must name the job: {message}");
+    }
+
+    #[test]
+    fn job_section_accepts_every_catalog_property() {
+        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::Job) {
+            let yaml = format!(
+                "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    {name}: x\n"
+            );
+            // Probe with a scalar; value-shape errors are separate from the
+            // allowlist and must not be raised here.
+            let result = from_yaml(&yaml);
+            assert!(
+                !result.as_ref().is_err_and(allowlist_rejects),
+                "{name} must be allowed in job"
+            );
+        }
+    }
+}
+
 fn output_policy_from_root(root: &Yaml) -> errors::Result<OutputPolicy> {
     let execution = &root["execution"];
     let policy = if execution == &Yaml::BadValue && root["tasks"] != Yaml::BadValue {
@@ -1005,6 +1144,116 @@ fn rule_from_with_common(yaml: &Yaml, common: &CommonRules) -> errors::Result<Ru
     .map_err(invalid_config_from_validation)
 }
 
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::from_yaml;
+
+    fn parse(yaml: &str) -> Result<Vec<crate::rules::Rules>, crate::errors::FzzError> {
+        from_yaml(yaml)
+    }
+
+    #[test]
+    fn manual_job_parses_with_empty_effective_surface() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n",
+        )
+        .expect("manual job is valid");
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].is_manual());
+        assert!(rules[0].watch_patterns().is_empty(), "no root inheritance");
+        assert!(rules[0].ignore_glob_patterns().is_empty());
+        assert!(!rules[0].run_on_init());
+    }
+
+    #[test]
+    fn manual_rejects_own_change() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    change: \"a/**\"\n")
+                .expect_err("manual+change must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'change'"));
+    }
+
+    #[test]
+    fn manual_rejects_own_ignore() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    ignore: \"a/**\"\n")
+                .expect_err("manual+ignore must be rejected");
+        assert!(err
+            .to_string()
+            .contains("both 'trigger: manual' and 'ignore'"));
+    }
+
+    #[test]
+    fn manual_rejects_run_on_init() {
+        let err =
+            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    run_on_init: true\n")
+                .expect_err("manual+run_on_init must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'run_on_init'"));
+    }
+
+    #[test]
+    fn manual_rejects_service() {
+        let err = parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    service: true\n")
+            .expect_err("manual+service must be rejected");
+        assert!(err
+            .to_string()
+            .contains("'trigger: manual' and 'service: true'"));
+    }
+
+    #[test]
+    fn manual_allows_recovery_parallel_and_root_on() {
+        let rules = parse(
+            "on:\n  change: [\"src/**\"]\njobs:\n  - name: a\n    trigger: manual\n    run: x\n    parallel: checks\n    recovery: \"echo fix\"\n",
+        )
+        .expect("recovery/parallel/root-on are valid with manual");
+        assert!(rules[0].recovery_commands().is_some());
+        assert_eq!(rules[0].parallel(), Some("checks"));
+    }
+
+    #[test]
+    fn manual_rejects_unknown_value_and_non_string() {
+        let err = parse("jobs:\n  - name: a\n    trigger: cron\n    run: x\n")
+            .expect_err("unknown value rejected");
+        assert!(err.to_string().contains("must be one of: manual"));
+        let err = parse("jobs:\n  - name: a\n    trigger: 5\n    run: x\n")
+            .expect_err("non-string rejected");
+        assert!(err.to_string().contains("must be the string 'manual'"));
+    }
+
+    #[test]
+    fn manual_rejected_in_root_list_form() {
+        let err = parse("- name: a\n  trigger: manual\n  run: x\n  change: \"a/**\"\n")
+            .expect_err("legacy root-list form rejects trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn manual_rejected_in_grouped_legacy_tasks() {
+        let err = parse(
+            "on:\n  change: [\"src/**\"]\ntasks:\n  - name: a\n    trigger: manual\n    run: x\n",
+        )
+        .expect_err("grouped legacy tasks reject trigger");
+        assert!(err
+            .to_string()
+            .contains("'trigger' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn non_manual_jobs_keep_root_inheritance_byte_identically() {
+        let rules =
+            parse("on:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build\n")
+                .expect("unchanged config parses");
+        assert!(!rules[0].is_manual());
+        assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
+    }
+}
+
 /// Parse the explicit service readiness policy. The object is intentionally
 /// strict: a typo or null value must not silently disable health checking.
 fn readiness_from_yaml(
@@ -1121,6 +1370,85 @@ fn readiness_from_yaml(
         ));
     }
     Ok(Some(Readiness::new(run, timeout, interval)))
+}
+
+#[cfg(test)]
+mod service_tests {
+    use super::*;
+
+    #[test]
+    fn service_defaults_to_false() {
+        let rules =
+            from_yaml("on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n").unwrap();
+        assert!(!rules[0].service());
+    }
+
+    #[test]
+    fn service_parses_true() {
+        let rules = from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: server\n    service: true\n    run: 'sleep 1000'\n",
+        )
+        .unwrap();
+        assert!(rules[0].service());
+    }
+
+    #[test]
+    fn service_rejects_non_boolean() {
+        assert!(from_yaml(
+            "on:\n  change: '**/*'\njobs:\n  - name: a\n    service: yes\n    run: echo a\n"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn readiness_parses_required_fields_and_defaults_interval() {
+        let rules = from_yaml(
+            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl --fail http://localhost/health\n      timeout: 30s\n",
+        )
+        .expect("readiness config parses");
+        let readiness = rules[0].readiness().expect("readiness is present");
+        assert_eq!(readiness.run(), "curl --fail http://localhost/health");
+        assert_eq!(readiness.timeout(), std::time::Duration::from_secs(30));
+        assert_eq!(readiness.interval(), std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn readiness_rejects_non_service_and_invalid_shape() {
+        let non_service = from_yaml(
+            "jobs:\n  - name: check\n    run: echo check\n    change: '**/*'\n    readiness:\n      run: echo ready\n      timeout: 1s\n",
+        )
+        .expect_err("readiness requires service");
+        assert!(non_service.to_string().contains("service: true"));
+
+        for readiness in [
+            "readiness:\n      timeout: 1s",
+            "readiness:\n      run: ''\n      timeout: 1s",
+            "readiness:\n      run: echo ready\n      timeout: 0s",
+            "readiness:\n      run: echo ready\n      timeout: 1s\n      interval: 2s",
+            "readiness: null",
+        ] {
+            let config = format!(
+                "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    {readiness}\n"
+            );
+            assert!(
+                from_yaml(&config).is_err(),
+                "expected rejection: {readiness}"
+            );
+        }
+    }
+
+    #[test]
+    fn readiness_render_and_revision_include_complete_policy() {
+        let rules = from_yaml(
+            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl health\n      timeout: 1m\n      interval: 2s\n",
+        )
+        .unwrap();
+        let rendered = rule_as_yaml(&rules[0]);
+        assert!(rendered.contains("readiness:"));
+        assert!(rendered.contains("run: curl health"));
+        assert!(rendered.contains("timeout: 1m"));
+        assert!(rendered.contains("interval: 2s"));
+    }
 }
 
 fn execution_timeout_from_root(root: &Yaml) -> errors::Result<Option<Duration>> {
@@ -1487,6 +1815,124 @@ pub fn parse_duration(field: &str, raw: &str) -> Result<Option<Duration>, String
     Ok(Some(Duration::from_millis(millis)))
 }
 
+#[cfg(test)]
+mod timeout_config_tests {
+    use super::from_yaml;
+    use std::time::Duration;
+
+    #[test]
+    fn timeout_parses_ms_s_m_and_bare_seconds() {
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 200ms\n    change: a/**\n")
+                .expect("ms parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_millis(200))
+        );
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 45s\n    change: a/**\n")
+                .expect("s parses");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(45)));
+
+        let rules =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    change: a/**\n")
+                .expect("m parses");
+        assert_eq!(
+            rules[0].timeout(),
+            Some(std::time::Duration::from_secs(1800))
+        );
+
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 2\n    change: a/**\n")
+            .expect("bare = seconds");
+        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn timeout_rejects_zero_negative_garbage_and_hours() {
+        for bad in ["0s", "0", "-5s", "banana", "1h", "1h30m"] {
+            let err = from_yaml(&format!(
+                "jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: {bad}\n"
+            ))
+            .expect_err(&format!("'{bad}' must be rejected"));
+            assert!(
+                err.to_string().contains("timeout"),
+                "error names the field for '{bad}': {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_rejects_service_and_non_string() {
+        let err = from_yaml(
+            "jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    service: true\n    change: a/**\n",
+        )
+        .expect_err("timeout+service rejected");
+        assert!(err.to_string().contains("'timeout' and 'service: true'"));
+
+        let err =
+            from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: true\n")
+                .expect_err("non-duration type rejected");
+        assert!(err.to_string().contains("duration string"));
+    }
+
+    #[test]
+    fn timeout_rejected_at_both_legacy_sites() {
+        let err = from_yaml("- name: a\n  run: x\n  timeout: 30m\n  change: a/**\n")
+            .expect_err("root-list legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+
+        let err = from_yaml(
+            "on:\n  change: [\"a/**\"]\ntasks:\n  - name: a\n    run: x\n    timeout: 30m\n",
+        )
+        .expect_err("grouped legacy rejects timeout");
+        assert!(err
+            .to_string()
+            .contains("'timeout' is supported only in preferred V2 jobs"));
+    }
+
+    #[test]
+    fn absent_timeout_means_unbounded() {
+        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
+        assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
+    fn execution_timeout_is_inherited_and_job_override_wins() {
+        let rules = from_yaml("execution:\n  timeout: 10m\njobs:\n  - name: a\n    run: x\n  - name: b\n    timeout: 30s\n    run: y\n").unwrap();
+        assert_eq!(rules[0].timeout(), Some(Duration::from_secs(600)));
+        assert_eq!(rules[1].timeout(), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn execution_timeout_does_not_bound_services() {
+        let rules = from_yaml(
+            "execution:\n  timeout: 10m\njobs:\n  - name: svc\n    service: true\n    run: x\n",
+        )
+        .unwrap();
+        assert_eq!(rules[0].timeout(), None);
+    }
+
+    #[test]
+    fn execution_timeout_rejects_legacy_and_invalid_values() {
+        assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
+        assert!(
+            from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err()
+        );
+        for sentinel in ["inherit", "unbounded"] {
+            assert!(from_yaml(&format!(
+                "execution:\n  timeout: {sentinel}\njobs:\n  - name: a\n    run: x\n"
+            ))
+            .is_err());
+        }
+        assert!(
+            from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err()
+        );
+    }
+}
+
 pub fn debounce_from_file(filename: &str) -> Result<Option<Duration>, String> {
     let mut file = File::open(filename).map_err(|err| err.to_string())?;
     let mut content = String::new();
@@ -1613,6 +2059,302 @@ pub fn format_rules(rule: &Vec<Rules>) -> String {
     }
 
     formatted_rules
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+
+    #[test]
+    fn watch_backend_defaults_to_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            None
+        );
+        assert_eq!(watch_backend_from_yaml("tasks: []\n").unwrap(), None);
+    }
+
+    #[test]
+    fn watch_backend_accepts_native_poll_and_auto() {
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: native\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Native)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: auto\n").unwrap(),
+            Some(crate::watcher::WatchBackend::Auto)
+        );
+        assert_eq!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 200ms\n")
+                .unwrap(),
+            Some(crate::watcher::WatchBackend::Poll {
+                interval: Duration::from_millis(200)
+            })
+        );
+    }
+
+    #[test]
+    fn watch_backend_rejects_invalid_values() {
+        assert!(watch_backend_from_yaml("on:\n  watch_backend: bogus\n").is_err());
+        assert!(
+            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 0\n").is_err()
+        );
+    }
+}
+
+/// Parses the optional `on.watch_backend` (native|poll|auto) plus
+/// `on.poll_interval` duration. Absent defaults to auto (native first, poll
+/// fallback). Zero/invalid values are rejected loudly.
+pub fn watch_backend_from_yaml(
+    content: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.watch_backend()
+}
+
+pub fn watch_backend_from_file(
+    filename: &str,
+) -> Result<Option<crate::watcher::WatchBackend>, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    watch_backend_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod gitignore_config_tests {
+    use super::*;
+
+    #[test]
+    fn respect_gitignore_defaults_to_false() {
+        assert!(!respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap());
+    }
+
+    #[test]
+    fn respect_gitignore_parses_boolean() {
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap());
+        assert!(!respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap());
+    }
+
+    #[test]
+    fn respect_gitignore_rejects_non_boolean() {
+        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: yes-please\n").is_err());
+    }
+}
+
+/// Parses the optional `on.respect_gitignore` boolean (default false).
+pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.respect_gitignore()
+}
+
+pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    respect_gitignore_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod hooks_tests {
+    use super::*;
+
+    #[test]
+    fn hooks_default_to_none() {
+        let hooks = generation_hooks_from_yaml("hooks: {}\n").unwrap();
+        assert_eq!(hooks.success, None);
+        assert_eq!(hooks.failure, None);
+    }
+
+    #[test]
+    fn hooks_parse_success_and_failure_commands() {
+        let hooks = generation_hooks_from_yaml(
+            "hooks:\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
+        )
+        .unwrap();
+        assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
+        assert_eq!(hooks.failure.as_deref(), Some("echo failed > failed.txt"));
+    }
+
+    #[test]
+    fn legacy_grouped_tasks_keep_historical_on_hook_placement() {
+        let yaml = "on:\n  success: echo ok\n  close: echo closed\ntasks:\n  - name: test\n    run: cargo test\n";
+        assert_eq!(
+            generation_hooks_from_yaml(yaml).unwrap().success.as_deref(),
+            Some("echo ok")
+        );
+        assert_eq!(
+            session_hooks_from_yaml(yaml).unwrap().close.as_deref(),
+            Some("echo closed")
+        );
+    }
+
+    #[test]
+    fn hooks_reject_non_string_values() {
+        assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
+        assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
+        let settled =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n")
+                .unwrap();
+        assert_eq!(settled.failure.as_deref(), Some("notify"));
+        assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
+        let boundary =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1440m\n")
+                .unwrap();
+        assert_eq!(
+            boundary.failure_settle,
+            Some(Duration::from_secs(24 * 60 * 60))
+        );
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
+        )
+        .is_err());
+        assert!(generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
+        )
+        .is_err());
+        let over_bound =
+            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1441m\n")
+                .expect_err("settle over 24h must be rejected");
+        assert!(over_bound.contains("must not exceed 24h"));
+        let non_string_key = generation_hooks_from_yaml(
+            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    ? [bad]\n    : nope\n",
+        )
+        .expect_err("non-string key must be rejected");
+        assert!(non_string_key.contains("keys must be run or settle"));
+    }
+
+    #[test]
+    fn session_hook_defaults_to_none_and_parses_close_command() {
+        assert_eq!(
+            session_hooks_from_yaml("hooks: {}\n").unwrap(),
+            SessionHooks::default()
+        );
+        assert_eq!(
+            session_hooks_from_yaml("hooks:\n  close: './scripts/cleanup'\n")
+                .unwrap()
+                .close
+                .as_deref(),
+            Some("./scripts/cleanup")
+        );
+    }
+
+    #[test]
+    fn session_hook_rejects_non_string_empty_and_trigger_templates() {
+        for yaml in [
+            "hooks:\n  close: [a, b]\n",
+            "hooks:\n  close: ''\n",
+            "hooks:\n  close: 'echo {{filepath}}'\n",
+            "hooks:\n  close: 'echo {{paths}}'\n",
+        ] {
+            assert!(
+                session_hooks_from_yaml(yaml).is_err(),
+                "must reject: {yaml}"
+            );
+        }
+    }
+}
+
+/// Generation terminal hooks (`on.success` / `on.failure`), TASK-0040.
+/// Kept distinct from [`SessionHooks`] so finite runners cannot execute the
+/// watcher lifecycle hook accidentally.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GenerationHooks {
+    // failure_settle defaults to None for legacy callers
+    pub success: Option<String>,
+    pub failure: Option<String>,
+    /// Optional asynchronous settlement window for failure hooks.
+    pub failure_settle: Option<Duration>,
+}
+
+/// Watcher-session lifecycle hook (`on.close`), TASK-0101.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionHooks {
+    pub close: Option<String>,
+}
+
+/// Parses `on.success` / `on.failure` hook commands; absent = None,
+/// non-string values are rejected loudly.
+const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
+
+pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.generation_hooks()
+}
+
+pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    generation_hooks_from_yaml(&content)
+}
+
+/// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
+/// templates are rejected at config validation instead of expanding to empty.
+pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
+    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
+    document.session_hooks()
+}
+
+pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
+    let mut file = File::open(filename).map_err(|err| err.to_string())?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|err| err.to_string())?;
+    session_hooks_from_yaml(&content)
+}
+
+#[cfg(test)]
+mod output_policy_tests {
+    use super::*;
+
+    #[test]
+    fn output_policy_defaults_to_inherit() {
+        assert_eq!(
+            output_policy_from_yaml("on:\n  change: '**/*'\n").unwrap(),
+            OutputPolicy::Inherit
+        );
+        assert_eq!(
+            output_policy_from_yaml("jobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n")
+                .unwrap(),
+            OutputPolicy::Inherit
+        );
+    }
+
+    #[test]
+    fn output_policy_parses_all_values() {
+        for (raw, expected) in [
+            ("inherit", OutputPolicy::Inherit),
+            ("quiet", OutputPolicy::Quiet),
+            ("capture", OutputPolicy::Capture),
+            ("show-on-failure", OutputPolicy::ShowOnFailure),
+        ] {
+            let yaml = format!("execution:\n  output: {raw}\n");
+            assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn output_policy_rejects_unknown_values() {
+        assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
+        assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
+    }
+}
+
+/// Parses `output:` (on-level default or job-level) into an OutputPolicy;
+/// unknown values are rejected loudly.
+pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
+    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
+    let root = documents
+        .first()
+        .ok_or_else(|| "Configuration file is empty".to_owned())?;
+    output_policy_from_root(root).map_err(|error| match error {
+        errors::FzzError::InvalidConfigError(message, _, _) => message,
+        other => other.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -3033,748 +3775,6 @@ mod jobs_tests {
         assert!(from_yaml("- name: check\n  run: check\n  recovery: repair\n").is_err());
         assert!(
             from_yaml("tasks:\n  - name: check\n    run: check\n    recovery: repair\n").is_err()
-        );
-    }
-}
-
-#[cfg(test)]
-mod backend_tests {
-    use super::*;
-
-    #[test]
-    fn watch_backend_defaults_to_auto() {
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  change: '**/*'\n").unwrap(),
-            None
-        );
-        assert_eq!(watch_backend_from_yaml("tasks: []\n").unwrap(), None);
-    }
-
-    #[test]
-    fn watch_backend_accepts_native_poll_and_auto() {
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: native\n").unwrap(),
-            Some(crate::watcher::WatchBackend::Native)
-        );
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: auto\n").unwrap(),
-            Some(crate::watcher::WatchBackend::Auto)
-        );
-        assert_eq!(
-            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 200ms\n")
-                .unwrap(),
-            Some(crate::watcher::WatchBackend::Poll {
-                interval: Duration::from_millis(200)
-            })
-        );
-    }
-
-    #[test]
-    fn watch_backend_rejects_invalid_values() {
-        assert!(watch_backend_from_yaml("on:\n  watch_backend: bogus\n").is_err());
-        assert!(
-            watch_backend_from_yaml("on:\n  watch_backend: poll\n  poll_interval: 0\n").is_err()
-        );
-    }
-}
-
-/// Parses the optional `on.watch_backend` (native|poll|auto) plus
-/// `on.poll_interval` duration. Absent defaults to auto (native first, poll
-/// fallback). Zero/invalid values are rejected loudly.
-pub fn watch_backend_from_yaml(
-    content: &str,
-) -> Result<Option<crate::watcher::WatchBackend>, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.watch_backend()
-}
-
-pub fn watch_backend_from_file(
-    filename: &str,
-) -> Result<Option<crate::watcher::WatchBackend>, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    watch_backend_from_yaml(&content)
-}
-
-#[cfg(test)]
-mod gitignore_config_tests {
-    use super::*;
-
-    #[test]
-    fn respect_gitignore_defaults_to_false() {
-        assert!(!respect_gitignore_from_yaml("on:\n  change: '**/*'\n").unwrap());
-    }
-
-    #[test]
-    fn respect_gitignore_parses_boolean() {
-        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: true\n").unwrap());
-        assert!(!respect_gitignore_from_yaml("on:\n  respect_gitignore: false\n").unwrap());
-    }
-
-    #[test]
-    fn respect_gitignore_rejects_non_boolean() {
-        assert!(respect_gitignore_from_yaml("on:\n  respect_gitignore: yes-please\n").is_err());
-    }
-}
-
-/// Parses the optional `on.respect_gitignore` boolean (default false).
-pub fn respect_gitignore_from_yaml(content: &str) -> Result<bool, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.respect_gitignore()
-}
-
-pub fn respect_gitignore_from_file(filename: &str) -> Result<bool, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    respect_gitignore_from_yaml(&content)
-}
-
-#[cfg(test)]
-mod hooks_tests {
-    use super::*;
-
-    #[test]
-    fn hooks_default_to_none() {
-        let hooks = generation_hooks_from_yaml("hooks: {}\n").unwrap();
-        assert_eq!(hooks.success, None);
-        assert_eq!(hooks.failure, None);
-    }
-
-    #[test]
-    fn hooks_parse_success_and_failure_commands() {
-        let hooks = generation_hooks_from_yaml(
-            "hooks:\n  success: 'echo done > done.txt'\n  failure: 'echo failed > failed.txt'\n",
-        )
-        .unwrap();
-        assert_eq!(hooks.success.as_deref(), Some("echo done > done.txt"));
-        assert_eq!(hooks.failure.as_deref(), Some("echo failed > failed.txt"));
-    }
-
-    #[test]
-    fn legacy_grouped_tasks_keep_historical_on_hook_placement() {
-        let yaml = "on:\n  success: echo ok\n  close: echo closed\ntasks:\n  - name: test\n    run: cargo test\n";
-        assert_eq!(
-            generation_hooks_from_yaml(yaml).unwrap().success.as_deref(),
-            Some("echo ok")
-        );
-        assert_eq!(
-            session_hooks_from_yaml(yaml).unwrap().close.as_deref(),
-            Some("echo closed")
-        );
-    }
-
-    #[test]
-    fn hooks_reject_non_string_values() {
-        assert!(generation_hooks_from_yaml("hooks:\n  success: [a, b]\n").is_err());
-        assert!(generation_hooks_from_yaml("hooks:\n  failure: 1\n").is_err());
-        let settled =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 30s\n")
-                .unwrap();
-        assert_eq!(settled.failure.as_deref(), Some("notify"));
-        assert_eq!(settled.failure_settle, Some(Duration::from_secs(30)));
-        let boundary =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1440m\n")
-                .unwrap();
-        assert_eq!(
-            boundary.failure_settle,
-            Some(Duration::from_secs(24 * 60 * 60))
-        );
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 0s\n"
-        )
-        .is_err());
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    extra: nope\n"
-        )
-        .is_err());
-        let over_bound =
-            generation_hooks_from_yaml("hooks:\n  failure:\n    run: notify\n    settle: 1441m\n")
-                .expect_err("settle over 24h must be rejected");
-        assert!(over_bound.contains("must not exceed 24h"));
-        let non_string_key = generation_hooks_from_yaml(
-            "hooks:\n  failure:\n    run: notify\n    settle: 1s\n    ? [bad]\n    : nope\n",
-        )
-        .expect_err("non-string key must be rejected");
-        assert!(non_string_key.contains("keys must be run or settle"));
-    }
-
-    #[test]
-    fn session_hook_defaults_to_none_and_parses_close_command() {
-        assert_eq!(
-            session_hooks_from_yaml("hooks: {}\n").unwrap(),
-            SessionHooks::default()
-        );
-        assert_eq!(
-            session_hooks_from_yaml("hooks:\n  close: './scripts/cleanup'\n")
-                .unwrap()
-                .close
-                .as_deref(),
-            Some("./scripts/cleanup")
-        );
-    }
-
-    #[test]
-    fn session_hook_rejects_non_string_empty_and_trigger_templates() {
-        for yaml in [
-            "hooks:\n  close: [a, b]\n",
-            "hooks:\n  close: ''\n",
-            "hooks:\n  close: 'echo {{filepath}}'\n",
-            "hooks:\n  close: 'echo {{paths}}'\n",
-        ] {
-            assert!(
-                session_hooks_from_yaml(yaml).is_err(),
-                "must reject: {yaml}"
-            );
-        }
-    }
-}
-
-/// Generation terminal hooks (`on.success` / `on.failure`), TASK-0040.
-/// Kept distinct from [`SessionHooks`] so finite runners cannot execute the
-/// watcher lifecycle hook accidentally.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GenerationHooks {
-    // failure_settle defaults to None for legacy callers
-    pub success: Option<String>,
-    pub failure: Option<String>,
-    /// Optional asynchronous settlement window for failure hooks.
-    pub failure_settle: Option<Duration>,
-}
-
-/// Watcher-session lifecycle hook (`on.close`), TASK-0101.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SessionHooks {
-    pub close: Option<String>,
-}
-
-/// Parses `on.success` / `on.failure` hook commands; absent = None,
-/// non-string values are rejected loudly.
-const MAX_FAILURE_SETTLE: Duration = Duration::from_secs(24 * 60 * 60);
-
-pub fn generation_hooks_from_yaml(content: &str) -> Result<GenerationHooks, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.generation_hooks()
-}
-
-pub fn generation_hooks_from_file(filename: &str) -> Result<GenerationHooks, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    generation_hooks_from_yaml(&content)
-}
-
-/// Parses watcher-session hooks. `close` has no trigger path, so trigger-bound
-/// templates are rejected at config validation instead of expanding to empty.
-pub fn session_hooks_from_yaml(content: &str) -> Result<SessionHooks, String> {
-    let document = ConfigDocument::parse(content).map_err(|err| err.to_string())?;
-    document.session_hooks()
-}
-
-pub fn session_hooks_from_file(filename: &str) -> Result<SessionHooks, String> {
-    let mut file = File::open(filename).map_err(|err| err.to_string())?;
-    let mut content = String::new();
-    file.read_to_string(&mut content)
-        .map_err(|err| err.to_string())?;
-    session_hooks_from_yaml(&content)
-}
-
-#[cfg(test)]
-mod output_policy_tests {
-    use super::*;
-
-    #[test]
-    fn output_policy_defaults_to_inherit() {
-        assert_eq!(
-            output_policy_from_yaml("on:\n  change: '**/*'\n").unwrap(),
-            OutputPolicy::Inherit
-        );
-        assert_eq!(
-            output_policy_from_yaml("jobs:\n  - name: a\n    run: echo a\n    change: '**/*'\n")
-                .unwrap(),
-            OutputPolicy::Inherit
-        );
-    }
-
-    #[test]
-    fn output_policy_parses_all_values() {
-        for (raw, expected) in [
-            ("inherit", OutputPolicy::Inherit),
-            ("quiet", OutputPolicy::Quiet),
-            ("capture", OutputPolicy::Capture),
-            ("show-on-failure", OutputPolicy::ShowOnFailure),
-        ] {
-            let yaml = format!("execution:\n  output: {raw}\n");
-            assert_eq!(output_policy_from_yaml(&yaml).unwrap(), expected, "{raw}");
-        }
-    }
-
-    #[test]
-    fn output_policy_rejects_unknown_values() {
-        assert!(output_policy_from_yaml("execution:\n  output: loud\n").is_err());
-        assert!(output_policy_from_yaml("execution:\n  output: 1\n").is_err());
-    }
-}
-
-/// Parses `output:` (on-level default or job-level) into an OutputPolicy;
-/// unknown values are rejected loudly.
-pub fn output_policy_from_yaml(content: &str) -> Result<OutputPolicy, String> {
-    let documents = YamlLoader::load_from_str(content).map_err(|err| err.to_string())?;
-    let root = documents
-        .first()
-        .ok_or_else(|| "Configuration file is empty".to_owned())?;
-    output_policy_from_root(root).map_err(|error| match error {
-        errors::FzzError::InvalidConfigError(message, _, _) => message,
-        other => other.to_string(),
-    })
-}
-
-#[cfg(test)]
-mod service_tests {
-    use super::*;
-
-    #[test]
-    fn service_defaults_to_false() {
-        let rules =
-            from_yaml("on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n").unwrap();
-        assert!(!rules[0].service());
-    }
-
-    #[test]
-    fn service_parses_true() {
-        let rules = from_yaml(
-            "on:\n  change: '**/*'\njobs:\n  - name: server\n    service: true\n    run: 'sleep 1000'\n",
-        )
-        .unwrap();
-        assert!(rules[0].service());
-    }
-
-    #[test]
-    fn service_rejects_non_boolean() {
-        assert!(from_yaml(
-            "on:\n  change: '**/*'\njobs:\n  - name: a\n    service: yes\n    run: echo a\n"
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn readiness_parses_required_fields_and_defaults_interval() {
-        let rules = from_yaml(
-            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl --fail http://localhost/health\n      timeout: 30s\n",
-        )
-        .expect("readiness config parses");
-        let readiness = rules[0].readiness().expect("readiness is present");
-        assert_eq!(readiness.run(), "curl --fail http://localhost/health");
-        assert_eq!(readiness.timeout(), std::time::Duration::from_secs(30));
-        assert_eq!(readiness.interval(), std::time::Duration::from_millis(500));
-    }
-
-    #[test]
-    fn readiness_rejects_non_service_and_invalid_shape() {
-        let non_service = from_yaml(
-            "jobs:\n  - name: check\n    run: echo check\n    change: '**/*'\n    readiness:\n      run: echo ready\n      timeout: 1s\n",
-        )
-        .expect_err("readiness requires service");
-        assert!(non_service.to_string().contains("service: true"));
-
-        for readiness in [
-            "readiness:\n      timeout: 1s",
-            "readiness:\n      run: ''\n      timeout: 1s",
-            "readiness:\n      run: echo ready\n      timeout: 0s",
-            "readiness:\n      run: echo ready\n      timeout: 1s\n      interval: 2s",
-            "readiness: null",
-        ] {
-            let config = format!(
-                "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    {readiness}\n"
-            );
-            assert!(
-                from_yaml(&config).is_err(),
-                "expected rejection: {readiness}"
-            );
-        }
-    }
-
-    #[test]
-    fn readiness_render_and_revision_include_complete_policy() {
-        let rules = from_yaml(
-            "jobs:\n  - name: api\n    service: true\n    run: cargo run\n    readiness:\n      run: curl health\n      timeout: 1m\n      interval: 2s\n",
-        )
-        .unwrap();
-        let rendered = rule_as_yaml(&rules[0]);
-        assert!(rendered.contains("readiness:"));
-        assert!(rendered.contains("run: curl health"));
-        assert!(rendered.contains("timeout: 1m"));
-        assert!(rendered.contains("interval: 2s"));
-    }
-}
-
-#[cfg(test)]
-mod v2_section_tests {
-    use super::*;
-
-    const CANONICAL: &str = "on:\n  change: 'src/**'\n  socket: .tmp/fzz.sock\n  debounce: 500ms\nexecution:\n  concurrency: 2\n  output: show-on-failure\nhooks:\n  success: echo ok\n  failure: echo failed\n  close: echo closed\njobs:\n  - name: test\n    run: cargo test\n";
-
-    #[test]
-    fn parses_canonical_v2_sections_into_existing_runtime_policies() {
-        let rules = from_yaml(CANONICAL).expect("canonical V2 config parses");
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].output(), OutputPolicy::ShowOnFailure);
-        assert_eq!(concurrency_from_yaml(CANONICAL), Ok(Some(2)));
-        assert_eq!(
-            control_socket_from_yaml(CANONICAL),
-            Ok(Some(".tmp/fzz.sock".to_owned()))
-        );
-        assert_eq!(
-            generation_hooks_from_yaml(CANONICAL)
-                .unwrap()
-                .success
-                .as_deref(),
-            Some("echo ok")
-        );
-        assert_eq!(
-            session_hooks_from_yaml(CANONICAL).unwrap().close.as_deref(),
-            Some("echo closed")
-        );
-    }
-
-    #[test]
-    fn rejects_old_grouped_v2_placements_instead_of_aliasing_them() {
-        for yaml in [
-            "on:\n  concurrency: 2\njobs:\n  - name: test\n    run: cargo test\n",
-            "on:\n  output: quiet\njobs:\n  - name: test\n    run: cargo test\n",
-            "on:\n  success: echo ok\njobs:\n  - name: test\n    run: cargo test\n",
-        ] {
-            assert!(from_yaml(yaml).is_err(), "old placement must fail: {yaml}");
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_and_wrongly_typed_v2_sections_with_field_paths() {
-        let unknown =
-            from_yaml("execution:\n  parallelism: 2\njobs:\n  - name: test\n    run: cargo test\n")
-                .expect_err("unknown execution property must fail");
-        assert!(format!("{unknown:?}").contains("execution.parallelism"));
-        let root = from_yaml("unknown: true\njobs:\n  - name: test\n    run: cargo test\n")
-            .expect_err("unknown root property must fail");
-        assert!(format!("{root:?}").contains("at configuration root"));
-
-        assert_eq!(
-            concurrency_from_yaml(
-                "execution:\n  concurrency: many\njobs:\n  - name: test\n    run: cargo test\n"
-            ),
-            Err("Property 'execution.concurrency' must be a positive integer".to_owned())
-        );
-        assert!(generation_hooks_from_yaml(
-            "hooks:\n  success: [echo, ok]\njobs:\n  - name: test\n    run: cargo test\n"
-        )
-        .is_err());
-    }
-}
-
-#[cfg(test)]
-mod catalog_allowlist_tests {
-    use super::*;
-
-    /// Allowlist rejection = an "Invalid property" error; value-shape errors
-    /// are separate.
-    fn allowlist_rejects(msg: &errors::FzzError) -> bool {
-        matches!(
-            msg,
-            errors::FzzError::InvalidConfigError(m, _, _) if m.contains("Invalid property")
-        )
-    }
-
-    /// TASK-0094: parser allowlists consume the canonical option catalog
-    /// (INIT-TEMPLATE-CONTRACT §10).
-    #[test]
-    fn on_section_accepts_every_catalog_property() {
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
-            let yaml = format!(
-                "on:\n  change: '**/*'\n  {name}: x\njobs:\n  - name: a\n    run: echo a\n"
-            );
-            // Keys with a fixed shape accept a probing scalar; the allowlist
-            // itself must never reject a catalog property by name.
-            let result = from_yaml(&yaml);
-            assert!(
-                !result.as_ref().is_err_and(allowlist_rejects),
-                "{name} must be allowed in 'on'"
-            );
-        }
-    }
-
-    #[test]
-    fn on_section_error_lists_every_catalog_property() {
-        let err =
-            from_yaml("on:\n  change: '**/*'\n  bogus: 1\njobs:\n  - name: a\n    run: echo a\n")
-                .expect_err("unknown on property must fail");
-        let message = format!("{:?}", err);
-        assert!(message.contains("Invalid property 'on.bogus'"));
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::On) {
-            assert!(
-                message.contains(name),
-                "error must name allowed '{name}': {message}"
-            );
-        }
-    }
-
-    #[test]
-    fn job_section_rejects_unknown_properties_actionably() {
-        // JOBS-CONFIG-CONTRACT §5: unknown job property must be an actionable
-        // error, not a silent accept (schema declares additionalProperties: false).
-        let err = from_yaml(
-            "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    bogus_key: 1\n",
-        )
-        .expect_err("unknown job property must fail");
-        let message = format!("{:?}", err);
-        assert!(message.contains("Invalid property 'bogus_key' in job"));
-        assert!(message.contains("a"), "error must name the job: {message}");
-    }
-
-    #[test]
-    fn job_section_accepts_every_catalog_property() {
-        for name in crate::option_catalog::property_names(crate::option_catalog::Owner::Job) {
-            let yaml = format!(
-                "on:\n  change: '**/*'\njobs:\n  - name: a\n    run: echo a\n    {name}: x\n"
-            );
-            // Probe with a scalar; value-shape errors are separate from the
-            // allowlist and must not be raised here.
-            let result = from_yaml(&yaml);
-            assert!(
-                !result.as_ref().is_err_and(allowlist_rejects),
-                "{name} must be allowed in job"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod manual_trigger_tests {
-    use super::from_yaml;
-
-    fn parse(yaml: &str) -> Result<Vec<crate::rules::Rules>, crate::errors::FzzError> {
-        from_yaml(yaml)
-    }
-
-    #[test]
-    fn manual_job_parses_with_empty_effective_surface() {
-        let rules = parse(
-            "on:\n  change: [\"src/**\"]\njobs:\n  - name: await-remote\n    trigger: manual\n    run: ./await.sh\n",
-        )
-        .expect("manual job is valid");
-        assert_eq!(rules.len(), 1);
-        assert!(rules[0].is_manual());
-        assert!(rules[0].watch_patterns().is_empty(), "no root inheritance");
-        assert!(rules[0].ignore_glob_patterns().is_empty());
-        assert!(!rules[0].run_on_init());
-    }
-
-    #[test]
-    fn manual_rejects_own_change() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    change: \"a/**\"\n")
-                .expect_err("manual+change must be rejected");
-        assert!(err
-            .to_string()
-            .contains("both 'trigger: manual' and 'change'"));
-    }
-
-    #[test]
-    fn manual_rejects_own_ignore() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    ignore: \"a/**\"\n")
-                .expect_err("manual+ignore must be rejected");
-        assert!(err
-            .to_string()
-            .contains("both 'trigger: manual' and 'ignore'"));
-    }
-
-    #[test]
-    fn manual_rejects_run_on_init() {
-        let err =
-            parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    run_on_init: true\n")
-                .expect_err("manual+run_on_init must be rejected");
-        assert!(err
-            .to_string()
-            .contains("'trigger: manual' and 'run_on_init'"));
-    }
-
-    #[test]
-    fn manual_rejects_service() {
-        let err = parse("jobs:\n  - name: a\n    trigger: manual\n    run: x\n    service: true\n")
-            .expect_err("manual+service must be rejected");
-        assert!(err
-            .to_string()
-            .contains("'trigger: manual' and 'service: true'"));
-    }
-
-    #[test]
-    fn manual_allows_recovery_parallel_and_root_on() {
-        let rules = parse(
-            "on:\n  change: [\"src/**\"]\njobs:\n  - name: a\n    trigger: manual\n    run: x\n    parallel: checks\n    recovery: \"echo fix\"\n",
-        )
-        .expect("recovery/parallel/root-on are valid with manual");
-        assert!(rules[0].recovery_commands().is_some());
-        assert_eq!(rules[0].parallel(), Some("checks"));
-    }
-
-    #[test]
-    fn manual_rejects_unknown_value_and_non_string() {
-        let err = parse("jobs:\n  - name: a\n    trigger: cron\n    run: x\n")
-            .expect_err("unknown value rejected");
-        assert!(err.to_string().contains("must be one of: manual"));
-        let err = parse("jobs:\n  - name: a\n    trigger: 5\n    run: x\n")
-            .expect_err("non-string rejected");
-        assert!(err.to_string().contains("must be the string 'manual'"));
-    }
-
-    #[test]
-    fn manual_rejected_in_root_list_form() {
-        let err = parse("- name: a\n  trigger: manual\n  run: x\n  change: \"a/**\"\n")
-            .expect_err("legacy root-list form rejects trigger");
-        assert!(err
-            .to_string()
-            .contains("'trigger' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn manual_rejected_in_grouped_legacy_tasks() {
-        let err = parse(
-            "on:\n  change: [\"src/**\"]\ntasks:\n  - name: a\n    trigger: manual\n    run: x\n",
-        )
-        .expect_err("grouped legacy tasks reject trigger");
-        assert!(err
-            .to_string()
-            .contains("'trigger' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn non_manual_jobs_keep_root_inheritance_byte_identically() {
-        let rules =
-            parse("on:\n  change: [\"src/**\"]\njobs:\n  - name: build\n    run: cargo build\n")
-                .expect("unchanged config parses");
-        assert!(!rules[0].is_manual());
-        assert_eq!(rules[0].watch_patterns(), vec!["src/**".to_string()]);
-    }
-}
-
-#[cfg(test)]
-mod timeout_config_tests {
-    use super::from_yaml;
-    use std::time::Duration;
-
-    #[test]
-    fn timeout_parses_ms_s_m_and_bare_seconds() {
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 200ms\n    change: a/**\n")
-                .expect("ms parses");
-        assert_eq!(
-            rules[0].timeout(),
-            Some(std::time::Duration::from_millis(200))
-        );
-
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 45s\n    change: a/**\n")
-                .expect("s parses");
-        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(45)));
-
-        let rules =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    change: a/**\n")
-                .expect("m parses");
-        assert_eq!(
-            rules[0].timeout(),
-            Some(std::time::Duration::from_secs(1800))
-        );
-
-        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    timeout: 2\n    change: a/**\n")
-            .expect("bare = seconds");
-        assert_eq!(rules[0].timeout(), Some(std::time::Duration::from_secs(2)));
-    }
-
-    #[test]
-    fn timeout_rejects_zero_negative_garbage_and_hours() {
-        for bad in ["0s", "0", "-5s", "banana", "1h", "1h30m"] {
-            let err = from_yaml(&format!(
-                "jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: {bad}\n"
-            ))
-            .expect_err(&format!("'{bad}' must be rejected"));
-            assert!(
-                err.to_string().contains("timeout"),
-                "error names the field for '{bad}': {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn timeout_rejects_service_and_non_string() {
-        let err = from_yaml(
-            "jobs:\n  - name: a\n    run: x\n    timeout: 30m\n    service: true\n    change: a/**\n",
-        )
-        .expect_err("timeout+service rejected");
-        assert!(err.to_string().contains("'timeout' and 'service: true'"));
-
-        let err =
-            from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n    timeout: true\n")
-                .expect_err("non-duration type rejected");
-        assert!(err.to_string().contains("duration string"));
-    }
-
-    #[test]
-    fn timeout_rejected_at_both_legacy_sites() {
-        let err = from_yaml("- name: a\n  run: x\n  timeout: 30m\n  change: a/**\n")
-            .expect_err("root-list legacy rejects timeout");
-        assert!(err
-            .to_string()
-            .contains("'timeout' is supported only in preferred V2 jobs"));
-
-        let err = from_yaml(
-            "on:\n  change: [\"a/**\"]\ntasks:\n  - name: a\n    run: x\n    timeout: 30m\n",
-        )
-        .expect_err("grouped legacy rejects timeout");
-        assert!(err
-            .to_string()
-            .contains("'timeout' is supported only in preferred V2 jobs"));
-    }
-
-    #[test]
-    fn absent_timeout_means_unbounded() {
-        let rules = from_yaml("jobs:\n  - name: a\n    run: x\n    change: a/**\n").unwrap();
-        assert_eq!(rules[0].timeout(), None);
-    }
-
-    #[test]
-    fn execution_timeout_is_inherited_and_job_override_wins() {
-        let rules = from_yaml("execution:\n  timeout: 10m\njobs:\n  - name: a\n    run: x\n  - name: b\n    timeout: 30s\n    run: y\n").unwrap();
-        assert_eq!(rules[0].timeout(), Some(Duration::from_secs(600)));
-        assert_eq!(rules[1].timeout(), Some(Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn execution_timeout_does_not_bound_services() {
-        let rules = from_yaml(
-            "execution:\n  timeout: 10m\njobs:\n  - name: svc\n    service: true\n    run: x\n",
-        )
-        .unwrap();
-        assert_eq!(rules[0].timeout(), None);
-    }
-
-    #[test]
-    fn execution_timeout_rejects_legacy_and_invalid_values() {
-        assert!(from_yaml("execution:\n  timeout: 0\njobs:\n  - name: a\n    run: x\n").is_err());
-        assert!(
-            from_yaml("execution:\n  timeout: null\njobs:\n  - name: a\n    run: x\n").is_err()
-        );
-        for sentinel in ["inherit", "unbounded"] {
-            assert!(from_yaml(&format!(
-                "execution:\n  timeout: {sentinel}\njobs:\n  - name: a\n    run: x\n"
-            ))
-            .is_err());
-        }
-        assert!(
-            from_yaml("execution:\n  timeout: 10m\ntasks:\n  - name: a\n    run: x\n").is_err()
         );
     }
 }
