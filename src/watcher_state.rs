@@ -4,7 +4,8 @@
 //! awaiting, snapshots, and control transport. This module owns no socket or
 //! JSON-RPC behavior.
 
-use crate::executor::{Event, TaskSnapshot};
+use crate::executor::Event;
+use crate::task_result::TaskSnapshot;
 use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -251,6 +252,7 @@ impl WatcherState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_result::TaskState;
     use std::time::Duration;
 
     fn started(run_id: u64, batch: Option<u64>, predecessor: Option<u64>) -> Event {
@@ -351,7 +353,7 @@ mod tests {
                     position,
                     id: name.to_owned(),
                     name: name.to_owned(),
-                    state: crate::executor::TaskState::Passed,
+                    state: TaskState::Passed,
                     duration_ms: Some(42),
                 },
             });
@@ -378,7 +380,7 @@ mod tests {
                     position,
                     id: name.to_owned(),
                     name: name.to_owned(),
-                    state: crate::executor::TaskState::Passed,
+                    state: TaskState::Passed,
                     duration_ms,
                 },
             });

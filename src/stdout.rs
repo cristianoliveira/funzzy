@@ -3,6 +3,7 @@ use std::io::Write;
 #[cfg(not(test))]
 use crate::environment;
 use crate::logging;
+use crate::task_result::{TaskSnapshot, TaskState};
 
 // ANSI color codes for terminal output
 pub const GREEN: &str = "\x1b[32m";
@@ -130,7 +131,7 @@ pub fn print_time_elapsed(_elapsed_param: std::time::Duration) -> () {
 /// Produces the deterministic per-job duration table shared by every local
 /// result path. Callers supply executor terminal snapshots already sorted by
 /// configured declaration order; this function never measures time.
-pub fn job_duration_rows(tasks: &[crate::executor::TaskSnapshot]) -> Vec<String> {
+pub fn job_duration_rows(tasks: &[TaskSnapshot]) -> Vec<String> {
     if tasks.is_empty() {
         return vec![];
     }
@@ -145,10 +146,10 @@ pub fn job_duration_rows(tasks: &[crate::executor::TaskSnapshot]) -> Vec<String>
     let states: Vec<&str> = tasks
         .iter()
         .map(|task| match task.state {
-            crate::executor::TaskState::Passed => "passed",
-            crate::executor::TaskState::Failed => "failed",
-            crate::executor::TaskState::Cancelled => "cancelled",
-            crate::executor::TaskState::TimedOut => "timedout",
+            TaskState::Passed => "passed",
+            TaskState::Failed => "failed",
+            TaskState::Cancelled => "cancelled",
+            TaskState::TimedOut => "timedout",
         })
         .collect();
     let name_width = identities
@@ -195,7 +196,7 @@ pub fn present_results(
     results: Vec<Result<(), String>>,
     time_elapsed: std::time::Duration,
     outcome: Option<&crate::plan::RunOutcome>,
-    tasks: &[crate::executor::TaskSnapshot],
+    tasks: &[TaskSnapshot],
 ) {
     let errors: Vec<Result<(), String>> = results.iter().filter(|&r| r.is_err()).cloned().collect();
     let completed = results.iter().filter(|&r| r.is_ok()).count();
@@ -282,7 +283,11 @@ pub fn clear_screen() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::{TaskSnapshot, TaskState};
+
+    #[test]
+    fn job_duration_rows_are_empty_for_no_tasks() {
+        assert!(job_duration_rows(&[]).is_empty());
+    }
 
     #[test]
     fn job_duration_rows_preserve_declaration_order_and_absent_duration() {
