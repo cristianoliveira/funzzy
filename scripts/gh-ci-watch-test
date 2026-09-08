@@ -9,7 +9,11 @@ trap 'rm -rf "$SCRATCH"' EXIT
 
 cat > "$SCRATCH/gh" <<'EOF'
 #!/usr/bin/env bash
-cat "$GH_FIXTURE"
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+  printf '[{"headRefName":"develop"}]\n'
+else
+  cat "$GH_FIXTURE"
+fi
 EOF
 chmod +x "$SCRATCH/gh"
 
@@ -53,6 +57,9 @@ if env "${common[@]}" "$WATCH" --once >"$SCRATCH/output" 2>&1; then
 fi
 grep -q 'CI Checks | failure | develop | change' "$SCRATCH/output"
 
-env "${common[@]}" "$WATCH" --once >/dev/null
+if env "${common[@]}" "$WATCH" --once >/dev/null 2>&1; then
+  echo "FAIL: an existing failed workflow was accepted" >&2
+  exit 1
+fi
 
 echo "gh-ci-watch-test: passed"

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Poll every GitHub Actions workflow in the current repository and fail when a
-# run changes to a non-success conclusion.
-#
-# The first poll establishes a baseline. Existing failures are not reported;
-# only failures observed after the watcher starts fail the process.
+# Poll GitHub Actions for main and every open pull request in the current
+# repository. Fail when the latest run for a workflow and branch has a
+# non-success conclusion.
 #
 # Environment:
 #   GH_CI_INTERVAL       Poll interval in seconds (default: 60)
-#   GH_CI_LIMIT          Number of recent runs to inspect (default: 100)
-#   GH_CI_STATE_FILE     Snapshot path (default: .tmp/gh/ci-runs.json)
+#   GH_CI_LIMIT          Number of runs per branch to inspect (default: 100)
+#   GH_CI_PR_LIMIT       Number of open pull requests to inspect (default: 100)
+#   GH_CI_STATE_FILE     Snapshot path (default: .tmp/gh/open-prs-main-runs.json)
 #   GH_BIN               gh executable (default: gh)
 #
 # Pass --once to perform one poll. This is useful for deterministic checks.
@@ -16,7 +15,8 @@ set -euo pipefail
 
 INTERVAL="${GH_CI_INTERVAL:-60}"
 LIMIT="${GH_CI_LIMIT:-100}"
-STATE_FILE="${GH_CI_STATE_FILE:-.tmp/gh/ci-runs.json}"
+PR_LIMIT="${GH_CI_PR_LIMIT:-100}"
+STATE_FILE="${GH_CI_STATE_FILE:-.tmp/gh/open-prs-main-runs.json}"
 GH_BIN="${GH_BIN:-gh}"
 ONCE=false
 
@@ -30,11 +30,28 @@ fi
 STATE_DIR="$(dirname "$STATE_FILE")"
 mkdir -p "$STATE_DIR"
 
+branches() {
+  {
+    printf '%s\n' main
+    "$GH_BIN" pr list \
+      --state open \
+      --limit "$PR_LIMIT" \
+      --json headRefName \
+      --jq '.[].headRefName'
+  } | LC_ALL=C sort -u
+}
+
 snapshot() {
-  "$GH_BIN" run list \
-    --limit "$LIMIT" \
-    --json databaseId,status,conclusion,headBranch,workflowName,displayTitle,url \
-    | jq -S 'sort_by(.databaseId)'
+  while IFS= read -r branch; do
+    "$GH_BIN" run list \
+      --branch "$branch" \
+      --limit "$LIMIT" \
+      --json databaseId,status,conclusion,headBranch,workflowName,displayTitle,url
+  done < <(branches) \
+    | jq -s -S 'add
+      | sort_by(.databaseId)
+      | group_by([.workflowName, .headBranch])
+      | map(last)'
 }
 
 poll() {
@@ -45,25 +62,9 @@ poll() {
     return 1
   fi
 
-  if [[ ! -f "$STATE_FILE" ]]; then
-    mv "$next" "$STATE_FILE"
-    printf 'GitHub CI baseline established (%s runs)\n' "$(jq 'length' "$STATE_FILE")"
-    return 0
-  fi
-
-  failures="$(jq -r --slurpfile previous "$STATE_FILE" '
-    ($previous[0] // []) as $old
-    | [
-        .[] as $run
-        | select($run.status == "completed")
-        | ([$old[] | select(.databaseId == $run.databaseId)] | first) as $before
-        | select($before == null
-            or $before.status != "completed"
-            or $before.conclusion != $run.conclusion)
-        | select($run.conclusion != "success")
-        | $run
-      ]
-    | .[]
+  failures="$(jq -r '
+    .[]
+    | select(.status == "completed" and .conclusion != "success")
     | "\(.workflowName) | \(.conclusion) | \(.headBranch) | \(.displayTitle) | \(.url // "")"
   ' "$next")"
 
