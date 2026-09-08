@@ -224,12 +224,12 @@ pub fn run() {
             example_profile,
             format,
         } => {
-            let result = crate::cli::config::execute_config(
-                schema_section.flatten(),
-                example_profile,
-                format,
-            );
-            if let Err(err) = result {
+            let config_action =
+                crate::arguments::normalize_config_action(schema_section, example_profile, format)
+                    .unwrap_or_else(|error| {
+                        stdout::failure("config command failed", error.to_owned())
+                    });
+            if let Err(err) = crate::cli::config::execute_config_action(config_action) {
                 stdout::failure("config command failed", err.to_string());
             }
         }
