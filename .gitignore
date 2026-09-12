@@ -24,8 +24,9 @@ tests/integration/workdir/
 *.log*
 tests/integration/release/
 
-# Agent tooling caches (e.g. AST index)
+# Agent tooling caches and watcher runtime state
 .pi/
+.pi-funzzy-*.json
 
 # Nix stuff
 result
