@@ -73,6 +73,22 @@ fn tag_selection_runs_all_matching_parallel_tasks() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+fn strip_sgr_codes(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+    while let Some(start) = remaining.find("\x1b[") {
+        output.push_str(&remaining[..start]);
+        let after_escape = &remaining[start + 2..];
+        let Some(end) = after_escape.find('m') else {
+            output.push_str(&remaining[start..]);
+            break;
+        };
+        remaining = &after_escape[end + 1..];
+    }
+    output.push_str(remaining);
+    output
+}
+
 fn ansi_code_for_tag(output: &str, tag: &str, occurrence: usize) -> String {
     let marker = format!("[{tag}]");
     let marker_start = output
@@ -99,7 +115,7 @@ fn parallel_attribution_colors_only_tags_and_reuses_label_color() {
     let log_path = directory.join("run.log");
     write_config(
         &directory,
-        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: alpha @quick\n    parallel: checks\n    run: 'printf alpha-out; printf alpha-error >&2; printf alpha-partial'\n  - name: beta @quick\n    parallel: checks\n    output: show-on-failure\n    run: 'printf beta-failure; printf beta-error >&2; exit 1'\n",
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: alpha @quick\n    parallel: checks\n    run: 'printf alpha-full-out\\\\n; printf alpha-full-error\\\\n >&2; printf alpha-partial'\n  - name: beta @quick\n    parallel: checks\n    output: show-on-failure\n    run: 'printf beta-full-out\\\\n; printf beta-full-error\\\\n >&2; printf beta-partial; exit 1'\n",
     );
 
     let output = fzz(&directory)
@@ -116,13 +132,28 @@ fn parallel_attribution_colors_only_tags_and_reuses_label_color() {
     // Alpha streams stdout, stderr, and its partial final line live. Beta is
     // revealed after failure, exercising both streams through the same seam.
     for body in [
-        "alpha-out",
-        "alpha-error",
+        "alpha-full-out",
+        "alpha-full-error",
         "alpha-partial",
-        "beta-failure",
-        "beta-error",
+        "beta-full-out",
+        "beta-full-error",
+        "beta-partial",
     ] {
         assert!(combined.contains(body), "missing {body:?}: {combined}");
+    }
+    let plain = strip_sgr_codes(&combined);
+    for body in [
+        "[alpha @quick] alpha-full-out\n",
+        "[alpha @quick] alpha-partial",
+        "[alpha @quick] alpha-full-error\n",
+        "[checks#1:stdout] beta-full-out\n",
+        "[checks#1:stdout] beta-partial\n",
+        "[checks#1:stderr] beta-full-error\n",
+    ] {
+        assert!(
+            plain.contains(body),
+            "ANSI-stripped body mismatch for {body:?}: {plain}"
+        );
     }
     for tag in ["alpha @quick", "checks#1:stdout", "checks#1:stderr"] {
         assert!(
@@ -140,6 +171,20 @@ fn parallel_attribution_colors_only_tags_and_reuses_label_color() {
     );
     let log = std::fs::read_to_string(&log_path).expect("read log");
     assert!(!log.contains('\x1b'), "log must remain ANSI-free: {log}");
+    for attribution in [
+        "[alpha @quick] alpha-full-out",
+        "[alpha @quick] alpha-full-error",
+        "[alpha @quick] alpha-partial",
+        "[checks#1:stdout] beta-full-out",
+        "[checks#1:stdout] beta-partial",
+        "[checks#1:stderr] beta-full-error",
+    ] {
+        assert_eq!(
+            log.matches(attribution).count(),
+            1,
+            "log attribution must be plain and non-duplicated for {attribution:?}: {log}"
+        );
+    }
 
     std::fs::remove_dir_all(&directory).unwrap();
 }
