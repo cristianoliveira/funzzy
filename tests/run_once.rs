@@ -73,6 +73,77 @@ fn tag_selection_runs_all_matching_parallel_tasks() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+fn ansi_code_for_tag(output: &str, tag: &str, occurrence: usize) -> String {
+    let marker = format!("[{tag}]");
+    let marker_start = output
+        .match_indices(&marker)
+        .nth(occurrence)
+        .map(|(start, _)| start)
+        .unwrap_or_else(|| panic!("missing tag {marker:?} in output: {output}"));
+    let prefix = &output[..marker_start];
+    let escape_start = prefix
+        .rfind("\x1b[")
+        .unwrap_or_else(|| panic!("tag {marker:?} is not colored: {output}"));
+    let escape_end = prefix[escape_start..]
+        .find('m')
+        .map(|offset| escape_start + offset + 1)
+        .expect("color escape must terminate");
+    prefix[escape_start..escape_end].to_owned()
+}
+
+#[test]
+fn parallel_attribution_colors_only_tags_and_reuses_label_color() {
+    // TASK-0186: labels are colored at the terminal presentation edge while
+    // child bodies, stream suffixes, and log output remain unchanged/plain.
+    let directory = fixture("colored-attributed-output");
+    let log_path = directory.join("run.log");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: alpha @quick\n    parallel: checks\n    run: 'printf alpha-out; printf alpha-error >&2; printf alpha-partial'\n  - name: beta @quick\n    parallel: checks\n    output: show-on-failure\n    run: 'printf beta-failure; printf beta-error >&2; exit 1'\n",
+    );
+
+    let output = fzz(&directory)
+        .env("FUNZZY_COLORED", "true")
+        .env("_TEST_FUNZZY_COLORED", "true")
+        .args(["--log-file", log_path.to_str().unwrap(), "run", "@quick"])
+        .output()
+        .expect("run colored parallel jobs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // Alpha streams stdout, stderr, and its partial final line live. Beta is
+    // revealed after failure, exercising both streams through the same seam.
+    for body in [
+        "alpha-out",
+        "alpha-error",
+        "alpha-partial",
+        "beta-failure",
+        "beta-error",
+    ] {
+        assert!(combined.contains(body), "missing {body:?}: {combined}");
+    }
+    for tag in ["alpha @quick", "checks#1:stdout", "checks#1:stderr"] {
+        assert!(
+            combined.contains(&format!("[{tag}]\x1b[0m ")),
+            "tag body boundary is not colored-only for {tag:?}: {combined}"
+        );
+    }
+    assert_eq!(
+        ansi_code_for_tag(&combined, "alpha @quick", 0),
+        ansi_code_for_tag(&combined, "alpha @quick", 1)
+    );
+    assert_eq!(
+        ansi_code_for_tag(&combined, "checks#1:stdout", 0),
+        ansi_code_for_tag(&combined, "checks#1:stderr", 0)
+    );
+    let log = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(!log.contains('\x1b'), "log must remain ANSI-free: {log}");
+
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
 #[test]
 fn parallel_live_output_is_attributed_and_summary_names_group_and_tasks() {
     // TASK-0028: live lines from parallel-group tasks carry the `[task]`
