@@ -1624,7 +1624,8 @@ impl Executor {
                 }
                 let text = String::from_utf8_lossy(bytes);
                 for line in text.lines() {
-                    let attributed = format!("[{}:{}] {}", label, stream, line);
+                    let attributed =
+                        format!("{} {}", stdout::attribution_tag(label, Some(stream)), line);
                     println!("{}", attributed);
                     logging::log_plain(&attributed);
                 }

@@ -11,6 +11,45 @@ pub const RED: &str = "\x1b[31m";
 pub const BLUE: &str = "\x1b[34m";
 pub const RESET: &str = "\x1b[0m";
 
+// Attribution tags use a fixed ANSI palette and a stable FNV-1a hash. The
+// palette is intentionally finite: the literal tag remains the identity when
+// two labels collide on a color.
+const ATTRIBUTION_COLORS: [&str; 6] = [
+    "\x1b[36m", // cyan
+    "\x1b[35m", // magenta
+    "\x1b[33m", // yellow
+    "\x1b[32m", // green
+    "\x1b[34m", // blue
+    "\x1b[31m", // red
+];
+
+/// Formats one live or revealed task-attribution tag. Color is applied only
+/// to the bracketed tag; callers append the child-produced body separately.
+/// The label alone selects the color so stdout/stderr and all invocations of
+/// one task remain visually consistent.
+pub(crate) fn attribution_tag(label: &str, stream: Option<&str>) -> String {
+    render_attribution_tag(label, stream, is_colored())
+}
+
+fn render_attribution_tag(label: &str, stream: Option<&str>, colored: bool) -> String {
+    let tag = match stream {
+        Some(stream) => format!("[{label}:{stream}]"),
+        None => format!("[{label}]"),
+    };
+    if colored {
+        format!("{}{}{}", attribution_color(label), tag, RESET)
+    } else {
+        tag
+    }
+}
+
+fn attribution_color(label: &str) -> &'static str {
+    let hash = label.bytes().fold(2_166_136_261_u32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
+    });
+    ATTRIBUTION_COLORS[(hash as usize) % ATTRIBUTION_COLORS.len()]
+}
+
 #[cfg(not(test))]
 pub fn is_colored() -> bool {
     environment::is_enabled("FUNZZY_COLORED")
@@ -283,6 +322,36 @@ pub fn clear_screen() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attribution_tag_color_is_stable_and_stream_independent() {
+        let live = render_attribution_tag("lint @quick", None, true);
+        let stdout = render_attribution_tag("lint @quick", Some("stdout"), true);
+        let stderr = render_attribution_tag("lint @quick", Some("stderr"), true);
+
+        assert_eq!(live, render_attribution_tag("lint @quick", None, true));
+        assert_eq!(
+            live[..live.find('[').unwrap()].to_owned(),
+            stdout[..stdout.find('[').unwrap()].to_owned()
+        );
+        assert_eq!(
+            live[..live.find('[').unwrap()].to_owned(),
+            stderr[..stderr.find('[').unwrap()].to_owned()
+        );
+        assert!(live.ends_with(RESET));
+    }
+
+    #[test]
+    fn attribution_tag_disabled_mode_preserves_plain_forms() {
+        assert_eq!(
+            render_attribution_tag("lint @quick", None, false),
+            "[lint @quick]"
+        );
+        assert_eq!(
+            render_attribution_tag("lint @quick", Some("stderr"), false),
+            "[lint @quick:stderr]"
+        );
+    }
 
     #[test]
     fn job_duration_rows_are_empty_for_no_tasks() {

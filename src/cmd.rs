@@ -699,7 +699,7 @@ fn forward_child_output(
 fn render_live_line(raw: &[u8], label: Option<&str>) -> String {
     let rendered = String::from_utf8_lossy(raw);
     match label {
-        Some(label) => format!("[{}] {}", label, rendered),
+        Some(label) => format!("{} {}", stdout::attribution_tag(label, None), rendered),
         None => rendered.into_owned(),
     }
 }

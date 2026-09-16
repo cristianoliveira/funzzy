@@ -73,6 +73,122 @@ fn tag_selection_runs_all_matching_parallel_tasks() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+fn strip_sgr_codes(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut remaining = input;
+    while let Some(start) = remaining.find("\x1b[") {
+        output.push_str(&remaining[..start]);
+        let after_escape = &remaining[start + 2..];
+        let Some(end) = after_escape.find('m') else {
+            output.push_str(&remaining[start..]);
+            break;
+        };
+        remaining = &after_escape[end + 1..];
+    }
+    output.push_str(remaining);
+    output
+}
+
+fn ansi_code_for_tag(output: &str, tag: &str, occurrence: usize) -> String {
+    let marker = format!("[{tag}]");
+    let marker_start = output
+        .match_indices(&marker)
+        .nth(occurrence)
+        .map(|(start, _)| start)
+        .unwrap_or_else(|| panic!("missing tag {marker:?} in output: {output}"));
+    let prefix = &output[..marker_start];
+    let escape_start = prefix
+        .rfind("\x1b[")
+        .unwrap_or_else(|| panic!("tag {marker:?} is not colored: {output}"));
+    let escape_end = prefix[escape_start..]
+        .find('m')
+        .map(|offset| escape_start + offset + 1)
+        .expect("color escape must terminate");
+    prefix[escape_start..escape_end].to_owned()
+}
+
+#[test]
+fn parallel_attribution_colors_only_tags_and_reuses_label_color() {
+    // TASK-0186: labels are colored at the terminal presentation edge while
+    // child bodies, stream suffixes, and log output remain unchanged/plain.
+    let directory = fixture("colored-attributed-output");
+    let log_path = directory.join("run.log");
+    write_config(
+        &directory,
+        "on:\n  change: '**/*'\nexecution:\n  concurrency: 2\njobs:\n  - name: alpha @quick\n    parallel: checks\n    run: 'printf alpha-full-out\\\\n; printf alpha-full-error\\\\n >&2; printf alpha-partial'\n  - name: beta @quick\n    parallel: checks\n    output: show-on-failure\n    run: 'printf beta-full-out\\\\n; printf beta-full-error\\\\n >&2; printf beta-partial; exit 1'\n",
+    );
+
+    let output = fzz(&directory)
+        .env("FUNZZY_COLORED", "true")
+        .env("_TEST_FUNZZY_COLORED", "true")
+        .args(["--log-file", log_path.to_str().unwrap(), "run", "@quick"])
+        .output()
+        .expect("run colored parallel jobs");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // Alpha streams stdout, stderr, and its partial final line live. Beta is
+    // revealed after failure, exercising both streams through the same seam.
+    for body in [
+        "alpha-full-out",
+        "alpha-full-error",
+        "alpha-partial",
+        "beta-full-out",
+        "beta-full-error",
+        "beta-partial",
+    ] {
+        assert!(combined.contains(body), "missing {body:?}: {combined}");
+    }
+    let plain = strip_sgr_codes(&combined);
+    for body in [
+        "[alpha @quick] alpha-full-out\n",
+        "[alpha @quick] alpha-partial",
+        "[alpha @quick] alpha-full-error\n",
+        "[checks#1:stdout] beta-full-out\n",
+        "[checks#1:stdout] beta-partial\n",
+        "[checks#1:stderr] beta-full-error\n",
+    ] {
+        assert!(
+            plain.contains(body),
+            "ANSI-stripped body mismatch for {body:?}: {plain}"
+        );
+    }
+    for tag in ["alpha @quick", "checks#1:stdout", "checks#1:stderr"] {
+        assert!(
+            combined.contains(&format!("[{tag}]\x1b[0m ")),
+            "tag body boundary is not colored-only for {tag:?}: {combined}"
+        );
+    }
+    assert_eq!(
+        ansi_code_for_tag(&combined, "alpha @quick", 0),
+        ansi_code_for_tag(&combined, "alpha @quick", 1)
+    );
+    assert_eq!(
+        ansi_code_for_tag(&combined, "checks#1:stdout", 0),
+        ansi_code_for_tag(&combined, "checks#1:stderr", 0)
+    );
+    let log = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(!log.contains('\x1b'), "log must remain ANSI-free: {log}");
+    for attribution in [
+        "[alpha @quick] alpha-full-out",
+        "[alpha @quick] alpha-full-error",
+        "[alpha @quick] alpha-partial",
+        "[checks#1:stdout] beta-full-out",
+        "[checks#1:stdout] beta-partial",
+        "[checks#1:stderr] beta-full-error",
+    ] {
+        assert_eq!(
+            log.matches(attribution).count(),
+            1,
+            "log attribution must be plain and non-duplicated for {attribution:?}: {log}"
+        );
+    }
+
+    std::fs::remove_dir_all(&directory).unwrap();
+}
+
 #[test]
 fn parallel_live_output_is_attributed_and_summary_names_group_and_tasks() {
     // TASK-0028: live lines from parallel-group tasks carry the `[task]`
