@@ -88,6 +88,9 @@ fi
 if [ -f nix/package.nix ]; then
   NIX_VERSION="$(grep -m1 '^  version' nix/package.nix | sed 's/^  version = "\(.*\)";/\1/')"
   NIX_REV="$(grep -m1 'rev = ' nix/package.nix | sed 's/.*rev = "\(.*\)";/\1/')"
+  if [ "$NIX_REV" = 'v${version}' ]; then
+    NIX_REV="v$NIX_VERSION"
+  fi
   echo "Nix stable:      $NIX_VERSION ($NIX_REV)"
   if [[ "$CARGO_VERSION" != *"-"* ]]; then
     if [ "$CANDIDATE" = "1" ]; then

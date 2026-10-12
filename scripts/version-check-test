@@ -101,5 +101,16 @@ sed -i 's/^version = "9.9.9-beta.1"/version = "9.9.9"/' "$SCRATCH/crates/fzz/Car
 sed -i 's/version = "=9.9.9-beta.1"/version = "=9.9.9"/' "$SCRATCH/crates/fzz/Cargo.toml"
 expect_reject "stable version without v9.9.9 tag" "$SCRATCH/scripts/version-check"
 
+# 5. The stable Nix package uses rev = "v${version}"; once tagged, that
+# template must resolve to the exact release tag, not be treated literally.
+sed -i -E 's/^  version = "[^"]+";/  version = "9.9.9";/' "$SCRATCH/nix/package.nix"
+git -C "$SCRATCH" init -q
+git -C "$SCRATCH" add Cargo.toml Cargo.lock crates/fzz/Cargo.toml nix/package.nix
+git -C "$SCRATCH" -c user.name=Test -c user.email=test@example.com commit -qm 'release fixture'
+git -C "$SCRATCH" tag v9.9.9
+expect_accept "tagged stable version with templated Nix rev" "$SCRATCH/scripts/version-check"
+sed -i 's/rev = "v${version}"/rev = "v9.9.8"/' "$SCRATCH/nix/package.nix"
+expect_reject "stable Nix rev for the wrong tag" "$SCRATCH/scripts/version-check"
+
 echo "version-check-test: $pass passed, $failc failed"
 [ "$failc" -eq 0 ]
