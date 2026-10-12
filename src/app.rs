@@ -712,16 +712,7 @@ fn literal_prefix(pattern: &str) -> Option<String> {
 /// to the historical one second when absent or invalid (invalid values fail
 /// loudly, they never silently change timing).
 fn load_debounce(config_file: &Option<String>) -> std::time::Duration {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return std::time::Duration::from_millis(1000);
     };
@@ -733,16 +724,7 @@ fn load_debounce(config_file: &Option<String>) -> std::time::Duration {
 /// The filesystem backend policy from `on.watch_backend` (TASK-0037);
 /// defaults to auto (native first, poll fallback). Invalid values fail loudly.
 fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBackend {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return crate::watcher::WatchBackend::Auto;
     };
@@ -754,16 +736,7 @@ fn load_watch_backend(config_file: &Option<String>) -> crate::watcher::WatchBack
 /// The run-level terminal hooks from `on.success`/`on.failure` (TASK-0040).
 fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
     // failure_settle defaults to None for legacy callers
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return config::GenerationHooks::default();
     };
@@ -773,16 +746,7 @@ fn load_hooks(config_file: &Option<String>) -> config::GenerationHooks {
 
 /// Whether `on.respect_gitignore` is enabled (TASK-0036); default false.
 fn load_respect_gitignore(config_file: &Option<String>) -> bool {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return false;
     };
@@ -799,16 +763,7 @@ fn effective_recovery_policy(
 }
 
 fn load_recovery_timeout(config_file: &Option<String>) -> std::time::Duration {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return std::time::Duration::from_secs(60);
     };
@@ -820,16 +775,7 @@ fn load_recovery_timeout(config_file: &Option<String>) -> std::time::Duration {
 }
 
 fn load_recovery_policy(config_file: &Option<String>) -> config::RecoveryPolicy {
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return config::RecoveryPolicy::Prompt;
     };
@@ -841,16 +787,7 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
     let default = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1);
-    let path = match config_file.as_deref() {
-        Some(path) => Some(path.to_owned()),
-        None if std::path::Path::new(cli::watch::DEFAULT_FILENAME).exists() => {
-            Some(cli::watch::DEFAULT_FILENAME.to_owned())
-        }
-        None => {
-            let yaml = cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml");
-            std::path::Path::new(&yaml).exists().then_some(yaml)
-        }
-    };
+    let path = selected_config_path(config_file, std::path::Path::new("."));
     let Some(path) = path else {
         return default;
     };
@@ -860,25 +797,64 @@ fn load_concurrency(config_file: &Option<String>) -> usize {
         .unwrap_or(default)
 }
 
-/// The control socket declared by the selected config file (`on.socket`),
-/// mirroring `execute_watch_command` path resolution (explicit path, else
-/// `.watch.yaml`/`.watch.yml` under the workspace root). Missing config or
-/// missing key yields `None`. Used by the Watch command so the initial
-/// revision's semantic surface includes the same socket the reload
-/// candidates carry (TASK-0092).
-fn config_control_socket(config: &Option<String>, root: &std::path::Path) -> Option<String> {
-    let possible = match config.as_deref() {
+/// One source of config path candidates for policy loading, socket discovery,
+/// and reload tracking. Explicit paths stay relative to the caller's cwd.
+fn config_candidates(
+    config_file: &Option<String>,
+    root: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    match config_file {
+        Some(path) => vec![std::path::PathBuf::from(path)],
         None => vec![
             root.join(cli::watch::DEFAULT_FILENAME),
-            root.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml")),
+            root.join(cli::watch::DEFAULT_FILENAME.replace(".yaml", ".yml")),
         ],
-        Some(config_file) => vec![std::path::PathBuf::from(config_file)],
+    }
+}
+
+fn selected_config_path(config_file: &Option<String>, root: &std::path::Path) -> Option<String> {
+    let candidates = config_candidates(config_file, root);
+    let selected = if config_file.is_some() {
+        candidates.into_iter().next()
+    } else {
+        candidates.into_iter().find(|path| path.exists())
     };
-    possible
+    selected.map(|path| {
+        path.to_str()
+            .unwrap_or_else(|| {
+                stdout::failure(
+                    "Failed to resolve config path",
+                    format!("Config path is not valid UTF-8: {}", path.display()),
+                )
+            })
+            .to_owned()
+    })
+}
+
+fn reload_config_paths(
+    config_file: &Option<String>,
+    root: &std::path::Path,
+) -> errors::Result<Vec<String>> {
+    config_candidates(config_file, root)
         .into_iter()
-        .find(|path| path.exists())
+        .map(|path| {
+            path.to_str().map(str::to_owned).ok_or_else(|| {
+                FzzError::PathError(
+                    format!("Config path is not valid UTF-8: {}", path.display()),
+                    None,
+                    Some("Use a UTF-8 workspace path to watch default config files.".to_owned()),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Read the socket from the selected config; missing config/key yields None.
+fn config_control_socket(config: &Option<String>, root: &std::path::Path) -> Option<String> {
+    selected_config_path(config, root)
+        .filter(|path| std::path::Path::new(path).exists())
         .and_then(|path| {
-            config::control_socket_from_file(&path.to_string_lossy())
+            config::control_socket_from_file(&path)
                 .unwrap_or_else(|err| stdout::failure("Invalid control socket config", err))
         })
 }
@@ -927,22 +903,8 @@ fn execute_watch_command(
         }
     }
 
-    let possible_config_paths = match args.config.as_deref() {
-        None => {
-            let dir = watches.root();
-            vec![
-                dir.join(cli::watch::DEFAULT_FILENAME)
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                dir.join(cli::watch::DEFAULT_FILENAME.replace("yaml", "yml"))
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-            ]
-        }
-        Some(config_file) => vec![config_file.to_string()],
-    };
+    let possible_config_paths = reload_config_paths(&args.config, watches.root())
+        .unwrap_or_else(|err| stdout::failure("Failed to resolve config paths", err.to_string()));
 
     let truncate_on_config_change = args.log_truncate_on_change;
     let debounce = load_debounce(&args.config);
@@ -1332,6 +1294,67 @@ fn from_stdin() -> errors::Result<StdinRead> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_config_paths_include_both_extensions() {
+        let root = std::env::temp_dir().join("funzzy");
+        let paths = reload_config_paths(&None, &root).expect("UTF-8 workspace root should work");
+        assert_eq!(
+            paths,
+            vec![
+                root.join(".watch.yaml").to_str().unwrap().to_owned(),
+                root.join(".watch.yml").to_str().unwrap().to_owned(),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_config_paths_reject_non_utf8_workspace_root_without_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let root =
+            std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/funzzy-\xff".to_vec()));
+        let error = reload_config_paths(&None, &root).expect_err("non-UTF-8 root must be rejected");
+        assert!(error.to_string().contains("not valid UTF-8"));
+    }
+
+    #[test]
+    fn selected_config_path_prefers_yaml_then_yml() {
+        let root = std::env::temp_dir().join(format!("funzzy-config-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let yaml = root.join(".watch.yaml");
+        let yml = root.join(".watch.yml");
+
+        assert_eq!(selected_config_path(&None, &root), None);
+        std::fs::write(&yml, "").unwrap();
+        assert_eq!(
+            selected_config_path(&None, &root),
+            Some(yml.display().to_string())
+        );
+        std::fs::write(&yaml, "").unwrap();
+        assert_eq!(
+            selected_config_path(&None, &root),
+            Some(yaml.display().to_string())
+        );
+        assert_eq!(
+            selected_config_path(&Some("custom.yaml".to_owned()), &root),
+            Some("custom.yaml".to_owned())
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn explicit_config_path_is_the_only_reload_candidate() {
+        let paths = reload_config_paths(
+            &Some("custom.yaml".to_owned()),
+            std::path::Path::new("/tmp/funzzy"),
+        )
+        .expect("explicit path should work");
+        assert_eq!(paths, vec!["custom.yaml".to_owned()]);
+    }
 
     #[test]
     fn literal_prefix_extracts_the_longest_non_wildcard_prefix() {
