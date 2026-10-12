@@ -106,7 +106,7 @@ fzz                              # start watching
 `fzz init` does not overwrite an existing configuration. Use `fzz migrate` to convert an accepted old configuration to the `jobs:` form.
 
 > [!NOTE]
-> V2 (`2.0.0`) is the current line. Version 1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1). See the [migration guide](docs/MIGRATION.md).
+> V2 (`2.0.1`) is the current line. Version 1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1). See the [migration guide](docs/MIGRATION.md).
 
 ## How it works
 

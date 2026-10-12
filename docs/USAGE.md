@@ -1,8 +1,8 @@
 # Funzzy V2 usage: getting started and daily workflows
 
-> V2 status: current `develop` is an unreleased **2.0.0** with intentional CLI
-> breaks (RELEASE-BOUNDARY). Both binary names work: `funzzy` and its short
-> alias `fzz` — examples use `fzz` consistently.
+> V2 introduced intentional CLI breaks from V1 (see [migration guide](MIGRATION.md)).
+> Both binary names work: `funzzy` and its short alias `fzz` — examples use
+> `fzz` consistently.
 
 ## 1. Getting started (five steps)
 

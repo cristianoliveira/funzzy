@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Check the actual crate payload before publishing, not just manifest globs.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+package_files="$(cargo package --locked --list --allow-dirty)"
+while IFS= read -r path; do
+  case "$path" in
+    .cargo_vcs_info.json|Cargo.lock|Cargo.toml|Cargo.toml.orig|LICENSE|README.md|\
+    src/*|docs/*|examples/*|nix/*|scripts/*) ;;
+    *) echo "Unexpected file in funzzy crate: $path" >&2; exit 1 ;;
+  esac
+done <<< "$package_files"
+
+echo "funzzy package contents OK"

@@ -7,7 +7,7 @@
 #
 #   scripts/verify-release [CHANNEL...]    # default: all
 #     CHANNEL ∈ crates github nix compat control
-#   scripts/verify-release --version X     # default 2.0.0
+#   scripts/verify-release --version X     # default 2.0.1
 #   scripts/verify-release --fzz-bin PATH [compat control]   # rehearsal:
 #     skip crates.io install and exercise the binary-dependent channels
 #     against an already-built binary (pre-publication dry rehearsal).
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="2.0.0"
+VERSION="2.0.1"
 FZZ_BIN=""
 CHANNELS=()
 while [ $# -gt 0 ]; do

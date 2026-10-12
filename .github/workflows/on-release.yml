@@ -37,6 +37,9 @@ jobs:
       - name: Verify the fzz alias package
         run: scripts/fzz-alias-check
 
+      - name: Verify the canonical crate payload
+        run: bash scripts/package-contents-check
+
       - name: Publish canonical crate, then exact-version alias
         env:
           CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}

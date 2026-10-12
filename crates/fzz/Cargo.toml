@@ -1,6 +1,6 @@
 [package]
 name = "fzz"
-version = "2.0.0"
+version = "2.0.1"
 authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "Official short-name installer for the Funzzy file watcher"
 license = "MIT"
@@ -21,4 +21,4 @@ path = "src/main.rs"
 [dependencies]
 # The path supports repository tests. Cargo removes it from the published
 # manifest and uses the exact crates.io version.
-funzzy = { version = "=2.0.0", path = "../.." }
+funzzy = { version = "=2.0.1", path = "../.." }

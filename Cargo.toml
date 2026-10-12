@@ -1,6 +1,6 @@
 [package]
 name = "funzzy"
-version = "2.0.0"
+version = "2.0.1"
 authors = ["Cristian Oliveira <me@cristianoliveira.com>"]
 description = "A lightweight blazingly fast file watcher"
 license = "MIT"
@@ -11,8 +11,8 @@ edition = "2021"
 include = [
     "src/**",
     "Cargo.toml",
-    "LICENSE",
-    "README.md",
+    "/LICENSE",
+    "/README.md",
     "docs/**",
     "examples/**",
     "nix/**",
