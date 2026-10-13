@@ -47,14 +47,31 @@ jobs:
           set -euo pipefail
           VERSION="$(grep -m1 '^version' Cargo.toml | sed 's/^version = "\(.*\)"/\1/')"
 
+          # crates.io rejects curl's default user agent with HTTP 403. A
+          # blocked lookup must never be mistaken for an unpublished version.
+          CRATES_USER_AGENT="funzzy-release/$VERSION (https://github.com/cristianoliveira/funzzy)"
+          crates_api() {
+            curl --fail --silent --show-error --user-agent "$CRATES_USER_AGENT" \
+              "https://crates.io/api/v1/$1"
+          }
+
           crate_version_exists() {
-            curl --fail --silent --show-error \
-              "https://crates.io/api/v1/crates/$1/$VERSION" >/dev/null 2>&1
+            local status
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+              --user-agent "$CRATES_USER_AGENT" \
+              "https://crates.io/api/v1/crates/$1/$VERSION")" || {
+              echo "crates.io lookup for $1 $VERSION failed" >&2
+              exit 1
+            }
+            case "$status" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *) echo "crates.io lookup for $1 $VERSION returned HTTP $status" >&2; exit 1 ;;
+            esac
           }
 
           verify_owner() {
-            curl --fail --silent --show-error \
-              "https://crates.io/api/v1/crates/$1/owners" |
+            crates_api "crates/$1/owners" |
               python3 -c 'import json,sys; users=json.load(sys.stdin)["users"]; assert any(user["login"] == "cristianoliveira" for user in users)'
           }
 
@@ -87,6 +104,5 @@ jobs:
           fi
 
           verify_owner fzz
-          curl --fail --silent --show-error \
-            "https://crates.io/api/v1/crates/fzz/$VERSION/dependencies" |
+          crates_api "crates/fzz/$VERSION/dependencies" |
             python3 -c 'import json,sys; version=sys.argv[1]; deps=json.load(sys.stdin)["dependencies"]; assert any(dep["crate_id"] == "funzzy" and dep["req"] == f"={version}" for dep in deps)' "$VERSION"
