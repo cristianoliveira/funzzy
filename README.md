@@ -131,6 +131,8 @@ fzz ctl output --generation 12 --tail 80 --format toon
 
 Funzzy runs local commands and does not depend on a CI provider. Your scripts manage external services, credentials, and provider requests.
 
+Not required, but you can use the https://github.com/carbon-ni/pi-watcher to give agents direct control over the watcher service.
+
 ## Learn more
 
 | Need | Guide |
