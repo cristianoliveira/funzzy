@@ -294,9 +294,7 @@ pub fn run() {
 /// Print guidance users can paste into their own repository's AGENTS.md.
 /// This path deliberately avoids startup/config discovery and watcher effects.
 fn print_agents_instruction() {
-    println!(
-        "{}",
-        r#"## Agent edit-feedback loop
+    const INSTRUCTION: &str = r#"## Agent edit-feedback loop
 
 When Pi watcher tools are available:
 
@@ -307,8 +305,8 @@ When Pi watcher tools are available:
 5. For final verification, discover configured targets with `watcher_targets`, then use `watcher_verify` to trigger and await the appropriate final gate. Accept green only with current freshness and unchanged worktree; a restart, timeout, disconnect, or worktree change is not verified.
 6. If a run is already active, `watcher_status({wait: true})` can wait for it. Do not rerun checks just to poll.
 
-Without Pi watcher tools, use `fzz ctl status --format toon` before edits and `fzz ctl await --after <generation> --timeout 5m --format toon` after. This is feedback, not the Pi tool's worktree-fingerprint verification. If the watcher is unavailable, report that verification could not be completed."#
-    );
+Without Pi watcher tools, use `fzz ctl status --format toon` before edits and `fzz ctl await --after <generation> --timeout 5m --format toon` after. This is feedback, not the Pi tool's worktree-fingerprint verification. If the watcher is unavailable, report that verification could not be completed."#;
+    println!("{INSTRUCTION}");
 }
 
 /// `fzz watch [-- TARGET]`: build the watch topology from the selected
