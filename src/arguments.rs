@@ -82,6 +82,8 @@ pub enum Action {
     List,
     /// `fzz check`: validate configuration without starting a watcher.
     Check,
+    /// `fzz --agents-instruction`: print reusable agent guidance.
+    AgentsInstruction,
     /// `fzz completions SHELL`: emit shell completion scripts.
     Completions { shell: String },
     /// `fzz config schema|example`: agent-discoverable config surface.
@@ -210,147 +212,153 @@ impl Arguments {
         let events_file = matches.get_one::<String>("events_file").cloned();
         let control_socket = matches.get_one::<String>("control_socket").cloned();
 
-        let action = match matches.subcommand() {
-            None => Action::Watch {
-                target: matches.get_one::<String>("root_target").cloned(),
-                exclude: matches
-                    .get_many::<String>("root_exclude")
-                    .map(|values| values.cloned().collect())
-                    .unwrap_or_default(),
-                no_services: matches.get_flag("root_no_services"),
-            },
-            Some(("watch", sub)) => {
-                let target = sub.get_one::<String>("target").cloned();
-                let mut exclude = matches
-                    .get_many::<String>("root_exclude")
-                    .map(|values| values.cloned().collect::<Vec<_>>())
-                    .unwrap_or_default();
-                if let Some(values) = sub.get_many::<String>("exclude") {
-                    exclude.extend(values.cloned());
+        let action = if matches.get_flag("agents_instruction") {
+            Action::AgentsInstruction
+        } else {
+            match matches.subcommand() {
+                None => Action::Watch {
+                    target: matches.get_one::<String>("root_target").cloned(),
+                    exclude: matches
+                        .get_many::<String>("root_exclude")
+                        .map(|values| values.cloned().collect())
+                        .unwrap_or_default(),
+                    no_services: matches.get_flag("root_no_services"),
+                },
+                Some(("watch", sub)) => {
+                    let target = sub.get_one::<String>("target").cloned();
+                    let mut exclude = matches
+                        .get_many::<String>("root_exclude")
+                        .map(|values| values.cloned().collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    if let Some(values) = sub.get_many::<String>("exclude") {
+                        exclude.extend(values.cloned());
+                    }
+                    Action::Watch {
+                        target,
+                        exclude,
+                        no_services: sub.get_flag("no_services")
+                            || matches.get_flag("root_no_services"),
+                    }
                 }
-                Action::Watch {
-                    target,
-                    exclude,
-                    no_services: sub.get_flag("no_services")
-                        || matches.get_flag("root_no_services"),
+                Some(("list", _)) => Action::List,
+                Some(("check", _)) => Action::Check,
+                Some(("completions", sub)) => Action::Completions {
+                    shell: sub
+                        .get_one::<String>("shell")
+                        .cloned()
+                        .expect("shell is required by clap"),
+                },
+                Some(("config", sub)) => parse_config_subcommand(sub),
+                Some(("run", sub)) => {
+                    let target = sub
+                        .get_one::<String>("target")
+                        .cloned()
+                        .expect("target is required by clap");
+                    Action::Run { target }
                 }
-            }
-            Some(("list", _)) => Action::List,
-            Some(("check", _)) => Action::Check,
-            Some(("completions", sub)) => Action::Completions {
-                shell: sub
-                    .get_one::<String>("shell")
-                    .cloned()
-                    .expect("shell is required by clap"),
-            },
-            Some(("config", sub)) => parse_config_subcommand(sub),
-            Some(("run", sub)) => {
-                let target = sub
-                    .get_one::<String>("target")
-                    .cloned()
-                    .expect("target is required by clap");
-                Action::Run { target }
-            }
-            Some(("explain", sub)) => {
-                let path = sub
-                    .get_one::<String>("path")
-                    .cloned()
-                    .expect("path is required by clap");
-                Action::Explain { path }
-            }
-            Some(("init", sub)) => {
-                let template = sub
-                    .get_one::<String>("template")
-                    .and_then(|raw| Profile::parse(raw))
-                    .unwrap_or(Profile::Comprehensive);
-                Action::Init { template }
-            }
-            Some(("migrate", _)) => Action::Migrate,
-            Some(("control", sub)) => {
-                let socket = sub.get_one::<String>("socket").cloned();
-                let format = match sub
-                    .get_one::<String>("format")
-                    .map(String::as_str)
-                    .unwrap_or("human")
-                {
-                    "toon" => OutputFormat::Toon,
-                    "json" => OutputFormat::Json,
-                    _ => OutputFormat::Human,
-                };
-                let action = match sub.subcommand() {
-                    Some(("status", _)) => ControlAction::Status,
-                    Some(("list", _)) => ControlAction::List,
-                    Some(("capabilities", _)) => ControlAction::Capabilities,
-                    Some(("config", _)) => ControlAction::Config,
-                    Some(("run", run_sub)) => ControlAction::Run {
-                        target: run_sub
-                            .get_one::<String>("target")
-                            .cloned()
-                            .expect("target is required by clap"),
-                        wait: run_sub.get_flag("wait"),
-                        timeout: run_sub.get_one::<Duration>("timeout").copied(),
-                        sequential: run_sub.get_flag("sequential"),
-                    },
-                    Some(("emit", emit_sub)) => ControlAction::Emit {
-                        path: emit_sub
-                            .get_one::<String>("path")
-                            .cloned()
-                            .expect("path is required by clap"),
-                        wait: emit_sub.get_flag("wait"),
-                        timeout: emit_sub.get_one::<Duration>("timeout").copied(),
-                    },
-                    Some(("await", await_sub)) => ControlAction::Await {
-                        after: await_sub.get_one::<u64>("after").copied(),
-                        generation: await_sub.get_one::<u64>("generation").copied(),
-                        timeout: await_sub
-                            .get_one::<Duration>("timeout")
-                            .copied()
-                            .expect("timeout is required by clap"),
-                    },
-                    Some(("cancel", cancel_sub)) => ControlAction::Cancel {
-                        generation: cancel_sub
-                            .get_one::<u64>("generation")
-                            .copied()
-                            .expect("generation is required by clap"),
-                        wait: cancel_sub.get_flag("wait"),
-                        timeout: cancel_sub.get_one::<Duration>("timeout").copied(),
-                    },
-                    Some(("output", output_sub)) => ControlAction::Output {
-                        generation: output_sub
-                            .get_one::<u64>("generation")
-                            .copied()
-                            .expect("generation is required by clap"),
-                        task: output_sub.get_one::<String>("task").cloned(),
-                        stream: if output_sub.get_flag("stdout") {
-                            Some("stdout".to_string())
-                        } else if output_sub.get_flag("stderr") {
-                            Some("stderr".to_string())
-                        } else {
-                            None
+                Some(("explain", sub)) => {
+                    let path = sub
+                        .get_one::<String>("path")
+                        .cloned()
+                        .expect("path is required by clap");
+                    Action::Explain { path }
+                }
+                Some(("init", sub)) => {
+                    let template = sub
+                        .get_one::<String>("template")
+                        .and_then(|raw| Profile::parse(raw))
+                        .unwrap_or(Profile::Comprehensive);
+                    Action::Init { template }
+                }
+                Some(("migrate", _)) => Action::Migrate,
+                Some(("control", sub)) => {
+                    let socket = sub.get_one::<String>("socket").cloned();
+                    let format = match sub
+                        .get_one::<String>("format")
+                        .map(String::as_str)
+                        .unwrap_or("human")
+                    {
+                        "toon" => OutputFormat::Toon,
+                        "json" => OutputFormat::Json,
+                        _ => OutputFormat::Human,
+                    };
+                    let action = match sub.subcommand() {
+                        Some(("status", _)) => ControlAction::Status,
+                        Some(("list", _)) => ControlAction::List,
+                        Some(("capabilities", _)) => ControlAction::Capabilities,
+                        Some(("config", _)) => ControlAction::Config,
+                        Some(("run", run_sub)) => ControlAction::Run {
+                            target: run_sub
+                                .get_one::<String>("target")
+                                .cloned()
+                                .expect("target is required by clap"),
+                            wait: run_sub.get_flag("wait"),
+                            timeout: run_sub.get_one::<Duration>("timeout").copied(),
+                            sequential: run_sub.get_flag("sequential"),
                         },
-                        tail: output_sub.get_one::<u64>("tail").copied(),
-                        full: output_sub.get_flag("full"),
-                        page: output_sub.get_flag("page"),
-                        page_size: output_sub.get_one::<u64>("page-size").copied(),
-                        cursor: output_sub.get_one::<String>("cursor").cloned(),
-                    },
-                    _ => unreachable!("clap rejects unknown control subcommand before dispatch"),
-                };
-                Action::Control {
-                    action,
-                    socket,
-                    format,
+                        Some(("emit", emit_sub)) => ControlAction::Emit {
+                            path: emit_sub
+                                .get_one::<String>("path")
+                                .cloned()
+                                .expect("path is required by clap"),
+                            wait: emit_sub.get_flag("wait"),
+                            timeout: emit_sub.get_one::<Duration>("timeout").copied(),
+                        },
+                        Some(("await", await_sub)) => ControlAction::Await {
+                            after: await_sub.get_one::<u64>("after").copied(),
+                            generation: await_sub.get_one::<u64>("generation").copied(),
+                            timeout: await_sub
+                                .get_one::<Duration>("timeout")
+                                .copied()
+                                .expect("timeout is required by clap"),
+                        },
+                        Some(("cancel", cancel_sub)) => ControlAction::Cancel {
+                            generation: cancel_sub
+                                .get_one::<u64>("generation")
+                                .copied()
+                                .expect("generation is required by clap"),
+                            wait: cancel_sub.get_flag("wait"),
+                            timeout: cancel_sub.get_one::<Duration>("timeout").copied(),
+                        },
+                        Some(("output", output_sub)) => ControlAction::Output {
+                            generation: output_sub
+                                .get_one::<u64>("generation")
+                                .copied()
+                                .expect("generation is required by clap"),
+                            task: output_sub.get_one::<String>("task").cloned(),
+                            stream: if output_sub.get_flag("stdout") {
+                                Some("stdout".to_string())
+                            } else if output_sub.get_flag("stderr") {
+                                Some("stderr".to_string())
+                            } else {
+                                None
+                            },
+                            tail: output_sub.get_one::<u64>("tail").copied(),
+                            full: output_sub.get_flag("full"),
+                            page: output_sub.get_flag("page"),
+                            page_size: output_sub.get_one::<u64>("page-size").copied(),
+                            cursor: output_sub.get_one::<String>("cursor").cloned(),
+                        },
+                        _ => {
+                            unreachable!("clap rejects unknown control subcommand before dispatch")
+                        }
+                    };
+                    Action::Control {
+                        action,
+                        socket,
+                        format,
+                    }
                 }
-            }
-            Some(("exec", sub)) => {
-                let command: Vec<String> = sub
-                    .get_many::<String>("command")
-                    .map(|values| values.cloned().collect())
-                    .unwrap_or_default();
-                Action::Exec { command }
-            }
-            Some((other, _)) => {
-                unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
+                Some(("exec", sub)) => {
+                    let command: Vec<String> = sub
+                        .get_many::<String>("command")
+                        .map(|values| values.cloned().collect())
+                        .unwrap_or_default();
+                    Action::Exec { command }
+                }
+                Some((other, _)) => {
+                    unreachable!("clap rejects unknown subcommand {other:?} before dispatch")
+                }
             }
         };
 
@@ -433,6 +441,13 @@ pub fn command() -> Command {
                 .global(true)
                 .action(ArgAction::Version)
                 .help("Show version."),
+        )
+        .arg(
+            Arg::new("agents_instruction")
+                .long("agents-instruction")
+                .global(true)
+                .action(ArgAction::SetTrue)
+                .help("Print ready-to-paste agent instructions for this repository."),
         )
         .arg(
             Arg::new("config")

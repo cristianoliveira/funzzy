@@ -126,7 +126,9 @@ invalid input, EOF, no TTY, cancellation, and supersession preserve failure.
 
 ## 3. Agent edit-feedback loop
 
-The compact loop (proven end-to-end, AGENT-FEEDBACK-CONTRACT §9):
+Run `fzz --agents-instruction` to print a ready-to-paste `AGENTS.md` section for an already configured project. It does not edit files or require a running watcher. With Pi watcher tools, the section teaches agents to snapshot the generation before editing, wait for the automatic run after editing, inspect failures, and trigger the final gate. Without Pi tools, it gives a limited control-CLI fallback. Paste and adapt it in the consuming repository's `AGENTS.md`.
+
+The control CLI also supports an explicit synthetic trigger when a change does not naturally match (proven end-to-end, AGENT-FEEDBACK-CONTRACT §9):
 
 ```sh
 # 1. Negotiate capabilities (legacy fallback detection).

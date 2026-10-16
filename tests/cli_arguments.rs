@@ -56,6 +56,61 @@ fn with_tmp_dir<F: FnOnce(&std::path::Path)>(suffix: &str, f: F) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent instruction snippet
+// ---------------------------------------------------------------------------
+
+#[test]
+fn agents_instruction_prints_standalone_snippet_without_starting_watcher() {
+    with_tmp_dir("agents-instruction", |dir| {
+        fzz()
+            .arg("--agents-instruction")
+            .current_dir(dir)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "When Pi watcher tools are available",
+            ))
+            .stdout(predicate::str::contains("watcher_observe({wait: false})"))
+            .stdout(predicate::str::contains(
+                "watcher_observe({wait: true, generation: G})",
+            ))
+            .stdout(predicate::str::contains(
+                "watcher_observe({wait: true, afterGeneration: G, timeoutSeconds: 300})",
+            ))
+            .stdout(predicate::str::contains(
+                "If no matching run appears before timeout",
+            ))
+            .stdout(predicate::str::contains("watcher_output({generation: N})"))
+            .stdout(predicate::str::contains("watcher_targets"))
+            .stdout(predicate::str::contains(
+                "watcher_verify` to trigger and await",
+            ))
+            .stdout(predicate::str::contains("watcher_status({wait: true})"))
+            .stdout(predicate::str::contains("fzz ctl status --format toon"))
+            .stdout(predicate::str::contains(
+                "fzz ctl await --after <generation> --timeout 5m",
+            ))
+            .stdout(predicate::str::contains("fzz ctl emit").not())
+            .stdout(predicate::str::contains("unchanged worktree"))
+            .stdout(predicate::str::contains("watcher is unavailable"))
+            .stdout(predicate::str::contains("fzz --help").not())
+            .stdout(predicate::str::contains("config schema").not())
+            .stdout(predicate::str::contains("fzz check").not());
+        assert!(!dir.join(".watch.yaml").exists());
+        assert!(!dir.join(".watch.sock").exists());
+    });
+}
+
+#[test]
+fn agents_instruction_is_discoverable_in_root_help() {
+    fzz()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--agents-instruction"));
+}
+
+// ---------------------------------------------------------------------------
 // TASK-0156 generation-hook validation
 // ---------------------------------------------------------------------------
 

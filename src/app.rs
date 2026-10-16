@@ -196,11 +196,16 @@ fn load_watch_config(args: &Arguments) -> LoadedWatchConfig {
 /// start the watcher or exit with a message.
 pub fn run() {
     let args = Arguments::parse();
+    if matches!(args.action, Action::AgentsInstruction) {
+        print_agents_instruction();
+        return;
+    }
     let startup = Startup::from_args(&args);
 
     match args.action {
         // Commands
         Action::Check => check_config(&args.config),
+        Action::AgentsInstruction => unreachable!("handled before startup initialization"),
         Action::Completions { shell } => {
             let mut cmd = crate::arguments::command();
             let name = cmd.get_name().to_string();
@@ -284,6 +289,26 @@ pub fn run() {
         // a shell (e.g. `fzz exec -- sh -c '...'`).
         Action::Exec { command: ref cmd } => exec_action(&args, &startup, cmd),
     }
+}
+
+/// Print guidance users can paste into their own repository's AGENTS.md.
+/// This path deliberately avoids startup/config discovery and watcher effects.
+fn print_agents_instruction() {
+    println!(
+        "{}",
+        r#"## Agent edit-feedback loop
+
+When Pi watcher tools are available:
+
+1. Before editing, snapshot `watcher_observe({wait: false})`; record baseline generation G and state. If G is already active and relevant, wait for that exact run with `watcher_observe({wait: true, generation: G})`.
+2. Edit files normally; matching changes auto-trigger the watcher. Do not trigger duplicate work.
+3. Await the first run after the checkpoint with `watcher_observe({wait: true, afterGeneration: G, timeoutSeconds: 300})`. If no matching run appears before timeout, do not wait indefinitely: discover a target and run `watcher_verify`, or report that no run matched.
+4. On failure, use `watcher_output({generation: N})` only to inspect that generation's bounded evidence. Fix the issue, then await a newer generation.
+5. For final verification, discover configured targets with `watcher_targets`, then use `watcher_verify` to trigger and await the appropriate final gate. Accept green only with current freshness and unchanged worktree; a restart, timeout, disconnect, or worktree change is not verified.
+6. If a run is already active, `watcher_status({wait: true})` can wait for it. Do not rerun checks just to poll.
+
+Without Pi watcher tools, use `fzz ctl status --format toon` before edits and `fzz ctl await --after <generation> --timeout 5m --format toon` after. This is feedback, not the Pi tool's worktree-fingerprint verification. If the watcher is unavailable, report that verification could not be completed."#
+    );
 }
 
 /// `fzz watch [-- TARGET]`: build the watch topology from the selected
