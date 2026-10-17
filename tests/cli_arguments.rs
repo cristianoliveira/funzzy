@@ -67,31 +67,24 @@ fn agents_instruction_prints_standalone_snippet_without_starting_watcher() {
             .current_dir(dir)
             .assert()
             .success()
-            .stdout(predicate::str::contains(
-                "When Pi watcher tools are available",
-            ))
-            .stdout(predicate::str::contains("watcher_observe({wait: false})"))
-            .stdout(predicate::str::contains(
-                "watcher_observe({wait: true, generation: G})",
-            ))
-            .stdout(predicate::str::contains(
-                "watcher_observe({wait: true, afterGeneration: G, timeoutSeconds: 300})",
-            ))
-            .stdout(predicate::str::contains(
-                "If no matching run appears before timeout",
-            ))
-            .stdout(predicate::str::contains("watcher_output({generation: N})"))
-            .stdout(predicate::str::contains("watcher_targets"))
-            .stdout(predicate::str::contains(
-                "watcher_verify` to trigger and await",
-            ))
-            .stdout(predicate::str::contains("watcher_status({wait: true})"))
+            .stdout(predicate::str::starts_with("## Funzzy agent feedback"))
             .stdout(predicate::str::contains("fzz ctl status --format toon"))
             .stdout(predicate::str::contains(
-                "fzz ctl await --after <generation> --timeout 5m",
+                "fzz ctl await --after <generation> --timeout 5m --format toon",
             ))
+            .stdout(predicate::str::contains(
+                "fzz ctl output --generation <generation> --tail 80 --format toon",
+            ))
+            .stdout(predicate::str::contains("fzz ctl list --format toon"))
+            .stdout(predicate::str::contains(
+                "fzz ctl run TARGET --wait --timeout 5m --format toon",
+            ))
+            .stdout(predicate::str::contains(
+                "If Pi watcher tools are installed",
+            ))
+            .stdout(predicate::str::contains("watcher_observe"))
+            .stdout(predicate::str::contains("watcher_verify"))
             .stdout(predicate::str::contains("fzz ctl emit").not())
-            .stdout(predicate::str::contains("unchanged worktree"))
             .stdout(predicate::str::contains("watcher is unavailable"))
             .stdout(predicate::str::contains("fzz --help").not())
             .stdout(predicate::str::contains("config schema").not())

@@ -168,7 +168,7 @@ output; **events**: `--events FILE` appends NDJSON run events.
 
 ### Agent instructions
 
-For an already configured project, run `fzz --agents-instruction` and paste its output into that project's `AGENTS.md`. It teaches agents to observe the running watcher before editing, wait for automatic feedback after editing, inspect failures, and trigger the final verification gate. The command only prints text; it needs neither `.watch.yaml` nor an active watcher. If Pi watcher tools are unavailable, the output includes a limited control-CLI fallback. See the [advanced guide](ADVANCED-GUIDE.md#3-agent-edit-feedback-loop) for control-socket details.
+For an already configured project, run `fzz --agents-instruction` and paste its output into that project's `AGENTS.md`. It teaches agents to use `fzz ctl` to observe the running watcher before editing, wait for automatic feedback after editing, inspect failures, and trigger an explicit target when no run matched. The command only prints text; it needs neither `.watch.yaml` nor an active watcher. Pi watcher tools are an optional enhancement, not a requirement. See the [advanced guide](ADVANCED-GUIDE.md#3-agent-edit-feedback-loop) for control-socket details.
 
 ## 3. Configuration guide
 

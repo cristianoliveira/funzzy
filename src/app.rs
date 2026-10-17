@@ -294,18 +294,14 @@ pub fn run() {
 /// Print guidance users can paste into their own repository's AGENTS.md.
 /// This path deliberately avoids startup/config discovery and watcher effects.
 fn print_agents_instruction() {
-    const INSTRUCTION: &str = r#"## Agent edit-feedback loop
+    const INSTRUCTION: &str = r#"## Funzzy agent feedback
 
-When Pi watcher tools are available:
+1. Before editing, run `fzz ctl status --format toon` and record the current generation. File changes that match the configured workflow trigger runs automatically; do not duplicate them.
+2. After editing, run `fzz ctl await --after <generation> --timeout 5m --format toon`. If the baseline generation was already active, use `fzz ctl await --generation <generation> --timeout 5m --format toon` instead. Check that the completed run covers your changes and has current freshness; superseded, restarted, timed-out, and disconnected runs do not verify the work.
+3. On failure, inspect bounded evidence with `fzz ctl output --generation <generation> --tail 80 --format toon`. Fix the cause and await a newer generation. If no matching run appears, use `fzz ctl list --format toon` to find a target, then trigger `fzz ctl run TARGET --wait --timeout 5m --format toon`.
+4. Before reporting success, confirm a relevant, latest passing run and that the worktree has not changed since it ran. If the watcher is unavailable, say verification could not be completed.
 
-1. Before editing, snapshot `watcher_observe({wait: false})`; record baseline generation G and state. If G is already active and relevant, wait for that exact run with `watcher_observe({wait: true, generation: G})`.
-2. Edit files normally; matching changes auto-trigger the watcher. Do not trigger duplicate work.
-3. Await the first run after the checkpoint with `watcher_observe({wait: true, afterGeneration: G, timeoutSeconds: 300})`. If no matching run appears before timeout, do not wait indefinitely: discover a target and run `watcher_verify`, or report that no run matched.
-4. On failure, use `watcher_output({generation: N})` only to inspect that generation's bounded evidence. Fix the issue, then await a newer generation.
-5. For final verification, discover configured targets with `watcher_targets`, then use `watcher_verify` to trigger and await the appropriate final gate. Accept green only with current freshness and unchanged worktree; a restart, timeout, disconnect, or worktree change is not verified.
-6. If a run is already active, `watcher_status({wait: true})` can wait for it. Do not rerun checks just to poll.
-
-Without Pi watcher tools, use `fzz ctl status --format toon` before edits and `fzz ctl await --after <generation> --timeout 5m --format toon` after. This is feedback, not the Pi tool's worktree-fingerprint verification. If the watcher is unavailable, report that verification could not be completed."#;
+If Pi watcher tools are installed, prefer `watcher_observe` to snapshot and await generations, `watcher_status` to wait for active work, and `watcher_output` for failure evidence. Discover final targets with `watcher_targets`; `watcher_verify` triggers the selected final gate and checks freshness and the worktree fingerprint. These tools are optional; the `fzz ctl` workflow above works without the extension."#;
     println!("{INSTRUCTION}");
 }
 
