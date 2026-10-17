@@ -157,6 +157,7 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | Init a starter config | `fzz init [--template P]` | no | writes `.watch.yaml` (create-only, refuses existing) |
 | Migrate a legacy config | `fzz migrate [-c PATH]` | no | atomic in-place rewrite (idempotent) |
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
+| Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
 
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
 cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`
@@ -164,6 +165,10 @@ stops at the first failing task. **Logging**: `--log-file FILE` mirrors all
 output; **events**: `--events FILE` appends NDJSON run events.
 
 **Exit codes**: 0 success/no-op, 1 workflow/operational failure, 2 usage. `--recovery-policy prompt|skip` overrides the configured policy for `fzz run` and watch sessions; it does not edit the config.
+
+### Agent instructions
+
+For an already configured project, run `fzz --agents-instruction` and paste its output into that project's `AGENTS.md`. It teaches agents to use `fzz ctl` to observe the running watcher before editing, wait for automatic feedback after editing, inspect failures, and trigger an explicit target when no run matched. The command only prints text; it needs neither `.watch.yaml` nor an active watcher. Pi watcher tools are an optional enhancement, not a requirement. See the [advanced guide](ADVANCED-GUIDE.md#3-agent-edit-feedback-loop) for control-socket details.
 
 ## 3. Configuration guide
 

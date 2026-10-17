@@ -131,6 +131,8 @@ fzz ctl output --generation 12 --tail 80 --format toon
 
 Funzzy runs local commands and does not depend on a CI provider. Your scripts manage external services, credentials, and provider requests.
 
+To give an agent a ready-to-paste edit-feedback workflow for your project's `AGENTS.md`, run `fzz --agents-instruction`. It prints instructions without changing files or requiring a running watcher. See the [daily usage guide](docs/USAGE.md#agent-instructions).
+
 Not required, but you can use the https://github.com/carbon-ni/pi-watcher to give agents direct control over the watcher service.
 
 ## Learn more

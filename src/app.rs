@@ -196,11 +196,16 @@ fn load_watch_config(args: &Arguments) -> LoadedWatchConfig {
 /// start the watcher or exit with a message.
 pub fn run() {
     let args = Arguments::parse();
+    if matches!(args.action, Action::AgentsInstruction) {
+        print_agents_instruction();
+        return;
+    }
     let startup = Startup::from_args(&args);
 
     match args.action {
         // Commands
         Action::Check => check_config(&args.config),
+        Action::AgentsInstruction => unreachable!("handled before startup initialization"),
         Action::Completions { shell } => {
             let mut cmd = crate::arguments::command();
             let name = cmd.get_name().to_string();
@@ -284,6 +289,20 @@ pub fn run() {
         // a shell (e.g. `fzz exec -- sh -c '...'`).
         Action::Exec { command: ref cmd } => exec_action(&args, &startup, cmd),
     }
+}
+
+/// Print guidance users can paste into their own repository's AGENTS.md.
+/// This path deliberately avoids startup/config discovery and watcher effects.
+fn print_agents_instruction() {
+    const INSTRUCTION: &str = r#"## Funzzy agent feedback
+
+1. Before editing, run `fzz ctl status --format toon` and record the current generation. File changes that match the configured workflow trigger runs automatically; do not duplicate them.
+2. After editing, run `fzz ctl await --after <generation> --timeout 5m --format toon`. If the baseline generation was already active, use `fzz ctl await --generation <generation> --timeout 5m --format toon` instead. Check that the completed run covers your changes and has current freshness; superseded, restarted, timed-out, and disconnected runs do not verify the work.
+3. On failure, inspect bounded evidence with `fzz ctl output --generation <generation> --tail 80 --format toon`. Fix the cause and await a newer generation. If no matching run appears, use `fzz ctl list --format toon` to find a target, then trigger `fzz ctl run TARGET --wait --timeout 5m --format toon`.
+4. Before reporting success, confirm a relevant, latest passing run and that the worktree has not changed since it ran. If the watcher is unavailable, say verification could not be completed.
+
+If Pi watcher tools are installed, prefer `watcher_observe` to snapshot and await generations, `watcher_status` to wait for active work, and `watcher_output` for failure evidence. Discover final targets with `watcher_targets`; `watcher_verify` triggers the selected final gate and checks freshness and the worktree fingerprint. These tools are optional; the `fzz ctl` workflow above works without the extension."#;
+    println!("{INSTRUCTION}");
 }
 
 /// `fzz watch [-- TARGET]`: build the watch topology from the selected

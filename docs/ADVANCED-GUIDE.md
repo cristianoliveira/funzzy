@@ -126,7 +126,7 @@ invalid input, EOF, no TTY, cancellation, and supersession preserve failure.
 
 ## 3. Agent edit-feedback loop
 
-The compact loop (proven end-to-end, AGENT-FEEDBACK-CONTRACT §9):
+For the everyday agent workflow and copyable `AGENTS.md` instructions, see the [usage guide](USAGE.md#agent-instructions). The control CLI also supports an explicit synthetic trigger when a change does not naturally match (proven end-to-end, AGENT-FEEDBACK-CONTRACT §9):
 
 ```sh
 # 1. Negotiate capabilities (legacy fallback detection).

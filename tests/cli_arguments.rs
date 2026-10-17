@@ -56,6 +56,54 @@ fn with_tmp_dir<F: FnOnce(&std::path::Path)>(suffix: &str, f: F) {
 }
 
 // ---------------------------------------------------------------------------
+// Agent instruction snippet
+// ---------------------------------------------------------------------------
+
+#[test]
+fn agents_instruction_prints_standalone_snippet_without_starting_watcher() {
+    with_tmp_dir("agents-instruction", |dir| {
+        fzz()
+            .arg("--agents-instruction")
+            .current_dir(dir)
+            .assert()
+            .success()
+            .stdout(predicate::str::starts_with("## Funzzy agent feedback"))
+            .stdout(predicate::str::contains("fzz ctl status --format toon"))
+            .stdout(predicate::str::contains(
+                "fzz ctl await --after <generation> --timeout 5m --format toon",
+            ))
+            .stdout(predicate::str::contains(
+                "fzz ctl output --generation <generation> --tail 80 --format toon",
+            ))
+            .stdout(predicate::str::contains("fzz ctl list --format toon"))
+            .stdout(predicate::str::contains(
+                "fzz ctl run TARGET --wait --timeout 5m --format toon",
+            ))
+            .stdout(predicate::str::contains(
+                "If Pi watcher tools are installed",
+            ))
+            .stdout(predicate::str::contains("watcher_observe"))
+            .stdout(predicate::str::contains("watcher_verify"))
+            .stdout(predicate::str::contains("fzz ctl emit").not())
+            .stdout(predicate::str::contains("watcher is unavailable"))
+            .stdout(predicate::str::contains("fzz --help").not())
+            .stdout(predicate::str::contains("config schema").not())
+            .stdout(predicate::str::contains("fzz check").not());
+        assert!(!dir.join(".watch.yaml").exists());
+        assert!(!dir.join(".watch.sock").exists());
+    });
+}
+
+#[test]
+fn agents_instruction_is_discoverable_in_root_help() {
+    fzz()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--agents-instruction"));
+}
+
+// ---------------------------------------------------------------------------
 // TASK-0156 generation-hook validation
 // ---------------------------------------------------------------------------
 
