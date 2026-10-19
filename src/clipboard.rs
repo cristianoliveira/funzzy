@@ -262,7 +262,7 @@ fn write_and_wait(
             writer
                 .join()
                 .map_err(|_| io::Error::other("clipboard input writer panicked"))?;
-            return Ok(status.clone());
+            return Ok(*status);
         }
         if std::time::Instant::now() >= deadline {
             stop_helper(&mut child);
@@ -435,7 +435,7 @@ mod tests {
             state: crate::task_result::TaskState::Failed,
             duration_ms: None,
         };
-        let copied = retained_failure_text(8, &[task.clone()], &registry).unwrap();
+        let copied = retained_failure_text(8, std::slice::from_ref(&task), &registry).unwrap();
         assert!(copied.contains("generation 8 failed"));
         assert!(copied.contains("[stderr]\nerror details"));
 
