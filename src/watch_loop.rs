@@ -103,6 +103,11 @@ pub trait RunStrategy {
     fn is_generation_complete(&self, _generation: u64) -> bool {
         true
     }
+
+    /// Returns bounded output for the latest failed generation, if retained.
+    fn latest_failed_output(&self) -> Result<String, String> {
+        Err("No failed generation output is available.".to_owned())
+    }
 }
 
 /// Runs the watch loop: registers filesystem watches, publishes readiness,
@@ -235,6 +240,17 @@ pub fn watch_loop(
         if key == crate::shortcut::KeyDecode::Eof {
             return;
         }
+        if key == crate::shortcut::KeyDecode::CopyFailure {
+            match crate::clipboard::copy_latest(
+                &crate::clipboard::SystemClipboardWriter,
+                foreground_tty(),
+                strategy.latest_failed_output(),
+            ) {
+                Ok(()) => stdout::info("Copied latest failed generation output to clipboard."),
+                Err(message) => stdout::warn(&format!("Could not copy failure output: {message}")),
+            }
+            return;
+        }
         if !trigger_latch.accept(key) {
             if key == crate::shortcut::KeyDecode::Trigger {
                 stdout::info("Shortcut already latched; waiting for the current run to finish.");
@@ -335,6 +351,11 @@ pub fn watch_loop(
         Some((shortcut_rx, Box::new(handle_shortcut))),
     )
     .map_err(FzzError::GenericError)
+}
+
+fn foreground_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -460,6 +481,9 @@ fn observe_triggers(watches: &Watches, batch: &Batch, trigger: &str, generation:
 /// honoring fail-fast, then presents the results.
 pub struct BlockingStrategy {
     workflow: WorkflowRunner,
+    outputs: Arc<OutputRegistry>,
+    next_generation: std::sync::atomic::AtomicU64,
+    latest_failure: Mutex<Option<(u64, Vec<crate::task_result::TaskSnapshot>)>>,
 }
 
 impl BlockingStrategy {
@@ -476,15 +500,47 @@ impl BlockingStrategy {
         concurrency: usize,
         events: Option<Arc<crate::event_stream::EventStream>>,
     ) -> Self {
+        let outputs = Arc::new(OutputRegistry::new());
         Self {
-            workflow: WorkflowRunner::with_recorder_and_events(
+            workflow: WorkflowRunner::with_recorder_events_and_outputs(
                 root,
                 verbose,
                 fail_fast,
                 concurrency,
                 None,
                 events,
+                Some(Arc::clone(&outputs)),
             ),
+            outputs,
+            next_generation: std::sync::atomic::AtomicU64::new(0),
+            latest_failure: Mutex::new(None),
+        }
+    }
+
+    fn next_generation(&self) -> u64 {
+        self.next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    fn run(&self, plan: RunPlan, metadata: RunMetadata, filepath: Option<&str>) {
+        let generation = metadata.run_id;
+        *self.latest_failure.lock().unwrap() = None;
+        match self.workflow.run(plan, metadata, filepath) {
+            Ok(completed) => {
+                let failed = completed.results.iter().any(Result::is_err);
+                if failed {
+                    *self.latest_failure.lock().unwrap() =
+                        Some((generation, completed.tasks.clone()));
+                }
+                stdout::present_results(
+                    completed.results,
+                    completed.elapsed,
+                    Some(&completed.outcome),
+                    &completed.tasks,
+                );
+            }
+            Err(error) => stdout::error(&error),
         }
     }
 
@@ -514,31 +570,16 @@ impl RunStrategy for BlockingStrategy {
     }
 
     fn run_manual(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self
-            .workflow
-            .run(plan, RunMetadata::new(0, "keyboard"), None)
-        {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+        self.run(
+            plan,
+            RunMetadata::new(self.next_generation(), "keyboard"),
+            None,
+        );
         None
     }
 
     fn run_init(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+        self.run(plan, RunMetadata::new(self.next_generation(), "init"), None);
         None
     }
 
@@ -549,18 +590,23 @@ impl RunStrategy for BlockingStrategy {
         batch: &Batch,
         _revision: Option<ConfigRevision>,
     ) -> Option<u64> {
-        let metadata =
-            RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
-        match self.workflow.run(plan, metadata, Some(filepath)) {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+        let metadata = RunMetadata::correlated(
+            self.next_generation(),
+            filepath,
+            Some(batch.id.0),
+            None,
+            batch.changed.clone(),
+        );
+        self.run(plan, metadata, Some(filepath));
         None
+    }
+
+    fn latest_failed_output(&self) -> Result<String, String> {
+        let latest = self.latest_failure.lock().unwrap();
+        let (generation, tasks) = latest.as_ref().ok_or_else(|| {
+            "There is no current failed generation; clipboard unchanged.".to_owned()
+        })?;
+        crate::clipboard::retained_failure_text(*generation, tasks, &self.outputs)
     }
 }
 
@@ -1044,6 +1090,18 @@ impl RunStrategy for NonBlockStrategy {
     fn is_generation_complete(&self, generation: u64) -> bool {
         let state = self.control_state.lock().unwrap();
         state.generation() >= generation && !state.is_running()
+    }
+
+    fn latest_failed_output(&self) -> Result<String, String> {
+        let state = self.control_state.lock().unwrap();
+        if state.state() != &crate::watcher_state::WatcherExecutionState::Failed {
+            return Err("There is no current failed generation; clipboard unchanged.".to_owned());
+        }
+        let outputs = self
+            .outputs
+            .as_ref()
+            .ok_or_else(|| "Failure output was not retained; clipboard unchanged.".to_owned())?;
+        crate::clipboard::retained_failure_text(state.generation(), state.tasks(), outputs)
     }
 }
 

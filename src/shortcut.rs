@@ -7,10 +7,13 @@ use std::sync::Arc;
 /// Ctrl-G is deliberately not Ctrl-C: SIGINT remains owned by the normal
 /// shutdown path. It is a single byte in both raw terminals and pipes.
 pub const TRIGGER_KEY: u8 = 0x07;
+/// Ctrl-Y copies the latest failed generation's bounded output.
+pub const COPY_FAILURE_KEY: u8 = 0x19;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyDecode {
     Trigger,
+    CopyFailure,
     Ignore,
     Partial,
     Eof,
@@ -26,6 +29,7 @@ pub fn decode_key(bytes: &[u8], eof: bool) -> KeyDecode {
     match bytes {
         [] | [0x1b] | [0x1b, b'['] => KeyDecode::Partial,
         [TRIGGER_KEY] => KeyDecode::Trigger,
+        [COPY_FAILURE_KEY] => KeyDecode::CopyFailure,
         _ => KeyDecode::Ignore,
     }
 }
@@ -150,7 +154,9 @@ impl RawTerminal {
             }
             let original = unsafe { original.assume_init() };
             let mut raw = original;
-            raw.c_lflag &= !(nix::libc::ICANON | nix::libc::ECHO);
+            // Disable IEXTEN too: terminals may consume Ctrl-Y as VDSUSP
+            // before the raw single-byte shortcut reader can receive it.
+            raw.c_lflag &= !(nix::libc::ICANON | nix::libc::ECHO | nix::libc::IEXTEN);
             raw.c_cc[nix::libc::VMIN] = 1;
             raw.c_cc[nix::libc::VTIME] = 0;
             if unsafe { nix::libc::tcsetattr(fd, nix::libc::TCSANOW, &raw) } != 0 {
@@ -176,11 +182,15 @@ impl Drop for RawTerminal {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_key, KeyDecode, TriggerLatch, TRIGGER_KEY};
+    use super::{decode_key, KeyDecode, TriggerLatch, COPY_FAILURE_KEY, TRIGGER_KEY};
 
     #[test]
     fn decodes_only_the_documented_single_key() {
         assert_eq!(decode_key(&[TRIGGER_KEY], false), KeyDecode::Trigger);
+        assert_eq!(
+            decode_key(&[COPY_FAILURE_KEY], false),
+            KeyDecode::CopyFailure
+        );
         assert_eq!(decode_key(b"x", false), KeyDecode::Ignore);
         assert_eq!(decode_key(&[0x1b], false), KeyDecode::Partial);
         assert_eq!(decode_key(&[0x1b, b'['], false), KeyDecode::Partial);
