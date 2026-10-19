@@ -222,48 +222,8 @@ pub fn watch_loop(
     gate.borrow_mut().seed(&baseline_paths);
 
     let shortcut_rx = crate::shortcut::start_reader(shutdown_flag.clone());
-    let mut trigger_latch = crate::shortcut::TriggerLatch::default();
-    let mut trigger_phase = ManualTriggerPhase::Idle;
-    let handle_shortcut = move |key: Option<crate::shortcut::KeyDecode>| {
-        let Some(key) = key else {
-            if let ManualTriggerPhase::Active(generation) = trigger_phase {
-                if strategy.is_generation_complete(generation) {
-                    trigger_phase = ManualTriggerPhase::Idle;
-                    trigger_latch.reset();
-                }
-            }
-            if matches!(trigger_phase, ManualTriggerPhase::Waiting) && !strategy.is_running() {
-                trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
-            }
-            return;
-        };
-        if key == crate::shortcut::KeyDecode::Eof {
-            return;
-        }
-        if key == crate::shortcut::KeyDecode::CopyFailure {
-            match crate::clipboard::copy_latest(
-                &crate::clipboard::SystemClipboardWriter,
-                foreground_tty(),
-                strategy.latest_failed_output(),
-            ) {
-                Ok(()) => stdout::info("Copied latest failed generation output to clipboard."),
-                Err(message) => stdout::warn(&format!("Could not copy failure output: {message}")),
-            }
-            return;
-        }
-        if !trigger_latch.accept(key) {
-            if key == crate::shortcut::KeyDecode::Trigger {
-                stdout::info("Shortcut already latched; waiting for the current run to finish.");
-            }
-            return;
-        }
-        if strategy.is_running() {
-            trigger_phase = ManualTriggerPhase::Waiting;
-            stdout::info("Shortcut latched; waiting for the current run to finish.");
-        } else {
-            trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
-        }
-    };
+    let mut shortcuts = crate::watch_shortcuts::WatchShortcuts::new(strategy, watches);
+    let handle_shortcut = move |key| shortcuts.handle(key);
 
     watcher::events_with_shortcut(
         list_of_watched_paths,
@@ -351,43 +311,6 @@ pub fn watch_loop(
         Some((shortcut_rx, Box::new(handle_shortcut))),
     )
     .map_err(FzzError::GenericError)
-}
-
-fn foreground_tty() -> bool {
-    use std::io::IsTerminal;
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ManualTriggerPhase {
-    Idle,
-    Waiting,
-    Active(u64),
-}
-
-fn trigger_manual_run(
-    strategy: &dyn RunStrategy,
-    watches: &Arc<Mutex<Watches>>,
-    latch: &mut crate::shortcut::TriggerLatch,
-    phase: &mut ManualTriggerPhase,
-) {
-    let (plan, revision) = {
-        let watches = watches.lock().unwrap();
-        (watches.manual_trigger_plan(), watches.revision().cloned())
-    };
-    let Some(plan) = plan else {
-        stdout::warn("Shortcut ignored: no configured jobs to run.");
-        latch.reset();
-        *phase = ManualTriggerPhase::Idle;
-        return;
-    };
-    stdout::info("Running full pipeline from keyboard shortcut.");
-    if let Some(generation) = strategy.run_manual(plan, revision) {
-        *phase = ManualTriggerPhase::Active(generation);
-    } else {
-        latch.reset();
-        *phase = ManualTriggerPhase::Idle;
-    }
 }
 
 /// Emits one `matched` decision record per task responsible for the trigger

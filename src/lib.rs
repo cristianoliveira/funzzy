@@ -43,6 +43,7 @@ pub mod stdout;
 pub mod task_result;
 pub mod template;
 pub mod watch_loop;
+pub(crate) mod watch_shortcuts;
 pub mod watcher;
 pub mod watcher_state;
 pub mod watches;
