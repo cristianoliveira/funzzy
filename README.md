@@ -120,7 +120,7 @@ fzz                              # start watching
 
 ## People and agents use the same loop
 
-You can read terminal output, press **Ctrl-G** to start all configured jobs, and press **Ctrl-Y** in a foreground terminal after failure to copy bounded task output to the clipboard. An agent can use the control socket:
+You can read terminal output, press **Ctrl-G** to start all configured jobs, and press **Ctrl-F** in a foreground terminal after failure to copy bounded task output to the clipboard. An agent can use the control socket:
 
 ```bash
 fzz ctl capabilities --format toon

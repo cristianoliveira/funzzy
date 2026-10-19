@@ -61,7 +61,7 @@ impl Drop for ChildGuard {
 }
 
 #[test]
-fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watchers() {
+fn ctrl_f_copies_latest_failure_without_suspending_foreground_watchers() {
     for non_block in [false, true] {
         let root = std::env::temp_dir().join(format!(
             "funzzy-copy-failure-{}-{non_block}",
@@ -156,7 +156,7 @@ fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watcher
             wait_for(&mut master, &mut output, "Watching...");
             master.write_all(&[0x07]).unwrap();
             wait_for(&mut master, &mut output, "Failure; Completed:");
-            master.write_all(&[0x19]).unwrap();
+            master.write_all(&[0x06]).unwrap();
             wait_for(
                 &mut master,
                 &mut output,
@@ -171,7 +171,7 @@ fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watcher
             std::fs::write(root.join("pass.marker"), "pass").unwrap();
             master.write_all(&[0x07]).unwrap();
             wait_for(&mut master, &mut output, "Success; Completed:");
-            master.write_all(&[0x19]).unwrap();
+            master.write_all(&[0x06]).unwrap();
             wait_for(
                 &mut master,
                 &mut output,

@@ -27,7 +27,7 @@ pub fn copy_latest(
     latest_output: Result<String, String>,
 ) -> Result<(), String> {
     if !foreground_tty {
-        return Err("Ctrl-Y requires a foreground terminal; clipboard unchanged.".to_owned());
+        return Err("Ctrl-F requires a foreground terminal; clipboard unchanged.".to_owned());
     }
     let text = latest_output?;
     writer

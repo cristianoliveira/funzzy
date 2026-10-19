@@ -112,7 +112,7 @@ fn agent_yaml() -> &'static str {
 #   fzz run verify     # run once locally
 #   fzz watch          # start the watcher + control socket
 #   Ctrl-G             # run the complete pipeline once while watching
-#   Ctrl-Y             # copy bounded output from the latest failed run (foreground TTY)
+#   Ctrl-F             # copy bounded output from the latest failed run (foreground TTY)
 on:
   change: "**/*"
   socket: .watch.sock
