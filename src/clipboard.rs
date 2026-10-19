@@ -375,7 +375,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stalled_helper_with_unread_pipe_is_killed_within_timeout() {
-        let mut command = Command::new("/bin/sleep");
+        let mut command = Command::new("sleep");
         command
             .arg("30")
             .stdin(Stdio::piped())

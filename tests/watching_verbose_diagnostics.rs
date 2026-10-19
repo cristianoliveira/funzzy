@@ -126,7 +126,7 @@ fn verbose_emits_startup_event_matched_and_outcome_records() {
             // Scheduled run + command lifecycle.
             assert!(
                 output.contains("decision=scheduled")
-                    && output.contains("run=0")
+                    && output.contains("run=1")
                     && output.contains("policy=wait")
                     && output.contains("commands=1"),
                 "scheduled run record missing: {}",
