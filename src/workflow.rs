@@ -79,6 +79,28 @@ impl WorkflowRunner {
         recorder: Option<Arc<DurationRecorder>>,
         events: Option<Arc<crate::event_stream::EventStream>>,
     ) -> Self {
+        Self::with_recorder_events_and_outputs(
+            root,
+            verbose,
+            fail_fast,
+            concurrency,
+            recorder,
+            events,
+            None,
+        )
+    }
+
+    /// Creates a runner with optional retained task output, used by the
+    /// foreground failure-copy shortcut as well as the control surface.
+    pub fn with_recorder_events_and_outputs(
+        root: PathBuf,
+        verbose: bool,
+        fail_fast: bool,
+        concurrency: usize,
+        recorder: Option<Arc<DurationRecorder>>,
+        events: Option<Arc<crate::event_stream::EventStream>>,
+        outputs: Option<Arc<crate::output::OutputRegistry>>,
+    ) -> Self {
         let recorder_sink = match &recorder {
             Some(recorder) => {
                 let recorder = Arc::clone(recorder);
@@ -108,14 +130,20 @@ impl WorkflowRunner {
             (None, Some(events)) => events,
             (None, None) => Arc::new(|_| {}),
         };
-        let executor = Executor::new(
-            Arc::new(SystemProcessRunner),
-            Arc::new(SystemClock),
-            concurrency,
-            events,
-            fail_fast,
-            verbose,
-        )
+        let runner = Arc::new(SystemProcessRunner);
+        let clock = Arc::new(SystemClock);
+        let executor = match outputs {
+            Some(outputs) => Executor::with_outputs(
+                runner,
+                clock,
+                concurrency,
+                events,
+                fail_fast,
+                verbose,
+                Some(outputs),
+            ),
+            None => Executor::new(runner, clock, concurrency, events, fail_fast, verbose),
+        }
         .expect("workflow concurrency must be positive");
         Self {
             root,

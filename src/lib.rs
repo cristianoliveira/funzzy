@@ -5,6 +5,7 @@ pub mod approval;
 pub mod arguments;
 pub mod awaiting;
 pub mod cli;
+pub mod clipboard;
 pub mod cmd;
 pub mod config;
 pub mod config_lifecycle;
