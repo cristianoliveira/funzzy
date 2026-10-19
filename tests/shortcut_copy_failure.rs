@@ -70,13 +70,18 @@ fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watcher
         let _scratch = Scratch(root.clone());
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let helper_dir = root.with_file_name(format!(
+            "funzzy-copy-helper-{}-{non_block}",
+            std::process::id()
+        ));
+        let _helper_scratch = Scratch(helper_dir.clone());
+        std::fs::create_dir_all(&helper_dir).unwrap();
         let copied = root.join("copied.txt");
         #[cfg(target_os = "macos")]
         let helper = "pbcopy";
         #[cfg(not(target_os = "macos"))]
         let helper = "wl-copy";
-        let helper_path = root.join("bin").join(helper);
+        let helper_path = helper_dir.join(helper);
         std::fs::write(
             &helper_path,
             format!("#!/bin/sh\n/bin/cat > '{}'\n", copied.display()),
@@ -85,9 +90,6 @@ fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watcher
         let mut permissions = std::fs::metadata(&helper_path).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&helper_path, permissions).unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink("/bin/sh", root.join("bin/sh")).unwrap();
-
         let socket_line = if non_block {
             format!(
                 "  socket: {:?}\n",
@@ -128,7 +130,7 @@ fn ctrl_y_copies_latest_failure_from_foreground_blocking_and_nonblocking_watcher
             .arg("--verbose")
             .current_dir(&root)
             .env("FUNZZY_COLORED", "false")
-            .env("PATH", root.join("bin"))
+            .env("PATH", &helper_dir)
             .env("FUNZZY_NON_BLOCK", if non_block { "true" } else { "false" })
             .stdin(Stdio::from(stdin))
             .stdout(Stdio::from(stdout))

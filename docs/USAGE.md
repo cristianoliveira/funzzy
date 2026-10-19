@@ -141,7 +141,7 @@ This is the whole loop: config → check → run → watch.
 
 ### Trigger the pipeline from the keyboard
 
-While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Press **Ctrl-Y** in a foreground terminal after a failed generation to copy its bounded, task-attributed stdout/stderr to the system clipboard. It never copies without a current failure; unavailable clipboard helpers are reported. Ctrl-C starts a graceful shutdown. Piped input accepts Ctrl-G; Ctrl-Y requires a foreground TTY. Closed input does not cause an error.
+While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Press **Ctrl-Y** in a foreground terminal after a failed generation to copy its bounded, task-attributed stdout/stderr to the system clipboard. It never copies without a current failure; unavailable clipboard helpers are reported. Clipboard helpers are resolved outside the project worktree and receive text on stdin (no shell). Ctrl-C starts a graceful shutdown. Piped input accepts Ctrl-G; Ctrl-Y requires a foreground TTY. Closed input does not cause an error.
 
 ## 2. Daily workflow decision table
 

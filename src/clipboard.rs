@@ -2,6 +2,7 @@
 
 use crate::output::RetrievedOutput;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 pub const MAX_CLIPBOARD_BYTES: usize = 64 * 1024;
@@ -116,30 +117,32 @@ pub fn format_failure(generation: u64, output: RetrievedOutput) -> Option<String
 /// Copy text using a platform clipboard utility, passing content only on stdin.
 pub fn copy_to_system(text: &str) -> io::Result<()> {
     let candidates: &[(&str, &[&str])] = clipboard_commands();
+    let workspace = project_root()?;
+    let search_path = std::env::var_os("PATH").unwrap_or_default();
     let mut unavailable = Vec::new();
     let mut failures = Vec::new();
     for (program, args) in candidates {
-        let spawned = Command::new(program)
+        let Some(executable) = resolve_helper(program, &search_path, &workspace) else {
+            unavailable.push(*program);
+            continue;
+        };
+        let mut command = Command::new(executable);
+        command
             .args(*args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        let mut child = match spawned {
-            Ok(child) => child,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                unavailable.push(*program);
+            .stderr(Stdio::null());
+        isolate_helper(&mut command);
+        let child = command.spawn()?;
+        let status = match write_and_wait(child, text.as_bytes(), std::time::Duration::from_secs(2))
+        {
+            Ok(status) => status,
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => return Err(error),
+            Err(error) => {
+                failures.push(format!("{program}: {error}"));
                 continue;
             }
-            Err(error) => return Err(error),
         };
-        let write_result = child
-            .stdin
-            .take()
-            .expect("piped clipboard stdin")
-            .write_all(text.as_bytes());
-        let status = wait_for_helper(&mut child)?;
-        write_result?;
         if status.success() {
             return Ok(());
         }
@@ -161,15 +164,109 @@ pub fn copy_to_system(text: &str) -> io::Result<()> {
     }
 }
 
-fn wait_for_helper(child: &mut Child) -> io::Result<ExitStatus> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+fn project_root() -> io::Result<PathBuf> {
+    let current = std::env::current_dir()?.canonicalize()?;
+    Ok(current
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .unwrap_or(&current)
+        .to_path_buf())
+}
+
+fn resolve_helper(
+    program: &str,
+    search_path: &std::ffi::OsStr,
+    workspace: &Path,
+) -> Option<PathBuf> {
+    let workspace = workspace.canonicalize().ok()?;
+    for entry in std::env::split_paths(search_path) {
+        if !entry.is_absolute() {
+            continue;
+        }
+        let Ok(directory) = entry.canonicalize() else {
+            continue;
+        };
+        if directory.starts_with(&workspace) {
+            continue;
+        }
+        let Ok(executable) = directory.join(program).canonicalize() else {
+            continue;
+        };
+        if executable.starts_with(&workspace) || !is_executable(&executable) {
+            continue;
+        }
+        return Some(executable);
+    }
+    None
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.metadata()
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn write_and_wait(
+    mut child: Child,
+    bytes: &[u8],
+    timeout: std::time::Duration,
+) -> io::Result<ExitStatus> {
+    let mut stdin = child.stdin.take().expect("piped clipboard stdin");
+    let (writer_tx, writer_rx) = std::sync::mpsc::channel();
+    let bytes = bytes.to_vec();
+    let writer = std::thread::spawn(move || {
+        let result = stdin.write_all(&bytes);
+        let _ = writer_tx.send(result);
+    });
+    let deadline = std::time::Instant::now() + timeout;
+    let mut status = None;
+    let mut write_result = None;
     loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
+        if write_result.is_none() {
+            match writer_rx.try_recv() {
+                Ok(result) => write_result = Some(result),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    stop_helper(&mut child);
+                    let _ = writer.join();
+                    return Err(io::Error::other(
+                        "clipboard input writer stopped unexpectedly",
+                    ));
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(status_now) => status = status_now,
+                Err(error) => {
+                    stop_helper(&mut child);
+                    let _ = writer.join();
+                    return Err(error);
+                }
+            }
+        }
+        if let Some(Err(error)) = write_result.as_ref() {
+            let error = io::Error::new(error.kind(), error.to_string());
+            stop_helper(&mut child);
+            let _ = writer.join();
+            return Err(error);
+        }
+        if let (Some(status), Some(Ok(()))) = (status.as_ref(), write_result.as_ref()) {
+            writer
+                .join()
+                .map_err(|_| io::Error::other("clipboard input writer panicked"))?;
+            return Ok(status.clone());
         }
         if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop_helper(&mut child);
+            let _ = writer.join();
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "clipboard helper timed out",
@@ -177,6 +274,30 @@ fn wait_for_helper(child: &mut Child) -> io::Result<ExitStatus> {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+fn isolate_helper(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if nix::libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
+fn stop_helper(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        let _ = nix::libc::kill(-(child.id() as nix::libc::pid_t), nix::libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(target_os = "macos")]
@@ -215,6 +336,63 @@ mod tests {
             self.0.lock().unwrap().push(text.to_owned());
             Ok(())
         }
+    }
+
+    #[test]
+    fn helper_resolution_skips_programs_inside_the_project() {
+        let root = std::env::temp_dir().join(format!("fzz-clipboard-path-{}", std::process::id()));
+        let local = root.join("repo/bin");
+        let trusted = root.join("system/bin");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&trusted).unwrap();
+        std::fs::write(local.join("wl-copy"), "local").unwrap();
+        std::fs::write(trusted.join("wl-copy"), "system").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [local.join("wl-copy"), trusted.join("wl-copy")] {
+                let mut permissions = path.metadata().unwrap().permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(path, permissions).unwrap();
+            }
+        }
+
+        assert_eq!(
+            resolve_helper("wl-copy", local.as_os_str(), &root.join("repo")),
+            None
+        );
+        assert_eq!(
+            resolve_helper(
+                "wl-copy",
+                &std::env::join_paths([&local, &trusted]).unwrap(),
+                &root.join("repo")
+            ),
+            Some(trusted.join("wl-copy").canonicalize().unwrap())
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stalled_helper_with_unread_pipe_is_killed_within_timeout() {
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        isolate_helper(&mut command);
+        let child = command.spawn().unwrap();
+        let pid = child.id();
+        let started = std::time::Instant::now();
+        let result = write_and_wait(
+            child,
+            &vec![b'x'; 128 * 1024],
+            std::time::Duration::from_millis(150),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(unsafe { nix::libc::kill(pid as nix::libc::pid_t, 0) }, -1);
     }
 
     #[test]
