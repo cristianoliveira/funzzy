@@ -97,4 +97,8 @@ fzz --version
 fzz --help
 ```
 
+A build from a Git checkout includes its commit in `--version` (for example,
+`funzzy 2.0.1 (e6f069be6c42)`). A crates.io build or source archive without
+Git metadata prints the package version alone.
+
 Continue with the [one-minute start](../README.md#start-in-one-minute) or the complete [usage guide](USAGE.md).
