@@ -430,7 +430,7 @@ fn removed_flag_error(flag: &str, replacement: &str) -> clap::Error {
 pub fn command() -> Command {
     Command::new("funzzy")
         .about("Funzzy the watcher.\n\nAlias:\n  fzz -> funzzy")
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(env!("FUNZZY_BUILD_VERSION"))
         .disable_version_flag(true)
         .help_template(HELP_TEMPLATE)
         .subcommand_required(false)

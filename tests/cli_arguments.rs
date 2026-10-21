@@ -307,6 +307,33 @@ fn short_version_flag_prints_version_for_both_binaries() {
 }
 
 #[test]
+fn source_build_version_names_its_git_commit_for_both_binaries() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(source)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8(output.stdout).unwrap().trim().to_owned())
+    };
+    if git(&["rev-parse", "--show-toplevel"]).as_deref() != source.to_str() {
+        // Published crates and source archives have no repository to identify.
+        return;
+    }
+    let commit = git(&["rev-parse", "--short=12", "HEAD"]).unwrap();
+    let expected = format!("funzzy {} ({commit})\n", env!("CARGO_PKG_VERSION"));
+
+    for mut cmd in [fzz(), funzzy()] {
+        let output = cmd.arg("--version").output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
+}
+
+#[test]
 fn long_version_flag_prints_version() {
     fzz()
         .arg("--version")
