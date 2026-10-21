@@ -57,7 +57,7 @@ linter: lint
 
 .PHONY: install
 install: tests ## Install funzzy on your machine
-	GITSHA="$(shell git rev-parse --short HEAD)" cargo install --path .
+	cargo install --locked --force --path .
 
 .PHONY: nix-gen-patch
 nix-gen-patch: ## Generate a patch for the nix derivation
