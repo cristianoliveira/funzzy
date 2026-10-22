@@ -1017,6 +1017,7 @@ fn execute_watch_command(
         .execute()
     } else {
         WatchCommand::with_events(watches, verbose, fail_fast, run_on_init, event_stream)
+            .with_reload(coordinator.clone())
             .with_shutdown(std::sync::Arc::clone(&shutdown))
             .execute()
     };
