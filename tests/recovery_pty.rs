@@ -349,7 +349,7 @@ fn approved_recovery_emits_phases_and_runs_only_success_hook_once() {
     std::fs::write(
         &config,
         format!(
-            "execution:\n  recovery_policy: prompt\nhooks:\n  success: \"printf success >> '{}'\"\n  failure: \"printf failure >> '{}'\"\njobs:\n  - name: recover @quick\n    run: {:?}\n    recovery: \"touch '{}'\"\n    run_on_init: true\n",
+            "execution:\n  recovery_policy: prompt\n  env:\n    RECOVERY_VALUE: expected\nhooks:\n  success: \"test \\\"$RECOVERY_VALUE\\\" = expected && printf success >> '{}'\"\n  failure: \"printf failure >> '{}'\"\njobs:\n  - name: recover @quick\n    run: {:?}\n    env: {{ RECOVERY_VALUE: from-job }}\n    recovery: \"test \\\"$RECOVERY_VALUE\\\" = from-job && touch '{}'\"\n    run_on_init: true\n",
             hook.display(),
             hook.display(),
             format!(

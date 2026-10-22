@@ -416,6 +416,31 @@ mod tests {
     }
 
     #[test]
+    fn execution_environment_value_change_commits_a_new_revision() {
+        let mut tracker = RevisionTracker::new();
+        let root = std::env::current_dir().unwrap();
+        let candidate = |value: &str| {
+            format!(
+                "execution:\n  env: {{ PROJECT_VALUE: {value} }}\njobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"
+            )
+        };
+
+        let ReloadDecision::Commit(first) =
+            decide(&mut tracker, &candidate("first"), root.clone(), &defaults())
+        else {
+            panic!("first environment config must commit");
+        };
+        let ReloadDecision::Commit(second) =
+            decide(&mut tracker, &candidate("second"), root, &defaults())
+        else {
+            panic!("environment change must reload");
+        };
+        assert_eq!(first.number, 1);
+        assert_eq!(second.number, 2);
+        assert_ne!(first.hash, second.hash);
+    }
+
+    #[test]
     fn policy_change_in_candidate_is_semantic() {
         // TASK-0092 regression: a concurrency/debounce/hooks change in the
         // candidate must commit a new revision, never a no-op.

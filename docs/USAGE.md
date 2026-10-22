@@ -188,6 +188,9 @@ execution:
   output: show-on-failure # default job output policy
   recovery_policy: prompt # prompt | skip; default prompt
   timeout: 10m           # default finite-job timeout
+  env:                     # defaults for jobs and all configured hooks
+    APP_MODE: test
+    OPTIONAL_FLAG: ''       # empty values are valid
 
 hooks:
   success: echo "checks passed"
@@ -199,7 +202,7 @@ jobs:
     parallel: checks      # contiguous members may overlap
     run: cargo clippy
     cwd: packages/core    # per-job working directory
-    env: { MODE: prod }   # per-job environment
+    env: { MODE: prod }   # per-job overrides execution.env
     change: "src/**"      # per-job triggers
     ignore: "target/**"   # per-job ignores (strongest precedence)
     run_on_init: true     # run when the watcher starts
@@ -240,6 +243,7 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
+- **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
 - **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
 - **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and

@@ -188,6 +188,15 @@ impl Rules {
         self
     }
 
+    /// Applies execution-level defaults without replacing job-level values.
+    pub(crate) fn merge_environment_defaults(&mut self, defaults: &BTreeMap<String, String>) {
+        for (name, value) in defaults {
+            self.environment
+                .entry(name.clone())
+                .or_insert_with(|| value.clone());
+        }
+    }
+
     pub fn cwd(&self) -> Option<&str> {
         self.cwd.as_deref()
     }
