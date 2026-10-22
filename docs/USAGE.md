@@ -293,10 +293,11 @@ hooks:
 
 Settlement is based only on watcher generations. It does not know whether an
 editor, agent, or other client is active. The command is run by the watcher as
-`$SHELL -c '<command>'` from the workspace root, with inherited environment and
-stdin, and its stdout/stderr are forwarded like other hooks. Funzzy injects
-reserved `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` environment
-variables, overriding inherited values. It does not inject failed job names,
+`$SHELL -c '<command>'` from the workspace root, with inherited environment,
+`execution.env` defaults, and inherited stdin. Its stdout/stderr are forwarded
+like other hooks. Funzzy injects reserved `FUNZZY_GENERATION_ID` and
+`FUNZZY_GENERATION_OUTCOME` environment variables, overriding configured and
+inherited values. It does not inject failed job names,
 changed paths, or evidence into argv, environment, or stdin. Use the exact
 `FUNZZY_GENERATION_ID` to retrieve evidence with `fzz control output
 --generation N`; latest-status lookup can race with a newer generation. A
