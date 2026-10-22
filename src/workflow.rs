@@ -21,7 +21,7 @@ pub struct WorkflowRunner {
     concurrency: usize,
     fail_fast: bool,
     /// Run-level terminal hooks (TASK-0040) applied to each finite run.
-    hooks: crate::config::GenerationHooks,
+    hooks: std::sync::Mutex<crate::config::GenerationHooks>,
     recovery_policy: crate::config::RecoveryPolicy,
     recovery_timeout: std::time::Duration,
 }
@@ -32,9 +32,15 @@ impl WorkflowRunner {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
-        self.hooks = hooks;
+    pub fn with_hooks(self, hooks: crate::config::GenerationHooks) -> Self {
+        *self.hooks.lock().unwrap() = hooks;
         self
+    }
+
+    /// Updates defaults used by future runs; each run freezes its hook context
+    /// before spawning commands, so a reload cannot alter an active run.
+    pub fn update_hooks(&self, hooks: crate::config::GenerationHooks) {
+        *self.hooks.lock().unwrap() = hooks;
     }
 
     /// Attaches the finite-run recovery policy and approval adapter.
@@ -123,7 +129,7 @@ impl WorkflowRunner {
             executor,
             concurrency,
             fail_fast,
-            hooks: crate::config::GenerationHooks::default(),
+            hooks: std::sync::Mutex::new(crate::config::GenerationHooks::default()),
             recovery_policy: crate::config::RecoveryPolicy::Prompt,
             recovery_timeout: std::time::Duration::from_secs(60),
         }
@@ -141,8 +147,9 @@ impl WorkflowRunner {
             paths: vec![],
             current_dir: self.root.display().to_string(),
         });
+        let hooks = self.hooks.lock().unwrap().clone();
         let metadata = metadata
-            .with_hooks(self.hooks.clone())
+            .with_hooks(hooks)
             .with_recovery_policy(self.recovery_policy)
             .with_recovery_timeout(self.recovery_timeout);
         if self.verbose {

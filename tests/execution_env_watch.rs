@@ -49,7 +49,7 @@ fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
     std::fs::create_dir_all(root.join("triggers")).unwrap();
     std::fs::write(
         root.join(".watch.yaml"),
-        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: first\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
+        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: first\nhooks:\n  success: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> hooks.txt'\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
     )
     .unwrap();
     let log_path = root.join("watcher.log");
@@ -66,10 +66,13 @@ fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
     let values_path = root.join("values.txt");
     wait_for(&values_path);
     assert_eq!(std::fs::read_to_string(&values_path).unwrap(), "first\n");
+    let hooks_path = root.join("hooks.txt");
+    wait_for(&hooks_path);
+    assert_eq!(std::fs::read_to_string(&hooks_path).unwrap(), "first\n");
 
     std::fs::write(
         root.join(".watch.yaml"),
-        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: second\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
+        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: second\nhooks:\n  success: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> hooks.txt'\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
     )
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -90,6 +93,16 @@ fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
         let values = std::fs::read_to_string(&values_path).unwrap_or_default();
         if values.lines().count() >= 2 {
             assert_eq!(values, "first\nsecond\n");
+            let hook_deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let hooks = std::fs::read_to_string(&hooks_path).unwrap_or_default();
+                if hooks.lines().count() >= 2 {
+                    assert_eq!(hooks, "first\nsecond\n");
+                    break;
+                }
+                assert!(Instant::now() < hook_deadline, "second hook did not finish");
+                std::thread::sleep(Duration::from_millis(10));
+            }
             break;
         }
         assert!(

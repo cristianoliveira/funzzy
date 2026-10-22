@@ -50,6 +50,11 @@ pub fn init_action(plan: Option<RunPlan>, run_on_init: bool) -> InitAction {
 
 /// Injected executor strategy: owns how selected rules are executed.
 pub trait RunStrategy {
+    /// Updates lifecycle hooks for future blocking generations. Asynchronous
+    /// strategies own their frozen hook snapshot at schedule time and may
+    /// leave this as a no-op.
+    fn update_hooks(&self, _hooks: crate::config::GenerationHooks) {}
+
     /// Called once after every filesystem watch is registered, before any
     /// init work, so auxiliary surfaces (e.g. the control socket) publish
     /// only when readiness is truthful. Defaults to no-op.
@@ -261,6 +266,7 @@ pub fn watch_loop(
             }
 
             let initial = watches.lock().unwrap().clone();
+            strategy.update_hooks(initial.hooks());
             let init_revision = initial.revision().cloned();
             match init_action(initial.run_on_init_plan(), run_on_init) {
                 InitAction::Run(plan) => {
@@ -306,6 +312,7 @@ pub fn watch_loop(
             // (contract §4). The revision rides the schedule so the generated
             // run freezes exactly the routed revision (TASK-0091, AC7).
             let watches_guard = watches.lock().unwrap();
+            strategy.update_hooks(watches_guard.hooks());
             let revision = watches_guard.revision().cloned();
             match watches_guard.watch_plan_batch(&batch.changed) {
                 Some((plan, trigger)) => {
@@ -350,10 +357,15 @@ fn trigger_manual_run(
     latch: &mut crate::shortcut::TriggerLatch,
     phase: &mut ManualTriggerPhase,
 ) {
-    let (plan, revision) = {
+    let (plan, revision, hooks) = {
         let watches = watches.lock().unwrap();
-        (watches.manual_trigger_plan(), watches.revision().cloned())
+        (
+            watches.manual_trigger_plan(),
+            watches.revision().cloned(),
+            watches.hooks(),
+        )
     };
+    strategy.update_hooks(hooks);
     let Some(plan) = plan else {
         stdout::warn("Shortcut ignored: no configured jobs to run.");
         latch.reset();
@@ -509,6 +521,10 @@ impl BlockingStrategy {
 }
 
 impl RunStrategy for BlockingStrategy {
+    fn update_hooks(&self, hooks: crate::config::GenerationHooks) {
+        self.workflow.update_hooks(hooks);
+    }
+
     fn policy(&self) -> &'static str {
         "wait"
     }
