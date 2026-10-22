@@ -8,8 +8,8 @@
 //! (increments only on semantic change; formatting-only rewrites are no-ops).
 //!
 //! The semantic hash is computed from frozen effective config material and is
-//! **secrets-safe**: declared environment *values* never enter the hash, only
-//! environment *keys* (sorted). Command content is hashed (never displayed).
+//! **secrets-safe**: environment values enter only as SHA-256 digests, never
+//! as plaintext; names and commands remain explicit canonical inputs.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -23,7 +23,7 @@ use crate::watcher::WatchBackend;
 
 /// Schema version of the canonical revision encoding. Bump only on a breaking
 /// encoding change; bumping invalidates all old revision hashes.
-pub const REVISION_SCHEMA_VERSION: u64 = 7;
+pub const REVISION_SCHEMA_VERSION: u64 = 8;
 
 /// One immutable revision of the effective runtime configuration: a monotonic
 /// number plus the deterministic semantic hash of the frozen config. Two
@@ -111,8 +111,8 @@ impl RuntimeConfig {
 /// Deterministic semantic hash of a frozen runtime config.
 ///
 /// Canonical, ambiguity-free encoding (length-prefixed fields, sorted env
-/// keys, never env values) hashed with SHA-256. Formatting-only rewrites
-/// produce the same rules and policy and therefore the same hash.
+/// names, one-way hashes of env values) hashed with SHA-256. Formatting-only
+/// rewrites produce the same rules and policy and therefore the same hash.
 pub fn semantic_hash(config: &RuntimeConfig) -> String {
     let mut canonical = CanonicalEncoder::new();
     canonical.u64(REVISION_SCHEMA_VERSION);
@@ -128,6 +128,7 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
     canonical.u64(config.recovery_timeout.as_millis() as u64);
     encode_generation_hooks(&mut canonical, &config.hooks);
     canonical.optional_string(config.session_hooks.close.clone());
+    encode_environment(&mut canonical, &config.session_hooks.environment);
     // AC8: the control socket path is part of the semantic surface.
     canonical.optional_string(
         config
@@ -138,7 +139,7 @@ pub fn semantic_hash(config: &RuntimeConfig) -> String {
 
     // Rules encode their full semantic surface: name, run_on_init, parallel
     // group, service, output policy, change/ignore patterns (sorted), commands
-    // (hashed, never displayed), cwd, and environment KEYS only.
+    // (hashed, never displayed), cwd, and environment values only by digest.
     canonical.u64(config.rules.len() as u64);
     for rule in &config.rules {
         encode_rule(&mut canonical, rule);
@@ -197,13 +198,9 @@ fn encode_rule(canonical: &mut CanonicalEncoder, rule: &Rules) {
         None => canonical.byte(0),
     }
 
-    // Environment: KEYS ONLY (sorted). Values are secrets and never enter
-    // the hash; presence/absence of a key is semantic, its content is not.
-    let env_keys: Vec<&String> = rule.environment().keys().collect();
-    canonical.u64(env_keys.len() as u64);
-    for key in env_keys {
-        canonical.string(key);
-    }
+    // Encode names and one-way value hashes so secret contents are not
+    // disclosed while changes still create a new runtime revision.
+    encode_environment(canonical, rule.environment());
 }
 
 /// Stable backend tag for hashing.
@@ -217,10 +214,10 @@ fn backend_tag(backend: WatchBackend) -> String {
 
 /// Per-service execution signature (TASK-0090 AC6): the canonical SHA-256
 /// over the service rule's own semantic surface — name, service flag, output
-/// policy, cwd, commands (hashed, never displayed), and environment KEYS
-/// only. Two revisions with the same signature for a service name mean the
-/// running process stays owned; a difference means graceful replacement.
-/// Secrets-safe: environment VALUES never enter the digest.
+/// policy, cwd, commands (hashed, never displayed), and environment names
+/// with one-way value digests. Two revisions with the same signature for a
+/// service name mean the running process stays owned; a difference means
+/// graceful replacement. Values are never included as plaintext.
 pub fn service_signature(rule: &Rules) -> String {
     let mut canonical = CanonicalEncoder::new();
     canonical.u64(REVISION_SCHEMA_VERSION);
@@ -246,12 +243,7 @@ pub fn service_signature(rule: &Rules) -> String {
         canonical.string(command);
     }
 
-    let mut env_keys: Vec<&String> = rule.environment().keys().collect();
-    env_keys.sort();
-    canonical.u64(env_keys.len() as u64);
-    for key in env_keys {
-        canonical.string(key);
-    }
+    encode_environment(&mut canonical, rule.environment());
 
     hex(&Sha256::digest(&canonical.bytes))
 }
@@ -289,6 +281,18 @@ fn encode_generation_hooks(canonical: &mut CanonicalEncoder, hooks: &GenerationH
             .failure_settle
             .map(|duration| duration.as_millis() as u64),
     );
+    encode_environment(canonical, &hooks.environment);
+}
+
+fn encode_environment(
+    canonical: &mut CanonicalEncoder,
+    environment: &std::collections::BTreeMap<String, String>,
+) {
+    canonical.u64(environment.len() as u64);
+    for (name, value) in environment {
+        canonical.string(name);
+        canonical.bytes(&Sha256::digest(value.as_bytes()));
+    }
 }
 
 /// Tracks revisions monotonically: the first observed config is revision 1;
@@ -374,6 +378,11 @@ impl CanonicalEncoder {
         self.bytes.extend_from_slice(value.as_bytes());
     }
 
+    fn bytes(&mut self, value: &[u8]) {
+        self.u64(value.len() as u64);
+        self.bytes.extend_from_slice(value);
+    }
+
     fn optional_string(&mut self, value: Option<String>) {
         match value {
             Some(value) => {
@@ -428,8 +437,8 @@ mod tests {
 
     #[test]
     fn semantic_hash_has_stable_sha256_fixture() {
-        // Schema version 7 (explicit readiness policy in canonical encoding;
-        // contracts): the semantic encoding changed; fixture regenerated.
+        // Schema version 8 adds hashed environment values to the semantic
+        // encoding so execution.env edits become reloadable.
         let config = RuntimeConfig::capture(
             PathBuf::from("/workspace"),
             rules("jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n"),
@@ -445,7 +454,7 @@ mod tests {
         );
         assert_eq!(
             semantic_hash(&config),
-            "348d24d5c2650482fd395cb35331a2e631db84528cfc7854136ce74ecb9ff7a9"
+            "cead484ecb49e55e765d2235891c74eea49e064c8aaec36e35c89aad3d874f6c"
         );
     }
 
@@ -568,6 +577,7 @@ mod tests {
         let with_close_hook = RuntimeConfig {
             session_hooks: SessionHooks {
                 close: Some("echo closed".to_owned()),
+                environment: Default::default(),
             },
             ..base.clone()
         };
@@ -575,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn environment_values_are_secret_safe_but_keys_are_semantic() {
+    fn environment_values_are_hashed_without_plaintext_disclosure() {
         let with_secret = capture(rules(
             "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n    env: { TOKEN: super-secret-value }\n",
         ));
@@ -583,8 +593,8 @@ mod tests {
             "jobs:\n  - name: build\n    run: cargo build\n    change: 'src/**'\n    env: { TOKEN: different-secret-value }\n",
         ));
 
-        // Same env KEY → same hash: values never enter the hash.
-        assert_eq!(
+        // A changed value changes the semantic digest without exposing plaintext.
+        assert_ne!(
             semantic_hash(&with_secret),
             semantic_hash(&same_key_other_value)
         );
@@ -621,7 +631,7 @@ mod tests {
     #[test]
     fn service_signature_is_stable_secret_safe_and_semantic() {
         // TASK-0090 AC6: per-service signature keeps unchanged services owned
-        // and flags changed ones; environment VALUES never enter it.
+        // and flags changed ones; environment values enter only as digests.
         let svc = |config: &str| capture(rules(config)).services()[0].1.clone();
         let base = svc(
             "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n",
@@ -636,7 +646,7 @@ mod tests {
             "jobs:\n  - name: server\n    run: 'vite dev --port 4000'\n    change: 'src/**'\n    service: true\n",
         );
         assert_ne!(base, changed_command);
-        // Env VALUE change → same signature (secrets-safe); KEY change differs.
+        // Env value and key changes both affect the signature.
         let with_key = svc(
             "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n    env: { TOKEN: first }\n",
         );
@@ -646,10 +656,7 @@ mod tests {
         let key_added = svc(
             "jobs:\n  - name: server\n    run: 'vite dev'\n    change: 'src/**'\n    service: true\n    env: { TOKEN: first, EXTRA: k }\n",
         );
-        assert_eq!(
-            with_key, value_changed,
-            "env values never enter the signature"
-        );
+        assert_ne!(with_key, value_changed, "env value change is semantic");
         assert_ne!(with_key, key_added, "env keys are semantic");
     }
 
@@ -824,10 +831,11 @@ mod manual_trigger_tests {
 
     /// TASK-0136 regression pin: schema version 3 introduced trigger
     /// encoding; TASK-0139 bumped to 4 for timeout encoding; settled failure
-    /// hooks bump it to 5. Each invalidates prior revision hashes by design.
+    /// hooks bump it to 5; hashed environment values bump it to 8. Each
+    /// invalidates prior revision hashes by design.
     #[test]
     fn revision_schema_version_is_pinned() {
-        assert_eq!(REVISION_SCHEMA_VERSION, 7);
+        assert_eq!(REVISION_SCHEMA_VERSION, 8);
     }
 
     #[test]
@@ -845,6 +853,7 @@ mod manual_trigger_tests {
                 success: None,
                 failure: Some("notify".into()),
                 failure_settle: Some(Duration::from_secs(1)),
+                environment: Default::default(),
             },
             SessionHooks::default(),
             None,

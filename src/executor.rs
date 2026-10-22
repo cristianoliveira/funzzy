@@ -454,6 +454,7 @@ pub struct PendingSettledHook {
     pub settle: Duration,
     pub revision: u64,
     pub revision_hash: String,
+    pub environment: std::collections::BTreeMap<String, String>,
 }
 
 /// Opaque transfer of promoted services from the executor to the worker.
@@ -2273,8 +2274,14 @@ impl Executor {
     /// Adds the reserved correlation inputs shared by immediate and settled
     /// generation hooks. Declared environment values cannot shadow these
     /// exact immutable identifiers.
-    fn hook_context(base: &TaskContext, run_id: u64, outcome: &str) -> TaskContext {
+    fn hook_context(
+        base: &TaskContext,
+        environment: &std::collections::BTreeMap<String, String>,
+        run_id: u64,
+        outcome: &str,
+    ) -> TaskContext {
         let mut context = base.clone();
+        context.environment.extend(environment.clone());
         context
             .environment
             .insert("FUNZZY_GENERATION_ID".to_owned(), run_id.to_string());
@@ -2305,6 +2312,7 @@ impl Executor {
                     run_id: metadata.run_id,
                     command: command.to_owned(),
                     settle,
+                    environment: metadata.hooks.environment.clone(),
                     revision: metadata.revision.unwrap_or(0),
                     revision_hash: metadata.revision_hash.clone().unwrap_or_default(),
                 });
@@ -2326,6 +2334,7 @@ impl Executor {
         }
         let context = Self::hook_context(
             &metadata.hook_context,
+            &metadata.hooks.environment,
             metadata.run_id,
             if outcome.is_success() {
                 "passed"
@@ -2386,7 +2395,7 @@ impl Executor {
         if token.is_cancelled() {
             return Ok(None);
         }
-        let context = Self::hook_context(base_context, spec.run_id, "failed");
+        let context = Self::hook_context(base_context, &spec.environment, spec.run_id, "failed");
         let child = self
             .runner
             .spawn(
@@ -3614,6 +3623,7 @@ mod tests {
             success: None,
             failure: Some("notify".into()),
             failure_settle: Some(Duration::from_secs(30)),
+            environment: Default::default(),
         });
         runner.complete("false", false);
         let mut run = executor.start(
@@ -3650,6 +3660,7 @@ mod tests {
             success: None,
             failure: Some("notify".into()),
             failure_settle: Some(Duration::from_secs(1)),
+            environment: Default::default(),
         });
         let mut run = executor.start(
             metadata,
@@ -3677,6 +3688,7 @@ mod tests {
             success: None,
             failure: Some("notify".into()),
             failure_settle: None,
+            environment: Default::default(),
         });
         runner.complete("false", false);
         runner.complete("notify", true);
@@ -3705,6 +3717,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 6,
             revision_hash: "rev6".into(),
+            environment: Default::default(),
         };
         let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
         runner.fail_wait("notify", "broken wait");
@@ -3728,6 +3741,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 1,
             revision_hash: "r".into(),
+            environment: Default::default(),
         };
         let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
         assert!(Executor::poll_settled_hook(&mut run).unwrap().is_none());
@@ -3749,6 +3763,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 1,
             revision_hash: "r".into(),
+            environment: Default::default(),
         };
         let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
         runner.complete("notify", false);
@@ -3769,6 +3784,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 1,
             revision_hash: "r".into(),
+            environment: Default::default(),
         };
         let mut run = executor.start_settled_hook(spec, &token).unwrap().unwrap();
         let outcome = executor.cancel_settled_hook(&mut run);
@@ -3788,6 +3804,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 3,
             revision_hash: "rev".into(),
+            environment: Default::default(),
         };
         assert!(executor.start_settled_hook(spec, &token).unwrap().is_none());
         assert!(runner.started_commands().is_empty());
@@ -3804,6 +3821,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 4,
             revision_hash: "rev4".into(),
+            environment: Default::default(),
         };
         let error = match executor.start_settled_hook(spec, &token) {
             Err(error) => error,
@@ -3826,6 +3844,7 @@ mod tests {
             settle: Duration::from_secs(2),
             revision: 5,
             revision_hash: "rev5".into(),
+            environment: Default::default(),
         };
         let run = executor
             .start_settled_hook(spec.clone(), &token)

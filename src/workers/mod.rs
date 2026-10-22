@@ -1614,6 +1614,7 @@ mod tests {
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
             failure_settle: None,
+            environment: Default::default(),
         });
         let run_id = worker
             .schedule_with_trigger(
@@ -1675,6 +1676,7 @@ mod tests {
             success: Some(format!("touch '{}'", hook.display())),
             failure: Some(format!("touch '{}'", hook.display())),
             failure_settle: None,
+            environment: Default::default(),
         });
         let run_id = worker
             .schedule_with_trigger(
@@ -1729,6 +1731,7 @@ mod tests {
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
             failure_settle: None,
+            environment: Default::default(),
         });
         let run_id = worker
             .schedule_with_trigger(
@@ -1785,6 +1788,7 @@ mod tests {
             success: None,
             failure: Some("notify".into()),
             failure_settle: Some(Duration::from_secs(9)),
+            environment: Default::default(),
         });
         worker.set_revision(crate::config_revision::ConfigRevision {
             number: 12,
@@ -1822,6 +1826,7 @@ mod tests {
             success: None,
             failure: Some(format!("touch '{}'", marker.display())),
             failure_settle: Some(Duration::ZERO),
+            environment: Default::default(),
         });
         let run_id = worker
             .schedule(vec![rule(vec!["false"])], "fail.rs")
@@ -1852,6 +1857,7 @@ mod tests {
                 settle: Duration::from_secs(10),
                 revision: 1,
                 revision_hash: "h".into(),
+                environment: Default::default(),
             },
             Instant::now(),
         );
@@ -1877,6 +1883,7 @@ mod tests {
                 settle: Duration::from_secs(10),
                 revision: 1,
                 revision_hash: "h".into(),
+                environment: Default::default(),
             },
             Instant::now(),
         );
@@ -1909,6 +1916,7 @@ mod tests {
             settle: Duration::from_secs(1),
             revision: 1,
             revision_hash: "h".into(),
+            environment: Default::default(),
         };
         scheduler.register_settlement(spec, now);
         let (_, token) = scheduler
@@ -1943,6 +1951,7 @@ mod tests {
                 settle: Duration::from_secs(10),
                 revision: 1,
                 revision_hash: "h".into(),
+                environment: Default::default(),
             },
             now,
         );
@@ -1980,6 +1989,7 @@ mod tests {
                 settle: Duration::ZERO,
                 revision: 1,
                 revision_hash: "h".into(),
+                environment: Default::default(),
             },
             Instant::now(),
         );
@@ -1999,6 +2009,7 @@ mod tests {
                 settle: Duration::from_secs(60),
                 revision: 1,
                 revision_hash: "h".into(),
+                environment: Default::default(),
             },
             now,
         );
@@ -2037,6 +2048,7 @@ mod tests {
             settle: Duration::ZERO,
             revision: 1,
             revision_hash: "h".into(),
+            environment: Default::default(),
         };
         scheduler.register_settlement(spec.clone(), now);
         let wake = scheduler.receive_until_deadline(Duration::from_secs(1));
@@ -2062,6 +2074,7 @@ mod tests {
                 settle: Duration::from_secs(5),
                 revision: 1,
                 revision_hash: "a".into(),
+                environment: Default::default(),
             },
             now,
         );
@@ -2072,6 +2085,7 @@ mod tests {
                 settle: Duration::from_secs(10),
                 revision: 2,
                 revision_hash: "b".into(),
+                environment: Default::default(),
             },
             now,
         );
@@ -3032,6 +3046,7 @@ mod manual_frozen_reload_tests {
             settle: Duration::from_secs(5),
             revision: 2,
             revision_hash: "h".into(),
+            environment: Default::default(),
         };
         let mut state = SettlementState::new();
         state.register(spec.clone(), now);
@@ -3506,6 +3521,7 @@ mod manual_frozen_reload_tests {
             settle: Duration::from_secs(1),
             revision: 1,
             revision_hash: "h".into(),
+            environment: Default::default(),
         };
         {
             let mut state = scheduler.state.lock().unwrap();

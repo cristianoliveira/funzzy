@@ -207,10 +207,11 @@ Generation hooks, including a settled failure command, are invoked as
 `$SHELL -c '<configured command>'`; they are not parsed as an argv array.
 `$SHELL` is inherited and defaults to `/bin/sh` when absent. They run from the
 watcher workspace root (the configured project cwd), not a later client cwd or
-job-specific `cwd`. The watcher process environment is inherited, with Funzzy
-reserved `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` variables
-forced to the immutable generation number and final outcome (`passed` or
-`failed`). Declared or inherited values cannot shadow these two variables.
+job-specific `cwd`. The watcher process environment is inherited, with
+`execution.env` defaults overlaid. Funzzy reserves `FUNZZY_GENERATION_ID` and
+`FUNZZY_GENERATION_OUTCOME` for the immutable generation number and final
+outcome (`passed` or `failed`). Configured or inherited values cannot shadow
+these two variables.
 Funzzy adds no failed job names, changed paths, or evidence variables. Stdin is
 inherited from the watcher process and Funzzy does not write a payload to it. Stdout/stderr are forwarded to the watcher output and
 normal configured log mirror; settled-hook output is not inserted into
@@ -222,9 +223,9 @@ that cannot be recalled.
 
 - Close hook runs from the immutable watcher workspace root, not the shell's
   later cwd and not a job-specific `cwd`.
-- It inherits the watcher process environment. No synthetic secrets,
-  filepath, changed-path batch, task name, run ID, or generation ID are
-  injected.
+- It inherits the watcher process environment with `execution.env` defaults
+  overlaid. No synthetic secrets, filepath, changed-path batch, task name, run
+  ID, or generation ID are injected.
 - `{{filepath}}`, `{{absolute_path}}`, `{{relative_filepath}}`,
   `{{relative_path}}`, and `{{paths}}` are trigger-bound and therefore invalid
   in `hooks.close`. `fzz check` rejects them with an actionable “close has no

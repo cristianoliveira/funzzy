@@ -77,6 +77,7 @@ impl ProcessReaper for SystemProcessReaper {
 struct Requested {
     reason: ShutdownReason,
     hook: Option<String>,
+    environment: std::collections::BTreeMap<String, String>,
 }
 
 enum Phase {
@@ -197,7 +198,16 @@ impl ShutdownCoordinator {
                 } else {
                     None
                 };
-                state.phase = Phase::Requested(Requested { reason, hook });
+                let environment = if state.ready {
+                    state.committed_hooks.environment.clone()
+                } else {
+                    Default::default()
+                };
+                state.phase = Phase::Requested(Requested {
+                    reason,
+                    hook,
+                    environment,
+                });
                 self.requested.store(true, Ordering::SeqCst);
                 true
             } else {
@@ -287,9 +297,15 @@ impl ShutdownCoordinator {
                             None
                         };
                         let skipped = !state.ready && state.committed_hooks.close.is_some();
+                        let environment = if state.ready {
+                            state.committed_hooks.environment.clone()
+                        } else {
+                            Default::default()
+                        };
                         let requested = Requested {
                             reason: ShutdownReason::Normal,
                             hook,
+                            environment,
                         };
                         let paths = state.cleanup_paths.clone();
                         state.phase = Phase::Finishing;
@@ -318,7 +334,11 @@ impl ShutdownCoordinator {
         let hook = if skipped_before_ready {
             CloseHookOutcome::SkippedBeforeReady
         } else {
-            self.run_close_hook(requested.hook.as_deref(), &requested.reason)
+            self.run_close_hook(
+                requested.hook.as_deref(),
+                &requested.environment,
+                &requested.reason,
+            )
         };
         let completion = ShutdownCompletion {
             reason: requested.reason,
@@ -331,7 +351,12 @@ impl ShutdownCoordinator {
         completion
     }
 
-    fn run_close_hook(&self, command: Option<&str>, reason: &ShutdownReason) -> CloseHookOutcome {
+    fn run_close_hook(
+        &self,
+        command: Option<&str>,
+        environment: &std::collections::BTreeMap<String, String>,
+        reason: &ShutdownReason,
+    ) -> CloseHookOutcome {
         let Some(command) = command else {
             return CloseHookOutcome::NotConfigured;
         };
@@ -345,7 +370,7 @@ impl ShutdownCoordinator {
         }
         let context = TaskContext {
             cwd: Some(self.root.clone()),
-            ..TaskContext::default()
+            environment: environment.clone(),
         };
         let mut child = match self.runner.spawn(
             "close hook",
@@ -472,6 +497,7 @@ mod tests {
             std::env::current_dir().unwrap(),
             SessionHooks {
                 close: Some(hook.to_owned()),
+                environment: Default::default(),
             },
             false,
             runner.clone(),
@@ -513,7 +539,10 @@ mod tests {
         });
         let coordinator = Arc::new(ShutdownCoordinator::new(
             std::env::current_dir().unwrap(),
-            SessionHooks { close: None },
+            SessionHooks {
+                close: None,
+                environment: Default::default(),
+            },
             false,
             Arc::new(FakeRunner {
                 commands: Mutex::new(Vec::new()),
@@ -593,10 +622,12 @@ mod tests {
             coordinator("echo old", FakeMode::Pass, Duration::from_secs(1));
         coordinator.update_hooks(SessionHooks {
             close: Some("echo latest".to_owned()),
+            environment: Default::default(),
         });
         assert!(coordinator.request(ShutdownReason::Normal));
         coordinator.update_hooks(SessionHooks {
             close: Some("echo too-late".to_owned()),
+            environment: Default::default(),
         });
         coordinator.finish();
         assert_eq!(runner.commands.lock().unwrap().as_slice(), ["echo latest"]);
@@ -637,6 +668,7 @@ mod tests {
             std::env::current_dir().unwrap(),
             SessionHooks {
                 close: Some("echo no".to_owned()),
+                environment: Default::default(),
             },
             false,
             runner.clone(),

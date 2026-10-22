@@ -176,6 +176,16 @@ const EXECUTION_SPECS: &[OptionSpec] = &[
         example: &["recovery_timeout: 60s"],
         kind: SpecKind::Duration,
     },
+    OptionSpec {
+        name: "env",
+        owner: Owner::Execution,
+        required: false,
+        default: None,
+        help: "Default environment values inherited by jobs, readiness/recovery commands, and hooks; job env overrides these defaults.",
+        values: None,
+        example: &["env:", "  APP_MODE: test", "  OPTIONAL_FLAG: ''"],
+        kind: SpecKind::StringMap,
+    },
 ];
 
 const HOOK_SPECS: &[OptionSpec] = &[
@@ -466,7 +476,8 @@ mod tests {
                 "output",
                 "timeout",
                 "recovery_policy",
-                "recovery_timeout"
+                "recovery_timeout",
+                "env"
             ]
         );
         assert_eq!(

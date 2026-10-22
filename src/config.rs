@@ -130,7 +130,7 @@ impl ConfigDocument {
             ));
         }
 
-        match &items[0] {
+        let mut rules = match &items[0] {
             Yaml::Array(items) => {
                 let mut rules = vec![];
                 for item in items {
@@ -148,13 +148,13 @@ impl ConfigDocument {
                         }
                     }
                 }
-                Ok(rules)
+                rules
             }
             Yaml::Hash(_) => {
                 // New format: { on: {...}, tasks: [...] }
-                parse_hash_format(&items[0], false)
+                parse_hash_format(&items[0], false)?
             }
-            other => Err(errors::FzzError::InvalidConfigError(
+            other => return Err(errors::FzzError::InvalidConfigError(
                 format!(
                     "Configuration file is invalid. Expected an Array/List of rules got: {}\n```yaml\n{}\n```",
                     yaml::get_type(other),
@@ -163,7 +163,51 @@ impl ConfigDocument {
                 None,
                 Some("Make sure to declare the rules as a list without any root property".to_owned()),
             )),
+        };
+        let defaults = self.execution_environment()?;
+        for rule in &mut rules {
+            rule.merge_environment_defaults(&defaults);
         }
+        Ok(rules)
+    }
+
+    pub(crate) fn execution_environment(
+        &self,
+    ) -> errors::Result<std::collections::BTreeMap<String, String>> {
+        let root = self
+            .root()
+            .map_err(|error| errors::FzzError::InvalidConfigError(error, None, None))?;
+        let execution = &root["execution"];
+        if execution == &Yaml::BadValue {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        if !matches!(execution, Yaml::Hash(_)) {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'execution' must be an object".to_owned(),
+                None,
+                None,
+            ));
+        }
+        let environment = yaml::extract_optional_string_map(execution, "env")?;
+        for name in environment.keys() {
+            if !valid_environment_name(name) {
+                return Err(errors::FzzError::InvalidConfigError(
+                    format!("Invalid environment variable name in 'execution.env': '{name}'"),
+                    None,
+                    Some("Use a portable name matching [A-Za-z_][A-Za-z0-9_]*.".to_owned()),
+                ));
+            }
+        }
+        if environment.values().any(|value| value.contains('\0')) {
+            return Err(errors::FzzError::InvalidConfigError(
+                "Property 'execution.env' values cannot contain NUL bytes".to_owned(),
+                None,
+                Some(
+                    "Use a string value without NUL bytes; an empty string is allowed.".to_owned(),
+                ),
+            ));
+        }
+        Ok(environment)
     }
 
     pub(crate) fn control_socket(&self) -> Result<Option<String>, String> {
@@ -393,6 +437,9 @@ impl ConfigDocument {
             success: read_hook("success")?,
             failure,
             failure_settle,
+            environment: self
+                .execution_environment()
+                .map_err(|error| error.to_string())?,
         })
     }
 
@@ -433,13 +480,76 @@ impl ConfigDocument {
                 }
             }
         }
-        Ok(SessionHooks { close })
+        Ok(SessionHooks {
+            close,
+            environment: self
+                .execution_environment()
+                .map_err(|error| error.to_string())?,
+        })
     }
 }
 
 #[cfg(test)]
 mod document_tests {
     use super::*;
+
+    #[test]
+    fn execution_environment_defaults_merge_beneath_job_environment() {
+        let document = ConfigDocument::parse(
+            "execution:\n  env:\n    DEFAULTED: from-execution\n    EMPTY: ''\n    OVERRIDDEN: from-execution\njobs:\n  - name: build\n    run: cargo build\n    env:\n      OVERRIDDEN: from-job\n      JOB_ONLY: from-job\n",
+        )
+        .expect("document parses");
+
+        let rules = document.rules().expect("environment config parses");
+        assert_eq!(
+            rules[0].environment().get("DEFAULTED").unwrap(),
+            "from-execution"
+        );
+        assert_eq!(rules[0].environment().get("EMPTY").unwrap(), "");
+        assert_eq!(
+            rules[0].environment().get("OVERRIDDEN").unwrap(),
+            "from-job"
+        );
+        assert_eq!(rules[0].environment().get("JOB_ONLY").unwrap(), "from-job");
+    }
+
+    #[test]
+    fn execution_environment_rejects_invalid_mapping_and_names() {
+        for execution in [
+            "env: [not, a, map]",
+            "env:\n    INVALID-NAME: value",
+            "env:\n    EMPTY-NAME: null",
+            r#"env:
+    NUL_VALUE: "\0""#,
+        ] {
+            let content = format!(
+                "execution:\n  {execution}\njobs:\n  - name: build\n    run: cargo build\n"
+            );
+            let document = ConfigDocument::parse(&content).expect("yaml parses");
+            assert!(document.rules().is_err(), "must reject {execution}");
+        }
+    }
+
+    #[test]
+    fn execution_environment_is_available_to_both_hook_lifecycles() {
+        let document = ConfigDocument::parse(
+            "execution:\n  env: { SHARED: configured }\nhooks:\n  success: echo ok\n  close: echo closed\njobs:\n  - name: build\n    run: cargo build\n",
+        )
+        .expect("document parses");
+
+        assert_eq!(
+            document
+                .generation_hooks()
+                .unwrap()
+                .environment
+                .get("SHARED"),
+            Some(&"configured".to_owned())
+        );
+        assert_eq!(
+            document.session_hooks().unwrap().environment.get("SHARED"),
+            Some(&"configured".to_owned())
+        );
+    }
 
     #[test]
     fn one_document_derives_rules_and_runtime_fields() {
@@ -516,6 +626,12 @@ struct CommonRules {
 
 fn invalid_config_from_validation(error: ValidationError) -> errors::FzzError {
     errors::FzzError::InvalidConfigError(error.message, None, error.hint)
+}
+
+fn valid_environment_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    matches!(characters.next(), Some(first) if first == '_' || first.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn validate_section(
@@ -2267,12 +2383,16 @@ pub struct GenerationHooks {
     pub failure: Option<String>,
     /// Optional asynchronous settlement window for failure hooks.
     pub failure_settle: Option<Duration>,
+    /// Project execution defaults inherited by generation hooks.
+    pub environment: std::collections::BTreeMap<String, String>,
 }
 
 /// Watcher-session lifecycle hook (`on.close`), TASK-0101.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionHooks {
     pub close: Option<String>,
+    /// Project execution defaults inherited by the close hook.
+    pub environment: std::collections::BTreeMap<String, String>,
 }
 
 /// Parses `on.success` / `on.failure` hook commands; absent = None,

@@ -17,6 +17,7 @@ pub struct WatchCommand {
     run_on_init: bool,
     events: Option<std::sync::Arc<crate::event_stream::EventStream>>,
     shutdown: Option<std::sync::Arc<crate::shutdown::ShutdownCoordinator>>,
+    reload: Option<crate::reload_coordinator::ReloadCoordinator>,
 }
 
 impl WatchCommand {
@@ -40,6 +41,7 @@ impl WatchCommand {
             run_on_init,
             events,
             shutdown: None,
+            reload: None,
         }
     }
 
@@ -48,6 +50,11 @@ impl WatchCommand {
         shutdown: std::sync::Arc<crate::shutdown::ShutdownCoordinator>,
     ) -> Self {
         self.shutdown = Some(shutdown);
+        self
+    }
+
+    pub fn with_reload(mut self, reload: crate::reload_coordinator::ReloadCoordinator) -> Self {
+        self.reload = Some(reload);
         self
     }
 }
@@ -64,7 +71,11 @@ impl Command for WatchCommand {
         .with_hooks(self.watches.hooks())
         .with_recovery_policy(self.watches.recovery_policy())
         .with_recovery_approval(std::sync::Arc::new(crate::approval::TtyRecoveryApproval));
-        let shared = std::sync::Arc::new(std::sync::Mutex::new(self.watches.clone()));
+        let shared = self
+            .reload
+            .as_ref()
+            .map(|reload| std::sync::Arc::clone(reload.shared()))
+            .unwrap_or_else(|| std::sync::Arc::new(std::sync::Mutex::new(self.watches.clone())));
         watch_loop(
             &shared,
             self.run_on_init,
