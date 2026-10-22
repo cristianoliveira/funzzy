@@ -32,14 +32,14 @@ impl WorkflowRunner {
     }
 
     /// Attaches run-level terminal hooks (TASK-0040).
-    pub fn with_hooks(self, hooks: crate::config::GenerationHooks) -> Self {
-        *self.hooks.lock().unwrap() = hooks;
+    pub fn with_hooks(mut self, hooks: crate::config::GenerationHooks) -> Self {
+        self.hooks = std::sync::Mutex::new(hooks);
         self
     }
 
     /// Updates defaults used by future runs; each run freezes its hook context
     /// before spawning commands, so a reload cannot alter an active run.
-    pub fn update_hooks(&self, hooks: crate::config::GenerationHooks) {
+    pub fn update_generation_hooks(&self, hooks: crate::config::GenerationHooks) {
         *self.hooks.lock().unwrap() = hooks;
     }
 

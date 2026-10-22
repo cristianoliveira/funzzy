@@ -36,6 +36,23 @@ fn wait_for(path: &PathBuf) {
     }
 }
 
+fn reload_config(value: &str) -> String {
+    format!(
+        r#"on:
+  change: 'triggers/**'
+execution:
+  env:
+    PROJECT_VALUE: {value}
+hooks:
+  success: 'printf "%s\n" "$PROJECT_VALUE" >> hooks.txt'
+jobs:
+  - name: echo
+    run: 'printf "%s\n" "$PROJECT_VALUE" >> values.txt'
+    run_on_init: true
+"#
+    )
+}
+
 #[test]
 fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
     let unique = SystemTime::now()
@@ -47,11 +64,7 @@ fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
         std::process::id()
     ));
     std::fs::create_dir_all(root.join("triggers")).unwrap();
-    std::fs::write(
-        root.join(".watch.yaml"),
-        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: first\nhooks:\n  success: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> hooks.txt'\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
-    )
-    .unwrap();
+    std::fs::write(root.join(".watch.yaml"), reload_config("first")).unwrap();
     let log_path = root.join("watcher.log");
     let log = std::fs::File::create(&log_path).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_fzz"))
@@ -70,11 +83,7 @@ fn blocking_watch_uses_reloaded_execution_environment_for_the_next_job() {
     wait_for(&hooks_path);
     assert_eq!(std::fs::read_to_string(&hooks_path).unwrap(), "first\n");
 
-    std::fs::write(
-        root.join(".watch.yaml"),
-        "on:\n  change: 'triggers/**'\nexecution:\n  env:\n    PROJECT_VALUE: second\nhooks:\n  success: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> hooks.txt'\njobs:\n  - name: echo\n    run: 'printf \"%s\\n\" \"$PROJECT_VALUE\" >> values.txt'\n    run_on_init: true\n",
-    )
-    .unwrap();
+    std::fs::write(root.join(".watch.yaml"), reload_config("second")).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while !std::fs::read_to_string(&log_path)
         .unwrap_or_default()
