@@ -561,9 +561,10 @@ fn observe_triggers(watches: &Watches, batch: &Batch, trigger: &str, generation:
 pub struct BlockingStrategy {
     workflow: WorkflowRunner,
     /// Latest terminal in-process run outcome (KEYBOARD-RETRY-CONTRACT):
-    /// terminal task snapshots plus the trigger path that produced them, so
-    /// Ctrl-R can re-run exactly the failed/timed-out finite jobs with the
-    /// original filepath context.
+    /// terminal task snapshots, the trigger path that produced them, and the
+    /// frozen config revision they ran under, so Ctrl-R can re-run exactly
+    /// the failed/timed-out finite jobs with the original filepath context
+    /// and never across a config change.
     latest_run: Mutex<Option<LatestBlockingRun>>,
 }
 
@@ -571,6 +572,7 @@ pub struct BlockingStrategy {
 struct LatestBlockingRun {
     tasks: Vec<crate::task_result::TaskSnapshot>,
     filepath: Option<String>,
+    revision: Option<ConfigRevision>,
 }
 
 impl BlockingStrategy {
@@ -629,38 +631,17 @@ impl RunStrategy for BlockingStrategy {
         "wait"
     }
 
-    fn run_manual(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self
+    fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let outcome = self
             .workflow
-            .run(plan, RunMetadata::new(0, "keyboard"), None)
-        {
-            Ok(completed) => {
-                self.record_completed_run(&completed, None);
-                stdout::present_results(
-                    completed.results,
-                    completed.elapsed,
-                    Some(&completed.outcome),
-                    &completed.tasks,
-                );
-            }
-            Err(error) => stdout::error(&error),
-        }
+            .run(plan, RunMetadata::new(0, "keyboard"), None);
+        self.finish_run(outcome, revision, None);
         None
     }
 
-    fn run_init(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
-            Ok(completed) => {
-                self.record_completed_run(&completed, None);
-                stdout::present_results(
-                    completed.results,
-                    completed.elapsed,
-                    Some(&completed.outcome),
-                    &completed.tasks,
-                );
-            }
-            Err(error) => stdout::error(&error),
-        }
+    fn run_init(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let outcome = self.workflow.run(plan, RunMetadata::new(0, "init"), None);
+        self.finish_run(outcome, revision, None);
         None
     }
 
@@ -669,22 +650,12 @@ impl RunStrategy for BlockingStrategy {
         plan: RunPlan,
         filepath: &str,
         batch: &Batch,
-        _revision: Option<ConfigRevision>,
+        revision: Option<ConfigRevision>,
     ) -> Option<u64> {
         let metadata =
             RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
-        match self.workflow.run(plan, metadata, Some(filepath)) {
-            Ok(completed) => {
-                self.record_completed_run(&completed, Some(filepath));
-                stdout::present_results(
-                    completed.results,
-                    completed.elapsed,
-                    Some(&completed.outcome),
-                    &completed.tasks,
-                );
-            }
-            Err(error) => stdout::error(&error),
-        }
+        let outcome = self.workflow.run(plan, metadata, Some(filepath));
+        self.finish_run(outcome, revision, Some(filepath));
         None
     }
 
@@ -704,14 +675,21 @@ impl RunStrategy for BlockingStrategy {
             }
         };
 
-        let (plan, hooks) = {
+        let (plan, hooks, current_revision) = {
             let watches = watches.lock().unwrap();
-            // One committed snapshot decides the retry: plan selection and
-            // terminal hooks must come from the same revision, never split
-            // across a reload commit (TASK-0091 semantics).
+            // One committed snapshot decides the retry: revision identity,
+            // plan selection, and terminal hooks must come from the same
+            // revision, never split across a reload commit (TASK-0091
+            // semantics; same revision guard as the socket retry).
             let plan = watches.retry_plan(&selected);
-            (plan, watches.hooks())
+            (plan, watches.hooks(), watches.revision().cloned())
         };
+        if latest.revision != current_revision {
+            stdout::warn(
+                "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
+            );
+            return None;
+        }
         if plan.is_empty() || plan.task_names() != selected {
             stdout::warn(
                 "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
@@ -734,12 +712,32 @@ impl RunStrategy for BlockingStrategy {
 
         stdout::info("Retrying failed jobs from keyboard shortcut.");
         let metadata = RunMetadata::new(0, "retry");
-        match self
+        let outcome = self
             .workflow
-            .run(plan, metadata, latest.filepath.as_deref())
-        {
+            .run(plan, metadata, latest.filepath.as_deref());
+        self.finish_run(outcome, current_revision, latest.filepath.as_deref());
+        None
+    }
+}
+
+impl BlockingStrategy {
+    /// Records one finished in-process run as the retry source and presents
+    /// its results. A failed preparation (`Err`) clears the stored outcome:
+    /// the newer attempt never produced work, so an older failure must not
+    /// stay retryable across it.
+    fn finish_run(
+        &self,
+        outcome: Result<crate::executor::CompletedRun, String>,
+        revision: Option<ConfigRevision>,
+        filepath: Option<&str>,
+    ) {
+        match outcome {
             Ok(completed) => {
-                self.record_completed_run(&completed, latest.filepath.as_deref());
+                *self.latest_run.lock().unwrap() = Some(LatestBlockingRun {
+                    tasks: completed.tasks.clone(),
+                    filepath: filepath.map(str::to_owned),
+                    revision,
+                });
                 stdout::present_results(
                     completed.results,
                     completed.elapsed,
@@ -747,22 +745,11 @@ impl RunStrategy for BlockingStrategy {
                     &completed.tasks,
                 );
             }
-            Err(error) => stdout::error(&error),
+            Err(error) => {
+                *self.latest_run.lock().unwrap() = None;
+                stdout::error(&error);
+            }
         }
-        None
-    }
-}
-
-impl BlockingStrategy {
-    fn record_completed_run(
-        &self,
-        completed: &crate::executor::CompletedRun,
-        filepath: Option<&str>,
-    ) {
-        *self.latest_run.lock().unwrap() = Some(LatestBlockingRun {
-            tasks: completed.tasks.clone(),
-            filepath: filepath.map(str::to_owned),
-        });
     }
 }
 
@@ -2591,6 +2578,99 @@ mod keyboard_retry_tests {
             std::fs::read_to_string(dir.join("passes.log")).unwrap(),
             "pass\n",
             "rejection must not schedule any work"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A hot reload that keeps every task name but changes commands bumps the
+    /// config revision: Ctrl-R must reject instead of silently running the
+    /// NEW commands for the OLD failure (same safety as the socket retry).
+    #[test]
+    fn keyboard_retry_rejects_a_same_name_command_change_under_a_new_revision() {
+        use super::BlockingStrategy;
+        use crate::config_revision::ConfigRevision;
+
+        let dir = scratch("kbd-retry-revision");
+        std::fs::create_dir_all(&dir).unwrap();
+        let revision_one = ConfigRevision {
+            number: 1,
+            hash: "revision-one".to_owned(),
+        };
+        let revision_two = ConfigRevision {
+            number: 2,
+            hash: "revision-two".to_owned(),
+        };
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(
+            Watches::new(vec![fails]).with_revision(revision_one.clone()),
+        ));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches.lock().unwrap().retry_plan(&["fails".to_owned()]);
+        strategy.run_manual(plan, Some(revision_one));
+
+        // Hot reload: same task name, different committed revision.
+        *watches.lock().unwrap() = Watches::new(vec![Rules::new(
+            "fails".to_owned(),
+            vec!["echo different >> fails.log".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )])
+        .with_revision(revision_two);
+
+        std::fs::write(dir.join("allow"), "passes now").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\n",
+            "a revision change must reject the retry even with identical task names"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A newer run whose preparation failed clears the stored outcome: an
+    /// older failure must not stay retryable across the failed attempt.
+    #[test]
+    fn keyboard_retry_after_a_failed_blocking_preparation_reports_no_previous_run() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-cleared");
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(Watches::new(vec![fails])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches.lock().unwrap().retry_plan(&["fails".to_owned()]);
+        strategy.run_manual(plan, None);
+
+        // The next attempt failed before producing any work.
+        strategy.finish_run(Err("cwd no longer exists".to_owned()), None, None);
+
+        std::fs::write(dir.join("allow"), "passes now").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\n",
+            "a cleared outcome must not replay the older failure"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

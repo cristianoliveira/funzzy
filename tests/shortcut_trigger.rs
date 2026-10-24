@@ -665,3 +665,78 @@ jobs:
         },
     );
 }
+
+#[test]
+fn piped_ctrl_r_after_a_hot_reload_rejects_the_stale_revision() {
+    let config_template = |command: &str| {
+        format!(
+            r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: fails
+    run: '{command}'
+    change: 'src/**'
+"#
+        )
+    };
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_r_reload.log",
+        |fzz_cmd, mut output_log, fixture| {
+            std::fs::write(
+                fixture.join("examples/retry-keys.yaml"),
+                config_template(
+                    "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi",
+                ),
+            )
+            .expect("write initial config");
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Watching..."),
+                "watcher did not become ready"
+            );
+            trigger_change(fixture);
+            wait_until!(
+                read_fixture_log(fixture, "fails.log") == 1,
+                "source run did not complete"
+            );
+
+            // Hot reload keeps the task name but changes the committed
+            // revision; the recorded outcome is now stale.
+            std::fs::write(
+                fixture.join("examples/retry-keys.yaml"),
+                config_template("echo reloaded >> fails.log"),
+            )
+            .expect("write reloaded config");
+            wait_until!(
+                watcher_output(&mut output_log).contains("hot-reloading to revision 2."),
+                "watcher did not hot-reload to revision 2"
+            );
+
+            std::fs::write(fixture.join("allow"), "passes now").expect("allow retry");
+            press(&mut input, CTRL_R);
+            wait_until!(
+                watcher_output(&mut output_log).contains(
+                    "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
+                ),
+                "keyboard retry did not reject the stale revision"
+            );
+
+            assert_eq!(
+                read_fixture_log(fixture, "fails.log"),
+                1,
+                "stale retry must not schedule work under the new revision"
+            );
+        },
+    );
+}
