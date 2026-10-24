@@ -434,6 +434,23 @@ fn piped_ctrl_r_retries_only_failed_blocking_jobs() {
                 !output.contains("Running full pipeline from keyboard shortcut."),
                 "retry must never fall back to a full run:\n{output}"
             );
+
+            // The successful retry is now the latest terminal run: an
+            // immediate second Ctrl+R must reject as nothing-eligible instead
+            // of replaying the older failure (blocking re-records through the
+            // same finish_run path).
+            press(&mut input, CTRL_R);
+            wait_until!(
+                watcher_output(&mut output_log).contains(
+                    "Shortcut ignored: latest run has no failed or timed-out jobs to retry.",
+                ),
+                "immediate second Ctrl+R after a passed retry was not rejected"
+            );
+            assert_eq!(
+                read_fixture_log(fixture, "fails.log"),
+                2,
+                "second Ctrl+R must not re-run the earlier failure"
+            );
         },
     );
 }
