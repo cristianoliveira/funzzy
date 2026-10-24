@@ -34,6 +34,11 @@ pub enum ControlAction {
     List,
     Capabilities,
     Config,
+    Retry {
+        generation: Option<u64>,
+        wait: bool,
+        timeout: Option<Duration>,
+    },
     Run {
         target: String,
         /// Await the exact scheduled generation before returning (TASK-0044).
@@ -247,6 +252,52 @@ impl Command for ControlCommand {
                     .config()
                     .map_err(|err| FzzError::GenericError(err.to_string()))?;
                 self.print_response(&config_document(&config), || render_config(&config));
+            }
+            ControlAction::Retry {
+                generation,
+                wait,
+                timeout,
+            } => {
+                let token = client
+                    .capabilities()
+                    .ok()
+                    .map(|capabilities| capabilities.token);
+                let retry = match client.retry(*generation, token.as_deref()) {
+                    Ok(retry) => retry,
+                    Err(ControlClientError::Server {
+                        code,
+                        message,
+                        data,
+                    }) => {
+                        let mut error = json!({ "code": code, "message": message });
+                        if let Some(data) = &data {
+                            error["data"] = data.clone();
+                        }
+                        let document = json!({ "error": error });
+                        let human = format!("retry failed: {message} ({code})");
+                        self.print_response(&document, || human.clone());
+                        return Err(FzzError::GenericError(human));
+                    }
+                    Err(error) => return Err(FzzError::GenericError(error.to_string())),
+                };
+                let document = json!({
+                    "sourceGeneration": retry.source_generation,
+                    "runId": retry.run_id,
+                    "tasks": retry.tasks,
+                    "revision": retry.revision,
+                    "revisionHash": retry.revision_hash,
+                });
+                self.print_response(&document, || render_retry(&retry));
+                if *wait {
+                    return self.finish_await(
+                        &mut client,
+                        &path,
+                        AwaitMode::Exact(retry.run_id),
+                        timeout
+                            .as_ref()
+                            .expect("--wait requires --timeout (validated by clap)"),
+                    );
+                }
             }
             ControlAction::Run {
                 target,
@@ -730,7 +781,20 @@ fn source_label(source: crate::duration_history::EstimateSource) -> &'static str
 
 /// Scheduled-generation identity returned by `control run TARGET`, with the
 /// frozen config revision it was planned under (TASK-0091, AC2).
-pub fn render_run(scheduled: &ScheduledRunSnapshot) -> String {
+pub fn render_retry(retry: &crate::control_client::RetrySnapshot) -> String {
+    let mut rendered = format!(
+        "source generation: {}\nscheduled generation: {}\nretried tasks: {}\n",
+        retry.source_generation,
+        retry.run_id,
+        retry.tasks.join(", ")
+    );
+    if let Some(revision) = retry.revision {
+        rendered.push_str(&format!("revision: {revision}\n"));
+    }
+    rendered
+}
+
+fn render_run(scheduled: &ScheduledRunSnapshot) -> String {
     let mut output = format!("scheduled generation: {}\n", scheduled.run_id);
     if let Some(revision) = scheduled.revision {
         output.push_str(&format!("revision: {}\n", revision));

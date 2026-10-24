@@ -909,6 +909,64 @@ impl ScheduledRunSnapshot {
     }
 }
 
+/// Validated explicit retry result: one new generation linked to its exact
+/// source generation and selected failed jobs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetrySnapshot {
+    pub source_generation: u64,
+    pub run_id: u64,
+    pub tasks: Vec<String>,
+    pub revision: Option<u64>,
+    pub revision_hash: Option<String>,
+}
+
+impl RetrySnapshot {
+    fn from_value(value: Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| "retry result must be an object".to_string())?;
+        let source_generation = object
+            .get("sourceGeneration")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "retry result must carry numeric sourceGeneration".to_string())?;
+        let run_id = object
+            .get("runId")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "retry result must carry numeric runId".to_string())?;
+        let tasks = object
+            .get("tasks")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "retry result field tasks must be an array".to_string())?
+            .iter()
+            .map(|task| {
+                task.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "retry result task names must be strings".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let revision = match object.get("revision") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(value)) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| "retry result field revision must be a number".to_string())?,
+            Some(_) => return Err("retry result field revision must be a number".to_string()),
+        };
+        let revision_hash = match object.get("revisionHash") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.clone()),
+            Some(_) => return Err("retry result field revisionHash must be a string".to_string()),
+        };
+        Ok(Self {
+            source_generation,
+            run_id,
+            tasks,
+            revision,
+            revision_hash,
+        })
+    }
+}
+
 /// Validated `cancel` result (contract §10): `{ cancelled: bool, generation: u64 }`.
 /// `cancelled: false` is a no-op (already terminal or unknown); escalation
 /// arrives as RPC error -32021 instead of this shape.
@@ -1169,6 +1227,23 @@ impl ControlClient {
         let params = serde_json::json!({ "target": target, "sequential": sequential });
         let result = self.call("run", params)?;
         ScheduledRunSnapshot::from_value(result).map_err(ControlClientError::Malformed)
+    }
+
+    /// Requests a retry of the latest terminal generation, or one exact source.
+    pub fn retry(
+        &mut self,
+        generation: Option<u64>,
+        instance_token: Option<&str>,
+    ) -> Result<RetrySnapshot, ControlClientError> {
+        let mut params = serde_json::json!({});
+        if let Some(generation) = generation {
+            params["generation"] = serde_json::json!(generation);
+        }
+        if let Some(token) = instance_token {
+            params["instanceToken"] = serde_json::json!(token);
+        }
+        let result = self.call("retry", params)?;
+        RetrySnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
     /// Requests `emit` for one path; returns matched tasks and run identity
@@ -1577,6 +1652,28 @@ mod tests {
         handle.join().expect("server thread");
         assert_eq!(scheduled.run_id, 7);
         assert_eq!(scheduled.revision, None, "legacy run shape has no revision");
+    }
+
+    #[test]
+    fn retry_parses_exact_source_and_scheduled_generation() {
+        let result = serde_json::json!({
+            "sourceGeneration": 3,
+            "runId": 4,
+            "tasks": ["compile", "test"],
+            "revision": 2,
+            "revisionHash": "revision-hash",
+        });
+        let (path, handle) = serving_socket(ok_response(1, result));
+        let mut client = ControlClient::connect(&path).expect("connect");
+        let retry = client
+            .retry(Some(3), Some("instance-token"))
+            .expect("retry");
+        handle.join().expect("server thread");
+        assert_eq!(retry.source_generation, 3);
+        assert_eq!(retry.run_id, 4);
+        assert_eq!(retry.tasks, ["compile", "test"]);
+        assert_eq!(retry.revision, Some(2));
+        assert_eq!(retry.revision_hash.as_deref(), Some("revision-hash"));
     }
 
     #[test]

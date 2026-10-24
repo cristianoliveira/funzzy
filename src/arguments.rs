@@ -287,6 +287,11 @@ impl Arguments {
                         Some(("list", _)) => ControlAction::List,
                         Some(("capabilities", _)) => ControlAction::Capabilities,
                         Some(("config", _)) => ControlAction::Config,
+                        Some(("retry", retry_sub)) => ControlAction::Retry {
+                            generation: retry_sub.get_one::<u64>("generation").copied(),
+                            wait: retry_sub.get_flag("wait"),
+                            timeout: retry_sub.get_one::<Duration>("timeout").copied(),
+                        },
                         Some(("run", run_sub)) => ControlAction::Run {
                             target: run_sub
                                 .get_one::<String>("target")
@@ -827,6 +832,36 @@ pub fn command() -> Command {
                         ),
                 )
                 .subcommand(
+                    Command::new("retry")
+                        .about("Retry failed jobs from the latest terminal generation, or an exact one.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Retry failed or timed-out finite jobs from the latest terminal generation. With no `--generation`, the watcher selects its current generation atomically; it never searches for an older failure. Use `--generation N` to require an exact source. This schedules one correlated generation and never retries passed, cancelled, or skipped jobs. Services and stale config revisions are rejected. The control socket must belong to an idle watcher. Only the latest terminal snapshot is retained; retry immediately after observing a failure.\n\nWorkflow: run `fzz control --format toon retry` and read sourceGeneration N and new runId M; observe `fzz control --format toon await --generation M --timeout 5m`; retrieve task output with `fzz control --format toon output --generation M --tail 80`. For an exact observed run, use `fzz control --format toon retry --generation N`. Use `--wait --timeout 5m` on retry to combine scheduling and bounded observation. Timeout keeps the same retry scheduled; await that runId again. `no_retryable_jobs` means the latest generation has no failed finite jobs; `watcher_busy` means wait for active work or pending batch; `stale_revision` means trigger fresh work under current config; services are not retryable.",
+                        )
+                        .arg(
+                            Arg::new("generation")
+                                .long("generation")
+                                .value_name("GENERATION")
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Require this exact source generation (default: latest terminal generation)."),
+                        )
+                        .arg(
+                            Arg::new("wait")
+                                .long("wait")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("timeout")
+                                .help("Await the new retry generation to terminal."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .requires("wait")
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Await bound: <number> seconds, or <number>ms/s/m (required with --wait)."),
+                        ),
+                )
+                .subcommand(
                     Command::new("run")
                         .about("Trigger a named target on the running watcher and report the scheduled generation.")
                         .version(env!("CARGO_PKG_VERSION"))
@@ -1057,6 +1092,12 @@ Alias:
 
 Config:
   fzz config describes the config schema and prints runnable examples.
+
+Retry failed jobs (requires a running watcher):
+  fzz control --format toon retry                   # latest terminal run; read new runId M
+  fzz control --format toon retry --generation N    # require exact source N instead
+  fzz control --format toon await --generation M --timeout 5m
+  fzz control --format toon output --generation M --tail 80
 
 {usage-heading} {usage}
 
@@ -1495,6 +1536,61 @@ mod tests {
     #[test]
     fn control_run_without_target_fails() {
         assert!(parse(&["control", "run"]).is_err());
+    }
+
+    #[test]
+    fn control_retry_defaults_to_latest_but_accepts_an_exact_generation() {
+        assert_eq!(
+            parse_action(&["control", "retry"]),
+            Action::Control {
+                action: ControlAction::Retry {
+                    generation: None,
+                    wait: false,
+                    timeout: None,
+                },
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
+        assert_eq!(
+            parse_action(&["control", "retry", "--generation", "12"]),
+            Action::Control {
+                action: ControlAction::Retry {
+                    generation: Some(12),
+                    wait: false,
+                    timeout: None,
+                },
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
+    }
+
+    #[test]
+    fn control_retry_wait_requires_a_timeout_and_preserves_format() {
+        assert!(parse(&["control", "retry", "--generation", "12", "--wait"]).is_err());
+        assert_eq!(
+            parse_action(&[
+                "control",
+                "--format",
+                "json",
+                "retry",
+                "--generation",
+                "12",
+                "--wait",
+                "--timeout",
+                "5m",
+            ]),
+            Action::Control {
+                action: ControlAction::Retry {
+                    generation: Some(12),
+                    wait: true,
+                    timeout: Some(Duration::from_secs(300)),
+                },
+                socket: None,
+                format: OutputFormat::Json,
+            }
+        );
     }
 
     #[test]

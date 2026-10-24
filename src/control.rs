@@ -117,6 +117,86 @@ pub struct ScheduledRun {
     pub revision_hash: Option<String>,
 }
 
+/// One explicit retry of failed jobs from an exact source generation.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryRun {
+    pub source_generation: u64,
+    pub run_id: u64,
+    pub tasks: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_hash: Option<String>,
+}
+
+/// Typed retry failures (TASK-0190): selection and scheduling failures are
+/// stable RPC outcomes, not generic server errors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ControlRetryError {
+    SourceUnavailable {
+        generation: u64,
+    },
+    SourceNotTerminal {
+        generation: u64,
+    },
+    StaleRevision {
+        source: Option<u64>,
+        current: Option<u64>,
+    },
+    NoRetryableJobs {
+        generation: u64,
+    },
+    UnsupportedService {
+        name: String,
+    },
+    WatcherBusy,
+    Internal(String),
+}
+
+impl ControlRetryError {
+    pub fn to_rpc(self) -> (i64, &'static str, Option<serde_json::Value>) {
+        match self {
+            Self::SourceUnavailable { generation } => (
+                -32030,
+                "source_unavailable",
+                Some(serde_json::json!({"generation": generation})),
+            ),
+            Self::SourceNotTerminal { generation } => (
+                -32031,
+                "source_not_terminal",
+                Some(serde_json::json!({"generation": generation})),
+            ),
+            Self::StaleRevision { source, current } => (
+                -32032,
+                "stale_revision",
+                Some(
+                    serde_json::json!({"sourceRevision": source, "currentRevision": current, "action": "trigger fresh work under the current config"}),
+                ),
+            ),
+            Self::NoRetryableJobs { generation } => (
+                -32033,
+                "no_retryable_jobs",
+                Some(serde_json::json!({"generation": generation})),
+            ),
+            Self::UnsupportedService { name } => (
+                -32034,
+                "unsupported_service",
+                Some(serde_json::json!({"task": name, "action": "retry finite jobs only"})),
+            ),
+            Self::WatcherBusy => (
+                -32035,
+                "watcher_busy",
+                Some(serde_json::json!({"action": "retry after the watcher is idle"})),
+            ),
+            Self::Internal(message) => (-32000, "Server error", Some(serde_json::json!(message))),
+        }
+    }
+}
+
+type RetryGeneration =
+    Arc<dyn Fn(Option<u64>) -> Result<RetryRun, ControlRetryError> + Send + Sync>;
+
 /// Typed control-run failure (TASK-0091, AC7): a stale target (not in the
 /// current revision) is an actionable typed outcome, never a generic server
 /// error that the agent would have to parse. Maps to one stable RPC code.
@@ -171,6 +251,7 @@ pub struct ControlApi {
     targets: Vec<ControlTarget>,
     targets_provider: Option<TargetsProvider>,
     run_target: Option<RunTarget>,
+    retry_generation: Option<RetryGeneration>,
     emit_path: Option<EmitPath>,
     coordinator: Option<Arc<AwaitCoordinator>>,
     outputs: Option<Arc<OutputRegistry>>,
@@ -188,6 +269,7 @@ impl ControlApi {
             targets: vec![],
             targets_provider: None,
             run_target: None,
+            retry_generation: None,
             emit_path: None,
             coordinator: None,
             outputs: None,
@@ -214,6 +296,14 @@ impl ControlApi {
         F: Fn(String, bool) -> Result<ScheduledRun, ControlRunError> + Send + Sync + 'static,
     {
         self.run_target = Some(Arc::new(run_target));
+        self
+    }
+
+    pub fn with_retry<F>(mut self, retry_generation: F) -> Self
+    where
+        F: Fn(Option<u64>) -> Result<RetryRun, ControlRetryError> + Send + Sync + 'static,
+    {
+        self.retry_generation = Some(Arc::new(retry_generation));
         self
     }
 
@@ -675,6 +765,7 @@ fn process_request(request: serde_json::Value, api: &ControlApi) -> Option<serde
     let targets = api.targets.as_slice();
     let targets_provider = api.targets_provider.as_ref();
     let run_target = api.run_target.as_ref();
+    let retry_generation = api.retry_generation.as_ref();
     let emit_path = api.emit_path.as_ref();
     let outputs = api.outputs.as_deref();
     let cancel_generation = api.cancel_generation.as_ref();
@@ -710,6 +801,7 @@ fn process_request(request: serde_json::Value, api: &ControlApi) -> Option<serde
             estimates,
         )),
         "run" => run_requested_target(&request, run_target),
+        "retry" => retry_requested_generation(&request, retry_generation, instance),
         "emit" => emit_requested_path(&request, emit_path),
         "cancel" => cancel_requested_generation(&request, cancel_generation, instance),
         "output" => output_retrieval(&request, outputs, instance),
@@ -719,17 +811,27 @@ fn process_request(request: serde_json::Value, api: &ControlApi) -> Option<serde
         // The extension keeps the legacy polling fallback and never assumes
         // capabilities from package versions.
         "config" => config_result(lifecycle),
-        "capabilities" => Ok(capabilities_result(
-            instance,
-            broker.is_some(),
-            estimates.is_some(),
-            lifecycle.is_some(),
-            // TASK-0073: the sequential run override is implemented whenever a
-            // run target handler is wired (always in production); capability
-            // negotiation lets old clients detect support before sending the
-            // flag, and lets the extension fail closed on legacy servers.
-            run_target.is_some(),
-        )),
+        "capabilities" => {
+            let mut capabilities = capabilities_result(
+                instance,
+                broker.is_some(),
+                estimates.is_some(),
+                lifecycle.is_some(),
+                // TASK-0073: the sequential run override is implemented whenever a
+                // run target handler is wired (always in production); capability
+                // negotiation lets old clients detect support before sending the
+                // flag, and lets the extension fail closed on legacy servers.
+                run_target.is_some(),
+            );
+            if retry_generation.is_some() {
+                capabilities["methods"]
+                    .as_array_mut()
+                    .expect("capabilities methods is an array")
+                    .push(serde_json::json!("retry"));
+            }
+            Ok(capabilities)
+        }
+
         _ => Err((-32601, "Method not found", None)),
     };
 
@@ -1167,6 +1269,62 @@ fn serialize_retrieved(
     })
 }
 
+fn retry_requested_generation(
+    request: &serde_json::Value,
+    retry_generation: Option<&RetryGeneration>,
+    instance: &WatcherInstance,
+) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
+    let params = match request.get("params") {
+        None => None,
+        Some(value) => Some(value.as_object().ok_or_else(|| {
+            (
+                -32602,
+                "Invalid params",
+                Some(serde_json::json!("retry params must be an object")),
+            )
+        })?),
+    };
+    let generation = match params.and_then(|params| params.get("generation")) {
+        None => None,
+        Some(value) => Some(value.as_u64().ok_or_else(|| {
+            (
+                -32602,
+                "Invalid params",
+                Some(serde_json::json!(
+                    "retry params.generation must be numeric when provided"
+                )),
+            )
+        })?),
+    };
+
+    if let Some(token) = params
+        .and_then(|params| params.get("instanceToken"))
+        .and_then(serde_json::Value::as_str)
+    {
+        if token != instance.token {
+            return Err((
+                -32030,
+                "source_unavailable",
+                Some(
+                    serde_json::json!({"generation": generation, "action": "query the current watcher status"}),
+                ),
+            ));
+        }
+    }
+
+    let Some(retry_generation) = retry_generation else {
+        return Err((
+            -32000,
+            "Server error",
+            Some(serde_json::json!("generation retry is unavailable")),
+        ));
+    };
+
+    retry_generation(generation)
+        .map(|retry| serde_json::to_value(retry).unwrap_or_default())
+        .map_err(ControlRetryError::to_rpc)
+}
+
 fn run_requested_target(
     request: &serde_json::Value,
     run_target: Option<&RunTarget>,
@@ -1480,6 +1638,63 @@ mod tests {
             });
             let (code, _, _) =
                 run_requested_target(&request, Some(&run_target)).expect_err("malformed");
+            assert_eq!(code, -32602);
+        }
+    }
+
+    #[test]
+    fn retry_rpc_exposes_typed_errors_and_capability() {
+        let state = Arc::new(Mutex::new(WatcherState::default()));
+        let api = ControlApi::new(state).with_retry(|generation| {
+            Err(ControlRetryError::NoRetryableJobs {
+                generation: generation.unwrap_or(0),
+            })
+        });
+        let capabilities = process_request(
+            serde_json::json!({"jsonrpc":"2.0", "id":1, "method":"capabilities", "params":{}}),
+            &api,
+        )
+        .expect("capabilities response");
+        assert!(capabilities["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("retry")));
+
+        let response = process_request(
+            serde_json::json!({"jsonrpc":"2.0", "id":2, "method":"retry", "params":{"generation":7}}),
+            &api,
+        )
+        .expect("retry response");
+        assert_eq!(response["error"]["code"], -32033);
+        assert_eq!(response["error"]["message"], "no_retryable_jobs");
+        assert_eq!(response["error"]["data"]["generation"], 7);
+    }
+
+    #[test]
+    fn retry_rpc_distinguishes_omitted_generation_from_malformed_generation() {
+        let retry: RetryGeneration = Arc::new(|generation| {
+            assert_eq!(generation, None);
+            Err(ControlRetryError::NoRetryableJobs { generation: 0 })
+        });
+        let omitted = serde_json::json!({"params": {}});
+        let (code, _, _) = retry_requested_generation(&omitted, Some(&retry), &instance("fz-7f3a"))
+            .expect_err("latest generation has no failures");
+        assert_eq!(code, -32033);
+
+        let malformed = serde_json::json!({"params": {"generation": "last"}});
+        let (code, _, _) =
+            retry_requested_generation(&malformed, Some(&retry), &instance("fz-7f3a"))
+                .expect_err("malformed generation is not a shorthand");
+        assert_eq!(code, -32602);
+
+        for params in [
+            serde_json::json!([]),
+            serde_json::json!({"generation": null}),
+        ] {
+            let request = serde_json::json!({"params": params});
+            let (code, _, _) =
+                retry_requested_generation(&request, Some(&retry), &instance("fz-7f3a"))
+                    .expect_err("malformed params must not select the latest generation");
             assert_eq!(code, -32602);
         }
     }

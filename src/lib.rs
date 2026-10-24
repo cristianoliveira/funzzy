@@ -32,6 +32,7 @@ pub mod process_owner;
 pub mod reload;
 pub mod reload_coordinator;
 pub mod reload_session;
+pub mod retry;
 pub mod rules;
 pub mod service_lifecycle;
 pub mod service_pool;

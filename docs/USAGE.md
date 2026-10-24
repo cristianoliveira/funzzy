@@ -153,11 +153,38 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | List targets | `fzz list` | no | none |
 | Explain a path | `fzz explain PATH` | no | none |
 | Ad-hoc over stdin | `fzz exec -- PROGRAM ARG...` | no | runs PROGRAM per stdin path |
-| Control running watcher | `fzz control status\|list\|run\|emit\|await\|cancel\|output\|capabilities` | no | talks to the socket |
+| Control running watcher | `fzz control status\|list\|run\|retry\|emit\|await\|cancel\|output\|capabilities` | no | talks to the socket |
 | Init a starter config | `fzz init [--template P]` | no | writes `.watch.yaml` (create-only, refuses existing) |
 | Migrate a legacy config | `fzz migrate [-c PATH]` | no | atomic in-place rewrite (idempotent) |
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 | Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
+
+### Retry failed jobs from the latest run
+
+With no generation, Funzzy atomically selects the latest terminal generation.
+It never searches for an older failure: if the latest run passed, there is
+nothing to retry. Only that generation's failed or timed-out finite jobs are
+retried; passed, skipped, and cancelled jobs stay out. Services cannot be retried.
+
+```sh
+fzz control --format toon retry
+# Copy the sourceGeneration N and new runId M from the response.
+fzz control --format toon await --generation M --timeout 5m
+fzz control --format toon output --generation M --tail 80
+
+# To require a particular observed generation instead:
+fzz control --format toon retry --generation N
+```
+
+`--format` belongs before the `control` action. `--wait --timeout 5m`
+combines scheduling and observation; a timeout leaves the retry running, so
+await its returned `runId` again. Bare retry always evaluates the latest
+source under the watcher's schedule lock. `--generation N` requires that exact
+source; an already-accepted retry of N returns the same runId while cached,
+whereas an uncached stale source fails. `watcher_busy` means wait for active
+work or pending batch routing. For `stale_revision` or `source_unavailable`,
+observe fresh work. `no_retryable_jobs` means no finite failure is eligible;
+`unsupported_service` means a failed service was selected.
 
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
 cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`

@@ -784,6 +784,19 @@ impl Scheduler {
         !self.state.lock().unwrap().queue.is_empty()
     }
 
+    fn has_pending_run(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .queue
+            .iter()
+            .any(|command| matches!(command, WorkerCommand::Run(_)))
+    }
+
+    fn has_active_run(&self) -> bool {
+        !self.active_cancellations.lock().unwrap().is_empty()
+    }
+
     fn try_recv(&self) -> Option<WorkerCommand> {
         self.state.lock().unwrap().queue.pop_front()
     }
@@ -1003,6 +1016,13 @@ impl Worker {
         }
     }
 
+    /// Whether a run is active or waiting in the worker's command queue.
+    pub fn has_active_or_queued_run(&self) -> bool {
+        self.scheduler
+            .as_ref()
+            .is_some_and(|scheduler| scheduler.has_active_run() || scheduler.has_pending_run())
+    }
+
     pub fn cancel_running_tasks(&self) -> Result<(), String> {
         if let Some(scheduler) = self.scheduler.as_ref() {
             scheduler.send(WorkerCommand::Cancel {
@@ -1193,6 +1213,19 @@ impl Worker {
         revision: Option<crate::config_revision::ConfigRevision>,
     ) -> Result<u64, String> {
         let request = self.prepare_request(plan, trigger, filepath, batch, changed, revision)?;
+        self.dispatch(request)
+    }
+
+    pub(crate) fn schedule_retry(
+        &self,
+        plan: RunPlan,
+        source_generation: u64,
+        filepath: Option<&str>,
+        changed: Vec<String>,
+        revision: Option<crate::config_revision::ConfigRevision>,
+    ) -> Result<u64, String> {
+        let trigger = format!("retry:{source_generation}");
+        let request = self.prepare_request(plan, &trigger, filepath, None, changed, revision)?;
         self.dispatch(request)
     }
 
