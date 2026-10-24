@@ -143,6 +143,8 @@ This is the whole loop: config → check → run → watch.
 
 While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Ctrl-C starts a graceful shutdown. Piped input accepts the same Ctrl-G byte. Closed input does not cause an error.
 
+Press **Ctrl-R** to retry only the failed and timed-out finite jobs of the latest terminal run — the same selection as `fzz control retry`. It never re-runs passed, skipped, or cancelled jobs, never reaches back to an older failure, and never falls back to a full run. Funzzy prints a clear rejection when there is no previous run, the latest run passed, the config changed after it, or a failed service cannot be retried. While a generation is active, the first shortcut press wins: one latched action (Ctrl-G or Ctrl-R) starts after it finishes and later presses are ignored.
+
 ## 2. Daily workflow decision table
 
 | Goal | Command | Watcher? | Side effects |
@@ -159,7 +161,7 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 | Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
 
-### Retry failed jobs from the latest run
+### Retry failed or timed-out jobs from the latest run
 
 With no generation, Funzzy atomically selects the latest terminal generation.
 It never searches for an older failure: if the latest run passed, there is
@@ -185,6 +187,11 @@ whereas an uncached stale source fails. `watcher_busy` means wait for active
 work or pending batch routing. For `stale_revision` or `source_unavailable`,
 observe fresh work. `no_retryable_jobs` means no finite failure is eligible;
 `unsupported_service` means a failed service was selected.
+
+The same retry is available on the keyboard while watching: **Ctrl-R** selects
+the latest terminal generation exactly like a bare `retry` — no generation ID
+typed, no older failure reachable, no full-run fallback (see *Trigger the
+pipeline from the keyboard*).
 
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
 cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`
