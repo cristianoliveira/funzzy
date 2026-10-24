@@ -91,6 +91,7 @@ server without `capabilities` reports a `legacy` profile.
 | `status` | current state | generation, state, failures |
 | `list` | remote targets | names + commands |
 | `run TARGET [--wait]` | schedule exact generation | runId |
+| `retry --generation N [--wait]` | retry failed/timed-out finite jobs from an exact source | sourceGeneration, runId, tasks |
 | `emit PATH [--wait]` | synthetic change through native routing | outcome, matched, runId |
 | `await` | atomic wait (after/exact) | terminalReason, snapshot, freshness |
 | `output` | bounded retained output | content + truncation bounds |
@@ -100,6 +101,34 @@ server without `capabilities` reports a `legacy` profile.
 `--wait` requires `--timeout`. Exit codes: 0 success/no-op, 1 failed/
 superseded/timeout/restarted, 2 usage. `--format toon|json|human` selects
 structured output (TOON default for agents, JSON interoperability).
+
+### Retry one failed generation
+
+Retry requires the exact generation ID from the failure observation. Funzzy retains
+only the latest terminal snapshot. It schedules one new generation containing
+failed or timed-out finite jobs; passed, skipped, and cancelled jobs stay out.
+Services are unsupported. The retry uses the same config revision and preserves
+the selected jobs' execution context, timeout, recovery policy, and hooks. A
+changed revision, another active run, or a pending batch rejects the request
+without scheduling partial work. Repeating the same source request returns the
+same retry generation.
+
+```sh
+fzz ctl status --format toon
+# Read the failed source generation N from the exact failure snapshot.
+fzz ctl retry --generation N --format toon
+# Read the returned retry runId M.
+fzz ctl await --generation M --timeout 5m --format toon
+fzz ctl output --generation M --tail 80 --format toon
+```
+
+`--wait --timeout 5m` can combine scheduling and bounded observation. If the
+await times out, the retry remains scheduled; observe the same returned `runId`
+again. `source_unavailable`/`source_not_terminal` require a current terminal
+source, `stale_revision` means trigger fresh work under the current config,
+`no_retryable_jobs` means there is nothing eligible, `unsupported_service`
+requires a finite-job-only retry, and `watcher_busy` means retry after current
+work or batch routing settles. Never substitute a different generation ID.
 
 ### Freshness
 

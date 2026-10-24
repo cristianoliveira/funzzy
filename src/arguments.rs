@@ -287,6 +287,14 @@ impl Arguments {
                         Some(("list", _)) => ControlAction::List,
                         Some(("capabilities", _)) => ControlAction::Capabilities,
                         Some(("config", _)) => ControlAction::Config,
+                        Some(("retry", retry_sub)) => ControlAction::Retry {
+                            generation: retry_sub
+                                .get_one::<u64>("generation")
+                                .copied()
+                                .expect("generation is required by clap"),
+                            wait: retry_sub.get_flag("wait"),
+                            timeout: retry_sub.get_one::<Duration>("timeout").copied(),
+                        },
                         Some(("run", run_sub)) => ControlAction::Run {
                             target: run_sub
                                 .get_one::<String>("target")
@@ -824,6 +832,37 @@ pub fn command() -> Command {
                         .version(env!("CARGO_PKG_VERSION"))
                         .long_about(
                             "Print the config lifecycle from the shared state source: the current phase (idle, configReloading, configReloaded, or terminal configInvalid), the revision facts, and the bounded transition history.\n\nA valid hot reload preserves the instance identity; a formatting-only save is quiet here (no transition) and only the watcher log reports it.",
+                        ),
+                )
+                .subcommand(
+                    Command::new("retry")
+                        .about("Retry failed jobs from one exact terminal generation.")
+                        .version(env!("CARGO_PKG_VERSION"))
+                        .long_about(
+                            "Retry failed finite jobs from the exact latest terminal generation. This schedules one correlated generation and never retries passed, cancelled, or skipped jobs. Services and stale config revisions are rejected. The control socket must belong to an idle watcher.\n\nExample: `fzz control retry --generation 12 --wait --timeout 5m --format toon`, then retrieve output with `fzz control output --generation <new-run-id>`. Use the source generation shown by `fzz control status`; no implicit latest selector is accepted.",
+                        )
+                        .arg(
+                            Arg::new("generation")
+                                .long("generation")
+                                .value_name("GENERATION")
+                                .required(true)
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Exact source generation to retry."),
+                        )
+                        .arg(
+                            Arg::new("wait")
+                                .long("wait")
+                                .action(clap::ArgAction::SetTrue)
+                                .requires("timeout")
+                                .help("Await the new retry generation to terminal."),
+                        )
+                        .arg(
+                            Arg::new("timeout")
+                                .long("timeout")
+                                .value_name("DURATION")
+                                .requires("wait")
+                                .value_parser(clap::builder::ValueParser::new(crate::cli::control::parse_duration))
+                                .help("Await bound: <number> seconds, or <number>ms/s/m (required with --wait)."),
                         ),
                 )
                 .subcommand(
@@ -1495,6 +1534,50 @@ mod tests {
     #[test]
     fn control_run_without_target_fails() {
         assert!(parse(&["control", "run"]).is_err());
+    }
+
+    #[test]
+    fn control_retry_requires_an_exact_generation() {
+        assert!(parse(&["control", "retry"]).is_err());
+        assert_eq!(
+            parse_action(&["control", "retry", "--generation", "12"]),
+            Action::Control {
+                action: ControlAction::Retry {
+                    generation: 12,
+                    wait: false,
+                    timeout: None,
+                },
+                socket: None,
+                format: OutputFormat::Human,
+            }
+        );
+    }
+
+    #[test]
+    fn control_retry_wait_requires_a_timeout_and_preserves_format() {
+        assert!(parse(&["control", "retry", "--generation", "12", "--wait"]).is_err());
+        assert_eq!(
+            parse_action(&[
+                "control",
+                "--format",
+                "json",
+                "retry",
+                "--generation",
+                "12",
+                "--wait",
+                "--timeout",
+                "5m",
+            ]),
+            Action::Control {
+                action: ControlAction::Retry {
+                    generation: 12,
+                    wait: true,
+                    timeout: Some(Duration::from_secs(300)),
+                },
+                socket: None,
+                format: OutputFormat::Json,
+            }
+        );
     }
 
     #[test]

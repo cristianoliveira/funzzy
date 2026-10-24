@@ -153,7 +153,7 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | List targets | `fzz list` | no | none |
 | Explain a path | `fzz explain PATH` | no | none |
 | Ad-hoc over stdin | `fzz exec -- PROGRAM ARG...` | no | runs PROGRAM per stdin path |
-| Control running watcher | `fzz control status\|list\|run\|emit\|await\|cancel\|output\|capabilities` | no | talks to the socket |
+| Control running watcher | `fzz control status\|list\|run\|retry\|emit\|await\|cancel\|output\|capabilities` | no | talks to the socket |
 | Init a starter config | `fzz init [--template P]` | no | writes `.watch.yaml` (create-only, refuses existing) |
 | Migrate a legacy config | `fzz migrate [-c PATH]` | no | atomic in-place rewrite (idempotent) |
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |

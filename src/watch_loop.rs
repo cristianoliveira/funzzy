@@ -304,6 +304,7 @@ pub fn watch_loop(
             // chatter re-delivery is filtered before matching.
             let changed_paths = gate.borrow_mut().changed(batch.changed.clone());
             if changed_paths.is_empty() {
+                strategy.on_batch_complete();
                 return;
             }
             let batch = Batch::normalized(batch.id, changed_paths);
@@ -596,6 +597,15 @@ pub struct NonBlockStrategy {
     shared: Arc<std::sync::Mutex<Watches>>,
     control_socket: Option<PathBuf>,
     control_state: Arc<Mutex<WatcherState>>,
+    /// Serializes explicit retry validation/scheduling against other generation
+    /// scheduling paths without changing native restart behavior.
+    schedule_lock: Mutex<()>,
+    /// Bounded idempotency cache: retrying the same source returns the
+    /// already-scheduled generation instead of scheduling another.
+    retry_cache: Mutex<std::collections::BTreeMap<u64, crate::control::RetryRun>>,
+    /// Original `{{filepath}}` context keyed by generation. This avoids
+    /// inferring provenance from trigger strings, which may be user paths.
+    generation_filepaths: Mutex<std::collections::BTreeMap<u64, Option<String>>>,
     coordinator: Option<Arc<AwaitCoordinator>>,
     outputs: Option<Arc<OutputRegistry>>,
     instance: Arc<WatcherInstance>,
@@ -691,6 +701,9 @@ impl NonBlockStrategy {
             shared,
             control_socket,
             control_state,
+            schedule_lock: Mutex::new(()),
+            retry_cache: Mutex::new(std::collections::BTreeMap::new()),
+            generation_filepaths: Mutex::new(std::collections::BTreeMap::new()),
             coordinator,
             outputs,
             instance,
@@ -756,6 +769,7 @@ impl NonBlockStrategy {
             .collect();
 
         let run_runner = Arc::clone(&runner);
+        let retry_runner = Arc::clone(&runner);
         let emit_runner = Arc::clone(&runner);
         let cancel_runner = Arc::clone(&runner);
         let coordinator = self.coordinator.clone();
@@ -783,6 +797,7 @@ impl NonBlockStrategy {
         let mut api = ControlApi::new(Arc::clone(&self.control_state))
             .with_targets(targets)
             .with_run(move |target, sequential| run_runner.run_target(&target, sequential))
+            .with_retry(move |generation| retry_runner.retry_generation(generation))
             .with_emit(move |path| emit_runner.emit_path(&path))
             .with_cancel(move |generation| cancel_runner.cancel_generation(generation))
             .with_instance(instance);
@@ -847,6 +862,17 @@ impl NonBlockStrategy {
         }
     }
 
+    fn remember_filepath(&self, generation: u64, filepath: Option<String>) {
+        let mut filepaths = self.generation_filepaths.lock().unwrap();
+        filepaths.insert(generation, filepath);
+        while filepaths.len() > 256 {
+            let Some(oldest) = filepaths.keys().next().copied() else {
+                break;
+            };
+            filepaths.remove(&oldest);
+        }
+    }
+
     /// Cancels an exact generation through the worker run contract
     /// (TASK-0046): a compare-and-act on generation identity. Returns the
     /// disposition or a no-op for already-terminal/unknown generations.
@@ -855,6 +881,142 @@ impl NonBlockStrategy {
         generation: u64,
     ) -> Result<crate::workers::CancelResult, String> {
         self.worker.cancel_generation(generation)
+    }
+
+    /// Retries failed finite jobs from the exact current terminal generation.
+    /// Validation and scheduling are serialized with the shared config revision
+    /// and other run requests; repeat calls return the cached generation.
+    pub fn retry_generation(
+        &self,
+        source_generation: u64,
+    ) -> Result<crate::control::RetryRun, crate::control::ControlRetryError> {
+        if let Some(retry) = self
+            .retry_cache
+            .lock()
+            .unwrap()
+            .get(&source_generation)
+            .cloned()
+        {
+            return Ok(retry);
+        }
+
+        let shared = self.shared.lock().unwrap();
+        let _schedule = self.schedule_lock.lock().unwrap();
+        if let Some(retry) = self
+            .retry_cache
+            .lock()
+            .unwrap()
+            .get(&source_generation)
+            .cloned()
+        {
+            return Ok(retry);
+        }
+        let state = self.control_state.lock().unwrap();
+        let debounce_pending = self
+            .coordinator
+            .as_ref()
+            .is_some_and(|coordinator| !coordinator.snapshot_facts().2.is_empty());
+        let worker_busy = self.worker.has_active_or_queued_run();
+        if state.generation() != source_generation {
+            return Err(if worker_busy || debounce_pending {
+                crate::control::ControlRetryError::WatcherBusy
+            } else {
+                crate::control::ControlRetryError::SourceUnavailable {
+                    generation: source_generation,
+                }
+            });
+        }
+        if matches!(
+            state.state(),
+            crate::watcher_state::WatcherExecutionState::Running
+                | crate::watcher_state::WatcherExecutionState::Cancelled
+        ) {
+            return Err(crate::control::ControlRetryError::SourceNotTerminal {
+                generation: source_generation,
+            });
+        }
+        if state.superseded_by().is_some() {
+            return Err(crate::control::ControlRetryError::SourceUnavailable {
+                generation: source_generation,
+            });
+        }
+
+        let revision = shared.revision().cloned();
+        let current_revision = revision.as_ref().map(|revision| revision.number);
+        if state.revision() != current_revision {
+            return Err(crate::control::ControlRetryError::StaleRevision {
+                source: state.revision(),
+                current: current_revision,
+            });
+        }
+        let selected = crate::retry::retryable_task_names(state.tasks()).map_err(|_| {
+            crate::control::ControlRetryError::NoRetryableJobs {
+                generation: source_generation,
+            }
+        })?;
+
+        let plan = shared.retry_plan(&selected);
+        if plan.is_empty() || plan.task_names() != selected {
+            return Err(crate::control::ControlRetryError::SourceUnavailable {
+                generation: source_generation,
+            });
+        }
+        for task in plan.stages.iter().flat_map(|stage| match stage {
+            crate::plan::Stage::Serial(task) => vec![task],
+            crate::plan::Stage::Parallel { tasks, .. } => tasks.iter().collect(),
+        }) {
+            if task.service {
+                return Err(crate::control::ControlRetryError::UnsupportedService {
+                    name: task.name.clone(),
+                });
+            }
+        }
+
+        if worker_busy || debounce_pending {
+            return Err(crate::control::ControlRetryError::WatcherBusy);
+        }
+
+        let filepath = self
+            .generation_filepaths
+            .lock()
+            .unwrap()
+            .get(&source_generation)
+            .cloned()
+            .ok_or(crate::control::ControlRetryError::SourceUnavailable {
+                generation: source_generation,
+            })?;
+        let changed = state.changed().to_vec();
+        let run_id = self
+            .worker
+            .schedule_retry(
+                plan,
+                source_generation,
+                filepath.as_deref(),
+                changed,
+                revision.clone(),
+            )
+            .map_err(crate::control::ControlRetryError::Internal)?;
+        let retry = crate::control::RetryRun {
+            source_generation,
+            run_id,
+            tasks: selected,
+            revision: current_revision,
+            revision_hash: revision.map(|revision| revision.hash),
+        };
+        self.remember_filepath(run_id, filepath);
+        let mut cache = self.retry_cache.lock().unwrap();
+        cache.insert(source_generation, retry.clone());
+        while cache.len() > 256 {
+            let Some(oldest) = cache.keys().next().copied() else {
+                break;
+            };
+            cache.remove(&oldest);
+        }
+        drop(cache);
+        drop(state);
+        drop(_schedule);
+        drop(shared);
+        Ok(retry)
     }
 
     /// Runs a control-requested target through the worker run contract:
@@ -884,6 +1046,7 @@ impl NonBlockStrategy {
                 }
             }
         };
+        let _schedule = self.schedule_lock.lock().unwrap();
         let commands = plan.commands().len();
         self.worker
             .cancel_running_tasks()
@@ -892,6 +1055,7 @@ impl NonBlockStrategy {
             .worker
             .schedule_target(plan, target, sequential, revision.clone())
             .map_err(ControlRunError::Internal)?;
+        self.remember_filepath(run_id, None);
         diagnostics::debug(&diagnostics::Record {
             source: Some("control"),
             decision: Some("scheduled"),
@@ -942,6 +1106,7 @@ impl NonBlockStrategy {
                 }
             }
         };
+        let _schedule = self.schedule_lock.lock().unwrap();
         let commands = plan.commands().len();
         self.worker.cancel_running_tasks()?;
         let run_id = self.worker.schedule_plan_correlated(
@@ -952,6 +1117,7 @@ impl NonBlockStrategy {
             vec![],
             revision.clone(),
         )?;
+        self.remember_filepath(run_id, Some(path.to_owned()));
         diagnostics::debug(&diagnostics::Record {
             source: Some("control"),
             decision: Some("scheduled"),
@@ -977,8 +1143,12 @@ impl RunStrategy for NonBlockStrategy {
     }
 
     fn run_init(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let _schedule = self.schedule_lock.lock().unwrap();
         match self.worker.schedule_plan(plan, "", revision) {
-            Ok(run_id) => Some(run_id),
+            Ok(run_id) => {
+                self.remember_filepath(run_id, None);
+                Some(run_id)
+            }
             Err(err) => {
                 stdout::error(&format!("failed to initiate next run: {:?}", err));
                 None
@@ -1005,6 +1175,7 @@ impl RunStrategy for NonBlockStrategy {
         batch: &Batch,
         revision: Option<ConfigRevision>,
     ) -> Option<u64> {
+        let _schedule = self.schedule_lock.lock().unwrap();
         if let Err(err) = self.worker.cancel_running_tasks() {
             stdout::error(&format!(
                 "failed to cancel current running tasks: {:?}",
@@ -1022,6 +1193,7 @@ impl RunStrategy for NonBlockStrategy {
             revision,
         ) {
             Ok(run_id) => {
+                self.remember_filepath(run_id, Some(filepath.to_owned()));
                 diagnostics::debug(&diagnostics::Record {
                     batch: Some(batch.id.0),
                     source: Some("filesystem"),
@@ -1041,11 +1213,15 @@ impl RunStrategy for NonBlockStrategy {
     }
 
     fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let _schedule = self.schedule_lock.lock().unwrap();
         match self
             .worker
             .schedule_plan_correlated(plan, "keyboard", None, None, vec![], revision)
         {
-            Ok(run_id) => Some(run_id),
+            Ok(run_id) => {
+                self.remember_filepath(run_id, None);
+                Some(run_id)
+            }
             Err(error) => {
                 stdout::error(&format!("failed to initiate keyboard run: {:?}", error));
                 None
@@ -1271,6 +1447,135 @@ mod tests {
         assert_eq!(outcome.outcome, "ignored");
         assert!(outcome.matched.is_empty());
         assert_eq!(outcome.run_id, None);
+    }
+
+    #[test]
+    fn retry_rejects_pending_batch_without_scheduling_work() {
+        use crate::awaiting::AwaitCoordinator;
+        use crate::task_result::{TaskSnapshot, TaskState};
+
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Started {
+                run_id: 1,
+                trigger: "src/main.rs".to_owned(),
+                batch: Some(8),
+                predecessor: None,
+                changed: vec!["src/main.rs".to_owned()],
+                commands: vec!["false".to_owned()],
+                target: None,
+                execution_signature: None,
+                effective_concurrency: None,
+                concurrency_source: None,
+                revision: None,
+                revision_hash: None,
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::TaskTerminal {
+                run_id: 1,
+                task: TaskSnapshot {
+                    position: 0,
+                    id: "my tests".to_owned(),
+                    name: "my tests".to_owned(),
+                    state: TaskState::Failed,
+                    duration_ms: Some(1),
+                },
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Finished {
+                run_id: 1,
+                superseded_by: None,
+                elapsed: std::time::Duration::from_millis(1),
+                failures: vec!["my tests failed".to_owned()],
+            });
+        let coordinator = Arc::new(AwaitCoordinator::new());
+        coordinator.note_batch(9);
+        let strategy = NonBlockStrategy::new_arc(
+            worker.clone(),
+            watches,
+            None,
+            control_state,
+            Some(coordinator),
+            None,
+        );
+
+        assert!(matches!(
+            strategy.retry_generation(1),
+            Err(crate::control::ControlRetryError::WatcherBusy)
+        ));
+        assert!(!worker.has_active_or_queued_run());
+    }
+
+    #[test]
+    fn retry_rejects_a_source_from_an_old_config_revision() {
+        use crate::task_result::{TaskSnapshot, TaskState};
+
+        let watches = Watches::new(vec![rule("my tests")]).with_revision(
+            crate::config_revision::ConfigRevision {
+                number: 2,
+                hash: "revision-2".to_owned(),
+            },
+        );
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Started {
+                run_id: 1,
+                trigger: "src/main.rs".to_owned(),
+                batch: Some(8),
+                predecessor: None,
+                changed: vec!["src/main.rs".to_owned()],
+                commands: vec!["false".to_owned()],
+                target: None,
+                execution_signature: None,
+                effective_concurrency: None,
+                concurrency_source: None,
+                revision: Some(1),
+                revision_hash: Some("revision-1".to_owned()),
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::TaskTerminal {
+                run_id: 1,
+                task: TaskSnapshot {
+                    position: 0,
+                    id: "my tests".to_owned(),
+                    name: "my tests".to_owned(),
+                    state: TaskState::Failed,
+                    duration_ms: Some(1),
+                },
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Finished {
+                run_id: 1,
+                superseded_by: None,
+                elapsed: std::time::Duration::from_millis(1),
+                failures: vec!["my tests failed".to_owned()],
+            });
+        let strategy =
+            NonBlockStrategy::new_arc(worker.clone(), watches, None, control_state, None, None);
+
+        assert!(matches!(
+            strategy.retry_generation(1),
+            Err(crate::control::ControlRetryError::StaleRevision {
+                source: Some(1),
+                current: Some(2),
+            })
+        ));
+        assert!(!worker.has_active_or_queued_run());
     }
 
     #[test]

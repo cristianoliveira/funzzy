@@ -545,6 +545,14 @@ impl Watches {
         Some(plan)
     }
 
+    /// Selects named tasks from the frozen workflow topology, preserving
+    /// declaration order and every surviving stage/group barrier.
+    pub fn retry_plan(&self, names: &[String]) -> RunPlan {
+        self.topology
+            .clone()
+            .filter(|rule| names.iter().any(|name| name == &rule.name))
+    }
+
     /// Selects matching tasks while retaining original stage occurrences.
     pub fn watch_plan(&self, path: &str) -> Option<RunPlan> {
         let (absolute_path, relative_path) = self.normalize_paths(path);
