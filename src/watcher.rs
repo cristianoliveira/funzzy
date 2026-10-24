@@ -193,13 +193,20 @@ fn drain_shortcut<'a>(shortcut: &mut Option<ShortcutInput<'a>>) {
     let Some((receiver, callback)) = shortcut.as_mut() else {
         return;
     };
-    let mut trigger_seen = false;
+    // One drained burst resolves to at most one shortcut action: the first
+    // key wins (KEYBOARD-RETRY-CONTRACT). Presses queued while a blocking
+    // run held the loop are collapsed here, so duplicates and mixed
+    // Ctrl-G/Ctrl-R bursts never run twice.
+    let mut action_seen = false;
     while let Ok(key) = receiver.try_recv() {
-        if key == crate::shortcut::KeyDecode::Trigger {
-            if trigger_seen {
+        if matches!(
+            key,
+            crate::shortcut::KeyDecode::Trigger | crate::shortcut::KeyDecode::Retry
+        ) {
+            if action_seen {
                 continue;
             }
-            trigger_seen = true;
+            action_seen = true;
         }
         callback(Some(key));
     }

@@ -1,5 +1,6 @@
 #![cfg(all(feature = "test-integration", unix))]
 
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
@@ -321,6 +322,345 @@ fn piped_shortcut_latches_busy_run_and_ignores_extra_press() {
                         == 1
                 },
                 "busy shortcut did not trigger exactly once"
+            );
+        },
+    );
+}
+
+fn retry_keys_config(socket: Option<&std::path::Path>) -> String {
+    let socket_line = socket
+        .map(|path| format!("  socket: \"{}\"\n", path.display()))
+        .unwrap_or_default();
+    format!(
+        r#"on:
+{socket_line}  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: fails
+    run: 'echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi'
+    change: 'src/**'
+  - name: passes
+    run: 'echo pass >> passes.log'
+    change: 'src/**'
+"#
+    )
+}
+
+fn write_retry_config(fixture: &std::path::Path, socket: Option<&std::path::Path>) {
+    std::fs::write(
+        fixture.join("examples/retry-keys.yaml"),
+        retry_keys_config(socket),
+    )
+    .expect("write retry config");
+}
+
+fn read_fixture_log(fixture: &std::path::Path, name: &str) -> usize {
+    std::fs::read_to_string(fixture.join(name))
+        .map(|content| content.lines().count())
+        .unwrap_or(0)
+}
+
+fn watcher_output(output_log: &mut File) -> String {
+    let mut output = String::new();
+    output_log.seek(SeekFrom::Start(0)).unwrap();
+    output_log.read_to_string(&mut output).unwrap();
+    output
+}
+
+fn trigger_change(fixture: &std::path::Path) {
+    std::fs::write(fixture.join("src/trigger.txt"), "retry me").expect("write trigger");
+}
+
+fn press(input: &mut std::process::ChildStdin, key: u8) {
+    input.write_all(&[key]).expect("write shortcut key");
+}
+
+const CTRL_R: u8 = 0x12;
+
+#[test]
+fn piped_ctrl_r_retries_only_failed_blocking_jobs() {
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_r_blocking.log",
+        |fzz_cmd, mut output_log, fixture| {
+            write_retry_config(fixture, None);
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Watching..."),
+                "watcher did not become ready"
+            );
+            trigger_change(fixture);
+            wait_until!(
+                read_fixture_log(fixture, "fails.log") == 1
+                    && read_fixture_log(fixture, "passes.log") == 1,
+                "source run did not complete both jobs"
+            );
+
+            std::fs::write(fixture.join("allow"), "passes now").expect("allow retry");
+            press(&mut input, CTRL_R);
+            wait_until!(
+                watcher_output(&mut output_log)
+                    .contains("Retrying failed jobs from keyboard shortcut."),
+                "keyboard retry did not run"
+            );
+            wait_until!(
+                read_fixture_log(fixture, "fails.log") == 2,
+                "failed job was not retried"
+            );
+
+            let output = watcher_output(&mut output_log);
+            assert_eq!(
+                output
+                    .matches("Retrying failed jobs from keyboard shortcut.")
+                    .count(),
+                1,
+                "retry output:\n{output}"
+            );
+            assert_eq!(
+                read_fixture_log(fixture, "passes.log"),
+                1,
+                "passed job must never be retried"
+            );
+            assert!(
+                !output.contains("Running full pipeline from keyboard shortcut."),
+                "retry must never fall back to a full run:\n{output}"
+            );
+        },
+    );
+}
+
+#[test]
+fn piped_ctrl_r_without_a_previous_run_is_rejected_without_a_full_run() {
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_r_no_run.log",
+        |fzz_cmd, mut output_log, fixture| {
+            write_retry_config(fixture, None);
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Watching..."),
+                "watcher did not become ready"
+            );
+            press(&mut input, CTRL_R);
+            wait_until!(
+                watcher_output(&mut output_log)
+                    .contains("Shortcut ignored: no previous run to retry."),
+                "keyboard retry without a previous run was not rejected"
+            );
+
+            assert_eq!(
+                read_fixture_log(fixture, "fails.log"),
+                0,
+                "rejection must not schedule any work"
+            );
+            assert!(
+                !watcher_output(&mut output_log)
+                    .contains("Running full pipeline from keyboard shortcut."),
+                "rejection must not fall back to a full run"
+            );
+        },
+    );
+}
+
+#[test]
+fn socket_watch_ctrl_r_retries_the_latest_terminal_generation() {
+    let socket = std::env::temp_dir().join(format!("fzz-kbd-retry-{}.sock", std::process::id()));
+    let _ = std::fs::remove_file(&socket);
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_r_socket.log",
+        move |fzz_cmd, mut output_log, fixture| {
+            write_retry_config(fixture, Some(&socket));
+            fzz_cmd.env("FUNZZY_NON_BLOCK", "true");
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = std::fs::remove_file(&socket);
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Control socket listening"),
+                "socket watcher did not bind"
+            );
+            trigger_change(fixture);
+            wait_until!(
+                status(std::path::Path::new(&socket))
+                    .is_some_and(|value| { value["result"]["state"] == "failed" }),
+                "source generation did not fail"
+            );
+            let source = status(std::path::Path::new(&socket)).unwrap()["result"]["generation"]
+                .as_u64()
+                .unwrap();
+
+            std::fs::write(fixture.join("allow"), "passes now").expect("allow retry");
+            press(&mut input, CTRL_R);
+            wait_until!(
+                watcher_output(&mut output_log)
+                    .contains("Retrying failed jobs from keyboard shortcut."),
+                "keyboard retry did not schedule"
+            );
+            wait_until!(
+                status(std::path::Path::new(&socket)).is_some_and(|value| {
+                    value["result"]["generation"].as_u64() == Some(source + 1)
+                        && value["result"]["state"] == "passed"
+                        && value["result"]["trigger"] == format!("retry:{source}")
+                }),
+                "retry generation did not pass"
+            );
+
+            wait_until!(
+                read_fixture_log(fixture, "fails.log") == 2,
+                "failed job was not retried"
+            );
+            assert_eq!(
+                read_fixture_log(fixture, "passes.log"),
+                1,
+                "passed job must never be retried"
+            );
+        },
+    );
+}
+
+#[test]
+fn piped_ctrl_r_burst_presses_during_a_blocking_run_retries_once() {
+    let config = r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: slow-fails
+    run: 'echo start >> slow.log; sleep 3; if test -f allow; then exit 0; else exit 1; fi'
+    change: 'src/**'
+"#;
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_r_latch.log",
+        |fzz_cmd, mut output_log, fixture| {
+            std::fs::write(fixture.join("examples/retry-keys.yaml"), config)
+                .expect("write burst config");
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Watching..."),
+                "watcher did not become ready"
+            );
+            trigger_change(fixture);
+            wait_until!(
+                read_fixture_log(fixture, "slow.log") == 1,
+                "active run did not start"
+            );
+
+            // Both presses queue while the blocking run holds the loop; the
+            // first action wins and the duplicate is dropped.
+            press(&mut input, CTRL_R);
+            press(&mut input, CTRL_R);
+            wait_until!(
+                read_fixture_log(fixture, "slow.log") == 2,
+                "the first shortcut action did not retry after the terminal run"
+            );
+
+            let output = watcher_output(&mut output_log);
+            assert_eq!(
+                output
+                    .matches("Retrying failed jobs from keyboard shortcut.")
+                    .count(),
+                1,
+                "duplicate presses must never retry twice:\n{output}"
+            );
+            assert!(
+                !output.contains("Running full pipeline from keyboard shortcut."),
+                "retry must never fall back to a full run:\n{output}"
+            );
+        },
+    );
+}
+
+#[test]
+fn piped_ctrl_r_ctrl_g_burst_during_a_blocking_run_runs_only_the_first_action() {
+    let config = r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: slow-fails
+    run: 'echo start >> slow.log; sleep 3; if test -f allow; then exit 0; else exit 1; fi'
+    change: 'src/**'
+"#;
+    setup::with_config(
+        std::path::Path::new("examples/retry-keys.yaml"),
+        "shortcut_ctrl_mixed_burst.log",
+        |fzz_cmd, mut output_log, fixture| {
+            std::fs::write(fixture.join("examples/retry-keys.yaml"), config)
+                .expect("write mixed burst config");
+            let mut child = fzz_cmd
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("failed to spawn watcher");
+            let mut input = child.stdin.take().expect("watcher stdin");
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+
+            wait_until!(
+                watcher_output(&mut output_log).contains("Watching..."),
+                "watcher did not become ready"
+            );
+            trigger_change(fixture);
+            wait_until!(
+                read_fixture_log(fixture, "slow.log") == 1,
+                "active run did not start"
+            );
+
+            // Ctrl-R queued first wins; the later Ctrl-G in the same burst is
+            // dropped instead of escalating the retry into a full run.
+            press(&mut input, CTRL_R);
+            press(&mut input, funzzy::shortcut::TRIGGER_KEY);
+            wait_until!(
+                read_fixture_log(fixture, "slow.log") == 2,
+                "the first shortcut action did not retry after the terminal run"
+            );
+
+            let output = watcher_output(&mut output_log);
+            assert_eq!(
+                output
+                    .matches("Retrying failed jobs from keyboard shortcut.")
+                    .count(),
+                1,
+                "burst output:\n{output}"
+            );
+            assert!(
+                !output.contains("Running full pipeline from keyboard shortcut."),
+                "a queued Ctrl-G must not escalate the retried action:\n{output}"
             );
         },
     );

@@ -1099,6 +1099,10 @@ Retry failed jobs (requires a running watcher):
   fzz control --format toon await --generation M --timeout 5m
   fzz control --format toon output --generation M --tail 80
 
+Keyboard (while watching):
+  Ctrl-G  run the complete pipeline once
+  Ctrl-R  retry failed/timed-out jobs of the latest run (no full-run fallback)
+
 {usage-heading} {usage}
 
 {all-args}
