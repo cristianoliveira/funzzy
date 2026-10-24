@@ -159,6 +159,29 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 | Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
 
+### Retry a failed generation
+
+Use the exact generation ID from the failure snapshot. Funzzy retains only the
+latest terminal snapshot, so retry before a newer generation replaces it.
+Retries include failed or timed-out finite jobs only; passed, skipped,
+cancelled, and service jobs are excluded. Services cannot be retried.
+
+```sh
+fzz control --format toon status
+# Copy the failed source generation N from the snapshot.
+fzz control --format toon retry --generation N
+# Copy the new retry runId M from the response.
+fzz control --format toon await --generation M --timeout 5m
+fzz control --format toon output --generation M --tail 80
+```
+
+`--format` is an option of `control`, so place it before the action. `--wait --timeout 5m` can combine scheduling and observation. A timeout does
+not cancel or duplicate the retry; await the same `runId` again. For
+`watcher_busy`, wait for active work or pending batch routing. For
+`stale_revision` or `source_unavailable`, observe fresh work and use its exact
+terminal generation. `no_retryable_jobs` means no finite failure is eligible;
+`unsupported_service` means the selected failure includes a service job.
+
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
 cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`
 stops at the first failing task. **Logging**: `--log-file FILE` mirrors all

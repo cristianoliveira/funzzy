@@ -839,7 +839,7 @@ pub fn command() -> Command {
                         .about("Retry failed jobs from one exact terminal generation.")
                         .version(env!("CARGO_PKG_VERSION"))
                         .long_about(
-                            "Retry failed finite jobs from the exact latest terminal generation. This schedules one correlated generation and never retries passed, cancelled, or skipped jobs. Services and stale config revisions are rejected. The control socket must belong to an idle watcher.\n\nExample: `fzz control retry --generation 12 --wait --timeout 5m --format toon`, then retrieve output with `fzz control output --generation <new-run-id>`. Use the source generation shown by `fzz control status`; no implicit latest selector is accepted.",
+                            "Retry failed finite jobs from the exact latest terminal generation. This schedules one correlated generation and never retries passed, cancelled, or skipped jobs. Services and stale config revisions are rejected. The control socket must belong to an idle watcher. Only the latest terminal snapshot is retained; retry immediately after observing a failure.\n\nWorkflow: read source generation N with `fzz control --format toon status`; schedule `fzz control --format toon retry --generation N` and read new runId M; observe `fzz control --format toon await --generation M --timeout 5m`; retrieve task output with `fzz control --format toon output --generation M --tail 80`. Use `--wait --timeout 5m` on retry to combine scheduling and bounded observation. Timeout keeps the same retry scheduled; await that runId again. `watcher_busy` means wait for active work or pending batch; `stale_revision` means trigger fresh work under current config; services are not retryable.",
                         )
                         .arg(
                             Arg::new("generation")
@@ -1096,6 +1096,12 @@ Alias:
 
 Config:
   fzz config describes the config schema and prints runnable examples.
+
+Retry failed jobs (requires a running watcher):
+  fzz control --format toon status                 # read exact source generation N
+  fzz control --format toon retry --generation N  # read new generation M
+  fzz control --format toon await --generation M --timeout 5m
+  fzz control --format toon output --generation M --tail 80
 
 {usage-heading} {usage}
 

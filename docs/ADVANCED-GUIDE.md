@@ -114,12 +114,12 @@ without scheduling partial work. Repeating the same source request returns the
 same retry generation.
 
 ```sh
-fzz ctl status --format toon
+fzz ctl --format toon status
 # Read the failed source generation N from the exact failure snapshot.
-fzz ctl retry --generation N --format toon
+fzz ctl --format toon retry --generation N
 # Read the returned retry runId M.
-fzz ctl await --generation M --timeout 5m --format toon
-fzz ctl output --generation M --tail 80 --format toon
+fzz ctl --format toon await --generation M --timeout 5m
+fzz ctl --format toon output --generation M --tail 80
 ```
 
 `--wait --timeout 5m` can combine scheduling and bounded observation. If the

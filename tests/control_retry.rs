@@ -21,6 +21,7 @@ use std::time::Duration;
 
 const SOURCE_UNAVAILABLE: i64 = -32030;
 const SOURCE_NOT_TERMINAL: i64 = -32031;
+const STALE_REVISION: i64 = -32032;
 const NO_RETRYABLE_JOBS: i64 = -32033;
 const UNSUPPORTED_SERVICE: i64 = -32034;
 const WATCHER_BUSY: i64 = -32035;
@@ -74,16 +75,19 @@ fn with_watcher(test_name: &str, config: &str, bail: bool, test: impl FnOnce(&Pa
     defer!({
         let _ = fs::remove_file(&log_path);
     });
-    common::with_config(
-        Path::new(".watch.yaml"),
-        &output_file,
-        |command, _log, directory| {
-            write_config(directory, config);
-            let watcher = start_watcher(command, directory, bail);
-            wait_until_socket(directory);
-            test(directory, watcher);
-        },
-    );
+    let config_path = std::fs::canonicalize(std::env::temp_dir())
+        .expect("canonicalize temporary directory")
+        .join(format!(
+            "funzzy-fixture-{}-{output_file}",
+            std::process::id()
+        ))
+        .join(".watch.yaml");
+    common::with_config(&config_path, &output_file, |command, _log, directory| {
+        write_config(directory, config);
+        let watcher = start_watcher(command, directory, bail);
+        wait_until_socket(directory);
+        test(directory, watcher);
+    });
 }
 
 fn wait_until_socket(directory: &Path) {
@@ -96,15 +100,19 @@ fn wait_until_socket(directory: &Path) {
     );
 }
 
-fn run_cli(directory: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_fzz"))
+fn run_binary(directory: &Path, binary: &str, args: &[&str]) -> Output {
+    Command::new(binary)
         .current_dir(directory)
         .env_remove("FUNZZY_BAIL")
         .env_remove("FUNZZY_NON_BLOCK")
         .env("_TEST_FUNZZY_COLORED", "0")
         .args(args)
         .output()
-        .expect("run fzz control client")
+        .expect("run control client")
+}
+
+fn run_cli(directory: &Path, args: &[&str]) -> Output {
+    run_binary(directory, env!("CARGO_BIN_EXE_fzz"), args)
 }
 
 fn run_retry(directory: &Path, generation: u64, wait_timeout: Option<&str>) -> Output {
@@ -151,6 +159,25 @@ fn result_document(output: &Output) -> Value {
 
 fn document_body(document: &Value) -> &Value {
     document.get("result").unwrap_or(document)
+}
+
+fn assert_task_outputs(output: &Output, expected: &[(&str, &str)]) {
+    assert!(output.status.success(), "output: {output:?}");
+    let document = result_document(output);
+    let tasks = document_body(&document)["tasks"]
+        .as_array()
+        .expect("output task list");
+    assert_eq!(tasks.len(), expected.len(), "output: {document}");
+
+    for (task, (expected_id, expected_content)) in tasks.iter().zip(expected) {
+        assert_eq!(task["id"], *expected_id, "task attribution: {document}");
+        assert!(
+            task["stdout"]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains(expected_content)),
+            "task output content: {document}"
+        );
+    }
 }
 
 fn assert_error_code(output: &Output, expected: i64) {
@@ -208,6 +235,13 @@ fn status(directory: &Path) -> Option<Value> {
         .ok()?
         .get("result")
         .cloned()
+}
+
+fn wait_for_log(directory: &Path, needle: &str) {
+    wait_until!(
+        fs::read_to_string(directory.join("child.log")).is_ok_and(|log| log.contains(needle)),
+        "watcher log did not contain {needle:?}"
+    );
 }
 
 fn wait_for_state(directory: &Path, generation: u64, expected: &str) {
@@ -306,6 +340,25 @@ jobs:
         );
 
         let retry_id = retry_generation.to_string();
+        let retry_json_output = run_cli(
+            directory,
+            &[
+                "control",
+                "--format",
+                "json",
+                "output",
+                "--generation",
+                &retry_id,
+                "--full",
+            ],
+        );
+        assert_task_outputs(
+            &retry_json_output,
+            &[
+                ("failed-one", "failed-one-output"),
+                ("failed-two", "failed-two-output"),
+            ],
+        );
         let output = run_cli(
             directory,
             &["control", "output", "--generation", &retry_id, "--full"],
@@ -317,6 +370,26 @@ jobs:
         assert!(!output.contains("passed-output"), "output: {output}");
 
         let source_id = source_generation.to_string();
+        let source_json_output = run_cli(
+            directory,
+            &[
+                "control",
+                "--format",
+                "json",
+                "output",
+                "--generation",
+                &source_id,
+                "--full",
+            ],
+        );
+        assert_task_outputs(
+            &source_json_output,
+            &[
+                ("failed-one", "failed-one-output"),
+                ("failed-two", "failed-two-output"),
+                ("passed", "passed-output"),
+            ],
+        );
         let source_output = run_cli(
             directory,
             &["control", "output", "--generation", &source_id, "--full"],
@@ -404,6 +477,203 @@ jobs:
             "control-allow",
             "control-paths.log",
         );
+        drop(watcher);
+    });
+}
+
+#[test]
+fn retry_preserves_arbitrary_colon_prefixed_filepaths() {
+    let config = r#"
+on:
+  socket: sock
+  watch_backend: poll
+jobs:
+  - name: arbitrary-prefixed
+    change: 'workspace:trigger.txt'
+    run: 'echo "{{filepath}}" >> workspace-paths.log; if test -f allow-workspace; then exit 0; else exit 1; fi'
+"#;
+    with_watcher("colon-filepath", config, false, |directory, _watcher| {
+        let source_generation = emit(directory, "workspace:trigger.txt");
+        let (source_output, _) = await_generation(directory, source_generation, "30s");
+        assert_eq!(source_output.status.code(), Some(1));
+        fs::write(directory.join("allow-workspace"), "pass").unwrap();
+
+        let retry = retry_result(&run_retry(directory, source_generation, None));
+        let retry_generation = retry_run_id(&retry);
+        let (retry_output, terminal) = await_generation(directory, retry_generation, "30s");
+        assert!(retry_output.status.success());
+        assert_eq!(terminal["result"]["terminalReason"], "passed");
+        assert_eq!(
+            fs::read_to_string(directory.join("workspace-paths.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["workspace:trigger.txt", "workspace:trigger.txt"]
+        );
+    });
+}
+
+#[test]
+fn both_binaries_advertise_retry_and_render_all_supported_formats() {
+    for (binary, args, expected) in [
+        (
+            env!("CARGO_BIN_EXE_fzz"),
+            vec!["control", "retry", "--help"],
+            vec![
+                "--generation",
+                "--wait",
+                "--timeout",
+                "fzz control --format toon retry --generation N",
+            ],
+        ),
+        (
+            env!("CARGO_BIN_EXE_funzzy"),
+            vec!["ctl", "retry", "--help"],
+            vec![
+                "--generation",
+                "--wait",
+                "--timeout",
+                "fzz control --format toon retry --generation N",
+            ],
+        ),
+        (
+            env!("CARGO_BIN_EXE_fzz"),
+            vec!["--help"],
+            vec![
+                "fzz control --format toon status",
+                "fzz control --format toon retry",
+                "fzz control --format toon await",
+                "fzz control --format toon output",
+            ],
+        ),
+    ] {
+        let output = Command::new(binary)
+            .args(&args)
+            .output()
+            .expect("run retry help");
+        assert!(output.status.success(), "help: {output:?}");
+        let help = String::from_utf8_lossy(&output.stdout);
+        for expected in expected {
+            assert!(help.contains(expected), "missing {expected:?}: {help}");
+        }
+    }
+
+    let config = r#"
+on:
+  socket: sock
+  watch_backend: poll
+jobs:
+  - name: failed
+    change: format.txt
+    run: 'exit 1'
+"#;
+    with_watcher("formats", config, false, |directory, watcher| {
+        let source_generation = emit(&directory, "format.txt");
+        let (source_output, _) = await_generation(&directory, source_generation, "30s");
+        assert_eq!(source_output.status.code(), Some(1));
+        let source = source_generation.to_string();
+
+        let human = run_cli(
+            &directory,
+            &[
+                "control",
+                "--format",
+                "human",
+                "retry",
+                "--generation",
+                &source,
+            ],
+        );
+        assert!(human.status.success(), "human: {human:?}");
+        let human = String::from_utf8_lossy(&human.stdout);
+        assert!(human.contains(&format!("source generation: {source}")));
+        let retry_generation = human
+            .lines()
+            .find_map(|line| line.strip_prefix("scheduled generation: "))
+            .expect("human retry generation")
+            .to_owned();
+        assert!(human.contains("retried tasks: failed"));
+
+        let json = run_binary(
+            &directory,
+            env!("CARGO_BIN_EXE_funzzy"),
+            &["ctl", "--format", "json", "retry", "--generation", &source],
+        );
+        let json_result = retry_result(&json);
+        assert_eq!(retry_run_id(&json_result).to_string(), retry_generation);
+        assert_eq!(
+            json_result["sourceGeneration"].as_u64(),
+            Some(source_generation)
+        );
+
+        let toon = run_cli(
+            &directory,
+            &["ctl", "--format", "toon", "retry", "--generation", &source],
+        );
+        assert!(toon.status.success(), "TOON: {toon:?}");
+        let toon = String::from_utf8_lossy(&toon.stdout);
+        assert!(toon.contains(&retry_generation), "TOON response: {toon}");
+        assert!(toon.contains("failed"), "TOON response: {toon}");
+
+        let retry_generation_id = retry_generation.parse::<u64>().unwrap();
+        let (retry_output, _) = await_generation(&directory, retry_generation_id, "30s");
+        assert_eq!(retry_output.status.code(), Some(1));
+
+        let toon_status = run_cli(&directory, &["control", "--format", "toon", "status"]);
+        assert!(toon_status.status.success(), "TOON status: {toon_status:?}");
+        assert!(String::from_utf8_lossy(&toon_status.stdout).contains(&retry_generation));
+
+        let toon_await = run_cli(
+            &directory,
+            &[
+                "control",
+                "--format",
+                "toon",
+                "await",
+                "--generation",
+                &retry_generation,
+                "--timeout",
+                "30s",
+            ],
+        );
+        assert_eq!(
+            toon_await.status.code(),
+            Some(1),
+            "TOON await: {toon_await:?}"
+        );
+        assert!(String::from_utf8_lossy(&toon_await.stdout).contains("failed"));
+
+        let toon_output = run_cli(
+            &directory,
+            &[
+                "control",
+                "--format",
+                "toon",
+                "output",
+                "--generation",
+                &retry_generation,
+                "--tail",
+                "80",
+            ],
+        );
+        assert!(toon_output.status.success(), "TOON output: {toon_output:?}");
+        assert!(String::from_utf8_lossy(&toon_output.stdout).contains(&retry_generation));
+
+        let capabilities = run_cli(&directory, &["control", "--format", "json", "capabilities"]);
+        assert!(
+            capabilities.status.success(),
+            "capabilities: {capabilities:?}"
+        );
+        let capabilities_document = result_document(&capabilities);
+        let methods = document_body(&capabilities_document)["methods"]
+            .as_array()
+            .expect("capability methods");
+        for method in ["status", "targets", "run", "retry"] {
+            assert!(
+                methods.iter().any(|value| value == method),
+                "methods: {methods:?}"
+            );
+        }
         drop(watcher);
     });
 }
@@ -520,6 +790,50 @@ jobs:
         assert_eq!(status(&directory).unwrap()["generation"], before);
         assert_eq!(
             fs::read_to_string(directory.join("passed.log")).unwrap(),
+            "run\n"
+        );
+        drop(watcher);
+    });
+}
+
+#[test]
+fn retry_rejects_source_after_a_valid_config_reload() {
+    let before = r#"
+on:
+  socket: sock
+  watch_backend: poll
+jobs:
+  - name: failed
+    change: trigger.txt
+    run: 'echo run >> attempts.log; exit 1'
+"#;
+    let after = r#"
+on:
+  socket: sock
+  watch_backend: poll
+jobs:
+  - name: failed
+    change: trigger.txt
+    run: 'echo run >> attempts.log; exit 1'
+  - name: added-after-reload
+    change: extra.txt
+    run: 'true'
+"#;
+    with_watcher("reload-stale", before, false, |directory, watcher| {
+        let source_generation = emit(&directory, "trigger.txt");
+        let (source_output, _) = await_generation(&directory, source_generation, "30s");
+        assert_eq!(source_output.status.code(), Some(1));
+
+        write_config(directory, after);
+        wait_for_log(directory, "hot-reloading to revision 2");
+
+        retry_error(directory, source_generation, STALE_REVISION);
+        assert_eq!(
+            status(directory).unwrap()["generation"].as_u64(),
+            Some(source_generation)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("attempts.log")).unwrap(),
             "run\n"
         );
         drop(watcher);
