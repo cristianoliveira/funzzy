@@ -833,7 +833,7 @@ pub fn command() -> Command {
                 )
                 .subcommand(
                     Command::new("retry")
-                        .about("Retry failed jobs from the latest terminal generation, or an exact one.")
+                        .about("Retry failed or timed-out finite jobs from the latest terminal generation, or an exact one.")
                         .version(env!("CARGO_PKG_VERSION"))
                         .long_about(
                             "Retry failed or timed-out finite jobs from the latest terminal generation. With no `--generation`, the watcher selects its current generation atomically; it never searches for an older failure. Use `--generation N` to require an exact source. This schedules one correlated generation and never retries passed, cancelled, or skipped jobs. Services and stale config revisions are rejected. The control socket must belong to an idle watcher. Only the latest terminal snapshot is retained; retry immediately after observing a failure.\n\nWorkflow: run `fzz control --format toon retry` and read sourceGeneration N and new runId M; observe `fzz control --format toon await --generation M --timeout 5m`; retrieve task output with `fzz control --format toon output --generation M --tail 80`. For an exact observed run, use `fzz control --format toon retry --generation N`. Use `--wait --timeout 5m` on retry to combine scheduling and bounded observation. Timeout keeps the same retry scheduled; await that runId again. `no_retryable_jobs` means the latest generation has no failed finite jobs; `watcher_busy` means wait for active work or pending batch; `stale_revision` means trigger fresh work under current config; services are not retryable.",
@@ -1093,7 +1093,7 @@ Alias:
 Config:
   fzz config describes the config schema and prints runnable examples.
 
-Retry failed jobs (requires a running watcher):
+Retry failed or timed-out jobs (requires a running watcher):
   fzz control --format toon retry                   # latest terminal run; read new runId M
   fzz control --format toon retry --generation N    # require exact source N instead
   fzz control --format toon await --generation M --timeout 5m

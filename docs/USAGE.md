@@ -161,7 +161,7 @@ Press **Ctrl-R** to retry only the failed and timed-out finite jobs of the lates
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 | Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
 
-### Retry failed jobs from the latest run
+### Retry failed or timed-out jobs from the latest run
 
 With no generation, Funzzy atomically selects the latest terminal generation.
 It never searches for an older failure: if the latest run passed, there is
