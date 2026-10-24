@@ -35,7 +35,7 @@ pub enum ControlAction {
     Capabilities,
     Config,
     Retry {
-        generation: u64,
+        generation: Option<u64>,
         wait: bool,
         timeout: Option<Duration>,
     },

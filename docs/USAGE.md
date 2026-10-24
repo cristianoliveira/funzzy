@@ -159,28 +159,32 @@ While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If
 | Config discovery | `fzz config schema\|example` | no | none (never reads project config) |
 | Print agent instructions | `fzz --agents-instruction` | no | prints Markdown; no file changes |
 
-### Retry a failed generation
+### Retry failed jobs from the latest run
 
-Use the exact generation ID from the failure snapshot. Funzzy retains only the
-latest terminal snapshot, so retry before a newer generation replaces it.
-Retries include failed or timed-out finite jobs only; passed, skipped,
-cancelled, and service jobs are excluded. Services cannot be retried.
+With no generation, Funzzy atomically selects the latest terminal generation.
+It never searches for an older failure: if the latest run passed, there is
+nothing to retry. Only that generation's failed or timed-out finite jobs are
+retried; passed, skipped, and cancelled jobs stay out. Services cannot be retried.
 
 ```sh
-fzz control --format toon status
-# Copy the failed source generation N from the snapshot.
-fzz control --format toon retry --generation N
-# Copy the new retry runId M from the response.
+fzz control --format toon retry
+# Copy the sourceGeneration N and new runId M from the response.
 fzz control --format toon await --generation M --timeout 5m
 fzz control --format toon output --generation M --tail 80
+
+# To require a particular observed generation instead:
+fzz control --format toon retry --generation N
 ```
 
-`--format` is an option of `control`, so place it before the action. `--wait --timeout 5m` can combine scheduling and observation. A timeout does
-not cancel or duplicate the retry; await the same `runId` again. For
-`watcher_busy`, wait for active work or pending batch routing. For
-`stale_revision` or `source_unavailable`, observe fresh work and use its exact
-terminal generation. `no_retryable_jobs` means no finite failure is eligible;
-`unsupported_service` means the selected failure includes a service job.
+`--format` belongs before the `control` action. `--wait --timeout 5m`
+combines scheduling and observation; a timeout leaves the retry running, so
+await its returned `runId` again. Bare retry always evaluates the latest
+source under the watcher's schedule lock. `--generation N` requires that exact
+source; an already-accepted retry of N returns the same runId while cached,
+whereas an uncached stale source fails. `watcher_busy` means wait for active
+work or pending batch routing. For `stale_revision` or `source_unavailable`,
+observe fresh work. `no_retryable_jobs` means no finite failure is eligible;
+`unsupported_service` means a failed service was selected.
 
 **Busy policy**: `--on-busy wait|restart` (default `wait`); `--restart`
 cancels and reaps active work on a newer event. **Fail fast**: `--fail-fast`

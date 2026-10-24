@@ -1229,13 +1229,16 @@ impl ControlClient {
         ScheduledRunSnapshot::from_value(result).map_err(ControlClientError::Malformed)
     }
 
-    /// Requests an explicit retry of one exact source generation.
+    /// Requests a retry of the latest terminal generation, or one exact source.
     pub fn retry(
         &mut self,
-        generation: u64,
+        generation: Option<u64>,
         instance_token: Option<&str>,
     ) -> Result<RetrySnapshot, ControlClientError> {
-        let mut params = serde_json::json!({ "generation": generation });
+        let mut params = serde_json::json!({});
+        if let Some(generation) = generation {
+            params["generation"] = serde_json::json!(generation);
+        }
         if let Some(token) = instance_token {
             params["instanceToken"] = serde_json::json!(token);
         }
@@ -1662,7 +1665,9 @@ mod tests {
         });
         let (path, handle) = serving_socket(ok_response(1, result));
         let mut client = ControlClient::connect(&path).expect("connect");
-        let retry = client.retry(3, Some("instance-token")).expect("retry");
+        let retry = client
+            .retry(Some(3), Some("instance-token"))
+            .expect("retry");
         handle.join().expect("server thread");
         assert_eq!(retry.source_generation, 3);
         assert_eq!(retry.run_id, 4);

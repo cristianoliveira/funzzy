@@ -130,6 +130,10 @@ fn run_retry(directory: &Path, generation: u64, wait_timeout: Option<&str>) -> O
     command.output().expect("run exact-generation retry")
 }
 
+fn run_latest_retry(directory: &Path) -> Output {
+    run_cli(directory, &["control", "--format", "json", "retry"])
+}
+
 fn json_documents(output: &Output) -> Vec<Value> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let payload = stdout
@@ -275,6 +279,53 @@ fn retry_error(directory: &Path, generation: u64, expected: i64) -> Output {
     let output = run_retry(directory, generation, None);
     assert_error_code(&output, expected);
     output
+}
+
+#[test]
+fn retry_without_generation_uses_only_the_latest_terminal_failure() {
+    let config = r#"
+on:
+  socket: sock
+  watch_backend: poll
+  poll_interval: 50ms
+jobs:
+  - name: fails
+    change: trigger.txt
+    run: 'printf "run\n" >> failed.log; if test -f pass-now; then exit 0; else exit 1; fi'
+  - name: passes
+    change: trigger.txt
+    run: 'printf "run\n" >> passed.log'
+"#;
+    with_watcher("latest-failure", config, false, |directory, watcher| {
+        assert_error_code(&run_latest_retry(&directory), -32030);
+
+        let source_generation = emit(&directory, "trigger.txt");
+        let (_, source) = await_generation(&directory, source_generation, "30s");
+        assert_eq!(source["result"]["terminalReason"], "failed");
+
+        fs::write(directory.join("pass-now"), "allow").unwrap();
+        let retry = retry_result(&run_latest_retry(&directory));
+        assert_eq!(retry["sourceGeneration"].as_u64(), Some(source_generation));
+        let retry_generation = retry_run_id(&retry);
+        let (output, terminal) = await_generation(&directory, retry_generation, "30s");
+        assert!(output.status.success());
+        assert_eq!(terminal["result"]["terminalReason"], "passed");
+        assert_eq!(
+            fs::read_to_string(directory.join("failed.log")).unwrap(),
+            "run\nrun\n"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("passed.log")).unwrap(),
+            "run\n"
+        );
+
+        assert_error_code(&run_latest_retry(&directory), -32033);
+        assert_eq!(
+            status(&directory).unwrap()["generation"].as_u64(),
+            Some(retry_generation)
+        );
+        drop(watcher);
+    });
 }
 
 #[test]
@@ -523,6 +574,7 @@ fn both_binaries_advertise_retry_and_render_all_supported_formats() {
                 "--generation",
                 "--wait",
                 "--timeout",
+                "fzz control --format toon retry`",
                 "fzz control --format toon retry --generation N",
             ],
         ),
@@ -533,6 +585,7 @@ fn both_binaries_advertise_retry_and_render_all_supported_formats() {
                 "--generation",
                 "--wait",
                 "--timeout",
+                "fzz control --format toon retry`",
                 "fzz control --format toon retry --generation N",
             ],
         ),
@@ -540,7 +593,6 @@ fn both_binaries_advertise_retry_and_render_all_supported_formats() {
             env!("CARGO_BIN_EXE_fzz"),
             vec!["--help"],
             vec![
-                "fzz control --format toon status",
                 "fzz control --format toon retry",
                 "fzz control --format toon await",
                 "fzz control --format toon output",

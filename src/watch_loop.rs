@@ -883,25 +883,23 @@ impl NonBlockStrategy {
         self.worker.cancel_generation(generation)
     }
 
-    /// Retries failed finite jobs from the exact current terminal generation.
-    /// Validation and scheduling are serialized with the shared config revision
-    /// and other run requests; repeat calls return the cached generation.
+    /// Retries failed finite jobs from the latest terminal generation, or
+    /// requires one exact source. Resolve the default under the same schedule
+    /// lock as selection so another run cannot change it between requests.
     pub fn retry_generation(
         &self,
-        source_generation: u64,
+        requested_generation: Option<u64>,
     ) -> Result<crate::control::RetryRun, crate::control::ControlRetryError> {
-        if let Some(retry) = self
-            .retry_cache
-            .lock()
-            .unwrap()
-            .get(&source_generation)
-            .cloned()
+        if let Some(retry) = requested_generation
+            .and_then(|generation| self.retry_cache.lock().unwrap().get(&generation).cloned())
         {
             return Ok(retry);
         }
 
         let shared = self.shared.lock().unwrap();
         let _schedule = self.schedule_lock.lock().unwrap();
+        let state = self.control_state.lock().unwrap();
+        let source_generation = requested_generation.unwrap_or_else(|| state.generation());
         if let Some(retry) = self
             .retry_cache
             .lock()
@@ -911,7 +909,11 @@ impl NonBlockStrategy {
         {
             return Ok(retry);
         }
-        let state = self.control_state.lock().unwrap();
+        if state.generation() == 0 {
+            return Err(crate::control::ControlRetryError::SourceUnavailable {
+                generation: source_generation,
+            });
+        }
         let debounce_pending = self
             .coordinator
             .as_ref()
@@ -1508,7 +1510,7 @@ mod tests {
         );
 
         assert!(matches!(
-            strategy.retry_generation(1),
+            strategy.retry_generation(Some(1)),
             Err(crate::control::ControlRetryError::WatcherBusy)
         ));
         assert!(!worker.has_active_or_queued_run());
@@ -1569,7 +1571,7 @@ mod tests {
             NonBlockStrategy::new_arc(worker.clone(), watches, None, control_state, None, None);
 
         assert!(matches!(
-            strategy.retry_generation(1),
+            strategy.retry_generation(Some(1)),
             Err(crate::control::ControlRetryError::StaleRevision {
                 source: Some(1),
                 current: Some(2),

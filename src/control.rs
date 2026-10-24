@@ -194,7 +194,8 @@ impl ControlRetryError {
     }
 }
 
-type RetryGeneration = Arc<dyn Fn(u64) -> Result<RetryRun, ControlRetryError> + Send + Sync>;
+type RetryGeneration =
+    Arc<dyn Fn(Option<u64>) -> Result<RetryRun, ControlRetryError> + Send + Sync>;
 
 /// Typed control-run failure (TASK-0091, AC7): a stale target (not in the
 /// current revision) is an actionable typed outcome, never a generic server
@@ -300,7 +301,7 @@ impl ControlApi {
 
     pub fn with_retry<F>(mut self, retry_generation: F) -> Self
     where
-        F: Fn(u64) -> Result<RetryRun, ControlRetryError> + Send + Sync + 'static,
+        F: Fn(Option<u64>) -> Result<RetryRun, ControlRetryError> + Send + Sync + 'static,
     {
         self.retry_generation = Some(Arc::new(retry_generation));
         self
@@ -1273,18 +1274,27 @@ fn retry_requested_generation(
     retry_generation: Option<&RetryGeneration>,
     instance: &WatcherInstance,
 ) -> Result<serde_json::Value, (i64, &'static str, Option<serde_json::Value>)> {
-    let params = request.get("params").and_then(serde_json::Value::as_object);
-    let Some(generation) = params
-        .and_then(|params| params.get("generation"))
-        .and_then(serde_json::Value::as_u64)
-    else {
-        return Err((
-            -32602,
-            "Invalid params",
-            Some(serde_json::json!(
-                "retry requires a numeric params.generation"
-            )),
-        ));
+    let params = match request.get("params") {
+        None => None,
+        Some(value) => Some(value.as_object().ok_or_else(|| {
+            (
+                -32602,
+                "Invalid params",
+                Some(serde_json::json!("retry params must be an object")),
+            )
+        })?),
+    };
+    let generation = match params.and_then(|params| params.get("generation")) {
+        None => None,
+        Some(value) => Some(value.as_u64().ok_or_else(|| {
+            (
+                -32602,
+                "Invalid params",
+                Some(serde_json::json!(
+                    "retry params.generation must be numeric when provided"
+                )),
+            )
+        })?),
     };
 
     if let Some(token) = params
@@ -1635,8 +1645,11 @@ mod tests {
     #[test]
     fn retry_rpc_exposes_typed_errors_and_capability() {
         let state = Arc::new(Mutex::new(WatcherState::default()));
-        let api = ControlApi::new(state)
-            .with_retry(|generation| Err(ControlRetryError::NoRetryableJobs { generation }));
+        let api = ControlApi::new(state).with_retry(|generation| {
+            Err(ControlRetryError::NoRetryableJobs {
+                generation: generation.unwrap_or(0),
+            })
+        });
         let capabilities = process_request(
             serde_json::json!({"jsonrpc":"2.0", "id":1, "method":"capabilities", "params":{}}),
             &api,
@@ -1655,6 +1668,35 @@ mod tests {
         assert_eq!(response["error"]["code"], -32033);
         assert_eq!(response["error"]["message"], "no_retryable_jobs");
         assert_eq!(response["error"]["data"]["generation"], 7);
+    }
+
+    #[test]
+    fn retry_rpc_distinguishes_omitted_generation_from_malformed_generation() {
+        let retry: RetryGeneration = Arc::new(|generation| {
+            assert_eq!(generation, None);
+            Err(ControlRetryError::NoRetryableJobs { generation: 0 })
+        });
+        let omitted = serde_json::json!({"params": {}});
+        let (code, _, _) = retry_requested_generation(&omitted, Some(&retry), &instance("fz-7f3a"))
+            .expect_err("latest generation has no failures");
+        assert_eq!(code, -32033);
+
+        let malformed = serde_json::json!({"params": {"generation": "last"}});
+        let (code, _, _) =
+            retry_requested_generation(&malformed, Some(&retry), &instance("fz-7f3a"))
+                .expect_err("malformed generation is not a shorthand");
+        assert_eq!(code, -32602);
+
+        for params in [
+            serde_json::json!([]),
+            serde_json::json!({"generation": null}),
+        ] {
+            let request = serde_json::json!({"params": params});
+            let (code, _, _) =
+                retry_requested_generation(&request, Some(&retry), &instance("fz-7f3a"))
+                    .expect_err("malformed params must not select the latest generation");
+            assert_eq!(code, -32602);
+        }
     }
 
     #[test]
