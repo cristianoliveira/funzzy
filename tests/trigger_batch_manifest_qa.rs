@@ -530,13 +530,17 @@ jobs:
             fs::write(&service_file, "before").unwrap();
             fs::write(&later_file, "before").unwrap();
             write_config(fixture, config);
-            let mut child = cmd.stdin(Stdio::piped()).spawn().unwrap();
-            let child_id = child.id().to_string();
+            let child = std::cell::RefCell::new(cmd.stdin(Stdio::piped()).spawn().unwrap());
+            let child_id = child.borrow().id().to_string();
             defer!({
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = child.borrow_mut().kill();
+                let _ = child.borrow_mut().wait();
                 if let Ok(pid) = fs::read_to_string(fixture.join("service-pid")) {
-                    let _ = Command::new("kill").args(["-TERM", pid.trim()]).status();
+                    let _ = Command::new("kill")
+                        .args(["-TERM", pid.trim()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
                 }
             });
             wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
@@ -583,6 +587,29 @@ jobs:
                 service_manifest.exists(),
                 later_manifest.exists()
             );
+            wait_until!(
+                child.borrow_mut().try_wait().unwrap().is_some(),
+                "watcher did not exit after SIGTERM"
+            );
+            let exit = child
+                .borrow_mut()
+                .try_wait()
+                .unwrap()
+                .expect("watcher exit status");
+            assert_eq!(exit.code(), Some(143));
+            assert!(
+                !log_contains(&mut log, "restarted after an unexpected exit"),
+                "service restarted during watcher shutdown"
+            );
+            let service_pid = fs::read_to_string(fixture.join("service-pid")).unwrap();
+            let service_alive = Command::new("kill")
+                .args(["-0", service_pid.trim()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            assert!(!service_alive, "service process survived watcher shutdown");
         },
     );
 }
