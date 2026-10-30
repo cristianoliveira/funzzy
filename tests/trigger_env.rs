@@ -327,3 +327,87 @@ jobs:
         },
     );
 }
+
+/// TASK-0193 honesty guard for the documented hook boundary: Funzzy never
+/// injects the trigger path into hooks. A close hook sees the name only when
+/// its explicitly configured environment contains it; a parent-inherited-only
+/// value is stripped.
+#[test]
+fn close_hooks_never_inject_the_trigger_path_but_keep_configured_values() {
+    let config = |env_block: &str| {
+        format!(
+            r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+{env_block}
+hooks:
+  close: 'printf "%s" "${{FZZ_TRIGGER_PATH:-unset}}" > close.txt'
+jobs:
+  - name: idle
+    run: 'echo run >> runs.log'
+    change: 'src/**'
+"#
+        )
+    };
+    let configured = "execution:\n  env:\n    FZZ_TRIGGER_PATH: configured-close\n";
+    let cases = [
+        (
+            configured,
+            "configured-close",
+            "explicitly configured hook env",
+        ),
+        ("", "unset", "parent-inherited-only value"),
+    ];
+    for (index, (env_block, expected, label)) in cases.iter().enumerate() {
+        let label = format!("case-{index}-{label}");
+        setup::with_config(
+            std::path::Path::new("examples/simple-case.yml"),
+            "trigger_env_hooks.log",
+            |fzz_cmd, mut output_log, fixture| {
+                std::fs::write(fixture.join("examples/simple-case.yml"), config(env_block))
+                    .expect("write config");
+                if *expected == "unset" {
+                    fzz_cmd.env("FZZ_TRIGGER_PATH", "stale-inherited");
+                }
+                let mut child = fzz_cmd
+                    .stdin(Stdio::piped())
+                    .spawn()
+                    .expect("failed to spawn watcher");
+
+                wait_until!(
+                    read_log(&mut output_log).contains("Watching..."),
+                    "watcher did not become ready ({label})"
+                );
+                // Give case A a real trigger path in the latest run before
+                // shutdown: the hook must still NOT receive it.
+                if *expected != "unset" {
+                    std::fs::write(fixture.join("src/trigger.txt"), "run").unwrap();
+                    wait_until!(
+                        read_fixture_file(fixture, "runs.log").lines().count() == 1,
+                        "triggered job did not run ({label})"
+                    );
+                }
+
+                // Graceful shutdown runs the close hook once.
+                unsafe {
+                    nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(child.id() as i32),
+                        nix::sys::signal::Signal::SIGTERM,
+                    )
+                    .expect("send SIGTERM");
+                }
+                let _ = child.wait();
+
+                wait_until!(
+                    !read_fixture_file(fixture, "close.txt").is_empty(),
+                    "close hook did not run ({label})"
+                );
+                assert_eq!(
+                    read_fixture_file(fixture, "close.txt"),
+                    *expected,
+                    "hook trigger-path honesty ({label})"
+                );
+            },
+        );
+    }
+}
