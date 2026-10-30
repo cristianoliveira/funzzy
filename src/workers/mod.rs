@@ -139,6 +139,9 @@ struct RunRequest {
     batch: Option<u64>,
     /// Complete normalized changed-path set of the triggering batch.
     changed: Vec<String>,
+    /// Owns the private JSON manifest until this request is discarded or all
+    /// of its supervised consumers release their executor clones.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     /// Generation identity this request replaces; set when it supersedes an
     /// active run (restart policy), so the relation survives to start.
     predecessor: Option<u64>,
@@ -1254,6 +1257,22 @@ impl Worker {
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
+        // TASK-0196: one constant-size pointer exposes the complete batch
+        // without putting an unbounded JSON value in the child environment.
+        // The request owns setup until the executor transfers ownership to
+        // finite tasks and long-lived services.
+        let trigger_paths_manifest = if changed.is_empty() {
+            None
+        } else {
+            Some(Arc::new(
+                crate::trigger_paths::TriggerPathsManifest::create(&changed)?,
+            ))
+        };
+        let plan = plan.with_trigger_paths_file(
+            trigger_paths_manifest
+                .as_ref()
+                .map(|manifest| manifest.path()),
+        );
         // TASK-0193/0194: expose the single trigger path (absolute and
         // per-job-cwd-relative forms) as child data for this generation.
         // Pathless schedules (init, keyboard, control retry of a pathless
@@ -1267,6 +1286,7 @@ impl Worker {
             trigger: trigger.to_string(),
             batch,
             changed,
+            trigger_paths_manifest,
             predecessor: None,
             target: None,
             execution_signature: None,
@@ -1381,7 +1401,7 @@ impl Worker {
         let revision = self.revision.lock().unwrap().clone();
         scheduler.send(WorkerCommand::StartServices {
             run_id,
-            plan,
+            plan: plan.with_trigger_paths_file(None),
             revision,
         });
         Ok(run_id)

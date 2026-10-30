@@ -142,11 +142,26 @@ impl WorkflowRunner {
         filepath: Option<&str>,
     ) -> Result<CompletedRun, String> {
         let plan = path_context::resolve_context(&plan, &self.root)?;
+        let changed = metadata.changed.clone();
+        let trigger_paths_manifest = if changed.is_empty() {
+            None
+        } else {
+            Some(std::sync::Arc::new(
+                crate::trigger_paths::TriggerPathsManifest::create(&changed)?,
+            ))
+        };
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
             filepath: filepath.map(str::to_owned),
-            paths: vec![],
+            // Blocking and non-blocking modes expand the same complete,
+            // correlated batch. Pathless runs keep the legacy empty value.
+            paths: changed,
             current_dir: self.root.display().to_string(),
         });
+        let plan = plan.with_trigger_paths_file(
+            trigger_paths_manifest
+                .as_ref()
+                .map(|manifest| manifest.path()),
+        );
         let hooks = self.hooks.lock().unwrap().clone();
         let metadata = metadata
             .with_hooks(hooks)
@@ -186,7 +201,11 @@ impl WorkflowRunner {
         // per-job-cwd-relative forms) as child data. Pathless runs (init,
         // manual target, Ctrl-G) strip both reserved names.
         let plan = plan.with_trigger_env(filepath, &self.root.display().to_string());
-        Ok(self.executor.run_to_completion(metadata, plan))
+        Ok(self.executor.run_to_completion_with_trigger_paths(
+            metadata,
+            plan,
+            trigger_paths_manifest,
+        ))
     }
 }
 

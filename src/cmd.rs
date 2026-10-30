@@ -478,6 +478,7 @@ fn apply_context(command: &mut Command, context: &TaskContext) {
     // values (present in the context map) win over both.
     command.env_remove(crate::plan::TRIGGER_PATH_ENV);
     command.env_remove(crate::plan::TRIGGER_RELATIVE_PATH_ENV);
+    command.env_remove(crate::plan::TRIGGER_PATHS_FILE_ENV);
     command.envs(&context.environment);
 }
 

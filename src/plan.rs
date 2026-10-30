@@ -33,6 +33,11 @@ pub const TRIGGER_PATH_ENV: &str = "FZZ_TRIGGER_PATH";
 /// `TRIGGER_PATH_ENV` and stripped for pathless runs.
 pub const TRIGGER_RELATIVE_PATH_ENV: &str = "FZZ_TRIGGER_RELATIVE_PATH";
 
+/// Reserved child-environment name pointing to the generation-owned JSON
+/// array of normalized changed paths (TASK-0196). The value is always an
+/// absolute path and is stripped for runs without a filesystem batch.
+pub const TRIGGER_PATHS_FILE_ENV: &str = "FZZ_TRIGGER_PATHS_FILE";
+
 /// Process context applied only to one task's child commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskContext {
@@ -359,6 +364,36 @@ impl RunPlan {
                 Stage::Parallel { tasks, .. } => tasks
                     .iter_mut()
                     .for_each(|task| apply(task, filepath, workspace_dir)),
+            }
+        }
+        self
+    }
+
+    /// Injects the absolute changed-path manifest pointer into every task, or
+    /// strips the reserved name for pathless runs. Manifest ownership stays
+    /// with the executor so services, readiness and recovery children keep
+    /// access for their complete supervised lifetime.
+    pub(crate) fn with_trigger_paths_file(mut self, path: Option<&Path>) -> RunPlan {
+        fn apply(task: &mut TaskPlan, path: Option<&Path>) {
+            match path {
+                Some(path) => {
+                    task.context.environment.insert(
+                        TRIGGER_PATHS_FILE_ENV.to_owned(),
+                        path.display().to_string(),
+                    );
+                }
+                None => {
+                    task.context.environment.remove(TRIGGER_PATHS_FILE_ENV);
+                }
+            }
+        }
+
+        for stage in &mut self.stages {
+            match stage {
+                Stage::Serial(task) => apply(task, path),
+                Stage::Parallel { tasks, .. } => {
+                    tasks.iter_mut().for_each(|task| apply(task, path));
+                }
             }
         }
         self
@@ -955,6 +990,36 @@ mod tests {
                 .map(String::as_str),
             Some("src/a.txt")
         );
+    }
+
+    #[test]
+    fn trigger_paths_file_reaches_all_tasks_and_strips_stale_pathless_values() {
+        let configured = &[(
+            TRIGGER_PATHS_FILE_ENV.to_owned(),
+            "stale-configured".to_owned(),
+        )];
+        let plan = RunPlan::from_rules(vec![
+            trigger_rule("A", configured),
+            rule("B", Some("group"), false),
+            rule("C", Some("group"), false),
+        ]);
+        let manifest = Path::new("/tmp/funzzy-trigger-paths/paths.json");
+
+        let triggered = plan.clone().with_trigger_paths_file(Some(manifest));
+        for context in task_contexts(&triggered) {
+            assert_eq!(
+                context
+                    .environment
+                    .get(TRIGGER_PATHS_FILE_ENV)
+                    .map(String::as_str),
+                manifest.to_str()
+            );
+        }
+
+        let pathless = plan.with_trigger_paths_file(None);
+        for context in task_contexts(&pathless) {
+            assert!(!context.environment.contains_key(TRIGGER_PATHS_FILE_ENV));
+        }
     }
 
     /// Mirrors `{{relative_filepath}}` expansion through the production

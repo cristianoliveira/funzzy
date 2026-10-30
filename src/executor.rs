@@ -615,6 +615,9 @@ struct ActiveTask {
     current_command: Option<String>,
     failures: Vec<String>,
     context: TaskContext,
+    /// Keeps the generation's private changed-path manifest alive for this
+    /// supervised task, including service handoff, readiness and recovery.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     context_validated: bool,
     group_occurrence: Option<String>,
     /// When the first command of this task spawned, for per-task duration
@@ -667,6 +670,7 @@ impl From<TaskPlan> for ActiveTask {
             current_command: None,
             failures: vec![],
             context: task.context,
+            trigger_paths_manifest: None,
             context_validated: false,
             group_occurrence: task.group_occurrence,
             started: None,
@@ -707,6 +711,10 @@ pub struct Run {
     /// is deterministic when parallel jobs complete out of order.
     task_snapshots: Vec<TaskSnapshot>,
     metadata: RunMetadata,
+    /// Generation owner retained until all finite work settles. Individual
+    /// service tasks clone it before handoff so their manifest outlives the
+    /// terminal generation event without becoming globally persistent.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     superseded_by: Option<u64>,
     cancellation: CancellationToken,
     started: Instant,
@@ -867,6 +875,15 @@ impl Executor {
     }
 
     pub fn start(&self, metadata: RunMetadata, plan: RunPlan) -> Run {
+        self.start_with_trigger_paths(metadata, plan, None)
+    }
+
+    pub(crate) fn start_with_trigger_paths(
+        &self,
+        metadata: RunMetadata,
+        plan: RunPlan,
+        trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
+    ) -> Run {
         self.events.emit(Event::Started {
             run_id: metadata.run_id,
             trigger: metadata.trigger.clone(),
@@ -893,6 +910,7 @@ impl Executor {
             outcomes: vec![],
             task_snapshots: vec![],
             metadata,
+            trigger_paths_manifest,
             superseded_by: None,
             cancellation: CancellationToken::new(),
             started: self.clock.now(),
@@ -1056,7 +1074,15 @@ impl Executor {
             let Some(task) = run.queued.pop_front() else {
                 return;
             };
-            run.active.push(task.into());
+            let needs_manifest = task
+                .context
+                .environment
+                .contains_key(crate::plan::TRIGGER_PATHS_FILE_ENV);
+            let mut active: ActiveTask = task.into();
+            if needs_manifest {
+                active.trigger_paths_manifest = run.trigger_paths_manifest.clone();
+            }
+            run.active.push(active);
         }
     }
 
@@ -2873,11 +2899,20 @@ impl Executor {
         still_running
     }
 
-    pub fn run_to_completion(&self, mut metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+    pub fn run_to_completion(&self, metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+        self.run_to_completion_with_trigger_paths(metadata, plan, None)
+    }
+
+    pub(crate) fn run_to_completion_with_trigger_paths(
+        &self,
+        mut metadata: RunMetadata,
+        plan: RunPlan,
+        trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
+    ) -> CompletedRun {
         // Finite commands have no future generation to settle against; their
         // failure hook is always immediate.
         metadata.hooks.failure_settle = None;
-        let mut run = self.start(metadata, plan);
+        let mut run = self.start_with_trigger_paths(metadata, plan, trigger_paths_manifest);
         loop {
             match self.advance(&mut run) {
                 Step::Finished => return self.finish(run),

@@ -273,7 +273,7 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
-- **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. `FZZ_TRIGGER_PATH` is likewise reserved in job child environments (TASK-0193): for triggered job commands Funzzy sets it after configured values so it always beats them, and it strips the name for pathless runs. Funzzy does not inject the trigger path into hooks; a hook child only sees the name when the explicitly configured `execution.env` (which defaults every configured hook) contains it — a parent-inherited-only value is stripped everywhere. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
+- **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. `FZZ_TRIGGER_PATH`, `FZZ_TRIGGER_RELATIVE_PATH`, and `FZZ_TRIGGER_PATHS_FILE` are likewise reserved in job child environments: filesystem-triggered jobs receive Funzzy's values after configured values, while pathless runs strip the names. Funzzy does not implicitly inject these trigger values into hooks. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
 - **Trigger path variable**: every filesystem-triggered job command (shell or direct argv) receives `FZZ_TRIGGER_PATH` in its child environment with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `{{paths}}` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe and reusable scripts need no Funzzy placeholder at all. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Hooks are out of scope: Funzzy never injects the trigger path into them. Migrate a job by dropping `{{filepath}}` from the command and reading the environment inside the script instead:
 
   ```yaml
@@ -321,6 +321,44 @@ jobs:
   fi
   "$SHELL" -n "$FZZ_TRIGGER_RELATIVE_PATH"
   ```
+- **Changed-path batch file**: every filesystem-triggered shell or direct-argv
+  job also receives `FZZ_TRIGGER_PATHS_FILE`, an absolute path to a private,
+  read-only UTF-8 JSON file. Its array is the complete post-debounce changed
+  set, sorted and deduplicated. Values are literal normalized paths: they are
+  not shell-quoted, filtered per job, or rebased for `cwd`. The same immutable
+  file remains readable by the generation's job commands, recovery commands,
+  readiness probes, and supervised services. A retry gets the same array in a
+  newly owned file. Read the file while the child is supervised; its pathname
+  and retention after the job or service exits are not APIs. Pathless runs do
+  not receive the variable, and hooks do not receive it implicitly. Native
+  non-UTF-8 paths remain outside the current watcher path model.
+
+  Migrate a whole-batch command without interpolating `{{paths}}`:
+
+  ```yaml
+  # before (supported shell interpolation)
+  - name: check-changed
+    run: './scripts/check-changed.sh {{paths}}'
+  # after (structured data, identical for shell and direct argv jobs)
+  - name: check-changed
+    run: 'node ./scripts/check-changed.mjs'
+  ```
+
+  ```js
+  // scripts/check-changed.mjs
+  import { readFile } from "node:fs/promises";
+
+  const file = process.env.FZZ_TRIGGER_PATHS_FILE;
+  if (!file) process.exit(0); // init or manual run
+
+  const paths = JSON.parse(await readFile(file, "utf8"));
+  for (const path of paths) console.log(path);
+  ```
+
+  `{{paths}}` remains supported with its existing shell-escaped, space-joined
+  expansion. In direct-argv commands it remains one expanded argv element; it
+  does not become multiple arguments. Prefer the JSON file when a reusable
+  script needs structured batch data or filenames with unusual characters.
 - **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
 - **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and

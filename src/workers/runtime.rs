@@ -210,7 +210,7 @@ impl WorkerRuntime {
                         req.revision.unwrap_or(0),
                     );
                     active = Some(
-                        executor.start(
+                        executor.start_with_trigger_paths(
                             RunMetadata::correlated(
                                 req.run_id,
                                 req.trigger.clone(),
@@ -233,6 +233,7 @@ impl WorkerRuntime {
                                 req.revision_hash.clone().unwrap_or_default(),
                             ),
                             req.plan,
+                            req.trigger_paths_manifest,
                         ),
                     );
                     if let Some(run) = active.as_ref() {
@@ -255,7 +256,7 @@ impl WorkerRuntime {
                                     req.revision.unwrap_or(0),
                                 );
                                 active = Some(
-                                    executor.start(
+                                    executor.start_with_trigger_paths(
                                         RunMetadata::correlated(
                                             req.run_id,
                                             req.trigger.clone(),
@@ -278,6 +279,7 @@ impl WorkerRuntime {
                                             req.revision_hash.clone().unwrap_or_default(),
                                         ),
                                         req.plan,
+                                        req.trigger_paths_manifest,
                                     ),
                                 );
                                 if let Some(run) = active.as_ref() {
