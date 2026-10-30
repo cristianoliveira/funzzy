@@ -2,7 +2,8 @@
 #![cfg(all(feature = "test-integration", unix))]
 
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -28,6 +29,24 @@ fn result_count(log: &mut File) -> usize {
 
 fn write_config(fixture: &Path, content: &str) {
     fs::write(fixture.join(".watch.yaml"), content).unwrap();
+}
+
+fn correlated_changed(socket: &Path) -> Vec<String> {
+    let mut stream = UnixStream::connect(socket).unwrap();
+    writeln!(
+        stream,
+        r#"{{"jsonrpc":"2.0","id":"status","method":"status"}}"#
+    )
+    .unwrap();
+    let mut line = String::new();
+    BufReader::new(&mut stream).read_line(&mut line).unwrap();
+    let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+    response["result"]["changed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("correlated changed batch missing: {response}"))
+        .iter()
+        .map(|path| path.as_str().unwrap().to_owned())
+        .collect()
 }
 
 #[test]
@@ -137,6 +156,78 @@ jobs:
             );
         },
     );
+}
+
+#[test]
+fn selected_job_reads_observed_multi_path_batch_in_both_modes() {
+    for (mode, non_blocking) in [("blocking", false), ("nonblocking", true)] {
+        let socket =
+            std::env::temp_dir().join(format!("fzz-batch-{}-{mode}.sock", std::process::id()));
+        let _ = fs::remove_file(&socket);
+        let config = format!(
+            r#"on:
+  socket: '{}'
+  watch_backend: poll
+  poll_interval: 20ms
+  debounce: 500ms
+jobs:
+  - name: src-recorder
+    run: 'cp "$FZZ_TRIGGER_PATHS_FILE" observed.json; touch batch-started; sleep 5'
+    change: 'src/**'
+  - name: zzz-selector
+    run: 'true'
+    change: 'zzz/**'
+"#,
+            socket.display()
+        );
+        setup::with_config(
+            Path::new(".watch.yaml"),
+            &format!("qa_batch_observed_{mode}.log"),
+            |cmd, mut log, fixture| {
+                let src = fixture.join("src/observed.txt");
+                let disjoint = fixture.join("zzz/observed.txt");
+                fs::create_dir_all(fixture.join("zzz")).unwrap();
+                fs::write(&src, "before").unwrap();
+                fs::write(&disjoint, "before").unwrap();
+                write_config(fixture, &config);
+                if non_blocking {
+                    cmd.env("FUNZZY_NON_BLOCK", "true");
+                }
+                let mut child = cmd.stdin(Stdio::piped()).spawn().unwrap();
+                defer!({
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_file(&socket);
+                });
+                wait_until!(
+                    socket.exists() && log_contains(&mut log, "Watching..."),
+                    "watcher not ready"
+                );
+
+                fs::write(&disjoint, "after").unwrap();
+                fs::write(&src, "after").unwrap();
+                wait_until!(
+                    fixture.join("batch-started").exists(),
+                    "correlated generation did not start"
+                );
+
+                let observed = correlated_changed(&socket);
+                let decoded: Vec<String> =
+                    serde_json::from_slice(&fs::read(fixture.join("observed.json")).unwrap())
+                        .unwrap();
+
+                assert_eq!(decoded, observed, "manifest must equal correlated status");
+                assert!(
+                    observed.contains(&src.display().to_string()),
+                    "{observed:?}"
+                );
+                assert!(
+                    observed.contains(&disjoint.display().to_string()),
+                    "src-selected job lost disjoint zzz path: {observed:?}"
+                );
+            },
+        );
+    }
 }
 
 #[test]
