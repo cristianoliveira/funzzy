@@ -232,7 +232,9 @@ impl Command for WatchNonBlockCommand {
         // The strategy and reload coordinator retain shared Worker handles.
         // Stop the worker-owned service pool explicitly before signal exit,
         // because process::exit does not run Arc-held destructors.
-        strategy.shutdown_worker();
-        result
+        let shutdown_result = strategy
+            .shutdown_worker()
+            .map_err(crate::errors::FzzError::GenericError);
+        result.and(shutdown_result)
     }
 }
