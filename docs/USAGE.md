@@ -266,10 +266,10 @@ jobs:
   retrievable. It is independent from control `--timeout`, which bounds only
   the caller's wait (FINITE-JOB-TIMEOUT-CONTRACT, ADVANCED-GUIDE §8.5).
 - **Templates**: `{{filepath}}`/`{{absolute_path}}` (**deprecated**: prefer
-  the `FZZ_TRIGGER_PATH` environment variable, below), `{{paths}}` (whole
-  batch, shell-escaped), `{{relative_filepath}}` (keeps working; no agreed
-  environment replacement yet because it depends on the job's working
-  directory). Existing configs keep working unchanged.
+  the `FZZ_TRIGGER_PATH` environment variable, below), `{{relative_filepath}}`/
+  `{{relative_path}}` (**deprecated**: prefer `FZZ_TRIGGER_RELATIVE_PATH`,
+  below), `{{paths}}` (whole batch, shell-escaped; stays). Existing configs
+  keep working unchanged.
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
@@ -294,6 +294,32 @@ jobs:
     exit 0
   fi
   "$SHELL" -n "$FZZ_TRIGGER_PATH"
+  ```
+
+  The cwd-relative form works the same way: every triggered child also
+  receives `FZZ_TRIGGER_RELATIVE_PATH` with the exact value
+  `{{relative_filepath}}` expands to — the trigger path relative to the
+  workspace root (NOT to the job's `cwd`; jobs in different directories see
+  the same value), keeping the legacy absolute fallback for triggers outside
+  the workspace. Funzzy does not inject either variable into hooks. Migrate
+  `{{relative_filepath}}` the same way — no interpolation in `run:`:
+
+  ```yaml
+  # before (deprecated interpolation)
+  - name: lint-changed
+    run: './scripts/lint-one.sh {{relative_filepath}}'
+  # after (path arrives as environment data)
+  - name: lint-changed
+    run: './scripts/lint-one.sh'
+  ```
+
+  ```sh
+  # scripts/lint-one.sh
+  if [ -z "${FZZ_TRIGGER_RELATIVE_PATH:-}" ]; then
+    echo "no trigger path (init or manual run)" >&2
+    exit 0
+  fi
+  "$SHELL" -n "$FZZ_TRIGGER_RELATIVE_PATH"
   ```
 - **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
 - **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.

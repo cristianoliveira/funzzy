@@ -26,6 +26,13 @@ pub const SIGNATURE_SCHEMA_VERSION: u64 = 2;
 /// it overrides inherited or `execution.env`/job `env` entries of this name.
 pub const TRIGGER_PATH_ENV: &str = "FZZ_TRIGGER_PATH";
 
+/// Reserved child-environment name carrying the cwd-relative form of the
+/// trigger path (TASK-0194): the exact value `{{relative_filepath}}`
+/// expands to for the run's workspace root, including its absolute-path
+/// fallback for triggers outside the root. Set alongside
+/// `TRIGGER_PATH_ENV` and stripped for pathless runs.
+pub const TRIGGER_RELATIVE_PATH_ENV: &str = "FZZ_TRIGGER_RELATIVE_PATH";
+
 /// Process context applied only to one task's child commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskContext {
@@ -310,30 +317,42 @@ impl RunPlan {
         RunPlan { stages }
     }
 
-    /// Injects or strips the reserved trigger-path environment (TASK-0193)
-    /// across every task in the plan, right before execution. With a trigger
-    /// path, each child sees the raw path as data under `TRIGGER_PATH_ENV`,
-    /// overriding any configured value of that name. Without one, the key is
-    /// stripped so an inherited or configured stale value cannot leak in.
-    pub fn with_trigger_env(mut self, filepath: Option<&str>) -> RunPlan {
-        fn apply(task: &mut TaskPlan, filepath: Option<&str>) {
+    /// Injects or strips the reserved trigger-path environments (TASK-0193
+    /// and TASK-0194) across every task in the plan, right before execution.
+    /// With a trigger path, each child sees the raw path as data under
+    /// `TRIGGER_PATH_ENV` plus its `current_dir`-relative form under
+    /// `TRIGGER_RELATIVE_PATH_ENV`, both overriding any configured value of
+    /// those names. Without one, both keys are stripped so an inherited or
+    /// configured stale value cannot leak in.
+    ///
+    /// The relative form mirrors the legacy `{{relative_filepath}}`
+    /// expansion exactly — the `current_dir` prefix is removed and a path
+    /// outside `current_dir` keeps its absolute fallback — so the env value
+    /// cannot drift from the deprecated template algorithm.
+    pub fn with_trigger_env(mut self, filepath: Option<&str>, current_dir: &str) -> RunPlan {
+        fn apply(task: &mut TaskPlan, filepath: Option<&str>, current_dir: &str) {
+            let environment = &mut task.context.environment;
             match filepath {
                 Some(path) => {
-                    task.context
-                        .environment
-                        .insert(TRIGGER_PATH_ENV.to_owned(), path.to_owned());
+                    environment.insert(TRIGGER_PATH_ENV.to_owned(), path.to_owned());
+                    let root_prefix = format!("{}/", current_dir);
+                    environment.insert(
+                        TRIGGER_RELATIVE_PATH_ENV.to_owned(),
+                        path.replace(&root_prefix, ""),
+                    );
                 }
                 None => {
-                    task.context.environment.remove(TRIGGER_PATH_ENV);
+                    environment.remove(TRIGGER_PATH_ENV);
+                    environment.remove(TRIGGER_RELATIVE_PATH_ENV);
                 }
             }
         }
         for stage in &mut self.stages {
             match stage {
-                Stage::Serial(task) => apply(task, filepath),
-                Stage::Parallel { tasks, .. } => {
-                    tasks.iter_mut().for_each(|task| apply(task, filepath));
-                }
+                Stage::Serial(task) => apply(task, filepath, current_dir),
+                Stage::Parallel { tasks, .. } => tasks
+                    .iter_mut()
+                    .for_each(|task| apply(task, filepath, current_dir)),
             }
         }
         self
@@ -735,7 +754,7 @@ mod tests {
             &[(TRIGGER_PATH_ENV.to_owned(), "stale-configured".to_owned())],
         )]);
 
-        let plan = plan.with_trigger_env(Some("src/we ird'$x.txt"));
+        let plan = plan.with_trigger_env(Some("src/we ird'$x.txt"), "/workspace");
         let contexts = task_contexts(&plan);
         assert_eq!(
             contexts[0]
@@ -756,7 +775,7 @@ mod tests {
             &[(TRIGGER_PATH_ENV.to_owned(), "stale-configured".to_owned())],
         )]);
 
-        let plan = plan.with_trigger_env(None);
+        let plan = plan.with_trigger_env(None, "/workspace");
         let contexts = task_contexts(&plan);
         assert!(
             !contexts[0].environment.contains_key(TRIGGER_PATH_ENV),
@@ -772,7 +791,7 @@ mod tests {
             rule("B", Some("group"), false),
         ]);
 
-        let plan = plan.with_trigger_env(Some("src/a.txt"));
+        let plan = plan.with_trigger_env(Some("src/a.txt"), "/workspace");
         for context in task_contexts(&plan) {
             assert_eq!(
                 context
@@ -782,6 +801,103 @@ mod tests {
                 Some("src/a.txt")
             );
         }
+    }
+
+    /// TASK-0194: the relative trigger env mirrors the legacy
+    /// `{{relative_filepath}}` expansion exactly — the workspace-root prefix
+    /// is removed and special characters stay literal.
+    #[test]
+    fn trigger_relative_env_mirrors_the_legacy_template_expansion() {
+        let plan = RunPlan::from_rules(vec![trigger_rule("A", &[])]);
+        let filepath = "/workspace/src/we ird'$x.txt";
+
+        let plan = plan.with_trigger_env(Some(filepath), "/workspace");
+        let contexts = task_contexts(&plan);
+
+        let legacy = plan_template_relative(filepath, "/workspace");
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some(legacy.as_str()),
+            "env value must equal the {{relative_filepath}} expansion"
+        );
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some("src/we ird'$x.txt"),
+            "relative path is data: raw, never shell-escaped"
+        );
+    }
+
+    /// TASK-0194: a trigger outside the workspace keeps the documented
+    /// absolute fallback — the legacy replace is a no-op there.
+    #[test]
+    fn trigger_relative_env_keeps_the_absolute_fallback_outside_the_root() {
+        let plan = RunPlan::from_rules(vec![trigger_rule("A", &[])]);
+
+        let plan = plan.with_trigger_env(Some("/elsewhere/x.txt"), "/workspace");
+        let contexts = task_contexts(&plan);
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some("/elsewhere/x.txt")
+        );
+    }
+
+    /// TASK-0194: a pathless run strips both reserved names even when
+    /// configured, and a triggered run carries both values at once.
+    #[test]
+    fn trigger_relative_env_is_stripped_when_pathless_and_set_when_triggered() {
+        let configured = vec![
+            (TRIGGER_PATH_ENV.to_owned(), "stale".to_owned()),
+            (TRIGGER_RELATIVE_PATH_ENV.to_owned(), "stale".to_owned()),
+        ];
+        let plan = RunPlan::from_rules(vec![trigger_rule("A", &configured)]);
+
+        let pathless = plan.clone().with_trigger_env(None, "/workspace");
+        let contexts = task_contexts(&pathless);
+        assert!(!contexts[0].environment.contains_key(TRIGGER_PATH_ENV));
+        assert!(!contexts[0]
+            .environment
+            .contains_key(TRIGGER_RELATIVE_PATH_ENV));
+
+        let triggered = RunPlan::from_rules(vec![trigger_rule("A", &configured)])
+            .with_trigger_env(Some("/workspace/src/a.txt"), "/workspace");
+        let contexts = task_contexts(&triggered);
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_PATH_ENV)
+                .map(String::as_str),
+            Some("/workspace/src/a.txt")
+        );
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some("src/a.txt")
+        );
+    }
+
+    /// Mirrors `{{relative_filepath}}` expansion through the production
+    /// template so the env value cannot drift from the legacy algorithm.
+    fn plan_template_relative(filepath: &str, current_dir: &str) -> String {
+        let output = crate::template::template(
+            vec!["{{relative_filepath}}".to_owned()],
+            crate::template::TemplateOptions {
+                filepath: Some(filepath.to_owned()),
+                paths: vec![],
+                current_dir: current_dir.to_owned(),
+            },
+        );
+        output.commands[0].clone()
     }
 
     #[test]

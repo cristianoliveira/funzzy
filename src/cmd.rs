@@ -472,11 +472,12 @@ fn apply_context(command: &mut Command, context: &TaskContext) {
     if let Some(cwd) = &context.cwd {
         command.current_dir(cwd);
     }
-    // TASK-0193: the reserved trigger-path name is removed before applying
-    // configured values so a pathless run can never inherit a stale parent
-    // or configured value, while a triggered run's injected value (present
-    // in the context map) wins over both.
+    // TASK-0193/0194: the reserved trigger-path names are removed before
+    // applying configured values so a pathless run can never inherit a
+    // stale parent or configured value, while a triggered run's injected
+    // values (present in the context map) win over both.
     command.env_remove(crate::plan::TRIGGER_PATH_ENV);
+    command.env_remove(crate::plan::TRIGGER_RELATIVE_PATH_ENV);
     command.envs(&context.environment);
 }
 
