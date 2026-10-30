@@ -18,6 +18,12 @@ pub(crate) struct TriggerPathsManifest {
 impl TriggerPathsManifest {
     pub(crate) fn create(paths: &[String]) -> Result<Self, String> {
         let root = absolute_temp_dir()?;
+        if root.to_str().is_none() {
+            return Err(format!(
+                "Changed-path manifest directory '{}' is not valid UTF-8",
+                root.display()
+            ));
+        }
         Self::create_in(&root, paths)
     }
 
@@ -44,7 +50,7 @@ impl TriggerPathsManifest {
 impl Drop for TriggerPathsManifest {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
-        let _ = fs::remove_dir(&self.directory);
+        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 
