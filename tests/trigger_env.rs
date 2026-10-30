@@ -47,7 +47,8 @@ jobs:
                 .stdin(Stdio::piped())
                 .spawn()
                 .expect("failed to spawn watcher");
-            let mut input = child.stdin.take().expect("watcher stdin");
+            // Holding the pipe (never written) keeps the watcher alive.
+            let input = child.stdin.take().expect("watcher stdin");
             defer!({
                 let _ = child.kill();
                 let _ = child.wait();
@@ -162,7 +163,7 @@ jobs:
     setup::with_config(
         std::path::Path::new("examples/simple-case.yml"),
         "trigger_env_pathless.log",
-        |fzz_cmd, mut output_log, fixture| {
+        |fzz_cmd, _output_log, fixture| {
             std::fs::write(fixture.join("examples/simple-case.yml"), config).expect("write config");
             // Stale value inherited by the Funzzy process itself.
             fzz_cmd.env("FZZ_TRIGGER_PATH", "stale-inherited");
@@ -170,7 +171,8 @@ jobs:
                 .stdin(Stdio::piped())
                 .spawn()
                 .expect("failed to spawn watcher");
-            let mut input = child.stdin.take().expect("watcher stdin");
+            // Holding the pipe (never written) keeps the watcher alive.
+            let input = child.stdin.take().expect("watcher stdin");
             defer!({
                 let _ = child.kill();
                 let _ = child.wait();

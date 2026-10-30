@@ -274,18 +274,18 @@ jobs:
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
 - **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. `FZZ_TRIGGER_PATH` is likewise reserved (TASK-0193): Funzzy sets it for triggered runs and removes it for pathless ones, so it always beats inherited or configured values. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
-- **Trigger path variable**: every filesystem-triggered child (shell command or direct-argv) receives `FZZ_TRIGGER_PATH` with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `{{paths}}` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Migrate a job by replacing `{{filepath}}` text with `"$FZZ_TRIGGER_PATH"`:
+- **Trigger path variable**: every filesystem-triggered child (shell command or direct-argv) receives `FZZ_TRIGGER_PATH` with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `{{paths}}` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe and reusable scripts need no Funzzy placeholder at all. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Migrate a job by dropping `{{filepath}}` from the command and reading the environment inside the script instead:
 
   ```yaml
   # before (deprecated interpolation)
   - name: checks
     run: './scripts/check.sh {{filepath}}'
-  # after (environment data)
+  # after (path arrives as environment data)
   - name: checks
-    run: './scripts/check.sh "$FZZ_TRIGGER_PATH"'
+    run: './scripts/check.sh'
   ```
 
-  A script reads it safely and handles a pathless run:
+  The script reads it safely and handles a pathless run:
 
   ```sh
   # scripts/check.sh
