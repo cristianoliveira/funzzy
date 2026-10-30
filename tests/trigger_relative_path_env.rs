@@ -27,9 +27,9 @@ set -eu
 output=$1
 shift
 if [ "${FZZ_TRIGGER_RELATIVE_PATH+x}" = x ]; then
-    printf '%s\n' "$FZZ_TRIGGER_RELATIVE_PATH" > "$output"
+    printf '%s\n' "$FZZ_TRIGGER_RELATIVE_PATH" >> "$output"
 else
-    printf '%s\n' '<unset>' > "$output"
+    printf '%s\n' '<unset>' >> "$output"
 fi
 for legacy_path in "$@"; do
     printf '%s\n' "$legacy_path" >> "$output"
