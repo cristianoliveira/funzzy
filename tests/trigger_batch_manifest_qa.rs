@@ -100,6 +100,46 @@ jobs:
 }
 
 #[test]
+fn manifest_stays_outside_workspace_when_tmpdir_is_inside_it() {
+    let config = r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: recorder
+    run: 'printf "%s" "$FZZ_TRIGGER_PATHS_FILE" > pointer'
+    change: 'src/**'
+"#;
+    setup::with_config(
+        Path::new(".watch.yaml"),
+        "qa_batch_workspace_tmp.log",
+        |cmd, mut log, fixture| {
+            let trigger = fixture.join("src/one.txt");
+            fs::write(&trigger, "before").unwrap();
+            let tmp = fixture.join("local-tmp");
+            fs::create_dir(&tmp).unwrap();
+            write_config(fixture, config);
+            let mut child = cmd
+                .env("TMPDIR", &tmp)
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+            wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
+            fs::write(trigger, "after").unwrap();
+            wait_until!(result_count(&mut log) >= 1, "generation did not finish");
+            let pointer = fs::read_to_string(fixture.join("pointer")).unwrap();
+            assert!(
+                !Path::new(&pointer).starts_with(fixture),
+                "manifest created inside workspace: {pointer}"
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_argv_exec_strips_init_pointer_and_reads_triggered_manifest() {
     setup::with_output("qa_batch_argv.log", |cmd, mut log, fixture| {
         let trigger = fixture.join("src/argv file.txt");
