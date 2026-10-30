@@ -36,6 +36,10 @@ jobs:
   - name: root-cwd-writer
     run: 'printf "%s" "$FZZ_TRIGGER_RELATIVE_PATH" > rel-root.txt'
     change: 'src/**'
+  - name: src-cwd-writer
+    cwd: src
+    run: 'printf "%s" "$FZZ_TRIGGER_RELATIVE_PATH" > ../rel-src.txt'
+    change: 'src/**'
   - name: nested-cwd-writer
     cwd: src/nested
     run: 'printf "%s" "$FZZ_TRIGGER_RELATIVE_PATH" > ../../rel-nested.txt'
@@ -70,6 +74,10 @@ jobs:
                 !read_fixture_file(fixture, "rel-nested.txt").is_empty(),
                 "nested job did not run"
             );
+            wait_until!(
+                !read_fixture_file(fixture, "rel-src.txt").is_empty(),
+                "src-cwd job did not run"
+            );
 
             assert_eq!(
                 read_fixture_file(fixture, "rel-root.txt"),
@@ -80,6 +88,44 @@ jobs:
             assert!(
                 nested_value.ends_with("src/review.txt"),
                 "nested-cwd job: outside-cwd trigger uses absolute-fallback: {nested_value}"
+            );
+
+            // Second trigger at root level — same trigger, three different
+            // cwds produce three different relative values. The src-cwd job
+            // sees its own cwd-relative form, proving inside-cwd stripping.
+            // Second trigger at root level — three cwds produce three
+            // different relative values. src-cwd proves inside-cwd stripping.
+            let root_prev = read_fixture_file(fixture, "rel-root.txt");
+            let src_prev = read_fixture_file(fixture, "rel-src.txt");
+            let nested_prev = read_fixture_file(fixture, "rel-nested.txt");
+            trigger_change(fixture, "inside.txt");
+            wait_until!(
+                read_fixture_file(fixture, "rel-root.txt") != root_prev,
+                "root job did not run for the second trigger"
+            );
+            wait_until!(
+                read_fixture_file(fixture, "rel-src.txt") != src_prev,
+                "src-cwd job did not run"
+            );
+            wait_until!(
+                read_fixture_file(fixture, "rel-nested.txt") != nested_prev,
+                "nested job did not run"
+            );
+
+            assert_eq!(
+                read_fixture_file(fixture, "rel-root.txt"),
+                "src/inside.txt",
+                "root-cwd job: workspace-root-relative"
+            );
+            assert_eq!(
+                read_fixture_file(fixture, "rel-src.txt"),
+                "inside.txt",
+                "src-cwd job: trigger inside its cwd sees cwd-relative"
+            );
+            assert_ne!(
+                read_fixture_file(fixture, "rel-src.txt"),
+                read_fixture_file(fixture, "rel-nested.txt"),
+                "three different cwds produce three different relative values"
             );
             drop(input);
         },
