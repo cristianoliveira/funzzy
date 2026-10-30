@@ -16,8 +16,8 @@ pub(crate) struct TriggerPathsManifest {
 }
 
 impl TriggerPathsManifest {
-    pub(crate) fn create(paths: &[String]) -> Result<Self, String> {
-        let root = absolute_temp_dir()?;
+    pub(crate) fn create(paths: &[String], workspace: &Path) -> Result<Self, String> {
+        let root = safe_temp_dir(workspace)?;
         if root.to_str().is_none() {
             return Err(format!(
                 "Changed-path manifest directory '{}' is not valid UTF-8",
@@ -54,14 +54,35 @@ impl Drop for TriggerPathsManifest {
     }
 }
 
-fn absolute_temp_dir() -> Result<PathBuf, String> {
-    let temp = std::env::temp_dir();
-    if temp.is_absolute() {
-        return Ok(temp);
+fn safe_temp_dir(workspace: &Path) -> Result<PathBuf, String> {
+    let mut candidates = vec![std::env::temp_dir()];
+    #[cfg(unix)]
+    candidates.push(PathBuf::from("/tmp"));
+    safe_temp_dir_from_candidates(workspace, candidates)
+}
+
+fn safe_temp_dir_from_candidates(
+    workspace: &Path,
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Result<PathBuf, String> {
+    let workspace = fs::canonicalize(workspace).map_err(|error| {
+        format!(
+            "Cannot resolve workspace '{}' for changed-path manifest: {error}",
+            workspace.display()
+        )
+    })?;
+    for candidate in candidates {
+        let Ok(candidate) = fs::canonicalize(&candidate) else {
+            continue;
+        };
+        if candidate.is_dir() && !candidate.starts_with(&workspace) {
+            return Ok(candidate);
+        }
     }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(temp))
-        .map_err(|error| format!("Cannot resolve changed-path manifest directory: {error}"))
+    Err(format!(
+        "Cannot create changed-path manifest outside workspace '{}'",
+        workspace.display()
+    ))
 }
 
 fn create_private_directory(root: &Path) -> Result<PathBuf, String> {
@@ -180,7 +201,7 @@ fn make_read_only(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::TriggerPathsManifest;
+    use super::{safe_temp_dir_from_candidates, TriggerPathsManifest};
     use std::os::unix::fs::PermissionsExt;
 
     fn test_root(name: &str) -> std::path::PathBuf {
@@ -224,6 +245,35 @@ mod tests {
 
         drop(manifest);
         assert!(!path.exists(), "manifest must be removed with its owner");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn temp_selection_rejects_workspace_local_and_symlinked_candidates() {
+        let root = test_root("safe-root");
+        let workspace = root.join("workspace");
+        let local = workspace.join("local-tmp");
+        let safe = root.join("safe-tmp");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir(&safe).unwrap();
+
+        #[cfg(unix)]
+        let local_candidate = {
+            use std::os::unix::fs::symlink;
+            let alias = root.join("workspace-temp-alias");
+            symlink(&local, &alias).unwrap();
+            alias
+        };
+        #[cfg(not(unix))]
+        let local_candidate = local;
+
+        let selected =
+            safe_temp_dir_from_candidates(&workspace, vec![local_candidate, safe.clone()]).unwrap();
+        assert_eq!(selected, std::fs::canonicalize(safe).unwrap());
+
+        let error = safe_temp_dir_from_candidates(&workspace, vec![workspace.clone()])
+            .expect_err("workspace-local candidates must fail explicitly");
+        assert!(error.contains("outside workspace"), "{error}");
         let _ = std::fs::remove_dir_all(root);
     }
 

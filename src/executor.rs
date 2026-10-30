@@ -3035,10 +3035,10 @@ mod tests {
         let _ = std::fs::remove_file(&marker);
         let _ = std::fs::remove_file(&output);
         let manifest = Arc::new(
-            crate::trigger_paths::TriggerPathsManifest::create(&[
-                "src/a file.rs".to_owned(),
-                "src/b.rs".to_owned(),
-            ])
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a file.rs".to_owned(), "src/b.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
             .unwrap(),
         );
         let manifest_path = manifest.path().to_owned();
@@ -4423,7 +4423,11 @@ mod tests {
         runner.complete("probe", true);
         let executor = fake_executor(runner, 1, false);
         let manifest = Arc::new(
-            crate::trigger_paths::TriggerPathsManifest::create(&["src/a.rs".to_owned()]).unwrap(),
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
+            .unwrap(),
         );
         let manifest_path = manifest.path().to_owned();
         let plan = RunPlan::from_rules(vec![readiness_service("api")])
@@ -4461,7 +4465,11 @@ mod tests {
         let runner = FakeRunner::default();
         let executor = fake_executor(runner, 1, false);
         let manifest = Arc::new(
-            crate::trigger_paths::TriggerPathsManifest::create(&["src/a.rs".to_owned()]).unwrap(),
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
+            .unwrap(),
         );
         let manifest_path = manifest.path().to_owned();
         let plan = RunPlan::from_rules(vec![task("A", None, &["wait"])])

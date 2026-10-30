@@ -1265,7 +1265,7 @@ impl Worker {
             None
         } else {
             Some(Arc::new(
-                crate::trigger_paths::TriggerPathsManifest::create(&changed)?,
+                crate::trigger_paths::TriggerPathsManifest::create(&changed, &self.root)?,
             ))
         };
         let plan = plan.with_trigger_paths_file(

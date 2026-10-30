@@ -147,7 +147,7 @@ impl WorkflowRunner {
             None
         } else {
             Some(std::sync::Arc::new(
-                crate::trigger_paths::TriggerPathsManifest::create(&changed)?,
+                crate::trigger_paths::TriggerPathsManifest::create(&changed, &self.root)?,
             ))
         };
         let (plan, unknown_variables) = plan.expand(&TemplateOptions {
