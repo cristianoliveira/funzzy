@@ -327,6 +327,101 @@ jobs:
 }
 
 #[test]
+fn replacing_and_cancelling_generations_cleans_their_distinct_manifests() {
+    let config = r#"on:
+  socket: control.sock
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: slow
+    run: 'printf "%s\n" "$FZZ_TRIGGER_PATHS_FILE" >> pointers; sleep 60'
+    change: 'src/**'
+"#;
+    setup::with_config(
+        Path::new(".watch.yaml"),
+        "qa_batch_cancel.log",
+        |cmd, mut log, fixture| {
+            let trigger = fixture.join("src/cancel.txt");
+            fs::write(&trigger, "before").unwrap();
+            write_config(fixture, config);
+            let mut child = cmd
+                .env("FUNZZY_NON_BLOCK", "true")
+                .stdin(Stdio::piped())
+                .spawn()
+                .unwrap();
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+            });
+            wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
+            fs::write(&trigger, "first").unwrap();
+            let pointers = fixture.join("pointers");
+            wait_until!(
+                fs::read_to_string(&pointers)
+                    .map(|s| s.lines().count() == 1)
+                    .unwrap_or(false),
+                "first job did not start"
+            );
+            let first = fs::read_to_string(&pointers).unwrap().trim().to_owned();
+            assert!(Path::new(&first).exists(), "active first manifest missing");
+            fs::write(&trigger, "second change").unwrap();
+            wait_until!(
+                fs::read_to_string(&pointers)
+                    .map(|s| s.lines().count() == 2)
+                    .unwrap_or(false),
+                "replacement job did not start"
+            );
+            let contents = fs::read_to_string(&pointers).unwrap();
+            let second = contents.lines().nth(1).unwrap();
+            assert_ne!(first, second);
+            assert!(
+                !Path::new(&first).exists(),
+                "cancelled generation retained its manifest"
+            );
+            assert!(
+                Path::new(second).exists(),
+                "replacement manifest missing while active"
+            );
+            let status = Command::new(env!("CARGO_BIN_EXE_fzz"))
+                .current_dir(fixture)
+                .args(["control", "--format", "json", "status"])
+                .output()
+                .unwrap();
+            assert!(status.status.success());
+            let snapshot: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+            let generation = snapshot["generation"]
+                .as_u64()
+                .expect("current generation")
+                .to_string();
+            let cancel = Command::new(env!("CARGO_BIN_EXE_fzz"))
+                .current_dir(fixture)
+                .args([
+                    "control",
+                    "--format",
+                    "json",
+                    "cancel",
+                    "--generation",
+                    &generation,
+                    "--wait",
+                    "--timeout",
+                    "30s",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                cancel.status.success(),
+                "cancel failed: {}",
+                String::from_utf8_lossy(&cancel.stderr)
+            );
+            wait_until!(
+                !Path::new(second).exists(),
+                "cancelled replacement retained its manifest"
+            );
+        },
+    );
+}
+
+#[test]
 fn legacy_paths_expands_to_changed_path_in_both_watch_modes() {
     let config = r#"on:
   watch_backend: poll
