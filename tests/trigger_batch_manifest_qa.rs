@@ -503,6 +503,91 @@ jobs:
 }
 
 #[test]
+fn ready_service_retains_original_manifest_while_later_generation_runs() {
+    let config = r#"on:
+  socket: control.sock
+  watch_backend: poll
+  poll_interval: 20ms
+jobs:
+  - name: service
+    service: true
+    run: 'printf "%s" "$FZZ_TRIGGER_PATHS_FILE" > service-pointer; printf "%s" "$$" > service-pid; exec sleep 60'
+    change: 'src/service.txt'
+    readiness:
+      run: 'test -f service-pointer && cp "$FZZ_TRIGGER_PATHS_FILE" readiness.json'
+      timeout: 5s
+      interval: 20ms
+  - name: later
+    run: 'printf "%s" "$FZZ_TRIGGER_PATHS_FILE" > later-pointer; sleep 60'
+    change: 'src/later.txt'
+"#;
+    setup::with_config(
+        Path::new(".watch.yaml"),
+        "qa_batch_service_overlap.log",
+        |cmd, mut log, fixture| {
+            let service_file = fixture.join("src/service.txt");
+            let later_file = fixture.join("src/later.txt");
+            fs::write(&service_file, "before").unwrap();
+            fs::write(&later_file, "before").unwrap();
+            write_config(fixture, config);
+            let mut child = cmd.stdin(Stdio::piped()).spawn().unwrap();
+            let child_id = child.id().to_string();
+            defer!({
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Ok(pid) = fs::read_to_string(fixture.join("service-pid")) {
+                    let _ = Command::new("kill").args(["-TERM", pid.trim()]).status();
+                }
+            });
+            wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
+            fs::write(&service_file, "service changed").unwrap();
+            wait_until!(
+                result_count(&mut log) >= 1,
+                "service generation did not settle"
+            );
+            let service_pointer = fs::read_to_string(fixture.join("service-pointer")).unwrap();
+            let service_manifest = Path::new(&service_pointer);
+            assert!(service_manifest.exists(), "ready service lost its manifest");
+            let readiness: serde_json::Value =
+                serde_json::from_slice(&fs::read(fixture.join("readiness.json")).unwrap()).unwrap();
+            assert_eq!(
+                readiness,
+                serde_json::json!([service_file.to_str().unwrap()])
+            );
+            fs::write(&later_file, "later changed").unwrap();
+            let later_pointer_file = fixture.join("later-pointer");
+            wait_until!(
+                fs::read_to_string(&later_pointer_file)
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false),
+                "later generation did not start"
+            );
+            let later_pointer = fs::read_to_string(later_pointer_file).unwrap();
+            assert_ne!(service_pointer, later_pointer);
+            let later_manifest = Path::new(&later_pointer);
+            assert!(later_manifest.exists());
+            let service: serde_json::Value =
+                serde_json::from_slice(&fs::read(service_manifest).unwrap()).unwrap();
+            let later: serde_json::Value =
+                serde_json::from_slice(&fs::read(later_manifest).unwrap()).unwrap();
+            assert_eq!(service, serde_json::json!([service_file.to_str().unwrap()]));
+            assert_eq!(later, serde_json::json!([later_file.to_str().unwrap()]));
+            let status = Command::new("kill")
+                .args(["-TERM", &child_id])
+                .status()
+                .unwrap();
+            assert!(status.success());
+            wait_until!(
+                !service_manifest.exists() && !later_manifest.exists(),
+                "manifests leaked after watcher shutdown: service={} later={}",
+                service_manifest.exists(),
+                later_manifest.exists()
+            );
+        },
+    );
+}
+
+#[test]
 fn legacy_paths_expands_to_changed_path_in_both_watch_modes() {
     let config = r#"on:
   watch_backend: poll
