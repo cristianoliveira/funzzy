@@ -142,9 +142,8 @@ fn direct_argv_child_receives_special_trigger_path_from_exec_stdin() {
     setup::with_output("trigger_path_argv.log", |fzz_cmd, _output_log, fixture| {
         let trigger = write_trigger(fixture, SPECIAL_TRIGGER);
         let expected = trigger.to_string_lossy().into_owned();
-        let relative_input = format!("{SPECIAL_TRIGGER}\n");
         let input = fixture.join("argv-input.txt");
-        fs::write(&input, relative_input).expect("write exec path input");
+        fs::write(&input, format!("{SPECIAL_TRIGGER}\n")).expect("write exec path input");
 
         let mut child = fzz_cmd
             .env("FZZ_TRIGGER_PATH", STALE_PARENT)
@@ -153,7 +152,7 @@ fn direct_argv_child_receives_special_trigger_path_from_exec_stdin() {
                 "--",
                 "sh",
                 "-c",
-                "printf '%s\\n' \"$FZZ_TRIGGER_PATH\" > argv-path.txt",
+                "printf '%s\\n' \"${FZZ_TRIGGER_PATH:-<unset>}\" >> argv-paths.txt",
             ])
             .stdin(Stdio::from(
                 File::open(input).expect("open exec path input"),
@@ -165,10 +164,25 @@ fn direct_argv_child_receives_special_trigger_path_from_exec_stdin() {
             let _ = child.wait();
         });
 
-        assert_path_file(
-            &fixture.join("argv-path.txt"),
-            &expected,
-            "direct-argv child did not receive the trigger path",
+        let captures = fixture.join("argv-paths.txt");
+        wait_until!(
+            fs::read_to_string(&captures)
+                .map(|paths| paths.lines().count() == 1)
+                .unwrap_or(false),
+            "exec init child did not run"
+        );
+        fs::write(&trigger, "changed again").expect("trigger an exec watch event");
+        wait_until!(
+            fs::read_to_string(&captures)
+                .map(|paths| paths.lines().count() == 2)
+                .unwrap_or(false),
+            "exec child did not run for a changed file"
+        );
+        let captured_paths = fs::read_to_string(&captures).unwrap();
+        assert_eq!(
+            captured_paths.lines().collect::<Vec<_>>(),
+            ["<unset>", expected.as_str()],
+            "direct argv must see no path on init and the exact path on change"
         );
         assert!(
             !fixture.join("injected").exists(),
