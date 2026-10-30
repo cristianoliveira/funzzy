@@ -2,7 +2,7 @@
 #![cfg(all(feature = "test-integration", unix))]
 
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -204,6 +204,56 @@ jobs:
             assert_eq!(fs::read_to_string(fixture.join("result")).unwrap(), "unset");
         },
     );
+}
+
+#[test]
+fn pathless_init_and_ctrl_g_strip_stale_pointer_in_both_modes() {
+    for (mode, non_blocking) in [("blocking", false), ("nonblocking", true)] {
+        for (kind, init) in [("init", true), ("ctrl_g", false)] {
+            let config = format!(
+                r#"on:
+  watch_backend: poll
+  poll_interval: 20ms
+execution:
+  env:
+    FZZ_TRIGGER_PATHS_FILE: stale-execution
+jobs:
+  - name: recorder
+    run: 'if [ "${{FZZ_TRIGGER_PATHS_FILE+x}}" = x ]; then printf "%s" "$FZZ_TRIGGER_PATHS_FILE" > result; else printf unset > result; fi'
+    change: 'src/**'
+    run_on_init: {init}
+    env:
+      FZZ_TRIGGER_PATHS_FILE: stale-job
+"#
+            );
+            setup::with_config(
+                Path::new(".watch.yaml"),
+                &format!("qa_batch_{kind}_{mode}.log"),
+                |cmd, mut log, fixture| {
+                    write_config(fixture, &config);
+                    cmd.env(ENV, "stale-inherited");
+                    if non_blocking {
+                        cmd.env("FUNZZY_NON_BLOCK", "true");
+                    }
+                    let mut child = cmd.stdin(Stdio::piped()).spawn().unwrap();
+                    let mut input = child.stdin.take().unwrap();
+                    defer!({
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    });
+                    if !init {
+                        wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
+                        input.write_all(&[0x07]).unwrap();
+                    }
+                    wait_until!(
+                        result_count(&mut log) >= 1,
+                        "pathless generation did not finish"
+                    );
+                    assert_eq!(fs::read_to_string(fixture.join("result")).unwrap(), "unset");
+                },
+            );
+        }
+    }
 }
 
 #[test]
