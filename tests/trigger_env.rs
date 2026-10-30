@@ -373,6 +373,15 @@ jobs:
                     .stdin(Stdio::piped())
                     .spawn()
                     .expect("failed to spawn watcher");
+                let pid = child.id();
+                // Leak guard: an early failure must not leave the watcher.
+                defer!({
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid as i32),
+                        nix::sys::signal::Signal::SIGTERM,
+                    );
+                    let _ = child.wait();
+                });
 
                 wait_until!(
                     read_log(&mut output_log).contains("Watching..."),
@@ -388,15 +397,13 @@ jobs:
                     );
                 }
 
-                // Graceful shutdown runs the close hook once.
-                unsafe {
-                    nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(child.id() as i32),
-                        nix::sys::signal::Signal::SIGTERM,
-                    )
-                    .expect("send SIGTERM");
-                }
-                let _ = child.wait();
+                // Graceful shutdown runs the close hook once. The watcher
+                // itself is reaped by the defer guard above.
+                nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                )
+                .expect("send SIGTERM");
 
                 wait_until!(
                     !read_fixture_file(fixture, "close.txt").is_empty(),
