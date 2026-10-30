@@ -298,11 +298,11 @@ jobs:
 
   The cwd-relative form works the same way: every triggered child also
   receives `FZZ_TRIGGER_RELATIVE_PATH` with the exact value
-  `{{relative_filepath}}` expands to — the trigger path relative to the
-  workspace root (NOT to the job's `cwd`; jobs in different directories see
-  the same value), keeping the legacy absolute fallback for triggers outside
-  the workspace. Funzzy does not inject either variable into hooks. Migrate
-  `{{relative_filepath}}` the same way — no interpolation in `run:`:
+  `{{relative_filepath}}` expands to for that job's working directory. Jobs
+  with different `cwd` can receive different values. As with the legacy
+  template, a trigger outside a job's `cwd` keeps its absolute path instead
+  of using `../` segments. Funzzy does not inject either variable into hooks.
+  Migrate `{{relative_filepath}}` the same way — no interpolation in `run:`:
 
   ```yaml
   # before (deprecated interpolation)

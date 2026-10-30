@@ -971,9 +971,6 @@ mod tests {
         output.commands[0].clone()
     }
 
-    /// Mirrors `{{relative_filepath}}` expansion through the production
-    /// template so the env value cannot drift from the legacy algorithm.
-
     #[test]
     fn ungrouped_tasks_stay_serial() {
         let plan = RunPlan::from_rules(vec![rule("A", None, false), rule("B", None, false)]);

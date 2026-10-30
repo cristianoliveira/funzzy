@@ -90,11 +90,8 @@ jobs:
                 "nested-cwd job: outside-cwd trigger uses absolute-fallback: {nested_value}"
             );
 
-            // Second trigger at root level — same trigger, three different
-            // cwds produce three different relative values. The src-cwd job
-            // sees its own cwd-relative form, proving inside-cwd stripping.
-            // Second trigger at root level — three cwds produce three
-            // different relative values. src-cwd proves inside-cwd stripping.
+            // Three job directories see distinct values. The src-cwd job
+            // proves a trigger inside its cwd loses that prefix.
             let root_prev = read_fixture_file(fixture, "rel-root.txt");
             let src_prev = read_fixture_file(fixture, "rel-src.txt");
             let nested_prev = read_fixture_file(fixture, "rel-nested.txt");
