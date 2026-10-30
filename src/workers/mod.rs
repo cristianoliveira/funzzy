@@ -1840,6 +1840,71 @@ mod tests {
     }
 
     #[test]
+    fn request_manifest_keeps_complete_normalized_large_batch_out_of_environment() {
+        let root = std::env::temp_dir().join(format!(
+            "funzzy-worker-batch-manifest-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let worker = Worker::with_root(false, false, root.clone(), |_| {});
+        let mut raw = Vec::new();
+        for index in (0..6_000).rev() {
+            let path = format!("src/generated/{index:05}-a file with space.rs");
+            raw.push(path.clone());
+            raw.push(path);
+        }
+        raw.push("docs/disjoint.md".to_owned());
+        let batch = crate::identity::Batch::normalized(crate::identity::BatchId(9), raw);
+        let rule = Rules::new(
+            "selected-by-src".to_owned(),
+            vec!["true".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+
+        let request = worker
+            .prepare_request(
+                RunPlan::from_rules(vec![rule]),
+                &batch.changed[0],
+                Some(&batch.changed[0]),
+                Some(batch.id.0),
+                batch.changed.clone(),
+                None,
+            )
+            .unwrap();
+        let manifest = request.trigger_paths_manifest.as_ref().unwrap();
+        let manifest_path = manifest.path().to_owned();
+        let decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(&manifest_path).unwrap()).unwrap();
+        assert_eq!(
+            decoded, batch.changed,
+            "the full batch must stay unfiltered"
+        );
+        assert!(std::fs::metadata(&manifest_path).unwrap().len() > 128 * 1024);
+
+        let pointer = match &request.plan.stages[0] {
+            crate::plan::Stage::Serial(task) => task
+                .context
+                .environment
+                .get(crate::plan::TRIGGER_PATHS_FILE_ENV)
+                .unwrap(),
+            crate::plan::Stage::Parallel { .. } => panic!("expected serial task"),
+        };
+        assert_eq!(pointer, &manifest_path.display().to_string());
+        assert!(
+            pointer.len() < 1_024,
+            "only the constant-size pointer belongs in the environment"
+        );
+
+        drop(request);
+        assert!(!manifest_path.exists());
+        drop(worker);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn finished_settled_failure_registers_exact_pending_spec() {
         let (worker, rx) = worker_with_events(false, false);
         worker.set_hooks(crate::config::GenerationHooks {

@@ -3028,6 +3028,60 @@ mod tests {
     }
 
     #[test]
+    fn recovery_commands_read_the_generation_changed_path_manifest() {
+        let suffix = format!("{}-recovery-manifest", std::process::id());
+        let marker = std::env::temp_dir().join(format!("funzzy-{suffix}-marker"));
+        let output = std::env::temp_dir().join(format!("funzzy-{suffix}-output.json"));
+        let _ = std::fs::remove_file(&marker);
+        let _ = std::fs::remove_file(&output);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(&[
+                "src/a file.rs".to_owned(),
+                "src/b.rs".to_owned(),
+            ])
+            .unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests,
+        }));
+        let plan = RunPlan::from_rules(vec![recovery_rule(
+            &format!("test -f '{}'", marker.display()),
+            &[&format!(
+                "cp \"$FZZ_TRIGGER_PATHS_FILE\" '{}'; touch '{}'",
+                output.display(),
+                marker.display()
+            )],
+        )])
+        .with_trigger_paths_file(Some(&manifest_path));
+
+        let completed = executor.run_to_completion_with_trigger_paths(
+            RunMetadata::new(41, "test"),
+            plan,
+            Some(manifest),
+        );
+
+        assert!(completed.outcome.is_success());
+        let decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(&output).unwrap()).unwrap();
+        assert_eq!(decoded, vec!["src/a file.rs", "src/b.rs"]);
+        assert!(!manifest_path.exists());
+        let _ = std::fs::remove_file(marker);
+        let _ = std::fs::remove_file(output);
+    }
+
+    #[test]
     fn approved_recovery_runs_once_then_verifies_original_job() {
         let marker =
             std::env::temp_dir().join(format!("funzzy-recovery-{}-{}", std::process::id(), 1));
@@ -4361,6 +4415,72 @@ mod tests {
         let mut handoff = handoff.take().unwrap();
         executor.shutdown_service_handoff(&mut handoff);
         assert!(runner.shutdown_commands().contains(&"serve".to_owned()));
+    }
+
+    #[test]
+    fn changed_path_manifest_outlives_ready_service_until_handoff_shutdown() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner, 1, false);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(&["src/a.rs".to_owned()]).unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let plan = RunPlan::from_rules(vec![readiness_service("api")])
+            .with_trigger_paths_file(Some(&manifest_path));
+        let mut run = executor.start_with_trigger_paths(
+            RunMetadata::new(206, "test"),
+            plan,
+            Some(Arc::clone(&manifest)),
+        );
+        drop(manifest);
+
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        let _completed =
+            executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        assert!(
+            manifest_path.exists(),
+            "ready service must retain its manifest after generation settlement"
+        );
+
+        let mut handoff = handoff.unwrap();
+        executor.shutdown_service_handoff(&mut handoff);
+        assert!(
+            !manifest_path.exists(),
+            "manifest must be removed after the supervised service stops"
+        );
+    }
+
+    #[test]
+    fn cancellation_releases_changed_path_manifest_after_children_are_reaped() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner, 1, false);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(&["src/a.rs".to_owned()]).unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let plan = RunPlan::from_rules(vec![task("A", None, &["wait"])])
+            .with_trigger_paths_file(Some(&manifest_path));
+        let mut run = executor.start_with_trigger_paths(
+            RunMetadata::new(207, "test"),
+            plan,
+            Some(Arc::clone(&manifest)),
+        );
+        drop(manifest);
+        assert!(matches!(executor.advance(&mut run), Step::Running));
+        assert!(manifest_path.exists());
+
+        executor.cancel(&mut run, None);
+        drop(run);
+        assert!(
+            !manifest_path.exists(),
+            "cancellation must remove the manifest after child shutdown"
+        );
     }
 
     #[test]
