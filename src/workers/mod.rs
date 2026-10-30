@@ -1255,7 +1255,7 @@ impl Worker {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
         // TASK-0193/0194: expose the single trigger path (absolute and
-        // workspace-relative forms) as child data for this generation.
+        // per-job-cwd-relative forms) as child data for this generation.
         // Pathless schedules (init, keyboard, control retry of a pathless
         // source) strip both reserved names entirely.
         let plan = plan.with_trigger_env(filepath, &self.root.display().to_string());

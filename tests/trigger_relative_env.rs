@@ -92,21 +92,19 @@ jobs:
 
             // Three job directories see distinct values. The src-cwd job
             // proves a trigger inside its cwd loses that prefix.
-            let root_prev = read_fixture_file(fixture, "rel-root.txt");
-            let src_prev = read_fixture_file(fixture, "rel-src.txt");
-            let nested_prev = read_fixture_file(fixture, "rel-nested.txt");
             trigger_change(fixture, "inside.txt");
+            let absolute_trigger = fixture.join("src/inside.txt").display().to_string();
             wait_until!(
-                read_fixture_file(fixture, "rel-root.txt") != root_prev,
-                "root job did not run for the second trigger"
+                read_fixture_file(fixture, "rel-root.txt") == "src/inside.txt",
+                "root job did not finish the second trigger"
             );
             wait_until!(
-                read_fixture_file(fixture, "rel-src.txt") != src_prev,
-                "src-cwd job did not run"
+                read_fixture_file(fixture, "rel-src.txt") == "inside.txt",
+                "src-cwd job did not finish the second trigger"
             );
             wait_until!(
-                read_fixture_file(fixture, "rel-nested.txt") != nested_prev,
-                "nested job did not run"
+                read_fixture_file(fixture, "rel-nested.txt") == absolute_trigger,
+                "nested job did not finish the second trigger"
             );
 
             assert_eq!(

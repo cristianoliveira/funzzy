@@ -183,7 +183,7 @@ impl WorkflowRunner {
                 Some(plan.execution_signature(self.concurrency, self.fail_fast));
         }
         // TASK-0193/0194: expose the single trigger path (absolute and
-        // workspace-relative forms) as child data. Pathless runs (init,
+        // per-job-cwd-relative forms) as child data. Pathless runs (init,
         // manual target, Ctrl-G) strip both reserved names.
         let plan = plan.with_trigger_env(filepath, &self.root.display().to_string());
         Ok(self.executor.run_to_completion(metadata, plan))
