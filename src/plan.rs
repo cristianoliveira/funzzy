@@ -20,6 +20,12 @@ use std::time::Duration;
 /// only on a breaking encoding change; bumping invalidates all old profiles.
 pub const SIGNATURE_SCHEMA_VERSION: u64 = 2;
 
+/// Reserved child-environment name carrying the single trigger path
+/// (TASK-0193). Same value `{{filepath}}` expands to for that run; set only
+/// when the run has a trigger path and injected after configured values, so
+/// it overrides inherited or `execution.env`/job `env` entries of this name.
+pub const TRIGGER_PATH_ENV: &str = "FZZ_TRIGGER_PATH";
+
 /// Process context applied only to one task's child commands.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TaskContext {
@@ -302,6 +308,35 @@ impl RunPlan {
         }
 
         RunPlan { stages }
+    }
+
+    /// Injects or strips the reserved trigger-path environment (TASK-0193)
+    /// across every task in the plan, right before execution. With a trigger
+    /// path, each child sees the raw path as data under `TRIGGER_PATH_ENV`,
+    /// overriding any configured value of that name. Without one, the key is
+    /// stripped so an inherited or configured stale value cannot leak in.
+    pub fn with_trigger_env(mut self, filepath: Option<&str>) -> RunPlan {
+        fn apply(task: &mut TaskPlan, filepath: Option<&str>) {
+            match filepath {
+                Some(path) => {
+                    task.context
+                        .environment
+                        .insert(TRIGGER_PATH_ENV.to_owned(), path.to_owned());
+                }
+                None => {
+                    task.context.environment.remove(TRIGGER_PATH_ENV);
+                }
+            }
+        }
+        for stage in &mut self.stages {
+            match stage {
+                Stage::Serial(task) => apply(task, filepath),
+                Stage::Parallel { tasks, .. } => {
+                    tasks.iter_mut().for_each(|task| apply(task, filepath));
+                }
+            }
+        }
+        self
     }
 
     /// Filters tasks by a keep predicate without merging originally separate
@@ -673,6 +708,80 @@ mod tests {
 
     fn names(plan: &RunPlan) -> Vec<String> {
         plan.task_names()
+    }
+
+    fn trigger_rule(name: &str, env: &[(String, String)]) -> Rules {
+        rule(name, None, false).with_execution_context(None, env.iter().cloned().collect())
+    }
+
+    fn task_contexts(plan: &RunPlan) -> Vec<TaskContext> {
+        plan.stages
+            .iter()
+            .flat_map(|stage| match stage {
+                Stage::Serial(task) => vec![task.context.clone()],
+                Stage::Parallel { tasks, .. } => {
+                    tasks.iter().map(|task| task.context.clone()).collect()
+                }
+            })
+            .collect()
+    }
+
+    /// TASK-0193: a triggered run injects the raw trigger path as data —
+    /// never shell-escaped — overriding any configured value.
+    #[test]
+    fn trigger_env_carries_the_raw_path_and_overrides_configured_values() {
+        let plan = RunPlan::from_rules(vec![trigger_rule(
+            "A",
+            &[(TRIGGER_PATH_ENV.to_owned(), "stale-configured".to_owned())],
+        )]);
+
+        let plan = plan.with_trigger_env(Some("src/we ird'$x.txt"));
+        let contexts = task_contexts(&plan);
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_PATH_ENV)
+                .map(String::as_str),
+            Some("src/we ird'$x.txt"),
+            "the trigger path is data: raw, never shell-escaped"
+        );
+    }
+
+    /// TASK-0193: a pathless run strips the reserved name entirely so an
+    /// inherited or configured stale value cannot leak into the child.
+    #[test]
+    fn trigger_env_is_removed_for_pathless_runs_even_when_configured() {
+        let plan = RunPlan::from_rules(vec![trigger_rule(
+            "A",
+            &[(TRIGGER_PATH_ENV.to_owned(), "stale-configured".to_owned())],
+        )]);
+
+        let plan = plan.with_trigger_env(None);
+        let contexts = task_contexts(&plan);
+        assert!(
+            !contexts[0].environment.contains_key(TRIGGER_PATH_ENV),
+            "a pathless run must strip the reserved name"
+        );
+    }
+
+    /// TASK-0193: serial and parallel stages both receive the trigger env.
+    #[test]
+    fn trigger_env_reaches_parallel_group_tasks() {
+        let plan = RunPlan::from_rules(vec![
+            rule("A", Some("group"), false),
+            rule("B", Some("group"), false),
+        ]);
+
+        let plan = plan.with_trigger_env(Some("src/a.txt"));
+        for context in task_contexts(&plan) {
+            assert_eq!(
+                context
+                    .environment
+                    .get(TRIGGER_PATH_ENV)
+                    .map(String::as_str),
+                Some("src/a.txt")
+            );
+        }
     }
 
     #[test]
