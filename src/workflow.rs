@@ -182,9 +182,10 @@ impl WorkflowRunner {
             metadata.execution_signature =
                 Some(plan.execution_signature(self.concurrency, self.fail_fast));
         }
-        // TASK-0193: expose the single trigger path as child data. Pathless
-        // runs (init, manual target, Ctrl-G) strip the reserved name.
-        let plan = plan.with_trigger_env(filepath);
+        // TASK-0193/0194: expose the single trigger path (absolute and
+        // per-job-cwd-relative forms) as child data. Pathless runs (init,
+        // manual target, Ctrl-G) strip both reserved names.
+        let plan = plan.with_trigger_env(filepath, &self.root.display().to_string());
         Ok(self.executor.run_to_completion(metadata, plan))
     }
 }

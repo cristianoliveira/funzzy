@@ -1254,10 +1254,11 @@ impl Worker {
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
-        // TASK-0193: expose the single trigger path as child data for this
-        // generation. Pathless schedules (init, keyboard, control retry of a
-        // pathless source) strip the reserved name entirely.
-        let plan = plan.with_trigger_env(filepath);
+        // TASK-0193/0194: expose the single trigger path (absolute and
+        // per-job-cwd-relative forms) as child data for this generation.
+        // Pathless schedules (init, keyboard, control retry of a pathless
+        // source) strip both reserved names entirely.
+        let plan = plan.with_trigger_env(filepath, &self.root.display().to_string());
         let run_id = self.next_run_id.fetch_add(1, Ordering::Relaxed) + 1;
         let revision = caller_revision.or_else(|| self.revision.lock().unwrap().clone());
         Ok(RunRequest {

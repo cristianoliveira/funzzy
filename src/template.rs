@@ -30,6 +30,16 @@ fn shell_escape(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+/// The single legacy cwd-relative computation (TASK-0194): shared by the
+/// `{{relative_filepath}}`/`{{relative_path}}` template expansion and the
+/// `FZZ_TRIGGER_RELATIVE_PATH` environment so the two cannot drift. The
+/// current-dir prefix is removed when present; a path outside the directory
+/// keeps its documented absolute fallback. Do not change this algorithm
+/// without a separate behavior decision.
+pub fn relative_to_current_dir(filepath: &str, current_dir: &str) -> String {
+    filepath.replace(&format!("{}/", current_dir), "")
+}
+
 pub struct TemplateOutput {
     pub commands: Vec<String>,
     pub unknown_variables: Vec<String>,
@@ -133,8 +143,7 @@ fn expand_command(
                     match tpl {
                         "filepath" | "absolute_path" => format!("{}{}", filepath, rest),
                         "relative_filepath" | "relative_path" => {
-                            let relative_path = &filepath.replace(&format!("{}/", current_dir), "");
-                            format!("{}{}", relative_path, rest)
+                            format!("{}{}", relative_to_current_dir(filepath, current_dir), rest)
                         }
                         // TASK-0031: the complete normalized changed-path set of
                         // the triggering batch, shell-escaped and space-joined.
