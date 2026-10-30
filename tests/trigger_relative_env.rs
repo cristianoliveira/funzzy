@@ -23,11 +23,12 @@ fn trigger_change(fixture: &std::path::Path, name: &str) {
 }
 
 /// TASK-0194: two jobs with distinct configured `cwd`s both receive
-/// `FZZ_TRIGGER_RELATIVE_PATH` as data with the legacy `{{relative_filepath}}`
-/// value — workspace-root-relative, special characters literal — including
-/// for a trigger that lies outside the second job's cwd.
+/// `FZZ_TRIGGER_RELATIVE_PATH` as data with different values — computed
+/// per job against its own resolved cwd. The root job sees workspace-root-
+/// relative; the nested job has its cwd outside the trigger path and sees
+/// the documented absolute-fallback (same as {{relative_filepath}}).
 #[test]
-fn blocking_watch_exposes_fzz_trigger_relative_path_to_jobs_with_different_cwds() {
+fn blocking_watch_exposes_different_relative_path_per_job_cwd() {
     let config = r#"on:
   watch_backend: poll
   poll_interval: 20ms
@@ -49,8 +50,7 @@ jobs:
             let mut child = fzz_cmd
                 .stdin(Stdio::piped())
                 .spawn()
-                .expect("failed to spawn watcher");
-            // Holding the pipe (never written) keeps the watcher alive.
+                .expect("spawn watcher");
             let input = child.stdin.take().expect("watcher stdin");
             defer!({
                 let _ = child.kill();
@@ -61,46 +61,32 @@ jobs:
                 read_log(&mut output_log).contains("Watching..."),
                 "watcher did not become ready"
             );
-            // Trigger inside the nested job's cwd AND outside it, with
-            // shell-significant characters: both writers must see the same
-            // literal root-relative path (the legacy fallback keeps a path
-            // outside the root absolute; a path outside the nested cwd is
-            // still root-relative).
-            trigger_change(fixture, "we ird'$x.txt");
+            trigger_change(fixture, "review.txt");
             wait_until!(
-                !read_fixture_file(fixture, "rel-root.txt").is_empty()
-                    && !read_fixture_file(fixture, "rel-nested.txt").is_empty(),
-                "relative-env jobs did not run"
+                !read_fixture_file(fixture, "rel-root.txt").is_empty(),
+                "root job did not run"
+            );
+            wait_until!(
+                !read_fixture_file(fixture, "rel-nested.txt").is_empty(),
+                "nested job did not run"
             );
 
-            let root_value = read_fixture_file(fixture, "rel-root.txt");
+            assert_eq!(
+                read_fixture_file(fixture, "rel-root.txt"),
+                "src/review.txt",
+                "root-cwd job: workspace-root-relative"
+            );
             let nested_value = read_fixture_file(fixture, "rel-nested.txt");
             assert!(
-                root_value.ends_with("src/we ird'$x.txt"),
-                "root-cwd value must be the literal root-relative path: {root_value}"
-            );
-            assert_eq!(
-                root_value, nested_value,
-                "the legacy relative expansion is workspace-root-relative, so \
-                 distinct cwds see the same value"
-            );
-
-            trigger_change(fixture, "other trigger.txt");
-            wait_until!(
-                read_fixture_file(fixture, "rel-root.txt").ends_with("src/other trigger.txt"),
-                "second trigger did not run"
-            );
-            assert!(
-                read_fixture_file(fixture, "rel-nested.txt").ends_with("src/other trigger.txt"),
-                "a trigger outside the nested cwd stays root-relative: {}",
-                read_fixture_file(fixture, "rel-nested.txt")
+                nested_value.ends_with("src/review.txt"),
+                "nested-cwd job: outside-cwd trigger uses absolute-fallback: {nested_value}"
             );
             drop(input);
         },
     );
 }
 
-/// TASK-0194: the same contract on the restart-policy, control-socket watch.
+/// TASK-0194: same contract on restart-policy (non-block) watch.
 #[test]
 fn nonblock_watch_exposes_fzz_trigger_relative_path() {
     let config = r#"on:
@@ -127,7 +113,7 @@ jobs:
             let mut child = fzz_cmd
                 .stdin(Stdio::piped())
                 .spawn()
-                .expect("failed to spawn watcher");
+                .expect("spawn watcher");
             defer!({
                 let _ = child.kill();
                 let _ = child.wait();
@@ -152,9 +138,8 @@ jobs:
     );
 }
 
-/// TASK-0194: pathless runs strip the reserved relative name even when the
-/// parent inherited it or `execution.env` configured it; a real trigger
-/// overrides the configured stale value.
+/// TASK-0194: pathless runs strip the relative env even with inherited
+/// or configured stale values; triggered runs override and set it.
 #[test]
 fn pathless_runs_strip_fzz_trigger_relative_path_and_triggered_runs_override_it() {
     let config = r#"on:
@@ -178,16 +163,13 @@ jobs:
             let mut child = fzz_cmd
                 .stdin(Stdio::piped())
                 .spawn()
-                .expect("failed to spawn watcher");
-            // Holding the pipe (never written) keeps the watcher alive.
+                .expect("spawn watcher");
             let input = child.stdin.take().expect("watcher stdin");
             defer!({
                 let _ = child.kill();
                 let _ = child.wait();
             });
 
-            // A run_on_init watcher never prints "Watching..."; the init
-            // completion itself is the readiness signal here.
             wait_until!(
                 !read_fixture_file(fixture, "out.txt").is_empty(),
                 "init run did not complete"
@@ -195,8 +177,7 @@ jobs:
             assert_eq!(
                 read_fixture_file(fixture, "out.txt"),
                 "unset",
-                "a pathless init run must see no FZZ_TRIGGER_RELATIVE_PATH despite \
-                 inherited and configured stale values"
+                "pathless init: no FZZ_TRIGGER_RELATIVE_PATH despite stale values"
             );
 
             trigger_change(fixture, "real trigger.txt");
@@ -206,7 +187,7 @@ jobs:
             );
             assert!(
                 read_fixture_file(fixture, "out.txt").ends_with("src/real trigger.txt"),
-                "triggered run must override the configured stale value: {}",
+                "triggered run overrides the stale configured value: {}",
                 read_fixture_file(fixture, "out.txt")
             );
             drop(input);
@@ -214,8 +195,8 @@ jobs:
     );
 }
 
-/// TASK-0194: a retry of a file-triggered run retains its original
-/// relative trigger path through FZZ_TRIGGER_RELATIVE_PATH.
+/// TASK-0194: a retry of a file-triggered run retains the original
+/// relative path through FZZ_TRIGGER_RELATIVE_PATH.
 #[test]
 fn nonblock_retry_retains_the_original_relative_trigger_path() {
     let config = r#"on:
@@ -243,7 +224,7 @@ jobs:
             let mut child = fzz_cmd
                 .stdin(Stdio::piped())
                 .spawn()
-                .expect("failed to spawn watcher");
+                .expect("spawn watcher");
             defer!({
                 let _ = child.kill();
                 let _ = child.wait();

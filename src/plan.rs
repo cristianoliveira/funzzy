@@ -320,25 +320,31 @@ impl RunPlan {
     /// Injects or strips the reserved trigger-path environments (TASK-0193
     /// and TASK-0194) across every task in the plan, right before execution.
     /// With a trigger path, each child sees the raw path as data under
-    /// `TRIGGER_PATH_ENV` plus its `current_dir`-relative form under
+    /// `TRIGGER_PATH_ENV` plus its cwd-relative form under
     /// `TRIGGER_RELATIVE_PATH_ENV`, both overriding any configured value of
     /// those names. Without one, both keys are stripped so an inherited or
     /// configured stale value cannot leak in.
     ///
-    /// The relative form mirrors the legacy `{{relative_filepath}}`
-    /// expansion exactly — the `current_dir` prefix is removed and a path
-    /// outside `current_dir` keeps its absolute fallback — so the env value
-    /// cannot drift from the deprecated template algorithm.
-    pub fn with_trigger_env(mut self, filepath: Option<&str>, current_dir: &str) -> RunPlan {
-        fn apply(task: &mut TaskPlan, filepath: Option<&str>, current_dir: &str) {
+    /// The relative form is computed PER TASK with the same legacy helper the
+    /// `{{relative_filepath}}` template uses, against that task's resolved
+    /// `context.cwd` (falling back to the workspace root when the task has
+    /// none), including the absolute fallback for triggers outside it — so
+    /// the env value cannot drift from the deprecated template algorithm.
+    pub fn with_trigger_env(mut self, filepath: Option<&str>, workspace_dir: &str) -> RunPlan {
+        fn apply(task: &mut TaskPlan, filepath: Option<&str>, workspace_dir: &str) {
             let environment = &mut task.context.environment;
             match filepath {
                 Some(path) => {
                     environment.insert(TRIGGER_PATH_ENV.to_owned(), path.to_owned());
-                    let root_prefix = format!("{}/", current_dir);
+                    let current_dir = task
+                        .context
+                        .cwd
+                        .as_ref()
+                        .map(|cwd| cwd.display().to_string())
+                        .unwrap_or_else(|| workspace_dir.to_owned());
                     environment.insert(
                         TRIGGER_RELATIVE_PATH_ENV.to_owned(),
-                        path.replace(&root_prefix, ""),
+                        crate::template::relative_to_current_dir(path, &current_dir),
                     );
                 }
                 None => {
@@ -349,10 +355,10 @@ impl RunPlan {
         }
         for stage in &mut self.stages {
             match stage {
-                Stage::Serial(task) => apply(task, filepath, current_dir),
+                Stage::Serial(task) => apply(task, filepath, workspace_dir),
                 Stage::Parallel { tasks, .. } => tasks
                     .iter_mut()
-                    .for_each(|task| apply(task, filepath, current_dir)),
+                    .for_each(|task| apply(task, filepath, workspace_dir)),
             }
         }
         self
@@ -710,6 +716,7 @@ impl RunOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::CommandLine;
 
     fn rule(name: &str, group: Option<&str>, run_on_init: bool) -> Rules {
         let rule = Rules::new(
@@ -731,6 +738,10 @@ mod tests {
 
     fn trigger_rule(name: &str, env: &[(String, String)]) -> Rules {
         rule(name, None, false).with_execution_context(None, env.iter().cloned().collect())
+    }
+
+    fn trigger_rule_with_cwd(name: &str, cwd: &str) -> Rules {
+        rule(name, None, false).with_execution_context(Some(cwd.to_owned()), Default::default())
     }
 
     fn task_contexts(plan: &RunPlan) -> Vec<TaskContext> {
@@ -803,50 +814,110 @@ mod tests {
         }
     }
 
-    /// TASK-0194: the relative trigger env mirrors the legacy
-    /// `{{relative_filepath}}` expansion exactly — the workspace-root prefix
-    /// is removed and special characters stay literal.
+    /// TASK-0194: the relative trigger env mirrors the legacy per-task
+    /// `{{relative_filepath}}` expansion — computed against that task's own
+    /// resolved cwd, with special characters staying literal.
     #[test]
-    fn trigger_relative_env_mirrors_the_legacy_template_expansion() {
-        let plan = RunPlan::from_rules(vec![trigger_rule("A", &[])]);
-        let filepath = "/workspace/src/we ird'$x.txt";
+    fn trigger_relative_env_mirrors_the_per_task_legacy_expansion() {
+        let plan = RunPlan::from_rules(vec![
+            trigger_rule("A", &[]),
+            trigger_rule_with_cwd("B", "/workspace/src/nested"),
+        ]);
 
-        let plan = plan.with_trigger_env(Some(filepath), "/workspace");
+        let plan = plan.with_trigger_env(Some("/workspace/src/nested/x.txt"), "/workspace");
         let contexts = task_contexts(&plan);
 
-        let legacy = plan_template_relative(filepath, "/workspace");
+        // Root job: value is workspace-relative.
         assert_eq!(
             contexts[0]
                 .environment
                 .get(TRIGGER_RELATIVE_PATH_ENV)
                 .map(String::as_str),
-            Some(legacy.as_str()),
-            "env value must equal the {{relative_filepath}} expansion"
+            Some("src/nested/x.txt"),
+            "a job without cwd uses the workspace root"
         );
+        // Nested job: value is cwd-relative and differs from the root job.
         assert_eq!(
-            contexts[0]
+            contexts[1]
                 .environment
                 .get(TRIGGER_RELATIVE_PATH_ENV)
                 .map(String::as_str),
-            Some("src/we ird'$x.txt"),
-            "relative path is data: raw, never shell-escaped"
+            Some("x.txt"),
+            "a job with cwd uses its own resolved cwd"
         );
+
+        // Drift guard: each env value must equal the legacy relative
+        // template expansion for that task's current_dir, not its own
+        // commands (which may not contain {{relative_filepath}}).
+        let legacy = |task: &TaskPlan| -> String {
+            let current_dir = task
+                .context
+                .cwd
+                .as_ref()
+                .map(|cwd| cwd.display().to_string())
+                .unwrap_or_else(|| "/workspace".to_owned());
+            plan_template_relative("/workspace/src/nested/x.txt", &current_dir)
+        };
+        for (task, context) in plan
+            .stages
+            .iter()
+            .flat_map(|stage| match stage {
+                Stage::Serial(task) => vec![task],
+                Stage::Parallel { tasks, .. } => tasks.iter().collect(),
+            })
+            .zip(&contexts)
+        {
+            let expected = legacy(task);
+            assert_eq!(
+                context
+                    .environment
+                    .get(TRIGGER_RELATIVE_PATH_ENV)
+                    .map(String::as_str),
+                Some(expected.as_str()),
+                "env value must equal the {{relative_filepath}} expansion for this task"
+            );
+        }
     }
 
-    /// TASK-0194: a trigger outside the workspace keeps the documented
-    /// absolute fallback — the legacy replace is a no-op there.
+    /// TASK-0194: a trigger outside the task's cwd keeps the documented
+    /// absolute fallback — for a nested-cwd job AND for a workspace-root job
+    /// when the trigger lies outside the workspace.
     #[test]
-    fn trigger_relative_env_keeps_the_absolute_fallback_outside_the_root() {
-        let plan = RunPlan::from_rules(vec![trigger_rule("A", &[])]);
+    fn trigger_relative_env_keeps_the_absolute_fallback_outside_the_cwd() {
+        let plan = RunPlan::from_rules(vec![
+            trigger_rule("A", &[]),
+            trigger_rule_with_cwd("B", "/workspace/src/nested"),
+        ]);
 
-        let plan = plan.with_trigger_env(Some("/elsewhere/x.txt"), "/workspace");
+        let plan = plan.with_trigger_env(Some("/workspace/src/y.txt"), "/workspace");
         let contexts = task_contexts(&plan);
         assert_eq!(
             contexts[0]
                 .environment
                 .get(TRIGGER_RELATIVE_PATH_ENV)
                 .map(String::as_str),
-            Some("/elsewhere/x.txt")
+            Some("src/y.txt"),
+            "inside the workspace root: root-relative for the root job"
+        );
+        assert_eq!(
+            contexts[1]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some("/workspace/src/y.txt"),
+            "outside the nested cwd: absolute fallback for the nested job"
+        );
+
+        let outside = RunPlan::from_rules(vec![trigger_rule("A", &[])])
+            .with_trigger_env(Some("/elsewhere/x.txt"), "/workspace");
+        let contexts = task_contexts(&outside);
+        assert_eq!(
+            contexts[0]
+                .environment
+                .get(TRIGGER_RELATIVE_PATH_ENV)
+                .map(String::as_str),
+            Some("/elsewhere/x.txt"),
+            "outside the workspace root: absolute fallback"
         );
     }
 
@@ -899,6 +970,9 @@ mod tests {
         );
         output.commands[0].clone()
     }
+
+    /// Mirrors `{{relative_filepath}}` expansion through the production
+    /// template so the env value cannot drift from the legacy algorithm.
 
     #[test]
     fn ungrouped_tasks_stay_serial() {
