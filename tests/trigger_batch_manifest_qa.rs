@@ -2,8 +2,7 @@
 #![cfg(all(feature = "test-integration", unix))]
 
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::os::unix::net::UnixStream;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -31,19 +30,16 @@ fn write_config(fixture: &Path, content: &str) {
     fs::write(fixture.join(".watch.yaml"), content).unwrap();
 }
 
-fn correlated_changed(socket: &Path) -> Vec<String> {
-    let mut stream = UnixStream::connect(socket).unwrap();
-    writeln!(
-        stream,
-        r#"{{"jsonrpc":"2.0","id":"status","method":"status"}}"#
-    )
-    .unwrap();
-    let mut line = String::new();
-    BufReader::new(&mut stream).read_line(&mut line).unwrap();
-    let response: serde_json::Value = serde_json::from_str(&line).unwrap();
-    response["result"]["changed"]
+fn started_changed(events: &Path) -> Vec<String> {
+    let content = fs::read_to_string(events).unwrap();
+    let started = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .rfind(|event| event["event"] == "started" && event["batch"].is_number())
+        .unwrap_or_else(|| panic!("correlated started event missing: {content}"));
+    started["changed"]
         .as_array()
-        .unwrap_or_else(|| panic!("correlated changed batch missing: {response}"))
+        .unwrap_or_else(|| panic!("correlated changed batch missing: {started}"))
         .iter()
         .map(|path| path.as_str().unwrap().to_owned())
         .collect()
@@ -160,13 +156,7 @@ jobs:
 
 #[test]
 fn selected_job_reads_observed_multi_path_batch_in_both_modes() {
-    for (mode, non_blocking) in [("blocking", false), ("nonblocking", true)] {
-        let socket =
-            std::env::temp_dir().join(format!("fzz-batch-{}-{mode}.sock", std::process::id()));
-        let _ = fs::remove_file(&socket);
-        let config = format!(
-            r#"on:
-  socket: '{}'
+    let config = r#"on:
   watch_backend: poll
   poll_interval: 20ms
   debounce: 500ms
@@ -177,19 +167,20 @@ jobs:
   - name: zzz-selector
     run: 'true'
     change: 'zzz/**'
-"#,
-            socket.display()
-        );
+"#;
+    for (mode, non_blocking) in [("blocking", false), ("nonblocking", true)] {
         setup::with_config(
             Path::new(".watch.yaml"),
             &format!("qa_batch_observed_{mode}.log"),
             |cmd, mut log, fixture| {
                 let src = fixture.join("src/observed.txt");
                 let disjoint = fixture.join("zzz/observed.txt");
+                let events = fixture.join("events.ndjson");
                 fs::create_dir_all(fixture.join("zzz")).unwrap();
                 fs::write(&src, "before").unwrap();
                 fs::write(&disjoint, "before").unwrap();
-                write_config(fixture, &config);
+                write_config(fixture, config);
+                cmd.args(["--events", "events.ndjson"]);
                 if non_blocking {
                     cmd.env("FUNZZY_NON_BLOCK", "true");
                 }
@@ -197,26 +188,22 @@ jobs:
                 defer!({
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = fs::remove_file(&socket);
                 });
-                wait_until!(
-                    socket.exists() && log_contains(&mut log, "Watching..."),
-                    "watcher not ready"
-                );
+                wait_until!(log_contains(&mut log, "Watching..."), "watcher not ready");
 
                 fs::write(&disjoint, "after").unwrap();
                 fs::write(&src, "after").unwrap();
                 wait_until!(
-                    fixture.join("batch-started").exists(),
+                    fixture.join("batch-started").exists() && events.exists(),
                     "correlated generation did not start"
                 );
 
-                let observed = correlated_changed(&socket);
+                let observed = started_changed(&events);
                 let decoded: Vec<String> =
                     serde_json::from_slice(&fs::read(fixture.join("observed.json")).unwrap())
                         .unwrap();
 
-                assert_eq!(decoded, observed, "manifest must equal correlated status");
+                assert_eq!(decoded, observed, "manifest must equal started event batch");
                 assert!(
                     observed.contains(&src.display().to_string()),
                     "{observed:?}"
