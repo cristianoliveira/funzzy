@@ -162,7 +162,7 @@ fn selected_job_reads_observed_multi_path_batch_in_both_modes() {
   debounce: 500ms
 jobs:
   - name: src-recorder
-    run: 'cp "$FZZ_TRIGGER_PATHS_FILE" observed.json; touch batch-started; sleep 5'
+    run: 'cp "$FZZ_TRIGGER_PATHS_FILE" observed.json; touch batch-started; while [ ! -e release-batch ]; do sleep 0.05; done'
     change: 'src/**'
   - name: zzz-selector
     run: 'true'
@@ -212,6 +212,9 @@ jobs:
                     observed.contains(&disjoint.display().to_string()),
                     "src-selected job lost disjoint zzz path: {observed:?}"
                 );
+
+                fs::write(fixture.join("release-batch"), "release").unwrap();
+                wait_until!(result_count(&mut log) >= 1, "generation did not finish");
             },
         );
     }
