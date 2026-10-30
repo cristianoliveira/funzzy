@@ -97,16 +97,19 @@ fn wait_for_result_count(log: &mut File, expected: usize, message: &str) {
 }
 
 #[test]
-fn shell_jobs_receive_the_relative_value_for_each_cwd_and_legacy_templates_stay_equal() {
+fn relative_trigger_env_matches_each_task_cwd_and_legacy_templates() {
     let config = r#"on:
   watch_backend: poll
   poll_interval: 20ms
 jobs:
-  - name: source-cwd
-    cwd: src
-    run: "../scripts/capture-relative-path.sh ../source-values.txt '{{relative_filepath}}' '{{relative_path}}'"
+  - name: workspace-cwd
+    run: "./scripts/capture-relative-path.sh root-values.txt '{{relative_filepath}}' '{{relative_path}}'"
     change: 'src/**'
-  - name: tests-cwd
+  - name: nested-cwd
+    cwd: src/nested
+    run: "../../scripts/capture-relative-path.sh ../../nested-values.txt '{{relative_filepath}}' '{{relative_path}}'"
+    change: 'src/**'
+  - name: outside-cwd
     cwd: tests
     run: "../scripts/capture-relative-path.sh ../tests-values.txt '{{relative_filepath}}' '{{relative_path}}'"
     change: 'src/**'
@@ -121,6 +124,9 @@ jobs:
             },
             |fzz_cmd, mut output_log, fixture| {
                 write_capture_script(fixture);
+                fs::create_dir_all(fixture.join("src/nested")).expect("create nested cwd");
+                let trigger = fixture.join("src/nested/ordinary.txt");
+                fs::write(&trigger, "initial").expect("create trigger file before watcher");
                 write_config(fixture, config);
                 if non_blocking {
                     fzz_cmd.env("FUNZZY_NON_BLOCK", "true");
@@ -137,24 +143,22 @@ jobs:
                 });
 
                 assert_watch_ready(&mut output_log);
-                let trigger = write_trigger(fixture, "src/ordinary.txt");
+                fs::write(&trigger, "changed").expect("modify nested trigger file");
                 let outside_cwd = trigger.to_string_lossy().into_owned();
 
-                let source_output = fixture.join("source-values.txt");
-                wait_for_lines(
-                    &source_output,
-                    3,
-                    "source-cwd job did not capture env and legacy values",
-                );
-
+                let root_output = fixture.join("root-values.txt");
+                wait_for_lines(&root_output, 3, "workspace-cwd job did not run");
+                let nested_output = fixture.join("nested-values.txt");
+                wait_for_lines(&nested_output, 3, "nested-cwd job did not run");
                 let tests_output = fixture.join("tests-values.txt");
-                wait_for_lines(
-                    &tests_output,
-                    3,
-                    "outside-cwd job did not capture env and legacy values",
+                wait_for_lines(&tests_output, 3, "outside-cwd job did not run");
+                wait_for_result_count(&mut output_log, 1, "three-cwd generation did not finish");
+
+                assert_contents(
+                    &root_output,
+                    "src/nested/ordinary.txt\nsrc/nested/ordinary.txt\nsrc/nested/ordinary.txt\n",
                 );
-                wait_for_result_count(&mut output_log, 1, "two-cwd generation did not finish");
-                assert_contents(&source_output, "ordinary.txt\nordinary.txt\nordinary.txt\n");
+                assert_contents(&nested_output, "ordinary.txt\nordinary.txt\nordinary.txt\n");
                 assert_contents(
                     &tests_output,
                     &format!("{outside_cwd}\n{outside_cwd}\n{outside_cwd}\n"),
