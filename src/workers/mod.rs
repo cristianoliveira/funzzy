@@ -1847,7 +1847,11 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let worker = Worker::with_root(false, false, root.clone(), |_| {});
+        let output = root.join("decoded-large-batch.json");
+        let (tx, rx) = channel();
+        let worker = Worker::with_root(false, false, root.clone(), move |event| {
+            tx.send(event).unwrap();
+        });
         let mut raw = Vec::new();
         for index in (0..6_000).rev() {
             let path = format!("src/generated/{index:05}-a file with space.rs");
@@ -1858,7 +1862,10 @@ mod tests {
         let batch = crate::identity::Batch::normalized(crate::identity::BatchId(9), raw);
         let rule = Rules::new(
             "selected-by-src".to_owned(),
-            vec!["true".to_owned()],
+            vec![format!(
+                "cp \"$FZZ_TRIGGER_PATHS_FILE\" '{}'",
+                output.display()
+            )],
             vec!["src/**".to_owned()],
             vec![],
             false,
@@ -1898,7 +1905,16 @@ mod tests {
             "only the constant-size pointer belongs in the environment"
         );
 
-        drop(request);
+        let run_id = request.run_id;
+        worker.dispatch(request).unwrap();
+        expect_event(
+            &rx,
+            "large batch finished",
+            |event| matches!(event, WorkerEvent::Finished { run_id: id, .. } if *id == run_id),
+        );
+        let child_decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(output).unwrap()).unwrap();
+        assert_eq!(child_decoded, batch.changed);
         assert!(!manifest_path.exists());
         drop(worker);
         let _ = std::fs::remove_dir_all(root);
