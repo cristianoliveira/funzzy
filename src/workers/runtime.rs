@@ -149,6 +149,7 @@ pub(crate) struct WorkerRuntime {
     events: Arc<dyn EventSink>,
     executor: Executor,
     hook_context: crate::plan::TaskContext,
+    shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl WorkerRuntime {
@@ -157,12 +158,14 @@ impl WorkerRuntime {
         events: Arc<dyn EventSink>,
         executor: Executor,
         hook_context: crate::plan::TaskContext,
+        shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Self {
         Self {
             scheduler,
             events,
             executor,
             hook_context,
+            shutdown_requested,
         }
     }
 
@@ -175,6 +178,7 @@ impl WorkerRuntime {
             events,
             executor,
             hook_context,
+            shutdown_requested,
         } = self;
         let mut active: Option<Run> = None;
         let mut pending: Option<RunRequest> = None;
@@ -187,7 +191,10 @@ impl WorkerRuntime {
             // Establish the cycle marker before polling pooled children:
             // commands already accepted by the scheduler must be handled
             // first so cancellation/shutdown/reload wins over child facts.
-            if may_observe_child_facts(scheduler.has_pending()) {
+            let shutting_down = shutdown_requested
+                .as_ref()
+                .is_some_and(|requested| requested.load(std::sync::atomic::Ordering::SeqCst));
+            if !shutting_down && may_observe_child_facts(scheduler.has_pending()) {
                 for service in managed_services.poll(&executor) {
                     if service.state == crate::service_pool::ServiceState::Restarting {
                         stdout::warn(&format!(

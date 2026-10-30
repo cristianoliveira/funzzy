@@ -948,7 +948,33 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
-        Self::with_root_and_concurrency_and_outputs_and_approval(
+        Self::with_root_and_concurrency_and_outputs_and_shutdown(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            outputs,
+            None,
+        )
+    }
+
+    /// Like [`Worker::with_root_and_concurrency_and_outputs`], suppresses
+    /// supervised-service restart polling once watcher shutdown is requested.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_root_and_concurrency_and_outputs_and_shutdown<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+        shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
+        Self::with_root_and_concurrency_and_outputs_and_approval_and_shutdown(
             verbose,
             fail_fast,
             root,
@@ -956,6 +982,7 @@ impl Worker {
             on_event,
             outputs,
             Arc::new(crate::approval::TtyRecoveryApproval),
+            shutdown_requested,
         )
     }
 
@@ -969,6 +996,32 @@ impl Worker {
         on_event: F,
         outputs: Option<Arc<OutputRegistry>>,
         approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
+        Self::with_root_and_concurrency_and_outputs_and_approval_and_shutdown(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            outputs,
+            approval,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_root_and_concurrency_and_outputs_and_approval_and_shutdown<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+        shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Self
     where
         F: Fn(Event) + Send + Sync + 'static,
@@ -1001,8 +1054,13 @@ impl Worker {
             cwd: Some(root.clone()),
             environment: Default::default(),
         };
-        let runtime =
-            WorkerRuntime::new(consumer_scheduler, service_events, executor, hook_context);
+        let runtime = WorkerRuntime::new(
+            consumer_scheduler,
+            service_events,
+            executor,
+            hook_context,
+            shutdown_requested,
+        );
         let consumer = std::thread::spawn(move || runtime.run());
 
         Worker {
@@ -1387,6 +1445,21 @@ impl Worker {
         receipt
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "service pool reconciliation timed out".to_owned())
+    }
+
+    /// Stops and reaps all worker-owned managed services before watcher
+    /// shutdown completes. The acknowledgement means their retained
+    /// generation resources, including trigger manifests, are released.
+    pub(crate) fn shutdown_service_pool(&self) -> Result<(), String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_owned());
+        };
+        let (reply, receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ShutdownServicePool { reply });
+        let (_, grace) = crate::process_owner::shutdown_policy();
+        receipt
+            .recv_timeout(grace + Duration::from_secs(5))
+            .map_err(|_| "service pool shutdown timed out".to_owned())
     }
 
     /// Starts new/changed managed services under the current revision without

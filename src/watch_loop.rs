@@ -718,6 +718,12 @@ impl NonBlockStrategy {
         strategy
     }
 
+    /// Stops finite work and reaps worker-owned services before watcher exit.
+    pub(crate) fn shutdown_worker(&self) {
+        let _ = self.worker.cancel_running_tasks();
+        let _ = self.worker.shutdown_service_pool();
+    }
+
     /// Publishes the control socket when configured.
     ///
     /// The control socket is an auxiliary control surface, so a bind failure
