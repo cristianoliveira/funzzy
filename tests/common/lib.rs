@@ -124,9 +124,9 @@ where
 
 #[cfg(feature = "test-integration")]
 #[allow(dead_code)]
-pub fn with_example<F>(opts: Options, handler: F) -> ()
+pub fn with_example<F>(opts: Options, handler: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     let config_path = std::path::Path::new(opts.example_file);
     with_config(config_path, opts.output_file, handler)
@@ -134,9 +134,9 @@ where
 
 #[cfg(feature = "test-integration")]
 #[allow(dead_code)]
-pub fn with_config<F>(config_path: &std::path::Path, output_file: &str, handler: F) -> ()
+pub fn with_config<F>(config_path: &std::path::Path, output_file: &str, handler: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     let dir = env::current_dir().expect("error getting current directory");
 
@@ -233,9 +233,9 @@ where
 
 #[cfg(feature = "test-integration")]
 #[allow(dead_code)]
-pub fn with_output<F>(output_file_path: &str, handler: F) -> ()
+pub fn with_output<F>(output_file_path: &str, handler: F)
 where
-    F: FnOnce(&mut Command, File, &std::path::Path) -> (),
+    F: FnOnce(&mut Command, File, &std::path::Path),
 {
     let dir = env::current_dir().expect("error getting current directory");
 

@@ -158,7 +158,7 @@ pub fn print_time_elapsed(elapsed: std::time::Duration) {
 #[cfg(feature = "test-integration")]
 // NOTE: This is for testing purposes only
 /// Print mocked time elapsed always as: "Finished in 0.0s"
-pub fn print_time_elapsed(_elapsed_param: std::time::Duration) -> () {
+pub fn print_time_elapsed(_elapsed_param: std::time::Duration) {
     let elapsed = std::time::Duration::from_secs(0);
     let message = format!("Duration: {:.4}s", elapsed.as_secs_f32());
 
