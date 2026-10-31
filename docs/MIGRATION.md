@@ -34,6 +34,42 @@ migration reference. For the checked-in example catalog, see the
 | `--non-block` in examples/scripts | `--on-busy restart` | see flag migration |
 | `--target` in examples/scripts | `watch TARGET`/`run TARGET` | see flag migration |
 
+## Path input migration
+
+Path templates remain runtime-compatible, but are deprecated for **new job
+scripts**. This includes `{{filepath}}`, `{{absolute_path}}`,
+`{{relative_filepath}}`, `{{relative_path}}`, `{{paths}}`, and supported
+spacing variants such as `{{ filepath }}`. Funzzy does not warn, remove, or
+rewrite these tokens.
+
+Before changing an old batch command, note its exact behavior. For a batch with
+`/repo/docs/two words.md` and `/repo/src/a.rs`, `{{paths}}` produces:
+
+```text
+'/repo/docs/two words.md' '/repo/src/a.rs'
+```
+
+That is shell-escaped command text. In a direct-argv command, the complete
+expansion remains one argv element. It never becomes one element per path.
+
+For new scripts, use:
+
+| Preferred input | Replacement for | Value |
+| --- | --- | --- |
+| `FZZ_TRIGGER_PATH` | `{{filepath}}`, `{{absolute_path}}` | One trigger path. |
+| `FZZ_TRIGGER_RELATIVE_PATH` | `{{relative_filepath}}`, `{{relative_path}}` | One trigger path relative to the job's `cwd`. |
+| `FZZ_TRIGGER_PATHS_FILE` | `{{paths}}` | Pointer to a private JSON array of literal complete paths, not shell-escaped text. |
+
+Remove the template argument from `run:` and let the invoked script read the
+environment. These values exist only in filesystem-triggered job children.
+Init and manual runs are pathless and receive none of them; hooks do not receive
+them. Read `FZZ_TRIGGER_PATHS_FILE` while Funzzy supervises the job or service.
+See [Changed-path inputs](USAGE.md#changed-path-inputs) for runnable migration
+examples and lifecycle details.
+
+`fzz migrate` deliberately preserves command bytes, including path templates.
+It changes accepted V1 configuration shape only.
+
 ## `fzz migrate` behavior (TASK-0096/0098)
 
 - One responsibility: **transform V1 task vocabulary** in an existing config in place. Never creates from scratch (`fzz init`) or watches. It validates the complete candidate before its atomic replacement; use `fzz check` for explicit validation.

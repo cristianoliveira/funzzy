@@ -242,9 +242,9 @@ const JOB_SPECS: &[OptionSpec] = &[
         owner: Owner::Job,
         required: true,
         default: None,
-        help: "Command(s): a shell string or an argv list. Template variables: {{filepath}}, {{paths}}, {{relative_filepath}}.",
+        help: "Command(s): a shell string or an argv list. New job scripts read FZZ_TRIGGER_PATH, FZZ_TRIGGER_RELATIVE_PATH, or the FZZ_TRIGGER_PATHS_FILE JSON batch pointer from filesystem-triggered child environments; pathless init/manual runs and hooks receive none. Legacy path templates remain supported but are deprecated for new scripts.",
         values: None,
-        example: &["run: [\"echo\", \"{{filepath}}\", \"{{paths}}\"]"],
+        example: &["run: ./scripts/check-changed.sh"],
         kind: SpecKind::StringList,
     },
     OptionSpec {

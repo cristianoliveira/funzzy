@@ -265,16 +265,43 @@ jobs:
   `timedout` state, the generation fails, and pre-kill output stays
   retrievable. It is independent from control `--timeout`, which bounds only
   the caller's wait (FINITE-JOB-TIMEOUT-CONTRACT, ADVANCED-GUIDE §8.5).
-- **Templates**: `{{filepath}}`/`{{absolute_path}}` (**deprecated**: prefer
-  the `FZZ_TRIGGER_PATH` environment variable, below), `{{relative_filepath}}`/
-  `{{relative_path}}` (**deprecated**: prefer `FZZ_TRIGGER_RELATIVE_PATH`,
-  below), `{{paths}}` (whole batch, shell-escaped; stays). Existing configs
-  keep working unchanged.
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
 - **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. `FZZ_TRIGGER_PATH`, `FZZ_TRIGGER_RELATIVE_PATH`, and `FZZ_TRIGGER_PATHS_FILE` are likewise reserved in job child environments: filesystem-triggered jobs receive Funzzy's values after configured values, while pathless runs strip the names. Funzzy does not implicitly inject these trigger values into hooks. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
-- **Trigger path variable**: every filesystem-triggered job command (shell or direct argv) receives `FZZ_TRIGGER_PATH` in its child environment with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `{{paths}}` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe and reusable scripts need no Funzzy placeholder at all. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Hooks are out of scope: Funzzy never injects the trigger path into them. Migrate a job by dropping `{{filepath}}` from the command and reading the environment inside the script instead:
+
+### Changed-path inputs
+
+For new job scripts, prefer child environment data over command interpolation:
+
+| Input | Meaning |
+| --- | --- |
+| `FZZ_TRIGGER_PATH` | One trigger path. |
+| `FZZ_TRIGGER_RELATIVE_PATH` | The trigger path relative to that job's `cwd`. |
+| `FZZ_TRIGGER_PATHS_FILE` | Absolute pointer to a private JSON array containing the complete changed-path batch. |
+
+The path templates `{{filepath}}`, `{{absolute_path}}`,
+`{{relative_filepath}}`, `{{relative_path}}`, and `{{paths}}` are deprecated
+for **new job scripts**. Supported spacing variants, such as `{{ filepath }}`
+and `{{ paths }}`, have the same status. They are not removed: existing
+commands execute as before, without a new runtime warning or automatic rewrite.
+
+For example, if one batch contains `/repo/docs/two words.md` and
+`/repo/src/a.rs`, `{{paths}}` expands to this shell-escaped, space-joined text:
+
+```text
+'/repo/docs/two words.md' '/repo/src/a.rs'
+```
+
+A shell command interprets that text as two path arguments. A direct-argv
+command keeps the complete expansion as **one** argv element; Funzzy does not
+split it into two arguments. The preferred batch file instead contains literal
+JSON strings, not shell-escaped command text:
+
+```json
+["/repo/docs/two words.md", "/repo/src/a.rs"]
+```
+- **Trigger path variable**: every filesystem-triggered job command (shell or direct argv) receives `FZZ_TRIGGER_PATH` in its child environment with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `FZZ_TRIGGER_PATHS_FILE` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe and reusable scripts need no Funzzy placeholder at all. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Hooks are out of scope: Funzzy never injects the trigger path into them. Migrate a job by dropping `{{filepath}}` from the command and reading the environment inside the script instead:
 
   ```yaml
   # before (deprecated interpolation)
@@ -336,7 +363,7 @@ jobs:
   Migrate a whole-batch command without interpolating `{{paths}}`:
 
   ```yaml
-  # before (supported shell interpolation)
+  # before (supported, deprecated interpolation)
   - name: check-changed
     run: './scripts/check-changed.sh {{paths}}'
   # after (structured data, identical for shell and direct argv jobs)
@@ -357,8 +384,9 @@ jobs:
 
   `{{paths}}` remains supported with its existing shell-escaped, space-joined
   expansion. In direct-argv commands it remains one expanded argv element; it
-  does not become multiple arguments. Prefer the JSON file when a reusable
-  script needs structured batch data or filenames with unusual characters.
+  does not become multiple arguments. It is deprecated only as an input for
+  new job scripts. Prefer the JSON file when a reusable script needs structured
+  batch data or filenames with unusual characters.
 - **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
 - **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and

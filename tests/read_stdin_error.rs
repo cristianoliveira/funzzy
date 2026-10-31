@@ -18,7 +18,7 @@ fn it_fails_when_no_stdin_is_given() -> Result<(), Box<dyn std::error::Error>> {
         .failure()
         .stdout(
             ["Error: No files provided via stdin.",
-                "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.",
+                "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- sh -c 'printf \"%s\\n\" \"$FZZ_TRIGGER_PATH\"'`.",
                 ""]
             .join("\n"),
         );

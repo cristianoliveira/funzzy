@@ -462,7 +462,7 @@ fn exec_action(args: &Arguments, startup: &Startup, cmd: &[String]) {
             process::exit(1);
         }
         Ok(StdinRead::PipeEmpty) => {
-            stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- echo {{filepath}}`.".to_string());
+            stdout::failure("No files provided via stdin.", "Provide a list of files or directories via stdin, e.g., `find . | fzz exec -- sh -c 'printf \"%s\\n\" \"$FZZ_TRIGGER_PATH\"'`.".to_string());
         }
         Ok(StdinRead::Data(content)) => {
             let patterns = match config::extract_paths(content) {

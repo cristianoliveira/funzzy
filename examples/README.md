@@ -6,6 +6,24 @@ integration tests. The migration target for valid examples is the canonical
 filename map, and before/after behavior contract are in
 [`docs/EXAMPLES-V2-MIGRATION-CONTRACT.md`](../docs/EXAMPLES-V2-MIGRATION-CONTRACT.md).
 
+## Changed-path inputs
+
+New job scripts should read `FZZ_TRIGGER_PATH` for one trigger file,
+`FZZ_TRIGGER_RELATIVE_PATH` for that file relative to the job's `cwd`, or the
+`FZZ_TRIGGER_PATHS_FILE` JSON array for the complete batch. These values exist
+only in filesystem-triggered job children. Init and manual runs are pathless,
+hooks receive none of them, and the batch pointer is valid only while Funzzy
+supervises the job or service. JSON entries are literal paths, not shell-escaped
+command text. See the [current migration examples](../docs/USAGE.md#changed-path-inputs).
+
+`jobs-with-filepath-template.yml` and `jobs-with-absolute-paths.yml` remain in
+the catalog as compatibility examples. Path templates—including
+`{{filepath}}`, `{{absolute_path}}`, `{{relative_filepath}}`,
+`{{relative_path}}`, `{{paths}}`, and spacing variants—still execute as before,
+but are deprecated for new job scripts. In particular, `{{paths}}` remains one
+expanded element in direct-argv commands. Funzzy does not warn or rewrite these
+legacy commands.
+
 To inspect or run one of these examples from the repository root:
 
 ```bash
