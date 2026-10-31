@@ -1,12 +1,10 @@
 # Funzzy User-Approved Job Recovery Contract
 
+A failed configured job may run its configured recovery commands only after local approval. Recovery runs before the generation becomes terminal and may make verification pass. It differs from `hooks.failure`: that hook observes the final failure and cannot change the result.
+
 ## 1. Scope and vocabulary
 
-This contract defines bounded, interactive recovery for a failed configured job.
-A recovery is an optional job-local command set. It is not a failure hook:
-`hooks.failure` observes a final failed generation and cannot change its
-result; a job recovery runs before the generation becomes terminal and may make
-verification pass.
+A recovery is an optional command set for one job. It requires an explicit decision for each eligible generation.
 
 The terms below are normative:
 
@@ -20,9 +18,7 @@ The terms below are normative:
 - **final result**: the generation result after the recovery decision and all
   permitted recovery work. Only this result is terminal.
 
-MVP is deliberately bounded: one approval decision, at most one recovery pass, and
-at most one verification per generation. There is no recursive recovery or
-configurable retry loop.
+The MVP permits one approval decision, at most one recovery pass, and at most one verification per generation. It has no recursive recovery or configurable retry loop.
 
 ## 2. Preferred configuration
 
@@ -63,8 +59,7 @@ field path and job name for unsupported placement or invalid values.
 
 Unknown values and non-string values are configuration errors. `on.recovery_policy`, `hooks.recovery`, and a top-level `recovery_policy` are not aliases.
 
-`execution.recovery_timeout` is a positive duration using the canonical `ms`, `s`, or `m` syntax. It defaults to `60s` and bounds only the local approval decision; recovery and verification commands keep their existing process and cancellation behavior. The budget starts when `approval_requested` is emitted and ends when a valid decision arrives, cancellation/supersession wins, or the budget expires. Expiry is default-deny: emit `approval_decided` with `approval timeout`, preserve the original failure, start no recovery or verification command, and finalize the generation as failed. Late input is ignored and cannot authorize this or a later generation.
-
+`execution.recovery_timeout` accepts a positive duration in the canonical `ms`, `s`, or `m` syntax. It defaults to `60s` and bounds only local approval. Recovery and verification commands retain their process and cancellation behavior. The budget starts when `approval_requested` is emitted. It ends when a valid decision arrives, cancellation or supersession wins, or time expires. On expiry, emit `approval_decided` with `approval timeout`. Preserve the original failure, start no recovery or verification command, and finalize the generation as failed. Ignore late input; it cannot authorize this or a later generation.
 
 A job with `service: true` cannot declare `recovery`. Configuration validation must
 reject the combination at `jobs[].recovery` (or the equivalent job name/path),
@@ -89,10 +84,7 @@ applies to the configured workflow execution selected by that invocation or
 watcher session. Commands with no configured jobs/recoveries have no recovery work;
 ad-hoc `fzz exec` cannot acquire a configured job recovery.
 
-Configuration declares that a command is available. It never authorizes a
-mutation. Each execution requires the explicit interactive approval described
-in §4. There is no automatic acceptance flag, environment switch, or implicit
-trust based on the command text. In particular, `CI`, `NO_TTY`, and other
+Configuration makes a command available; it does not authorize a mutation. Each execution requires the interactive approval in §4. No flag, environment switch, or command text grants automatic approval. In particular, `CI`, `NO_TTY`, and other
 ambient environment variables do not change the effective policy.
 
 `skip` is an immediate final-failure decision for a generation with an
@@ -128,11 +120,7 @@ Only a trimmed, case-insensitive `y` or `yes` is affirmative. Empty input,
 non-affirmative. The prompt is default-deny; an invalid answer is never
 reinterpreted as approval.
 
-The approval is a single-use authorization bound to the watcher instance,
-configuration revision, exact generation, and exact ordered recovery set. A stale,
-late, or repeated answer is ignored. Approval authorizes only the commands
-rendered in that prompt; it cannot authorize a later generation, another job,
-or a changed configuration.
+Approval applies once to the watcher instance, configuration revision, exact generation, and exact ordered recovery set. Ignore stale, late, or repeated answers. Approval permits only the commands shown in the prompt, not a later generation, another job, or changed configuration.
 
 A generation with failed jobs that have no `recovery` is not eligible for a prompt.
 If both recoverable and unrecoverable jobs fail, the prompt lists only the recoverable
