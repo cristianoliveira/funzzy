@@ -79,6 +79,25 @@ fzz --no-services -- "@quick"
 
 Declaration order is important. Consecutive jobs with the same `parallel` name can run at the same time. Other jobs run in sequence.
 
+### Changed paths in job scripts
+
+For new job scripts, read changed paths from child environment data:
+
+- `FZZ_TRIGGER_PATH`: one trigger path.
+- `FZZ_TRIGGER_RELATIVE_PATH`: that path relative to the job's `cwd`.
+- `FZZ_TRIGGER_PATHS_FILE`: private JSON file containing the complete changed-path batch as literal paths.
+
+These values exist only for filesystem-triggered job children. Init and manual
+runs are pathless and receive none of them. Hooks do not receive them. Read the
+batch file while Funzzy supervises the job or service.
+
+Old path templates remain compatible but are deprecated for new job scripts.
+For example, a two-file batch still makes `{{paths}}` expand to one
+shell-escaped, space-joined string; a direct-argv command still receives that
+complete expansion as one argument. Funzzy does not warn or rewrite old
+commands. See [Changed-path inputs](docs/USAGE.md#changed-path-inputs) for all
+legacy names and migration examples.
+
 ## Start in one minute
 
 Install Funzzy with one of these commands:

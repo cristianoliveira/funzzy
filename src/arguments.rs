@@ -703,6 +703,9 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("config")
                 .about("Describe configuration structure and print runnable examples.")
+                .long_about(
+                    "Describe configuration structure and print runnable examples. For new job scripts, use FZZ_TRIGGER_PATH, FZZ_TRIGGER_RELATIVE_PATH, and the FZZ_TRIGGER_PATHS_FILE JSON batch pointer. They exist only for filesystem-triggered job children; pathless init/manual runs and hooks receive none. Legacy path templates remain compatible but are deprecated for new scripts.",
+                )
                 .version(env!("CARGO_PKG_VERSION"))
                 .subcommand_required(true)
                 .arg_required_else_help(true)
@@ -711,7 +714,7 @@ pub fn command() -> Command {
                         .version(env!("CARGO_PKG_VERSION"))
                         .about("Print the JSON Schema for the preferred jobs: config.")
                         .long_about(
-                            "Print a deterministic JSON Schema describing the preferred ordered `jobs:` .watch.yaml format. Exit 0. No config, watcher, or socket is read.\n\nOutput contract: one JSON Schema document on stdout, nothing else. `--section` returns a bounded self-contained section plus its identity and a hint for the full schema.\n\nExamples:\n  fzz config schema\n  fzz config schema --section parallel\n  fzz config schema --section job --format toon",
+                            "Print a deterministic JSON Schema describing the preferred ordered `jobs:` .watch.yaml format. Exit 0. No config, watcher, or socket is read.\n\nThe job and matching sections direct new scripts to FZZ_TRIGGER_PATH, FZZ_TRIGGER_RELATIVE_PATH, and FZZ_TRIGGER_PATHS_FILE, including pathless behavior; legacy path templates are documented as compatible but deprecated for new scripts.\n\nOutput contract: one JSON Schema document on stdout, nothing else. `--section` returns a bounded self-contained section plus its identity and a hint for the full schema.\n\nExamples:\n  fzz config schema\n  fzz config schema --section matching\n  fzz config schema --section job --format toon",
                         )
                         .arg(
                             Arg::new("section")
@@ -735,7 +738,7 @@ pub fn command() -> Command {
                         .version(env!("CARGO_PKG_VERSION"))
                         .about("Print a runnable .watch.yaml example to stdout.")
                         .long_about(
-                            "Print a valid runnable .watch.yaml to stdout with no prose mixed in. The output parses through the same production parser and is byte-identical to `fzz init --template PROFILE`. Exit 0. No config, watcher, or socket is read.\n\nExamples:\n  fzz config example minimal\n  fzz config example parallel\n  fzz config example agent",
+                            "Print a valid runnable .watch.yaml to stdout with no prose mixed in. The output parses through the same production parser and is byte-identical to `fzz init --template PROFILE`. The comprehensive profile comments direct new scripts to the trigger environment and mark legacy path templates deprecated. Exit 0. No config, watcher, or socket is read.\n\nExamples:\n  fzz config example comprehensive\n  fzz config example minimal\n  fzz config example agent",
                         )
                         .arg(
                             Arg::new("profile")
@@ -1092,6 +1095,14 @@ Alias:
 
 Config:
   fzz config describes the config schema and prints runnable examples.
+
+Changed paths in new job scripts:
+  FZZ_TRIGGER_PATH          One trigger path.
+  FZZ_TRIGGER_RELATIVE_PATH Trigger path relative to the job cwd.
+  FZZ_TRIGGER_PATHS_FILE    Complete literal-path batch in a private JSON file.
+  Filesystem-triggered job children receive these values while supervised.
+  Init/manual runs are pathless; hooks receive none. Legacy path templates
+  remain compatible but are deprecated for new scripts.
 
 Retry failed jobs (requires a running watcher):
   fzz control --format toon retry                   # latest terminal run; read new runId M

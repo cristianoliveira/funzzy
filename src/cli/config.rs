@@ -168,9 +168,19 @@ fn section_matching() -> Value {
         "title": "matching",
         "description": "Change/ignore matching semantics (GITIGNORE-CONTRACT).",
         "properties": {
-            "change_globs": { "type": "array", "items": {"type": "string"}, "description": "Glob patterns; relative and absolute forms both supported." },
+            "change_globs": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns; relative and absolute forms both supported." },
             "ignore_precedence": { "type": "string", "enum": ["config-ignore-wins", "gitignore"], "description": "Explicit config ignore wins over gitignore; gitignore applies only when respect_gitignore is true." },
-            "filepath_template": { "type": "string", "enum": ["{{filepath}}", "{{paths}}", "{{relative_filepath}}"], "description": "Template variables available in run commands." }
+            "trigger_environment": {
+                "type": "array",
+                "items": { "type": "string", "enum": ["FZZ_TRIGGER_PATH", "FZZ_TRIGGER_RELATIVE_PATH", "FZZ_TRIGGER_PATHS_FILE"] },
+                "description": "Preferred inputs for new job scripts: one trigger path, one cwd-relative trigger path, and a pointer to the complete literal-path JSON batch. Available only to filesystem-triggered job children while supervised; pathless init/manual runs and hooks receive none."
+            },
+            "filepath_template": {
+                "type": "string",
+                "enum": ["{{filepath}}", "{{absolute_path}}", "{{relative_filepath}}", "{{relative_path}}", "{{paths}}"],
+                "deprecated": true,
+                "description": "Legacy path templates remain supported, including spacing variants, but are deprecated for new job scripts. {{paths}} stays shell-escaped and space-joined; direct-argv commands keep the complete expansion as one element. No removal or runtime warning is implied."
+            }
         }
     })
 }
@@ -425,6 +435,44 @@ mod catalog_parity_tests {
         assert!(execution.contains(&"output".to_string()));
         assert!(hooks.contains(&"success".to_string()));
         assert!(hooks.contains(&"failure".to_string()));
+    }
+
+    #[test]
+    fn matching_schema_prefers_trigger_environment_and_deprecates_templates() {
+        let matching = &full_schema()["$defs"]["matching"]["properties"];
+        let trigger_names: Vec<&str> = matching["trigger_environment"]["items"]["enum"]
+            .as_array()
+            .expect("trigger environment enum")
+            .iter()
+            .map(|value| value.as_str().expect("trigger environment name"))
+            .collect();
+        assert_eq!(
+            trigger_names,
+            [
+                "FZZ_TRIGGER_PATH",
+                "FZZ_TRIGGER_RELATIVE_PATH",
+                "FZZ_TRIGGER_PATHS_FILE"
+            ]
+        );
+
+        let templates = &matching["filepath_template"];
+        assert_eq!(templates["deprecated"], true);
+        let names: Vec<&str> = templates["enum"]
+            .as_array()
+            .expect("path template enum")
+            .iter()
+            .map(|value| value.as_str().expect("path template name"))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "{{filepath}}",
+                "{{absolute_path}}",
+                "{{relative_filepath}}",
+                "{{relative_path}}",
+                "{{paths}}"
+            ]
+        );
     }
 
     #[test]
