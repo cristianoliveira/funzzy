@@ -1,12 +1,10 @@
-# Funzzy V2 usage: getting started and daily workflows
+# Use Funzzy day to day
 
-> V2 introduced intentional CLI breaks from V1 (see [migration guide](MIGRATION.md)).
-> Both binary names work: `funzzy` and its short alias `fzz` — examples use
-> `fzz` consistently.
+Create a configuration, check it, run a job once, then start the watcher. These five steps give you the shortest path to a working edit loop.
+
+This guide uses `fzz`. The `funzzy` binary works the same way. If you used V1, see the [migration guide](MIGRATION.md) before you change your commands.
 
 ## 1. Getting started (five steps)
-
-The shortest accurate path from installation to a running workflow.
 
 ### 1.1 Create a config
 
@@ -63,46 +61,6 @@ fzz run "@quick"    # target can be a name, @tag, or unambiguous substring
 
 `run` exits with the combined outcome (0 all pass, 1 any fail).
 
-### Readiness-enabled services
-
-A service without `readiness` remains a legacy generation-owned service: it is
-unbounded and keeps its generation running while alive. Add an explicit
-readiness command when the watcher should settle the generation after health
-is proven:
-
-```yaml
-jobs:
-  - name: api
-    service: true
-    run: cargo run -- --port 8080
-    readiness:
-      run: curl --fail http://127.0.0.1:8080/health
-      timeout: 30s
-      interval: 500ms
-```
-
-A successful readiness probe transfers `api` to the worker-owned pool. The
-exact generation becomes `passed`, while control status reports the separate
-secondary view `services: [{name: api, state: ready}]`. A later service
-restart or failure does not rewrite that generation result. A failed probe or
-timeout fails the generation and reaps the service. Readiness configuration
-is strict and frozen when the generation is scheduled.
-
-### Current-run job durations
-
-Finite runs render one declaration-ordered `JOB / RESULT / DURATION` row for
-each configured job. Per-job duration is the executor's monotonic elapsed
-measurement, valid whether jobs are serial or parallel. The generation
-`Duration:` remains separate wall-clock time and is never calculated by adding
-job rows.
-
-Started cancellations retain a partial duration; skipped or never-started jobs
-render `-` and structured snapshots/events expose `durationMs: null`. A recovered job appears once with its final state and a duration through final
-verification. Readiness-enabled services record duration through readiness
-promotion; their later uptime is pool state. Legacy live services have no
-finite duration while alive. For exact integer milliseconds, inspect
-`tasks[].durationMs` in a control snapshot or a `task_terminal` NDJSON event.
-
 ### 1.4 Inspect before executing
 
 ```bash
@@ -137,11 +95,36 @@ the delimiter is target data, so `fzz -- --service` selects a target named
 `--service`; extra values are usage errors. Without the delimiter, a word
 matching a subcommand still invokes that subcommand.
 
-This is the whole loop: config → check → run → watch.
+The edit loop is now ready: configure, check, run once, then watch.
 
 ### Trigger the pipeline from the keyboard
 
 While Funzzy watches files, press **Ctrl-G** once to run all configured jobs. If a generation is active, Funzzy saves one request. It starts that request after the active generation finishes. Funzzy ignores more requests during this time. Ctrl-C starts a graceful shutdown. Piped input accepts the same Ctrl-G byte. Closed input does not cause an error.
+
+### Readiness-enabled services
+
+Add a `readiness` command when you want the watcher to settle a generation after it confirms service health:
+
+```yaml
+jobs:
+  - name: api
+    service: true
+    run: cargo run -- --port 8080
+    readiness:
+      run: curl --fail http://127.0.0.1:8080/health
+      timeout: 30s
+      interval: 500ms
+```
+
+After the probe passes, `api` moves to the pool of services that the worker owns. The generation becomes `passed`. Control status reports the separate view `services: [{name: api, state: ready}]`. A later restart or failure does not change that generation result.
+
+If the probe fails or times out, the generation fails and Funzzy reaps the service. Readiness configuration is strict and stays fixed for that generation. Without `readiness`, a legacy service keeps its generation running while the service is alive.
+
+### Current-run job durations
+
+A finite run shows one `JOB / RESULT / DURATION` row per configured job, in declaration order. Each duration measures that job's elapsed time, including serial or parallel work. The generation's `Duration:` is separate wall-clock time; do not add the job rows to calculate it.
+
+A cancelled job that started keeps a partial duration. A skipped or unstarted job shows `-`; snapshots and events report `durationMs: null`. A recovered job appears once, with its final state and duration through final verification. A service with `readiness` records duration until its probe passes; later uptime belongs to pool state. A legacy live service has no finite duration while it runs. For integer milliseconds, inspect `tasks[].durationMs` in a control snapshot or a `task_terminal` NDJSON event.
 
 ## 2. Daily workflow decision table
 
@@ -268,7 +251,11 @@ jobs:
 - **Parallel groups**: only *consecutive* jobs sharing one `parallel` name may
   overlap; reused names across a serial job start a new barrier. Order inside
   a group is unspecified (PARALLEL-EXECUTION-CONTRACT).
-- **Environment**: `execution.env` provides string defaults to every configured job, service start, readiness probe, job recovery command, and success/failure/close hook. Existing parent variables are inherited; job `env` overrides defaults for that job and its readiness/recovery commands. Hook `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` are reserved and override configured values. `FZZ_TRIGGER_PATH`, `FZZ_TRIGGER_RELATIVE_PATH`, and `FZZ_TRIGGER_PATHS_FILE` are likewise reserved in job child environments: filesystem-triggered jobs receive Funzzy's values after configured values, while pathless runs strip the names. Funzzy does not implicitly inject these trigger values into hooks. No process-wide environment is changed. Empty strings are allowed; names must match `[A-Za-z_][A-Za-z0-9_]*` and values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
+- **Environment**: `execution.env` sets string defaults for configured jobs, services, readiness probes, recovery commands, and success/failure/close hooks. Children also inherit parent variables. A job's `env` overrides defaults for that job and its readiness or recovery commands.
+
+  Funzzy reserves `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` for hooks. Its values override inherited or configured values. For filesystem-triggered job children, Funzzy also reserves `FZZ_TRIGGER_PATH`, `FZZ_TRIGGER_RELATIVE_PATH`, and `FZZ_TRIGGER_PATHS_FILE`. It sets those values after configured values. Pathless runs remove stale values, and hooks do not receive trigger values implicitly.
+
+  Funzzy does not change the process-wide environment. Empty values are valid. Names must match `[A-Za-z_][A-Za-z0-9_]*`; values cannot contain NUL. Ad-hoc `fzz exec` does not load project configuration.
 
 ### Changed-path inputs
 
@@ -301,7 +288,9 @@ JSON strings, not shell-escaped command text:
 ```json
 ["/repo/docs/two words.md", "/repo/src/a.rs"]
 ```
-- **Trigger path variable**: every filesystem-triggered job command (shell or direct argv) receives `FZZ_TRIGGER_PATH` in its child environment with the exact value `{{filepath}}` expands to for that run — one trigger path, **not** every path in the debounced batch (use `FZZ_TRIGGER_PATHS_FILE` for the batch). The value is environment data, never inserted into command text, so spaces and shell metacharacters are safe and reusable scripts need no Funzzy placeholder at all. A pathless run (init, manual target, Ctrl-G) has no `FZZ_TRIGGER_PATH` at all: Funzzy removes the name even when the parent process or `execution.env`/job `env` configured a stale value. Hooks are out of scope: Funzzy never injects the trigger path into them. Migrate a job by dropping `{{filepath}}` from the command and reading the environment inside the script instead:
+- **Trigger path variable**: a filesystem-triggered shell or direct-argv child receives `FZZ_TRIGGER_PATH`. Its value matches `{{filepath}}` for that run: **one** path, not the complete batch. Use `FZZ_TRIGGER_PATHS_FILE` for the batch. The path is data, not command text, so a script can read paths with spaces or shell characters safely.
+
+  Init, manual target, and Ctrl-G runs have no trigger path. Funzzy removes a stale `FZZ_TRIGGER_PATH` even if the parent or configured `env` set one. Hooks do not receive it implicitly. To migrate, remove `{{filepath}}` from `run:` and read the variable in the script:
 
   ```yaml
   # before (deprecated interpolation)
@@ -348,17 +337,11 @@ JSON strings, not shell-escaped command text:
   fi
   "$SHELL" -n "$FZZ_TRIGGER_RELATIVE_PATH"
   ```
-- **Changed-path batch file**: every filesystem-triggered shell or direct-argv
-  job also receives `FZZ_TRIGGER_PATHS_FILE`, an absolute path to a private,
-  read-only UTF-8 JSON file. Its array is the complete post-debounce changed
-  set, sorted and deduplicated. Values are literal normalized paths: they are
-  not shell-quoted, filtered per job, or rebased for `cwd`. The same immutable
-  file remains readable by the generation's job commands, recovery commands,
-  readiness probes, and supervised services. A retry gets the same array in a
-  newly owned file. Read the file while the child is supervised; its pathname
-  and retention after the job or service exits are not APIs. Pathless runs do
-  not receive the variable, and hooks do not receive it implicitly. Native
-  non-UTF-8 paths remain outside the current watcher path model.
+- **Changed-path batch file**: each filesystem-triggered shell or direct-argv job receives `FZZ_TRIGGER_PATHS_FILE`. This absolute path points to a private, read-only UTF-8 JSON file. The array contains the complete changed set after debounce, sorted and deduplicated. Each entry is a literal normalized path. Funzzy does not shell-quote entries, filter them for a job, or rebase them for `cwd`.
+
+  Job commands, recovery commands, readiness probes, and supervised services can read the same immutable file for that generation. A retry receives the same array in a new file. Read it while Funzzy supervises the child. Do not rely on its file name or on access after the job or service exits.
+
+  Pathless runs do not receive the variable; hooks do not receive it implicitly. The watcher does not currently include native non-UTF-8 paths in its batch model.
 
   Migrate a whole-batch command without interpolating `{{paths}}`:
 
@@ -387,8 +370,8 @@ JSON strings, not shell-escaped command text:
   does not become multiple arguments. It is deprecated only as an input for
   new job scripts. Prefer the JSON file when a reusable script needs structured
   batch data or filenames with unusual characters.
-- **Hooks**: `hooks.success` runs after each passing generation. Scalar `hooks.failure` runs immediately; object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. Neither changes the result. `hooks.close` runs once, only when a ready watcher shuts down gracefully after active jobs/services are reaped. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
-- **Recovery**: `jobs[].recovery` is an ordered scalar or command list. A failed finite job is recoverable only under `execution.recovery_policy: prompt`, after an attached TTY answers `y`/`yes`; recovery commands run once, then the original job is verified once. `n`, EOF, invalid input, no TTY, and `skip` preserve the original failure without spawning recovery.
+- **Hooks**: `hooks.success` runs after a passing generation. Scalar `hooks.failure` runs immediately after failure. Object-form `hooks.failure.run` waits for `settle` only while that failed watcher generation remains latest. These hooks do not change the result. `hooks.close` runs once when a ready watcher shuts down gracefully, after it reaps active jobs and services. Finite commands do not run settled or close hooks (RUN-HOOKS-CONTRACT).
+- **Recovery**: `jobs[].recovery` accepts one command or an ordered list. A failed finite job can recover only with `execution.recovery_policy: prompt` and an attached TTY answer of `y` or `yes`. Funzzy runs recovery once, then verifies the original job once. `n`, EOF, invalid input, no TTY, or `skip` keeps the failure and does not spawn recovery.
 - **Legacy input**: root task lists and grouped `tasks:` remain accepted and
   are rewritten deterministically with `fzz migrate`.
 

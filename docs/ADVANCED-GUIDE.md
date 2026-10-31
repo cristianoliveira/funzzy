@@ -1,4 +1,6 @@
-# Funzzy advanced: parallel execution, control socket, and agent workflows
+# Use Funzzy for parallel work and exact run control
+
+Use this guide when jobs run in parallel, an agent controls a watcher, or a script waits for external work. Start with the rule for your task, then follow its command example. For a first workflow, use the [daily usage guide](USAGE.md).
 
 ## 1. Parallel execution
 
@@ -66,7 +68,7 @@ time fzz run "@bench" --sequential
 
 ## 2. Control socket
 
-`control` is canonical; `ctl` is its visible alias (identical behavior).
+Use `fzz control` to inspect or control a running watcher. `fzz ctl` is an alias with the same behavior.
 
 ### Socket precedence
 
@@ -136,8 +138,7 @@ selects the latest; an explicit generation is never silently substituted.
 
 ### Freshness
 
-`freshness: current` means the snapshot is exactly the requested generation;
-`stale` means a newer batch exists. Never reconstruct freshness by polling.
+Read the `freshness` field instead of polling to guess whether a result is current. `current` means the snapshot is for the exact generation you requested. `stale` means a newer batch exists.
 
 ### Recovery and control-socket boundaries
 
@@ -211,7 +212,7 @@ the `legacy` profile, never assumed facts.
 
 ## 6. Troubleshooting
 
-| Symptom | Cause → action |
+| Symptom | Cause and next step |
 | --- | --- |
 | No match | path matches no change glob → `fzz explain PATH` |
 | Ignored path | config `ignore` or gitignore won → explain names the source |
@@ -363,24 +364,14 @@ result, so use `trigger: manual` on a normal finite job.
 
 ### 8.5 Bounded observation: `jobs[].timeout` vs control `--timeout`
 
-Two independent deadlines — never conflate them:
+Use two separate deadlines: the job timeout limits work; control `--timeout` limits only how long the caller waits.
 
-- **`execution.timeout: <duration>`** sets the default child lifetime for finite jobs; **`jobs[].timeout`** overrides it. Services remain unbounded by this finite-job timeout; a readiness service's `readiness.timeout` bounds health probing, not service uptime. Both use (`30m`,
-  `500ms`, `90s`; a bare number means seconds). It starts at the job's
-  first successful spawn, covers the job's whole invocation (including
-  multi-command sequences), and on elapse terminates the complete process
-  group — graceful SIGTERM, escalating to SIGKILL, then reap. The job
-  records the typed `timedout` state, the generation fails, pre-kill output
-  stays retrievable (`control output --generation N`), duration history
-  records a failure, and recovery is never offered. Exact user cancellation,
-  generation supersession, and watcher shutdown all outrank the deadline.
-- **Control `--timeout`** owns only the **caller's wait**: an await that
-  expires reports `timeout` and performs no cancellation whatsoever.
+- **Job timeout:** `execution.timeout` sets the default lifetime for finite jobs. `jobs[].timeout` overrides that default. A bare number means seconds; `30m`, `500ms`, and `90s` are also valid. The timer starts when the job first spawns and covers its complete invocation, including multiple commands. On expiry, Funzzy sends SIGTERM to the process group, escalates to SIGKILL, then reaps it. It records the job as `timedout`, fails the generation, and keeps output from before termination available through `control output --generation N`. Duration history records a failure. Recovery is not offered. Exact cancellation, supersession, and shutdown take precedence over the timer.
+- **Control `--timeout`:** an expired await reports `timeout` but does not cancel the job.
 
-A config reload that changes `timeout` affects only generations scheduled
-under the new revision; running generations keep their frozen deadline and
-a stale timer never touches replacement work. `timeout` is rejected on
-`service: true` jobs (a managed service is intentionally unbounded).
+Finite-job timeout does not limit services. `readiness.timeout` bounds a service's health probe, not its uptime. A `service: true` job cannot set `timeout`.
+
+After a config reload, new generations use the new timeout. A running generation keeps its original deadline; an old timer cannot stop replacement work.
 
 Proven black-box in `tests/finite_job_timeouts.rs`.
 
