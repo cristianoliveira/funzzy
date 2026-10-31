@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage {
 #   allowBuiltinFetchGit = true;
 # };
 
-  cargoHash = "sha256-yR3rItzINUKTZ//nttbxkQC24gmZVl2/nGkyPVs3Nqw=";
+  cargoHash = "sha256-WmTCOxhZxOz9E+LMcyXwHYDUVhahYQJTn/StXO2jmLw=";
 
   # NOTE: legacy darwin.apple_sdk.frameworks references were removed in
   # nixpkgs; the default SDK (via SDKROOT) provides CoreServices now.
