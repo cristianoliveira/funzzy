@@ -1,11 +1,8 @@
 # Funzzy Finite-Job Timeout Contract (TASK-0138)
 
-Status: accepted design. Implementation: TASK-0139. Proof: TASK-0140.
-Amended after Kely's verification (evidence:
-/Users/cristianoliveira/.agents/reports/26-08-26/task-0138-finite-job-timeout-contract-verification.md):
-syntax grammar corrected to the shared parser, revision-identity encoding,
-single ordering rule, evidence-surface filters, pi-watcher decoder location,
-flush-dependency note. Round 2: job-wide sequential deadline (§3).
+A finite job uses one deadline from its first successful spawn through all its commands. Its own `timeout` overrides `execution.timeout`; without either value, it remains unbounded. Timeout fails the generation but is not a client-await timeout.
+
+Status: accepted design (TASK-0138). Implementation: TASK-0139. Proof: TASK-0140. Verification corrected duration syntax, revision identity, outcome ordering, evidence filters, the pi-watcher decoder location, and the flush dependency. A second pass clarified the job-wide sequential deadline (§3).
 
 Evidence base (all cited symbols verified in-tree): `executor.rs` (`Executor`,
 `advance`, `advance_task`, `Run`, `ActiveTask`, `Clock`, `POLL_INTERVAL`,
@@ -31,11 +28,7 @@ jobs:
     run: cargo test
 ```
 
-The precedence is `jobs[].timeout` > `execution.timeout` > unbounded. The
-execution default applies only to finite jobs; managed services remain
-unbounded. `null`, zero, and sentinel strings (`inherit`, `unbounded`) are
-invalid. The default is distinct from the control client's `--timeout`.
-
+The precedence is `jobs[].timeout` > `execution.timeout` > unbounded. The execution default applies only to finite jobs; managed services remain unbounded. `null`, zero, and sentinel strings (`inherit`, `unbounded`) are invalid. This deadline differs from the control client's `--timeout`.
 
 ```yaml
 jobs:
@@ -78,13 +71,7 @@ jobs:
 
 ## 3. Deterministic precedence
 
-Evaluation happens inside the existing single-threaded `advance()` poll loop
-(`POLL_INTERVAL` = 10 ms), which already makes every terminal condition
-total-ordered. **Single ordering rule (applies once, consistently):** in
-each `advance_task` iteration the timeout check runs BEFORE `try_wait` —
-so a child that exited at `deadline − ε` but is reaped one poll later is a
-**timeout** outcome (outcome indeterminism bounded by one poll interval;
-accepted). Within one poll iteration the order is:
+The single-threaded `advance()` loop checks outcomes every 10 ms (`POLL_INTERVAL`). In each `advance_task` iteration, check the timeout before `try_wait`. A child that exits just before its deadline but is reaped on the next poll therefore times out. This accepted uncertainty is bounded by one poll interval. Apply this order within each poll:
 
 1. **Generation cancellation/supersession** — the existing
    `run.cancellation_requested()` guard at the top of `advance()` wins over
@@ -98,14 +85,7 @@ accepted). Within one poll iteration the order is:
 5. **Fail-fast sibling failure** — `stop_after_failure` runs inside the
    per-task loop, after the deadline check.
 
-**Sequential multi-command recheck (job-wide):** the deadline is the
-ORIGINAL `ActiveTask.started + timeout` governing the job's whole
-invocation (§2) — before each continuation spawn in a sequential run, the
-ORIGINAL deadline is rechecked; `started` is never reset and no fresh
-deadline is minted. A continuation that cannot meet the remaining budget
-follows the same timeout precedence above (its spawn is already expired at
-spawn-check time). This preserves the job-whole-invocation budget: a
-two-command 30m job gets 30m total, not 60m.
+**Sequential multi-command recheck:** use the original `ActiveTask.started + timeout` for the whole job (§2). Recheck it before each later command spawns. Do not reset `started` or issue a fresh deadline. If the budget has expired at that check, apply the timeout precedence above. A two-command job with a 30m budget gets 30m total, not 60m.
 
 Consequence (explicit): a timeout observed in the same pass as a sibling's
 failure is a **timeout** for the timed-out job while the generation still
@@ -155,11 +135,7 @@ new capture surface; nothing beyond the kill is readable by definition.
 - **Parallel groups:** timeout is per-job; surviving siblings keep their own
   deadlines. A timed-out job is a failure, so fail-fast (`stop_after_failure`)
   applies to siblings exactly as for command failures.
-- **Recovery:** a timed-out job does **not** enter `pending_recoveries` —
-  recovery targets command failures; re-running an unbounded command on a
-  policy deadline would reintroduce unboundedness. Tradeoff recorded: users
-  wanting retry-on-timeout compose it in the command (`timeout 30m cmd ||
-  retry`), not here.
+- **Recovery:** do not add a timed-out job to `pending_recoveries`. Recovery handles command failures. Retrying a command after a policy deadline could make the job unbounded. To retry on timeout, compose that behavior in the command (`timeout 30m cmd || retry`).
 - **Hooks:** generation `failure` hooks fire (generation failed); `success`
   hooks never.
 - **Reload / frozen revisions:** the timeout value is frozen into the task

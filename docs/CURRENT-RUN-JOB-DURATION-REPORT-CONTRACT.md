@@ -1,20 +1,14 @@
 # Current-Run Job Duration Report Contract
 
+Report each finite job's duration from its terminal executor snapshot. Do not measure it again or sum job durations to obtain the generation total. A job that never started has no duration.
+
 ## 1. Scope
 
-This contract defines per-job duration reporting for one Funzzy generation.
-It applies to local `fzz run` results, foreground blocking watches,
-restart-capable worker completions, and correlated control observations.
-
-A report is a projection of the executor's terminal job snapshots. It does not
-measure work itself, alter scheduling, or add historical statistics.
+This contract applies to one Funzzy generation: local `fzz run`, foreground blocking watches, restart-capable worker completions, and correlated control observations. The report projects terminal job snapshots. It does not change scheduling or add historical statistics.
 
 ## 2. Authoritative measurement
 
-`executor::TaskSnapshot.duration_ms` is the sole authoritative per-job
-measurement. Its value is a non-negative integer count of monotonic elapsed
-wall-clock milliseconds from the first successful spawn for that job until the
-job's final terminal outcome.
+`executor::TaskSnapshot.duration_ms` is the sole per-job measurement. It counts non-negative monotonic elapsed wall-clock milliseconds from the job's first successful spawn to its final terminal outcome.
 
 A renderer MUST NOT start another timer, infer a duration from log or event
 timestamps, add command durations, or replace a supplied value. Human
@@ -35,10 +29,7 @@ A job row has one final state and at most one `durationMs` value:
 | A legacy managed service remains alive | service/running, generation remains active | `null` |
 | A readiness-enabled service reaches readiness | `passed` at promotion; later uptime is pool state | terminal snapshot value |
 
-`null` means the job did not obtain a finite executor duration. A human report
-renders it as `-`; it MUST NOT render `0ms`, estimate a value, or imply that a
-never-started job ran. A measured `0` remains a valid integer and is distinct
-from `null`.
+`null` means the executor has no finite duration for the job. Render it as `-` in a human report. Do not show `0ms`, estimate a value, or imply that a job ran when it did not. A measured `0` remains valid and differs from `null`.
 
 A recovered job appears exactly once, in its configured position. Its duration
 covers its original attempt, approval boundary, recovery commands, and final
@@ -47,10 +38,7 @@ phase rows and a successful verification changes its one row to `passed`.
 
 ## 4. Generation total
 
-The generation total is a separate monotonic wall-clock measurement from
-run start until the generation's terminal result. It MUST NOT be calculated by
-summing job durations: serial work, parallel overlap, cancellation, recovery,
-and hooks make such a sum semantically different. Existing aggregate outcome,
+Measure generation total separately with a monotonic wall clock, from run start to the terminal result. Do not sum job durations: serial work, parallel overlap, cancellation, recovery, and hooks make that sum a different measure. Existing aggregate outcome,
 counts, failures, exit status, colors, and log mirroring retain their meanings.
 
 ## 5. Ordering and identity
@@ -82,12 +70,7 @@ Column padding may adapt to names, but row ordering, state labels, and the
 dash for absent durations are deterministic. The shared duration formatter is
 the canonical human rendering and never changes the underlying integer.
 
-Structured snapshots and `task_terminal` events retain their additive
-`tasks[].durationMs` / `durationMs` integer-or-null field. New result
-projections expose the same immutable report value rather than a duplicate
-measurement. A legacy snapshot that lacks task data remains valid: it has no
-job-duration rows, and clients MUST treat availability as unknown rather than
-inventing a value. Per-job duration availability is neither a freshness claim
+Structured snapshots and `task_terminal` events keep their additive `tasks[].durationMs` / `durationMs` integer-or-null field. New projections use the same immutable value; they do not measure again. A legacy snapshot without task data remains valid. It has no job-duration rows, and clients must treat availability as unknown rather than invent a value. Per-job duration availability is neither a freshness claim
 nor a substitute for generation identity.
 
 ## 7. Services and hooks
