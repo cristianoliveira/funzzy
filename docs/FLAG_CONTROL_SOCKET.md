@@ -1,14 +1,14 @@
-## FLAG: `--control-socket <path>`
+# Control a running watcher through a Unix socket
 
-Expose compact watcher state and named-target execution over a Unix domain socket. This mode implies `--non-block` so a newer filesystem event or control request can cancel an obsolete run.
+Set `on.socket` in `.watch.yaml` to let clients inspect status and run named jobs. You can use `--control-socket PATH` to override that path for one invocation. A control socket implies `--on-busy restart`: a newer change can cancel obsolete work.
 
-Prefer one shared project configuration in `.watch.yaml`:
+Prefer one shared project configuration:
 
 ```yaml
 on:
   socket: .tmp/funzzy/control.sock
 
-tasks:
+jobs:
   - name: final checks @agent-final
     run: cargo test
     change: ["src/**", "tests/**"]
@@ -20,9 +20,7 @@ Then start Funzzy without repeating the socket path:
 fzz --log-file .tmp/funzzy/tests.log
 ```
 
-`--control-socket <path>` remains an explicit override and takes precedence over `on.socket` in `.watch.yaml`. Configuring either form implies `--non-block`.
-
-Funzzy creates missing parent directories and creates the socket with permissions `0600`. It removes the socket on graceful shutdown. A live socket at the same path prevents a second server from starting; stale socket files are replaced.
+`--control-socket PATH` takes precedence over `on.socket`. Funzzy creates missing parent directories and gives the socket `0600` permissions. It removes the socket on graceful shutdown. A live socket prevents a second server from using the same path; Funzzy replaces a stale socket file.
 
 The socket uses JSON-RPC 2.0 framed as NDJSON: send one newline-terminated JSON-RPC request or batch per connection. Funzzy returns one newline-terminated response; notifications do not receive responses.
 
@@ -36,14 +34,9 @@ The socket uses JSON-RPC 2.0 framed as NDJSON: send one newline-terminated JSON-
 {"jsonrpc":"2.0","id":"status","result":{"generation":4,"state":"passed","trigger":"src/main.rs","commands":["cargo test"],"durationMs":42,"tasks":[{"id":"checks#1","name":"test","state":"passed","durationMs":37}],"failures":[]}}
 ```
 
-States are `idle`, `running`, `passed`, `failed`, and `cancelled`. Terminal
-snapshots additionally expose one configured-declaration-ordered `tasks` row
-per job. A row's `durationMs` is the executor's monotonic job duration; it is
-independent of serial/parallel scheduling. `null` means the job never started
-or was skipped, while a started cancellation carries its partial elapsed
-integer. Generation `durationMs` is separate wall time, never a sum of rows.
-Human `fzz control status`/`await` output renders the same rows with `-` for
-an absent duration; use JSON or TOON when the exact integer is required.
+A snapshot reports the current state, such as `idle`, `running`, `passed`, `failed`, or `cancelled`. A terminal snapshot also lists one `tasks` row per configured job, in declaration order. Each row's `durationMs` measures that job's elapsed time, whether jobs ran in series or parallel. `null` means the job never started or was skipped. A cancelled job that started keeps its partial duration.
+
+Generation `durationMs` is separate wall-clock time, not a sum of job durations. Human `fzz control status` and `await` show `-` for an absent duration. Use JSON or TOON when you need integer milliseconds.
 
 ### List targets
 
@@ -57,7 +50,7 @@ an absent duration; use JSON or TOON when the exact integer is required.
 
 ### Run named target
 
-The target uses the same task-name substring matching as `--target`:
+The target selects a named job in the running watcher:
 
 ```json
 {"jsonrpc":"2.0","id":"run","method":"run","params":{"target":"@agent-final"}}
@@ -67,6 +60,6 @@ The target uses the same task-name substring matching as `--target`:
 {"jsonrpc":"2.0","id":"run","result":{"runId":5}}
 ```
 
-Poll `status` until `generation` equals `runId` and state is terminal. If generation becomes greater than `runId`, that run was superseded.
+Use `fzz ctl await --generation 5 --timeout 5m` to wait for that exact run. Do not infer its result by polling latest status: a newer run can supersede it. The [advanced control guide](ADVANCED-GUIDE.md#2-control-socket) explains exact-generation waits and output retrieval.
 
-Full command output remains on stdout and in `--log-file`; socket responses intentionally stay compact for agents and editor integrations.
+The socket response stays compact. Funzzy still writes full command output to the console and to `--log-file` when configured.

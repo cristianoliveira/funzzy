@@ -1,72 +1,28 @@
-## FLAG: `--fail-fast`
+# Stop after the first failure with `--fail-fast`
 
-**Minimal version**: 1.4.0
+Use `--fail-fast` when later jobs should not run after a job fails. By default, Funzzy continues with the remaining jobs and reports the combined result.
 
-The default behavior is to continue executing all tasks, regardless of their success or failure and report.
+```bash
+fzz --fail-fast
+```
 
-The `--fail-fast` flag allows you to stop the execution of tasks as soon as one fails. If any task exits with a non-zero status code, all subsequent tasks will be halted immediately. This option is useful when you want to avoid unnecessary task processing if a critical task fails. TIP: Use this to do the red-green-refactor 
+This flag also cancels active jobs in a parallel group and skips jobs that have not started. It does not undo work that a job already completed. `FUNZZY_BAIL` is the environment equivalent.
 
-## USAGE
-
-Consider the following configuration file:
+## Example
 
 ```yaml
-- name: first task
-  run: "echo 'This task will run'"
+on:
   change: "directory/**/*"
 
-- name: failing task
-  run: "exit 1"  # This task is intended to fail
-  change: "directory/**/*"
-
-- name: last task
-  run: "echo 'This task will not run if --fail-fast is set'"
-  change: "directory/**/*"
+jobs:
+  - name: prepare
+    run: echo ready
+  - name: check
+    run: exit 1
+  - name: package
+    run: echo packaged
 ```
 
-### Example without the `--fail-fast` flag
+Without `--fail-fast`, `package` runs after `check` fails. The overall run still fails. With `--fail-fast`, Funzzy skips `package` and reports the failure. If `prepare` and `check` were active in the same parallel group, Funzzy would cancel the active sibling after the first failure.
 
-When you execute `fzz` without using the `--fail-fast` flag, all tasks will be executed regardless of their success or failure:
-
-```bash
-$ fzz
-Funzzy: Running each command...
-
-Funzzy: echo 'This task will run'
-This task will run
-
-Funzzy: exit 1
-
-
-Funzzy: echo 'This task will not run if --fail-fast is set'
-This task will not run if --fail-fast is set
-
-Funzzy results ----------------------------
-Failure; Completed: 2; Failed: 1; Duration: ...s
-```
-
-### Example with the `--fail-fast` flag
-
-When the `--fail-fast` flag is used, task execution stops as soon as a failure is encountered:
-
-```bash
-$ fzz --fail-fast
-Funzzy: Running each command...
-
-Funzzy: echo 'This task will run'
-This task will run
-
-Funzzy: exit 1
-Funzzy results ----------------------------
-- Command exit 1 has failed with exit status: 1
-Failure; Completed: 1; Failed: 1; Duration: ...s
-
-# Notice the 'This task will not run if --fail-fast is set' was not echoed
-```
-
-Running the `fzz` command with the `--fail-fast` flag will ensure tasks stop on failure, optimizing task execution time and preventing unnecessary work.
-
-### Tests
-
-Refer to `tests/watching_with_fail_fast_flag.rs` for detailed test scenarios related to the `--fail-fast` functionality.
-
+For behavior-level tests, see `tests/watching_with_fail_fast_flag.rs`. This flag was introduced in version 1.4.0. See [parallel failures and restart](ADVANCED-GUIDE.md#failures-and-restart) for V2 behavior.
