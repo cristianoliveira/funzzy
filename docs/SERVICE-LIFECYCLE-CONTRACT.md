@@ -1,6 +1,6 @@
 # Funzzy Service Lifecycle Contract
 
-Readiness changes who owns a running service. A service without `readiness` keeps its generation open. A ready service moves to the worker pool, so its generation can settle while it stays alive.
+Readiness changes who owns a running service. A service without `readiness` keeps its generation open. In a watcher, a ready service moves to the worker pool, so its generation can settle while it stays alive. A one-shot run stops the service before returning.
 
 Status: TASK-0161 implemented readiness settlement and worker-owned pooling. External black-box proof is in `tests/control_await.rs` (`30f5ff4`). This contract supersedes the TASK-0133 description that treated every live service as generation-owned.
 
@@ -53,7 +53,7 @@ is scheduled; a later reload cannot change an in-flight probe decision.
 
 ## 3. Readiness execution
 
-After the service spawns, Funzzy runs at most one readiness attempt at a time. A failed attempt must exit before a retry starts. The interval starts after that exit. Exit code zero promotes the service only if it is still alive. Non-zero attempts retry until success or the absolute timeout. A readiness-command spawn failure ends probing immediately.
+After the service spawns, Funzzy runs at most one readiness attempt at a time. A failed attempt must exit before a retry starts. The interval starts after that exit. Exit code zero promotes the service only if it is still alive. Non-zero attempts retry until success or the absolute timeout. A readiness-command spawn failure fails the service immediately.
 
 A timeout terminates and reaps an active readiness process group before the
 service lifecycle becomes failed. A service that exits before readiness is a
