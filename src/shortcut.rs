@@ -8,12 +8,26 @@ use std::sync::Arc;
 /// shutdown path. It is a single byte in both raw terminals and pipes.
 pub const TRIGGER_KEY: u8 = 0x07;
 
+/// Ctrl-R retries the failed and timed-out finite jobs of the latest
+/// terminal run. Single byte, same raw-mode delivery as Ctrl-G.
+pub const RETRY_KEY: u8 = 0x12;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyDecode {
     Trigger,
+    Retry,
     Ignore,
     Partial,
     Eof,
+}
+
+/// The one-shot action a latched shortcut will perform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShortcutAction {
+    /// Run the complete configured workflow (Ctrl-G).
+    FullRun,
+    /// Retry failed/timed-out finite jobs of the latest terminal run (Ctrl-R).
+    RetryFailed,
 }
 
 /// Decodes one input read without terminal or process side effects.
@@ -26,31 +40,50 @@ pub fn decode_key(bytes: &[u8], eof: bool) -> KeyDecode {
     match bytes {
         [] | [0x1b] | [0x1b, b'['] => KeyDecode::Partial,
         [TRIGGER_KEY] => KeyDecode::Trigger,
+        [RETRY_KEY] => KeyDecode::Retry,
         _ => KeyDecode::Ignore,
     }
 }
 
-/// Latches at most one shortcut request until the watch loop completes it.
+/// Latches at most one shortcut action until the watch loop completes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TriggerLatch {
-    pending: bool,
+    pending: Option<ShortcutAction>,
 }
 
 impl TriggerLatch {
+    /// Latches the action for this shortcut key. Returns false when the key
+    /// carries no action or an action is already latched (first one wins).
     pub fn accept(&mut self, decoded: KeyDecode) -> bool {
-        if decoded != KeyDecode::Trigger || self.pending {
+        let Some(action) = Self::action(decoded) else {
+            return false;
+        };
+        if self.pending.is_some() {
             return false;
         }
-        self.pending = true;
+        self.pending = Some(action);
         true
     }
 
     pub fn reset(&mut self) {
-        self.pending = false;
+        self.pending = None;
     }
 
     pub fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The action waiting to run, if any.
+    pub fn latched(&self) -> Option<ShortcutAction> {
         self.pending
+    }
+
+    fn action(decoded: KeyDecode) -> Option<ShortcutAction> {
+        match decoded {
+            KeyDecode::Trigger => Some(ShortcutAction::FullRun),
+            KeyDecode::Retry => Some(ShortcutAction::RetryFailed),
+            KeyDecode::Ignore | KeyDecode::Partial | KeyDecode::Eof => None,
+        }
     }
 }
 
@@ -176,11 +209,12 @@ impl Drop for RawTerminal {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_key, KeyDecode, TriggerLatch, TRIGGER_KEY};
+    use super::{decode_key, KeyDecode, ShortcutAction, TriggerLatch, RETRY_KEY, TRIGGER_KEY};
 
     #[test]
     fn decodes_only_the_documented_single_key() {
         assert_eq!(decode_key(&[TRIGGER_KEY], false), KeyDecode::Trigger);
+        assert_eq!(decode_key(&[RETRY_KEY], false), KeyDecode::Retry);
         assert_eq!(decode_key(b"x", false), KeyDecode::Ignore);
         assert_eq!(decode_key(&[0x1b], false), KeyDecode::Partial);
         assert_eq!(decode_key(&[0x1b, b'['], false), KeyDecode::Partial);
@@ -199,8 +233,19 @@ mod tests {
         assert!(latch.accept(KeyDecode::Trigger));
         assert!(!latch.accept(KeyDecode::Trigger));
         assert!(!latch.accept(KeyDecode::Ignore));
-        assert!(latch.is_pending());
+        assert_eq!(latch.latched(), Some(ShortcutAction::FullRun));
         latch.reset();
+        assert_eq!(latch.latched(), None);
         assert!(latch.accept(KeyDecode::Trigger));
+    }
+
+    #[test]
+    fn latch_keeps_the_first_action_and_ignores_later_keys() {
+        let mut latch = TriggerLatch::default();
+        assert!(latch.accept(KeyDecode::Retry));
+        assert_eq!(latch.latched(), Some(ShortcutAction::RetryFailed));
+        // A different shortcut arriving while latched changes nothing.
+        assert!(!latch.accept(KeyDecode::Trigger));
+        assert_eq!(latch.latched(), Some(ShortcutAction::RetryFailed));
     }
 }

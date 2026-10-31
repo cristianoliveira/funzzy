@@ -112,6 +112,7 @@ fn agent_yaml() -> &'static str {
 #   fzz run verify     # run once locally
 #   fzz watch          # start the watcher + control socket
 #   Ctrl-G             # run the complete pipeline once while watching
+#   Ctrl-R             # retry the failed and timed-out finite jobs of the latest run
 on:
   change: "**/*"
   socket: .watch.sock

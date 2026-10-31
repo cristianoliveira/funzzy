@@ -120,7 +120,7 @@ fzz                              # start watching
 
 ## People and agents use the same loop
 
-You can read terminal output and press **Ctrl-G** to start all configured jobs. An agent can use the control socket:
+You can read terminal output and press **Ctrl-G** to start all configured jobs, or **Ctrl-R** to retry only the failed and timed-out finite jobs of the latest run. An agent can use the control socket:
 
 ```bash
 fzz ctl capabilities --format toon

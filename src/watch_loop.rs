@@ -97,6 +97,16 @@ pub trait RunStrategy {
     /// trigger. Returns a generation for asynchronous strategies.
     fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64>;
 
+    /// Retries only the failed and timed-out finite jobs of the latest
+    /// terminal run (Ctrl-R, KEYBOARD-RETRY-CONTRACT). Implementations own
+    /// their selection source and present every rejection; they never fall
+    /// back to a full run. Returns the scheduled generation for asynchronous
+    /// strategies, `None` when the retry ran in-process or was rejected.
+    fn retry_latest(&self, watches: &std::sync::Arc<std::sync::Mutex<Watches>>) -> Option<u64> {
+        let _ = watches;
+        None
+    }
+
     /// Whether the strategy currently has an in-flight generation.
     fn is_running(&self) -> bool {
         false
@@ -233,7 +243,7 @@ pub fn watch_loop(
                 }
             }
             if matches!(trigger_phase, ManualTriggerPhase::Waiting) && !strategy.is_running() {
-                trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
+                run_latched_action(strategy, watches, &mut trigger_latch, &mut trigger_phase);
             }
             return;
         };
@@ -241,7 +251,10 @@ pub fn watch_loop(
             return;
         }
         if !trigger_latch.accept(key) {
-            if key == crate::shortcut::KeyDecode::Trigger {
+            if matches!(
+                key,
+                crate::shortcut::KeyDecode::Trigger | crate::shortcut::KeyDecode::Retry
+            ) {
                 stdout::info("Shortcut already latched; waiting for the current run to finish.");
             }
             return;
@@ -250,7 +263,7 @@ pub fn watch_loop(
             trigger_phase = ManualTriggerPhase::Waiting;
             stdout::info("Shortcut latched; waiting for the current run to finish.");
         } else {
-            trigger_manual_run(strategy, watches, &mut trigger_latch, &mut trigger_phase);
+            run_latched_action(strategy, watches, &mut trigger_latch, &mut trigger_phase);
         }
     };
 
@@ -350,6 +363,80 @@ enum ManualTriggerPhase {
     Idle,
     Waiting,
     Active(u64),
+}
+
+/// Presents one keyboard-retry rejection without ever falling back to a full
+/// run. Messages mirror the control-socket retry outcomes so the terminal
+/// and socket clients learn the same reasons.
+fn present_retry_rejection(error: &crate::control::ControlRetryError) {
+    match error {
+        crate::control::ControlRetryError::SourceUnavailable { .. } => {
+            stdout::warn("Shortcut ignored: no previous run to retry.");
+        }
+        crate::control::ControlRetryError::SourceNotTerminal { .. } => {
+            stdout::warn(
+                "Shortcut ignored: latest run has not finished; try again when it is terminal.",
+            );
+        }
+        crate::control::ControlRetryError::StaleRevision { .. } => {
+            stdout::warn(
+                "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
+            );
+        }
+        crate::control::ControlRetryError::NoRetryableJobs { .. } => {
+            stdout::warn("Shortcut ignored: latest run has no failed or timed-out jobs to retry.");
+        }
+        crate::control::ControlRetryError::UnsupportedService { name } => {
+            stdout::warn(&format!(
+                "Shortcut ignored: service job '{}' cannot be retried.",
+                name
+            ));
+        }
+        crate::control::ControlRetryError::WatcherBusy => {
+            stdout::warn(
+                "Shortcut ignored: watcher is busy; press Ctrl-R again after the current run.",
+            );
+        }
+        crate::control::ControlRetryError::Internal(message) => {
+            stdout::error(&format!(
+                "failed to retry from keyboard shortcut: {message}"
+            ));
+        }
+    }
+}
+
+/// Runs the one latched shortcut action: Ctrl-G the full pipeline, Ctrl-R
+/// the failed-job retry. The latch carries exactly one action; the first
+/// shortcut received while a run is active wins.
+fn run_latched_action(
+    strategy: &dyn RunStrategy,
+    watches: &Arc<Mutex<Watches>>,
+    latch: &mut crate::shortcut::TriggerLatch,
+    phase: &mut ManualTriggerPhase,
+) {
+    match latch.latched() {
+        Some(crate::shortcut::ShortcutAction::RetryFailed) => {
+            trigger_retry_run(strategy, watches, latch, phase)
+        }
+        _ => trigger_manual_run(strategy, watches, latch, phase),
+    }
+}
+
+fn trigger_retry_run(
+    strategy: &dyn RunStrategy,
+    watches: &Arc<Mutex<Watches>>,
+    latch: &mut crate::shortcut::TriggerLatch,
+    phase: &mut ManualTriggerPhase,
+) {
+    // Hooks and plan are owned by each strategy under its own locks: the
+    // non-block worker freezes committed hooks per schedule, and the blocking
+    // strategy reads one committed watches snapshot. The loop only dispatches.
+    if let Some(generation) = strategy.retry_latest(watches) {
+        *phase = ManualTriggerPhase::Active(generation);
+    } else {
+        latch.reset();
+        *phase = ManualTriggerPhase::Idle;
+    }
 }
 
 fn trigger_manual_run(
@@ -473,6 +560,19 @@ fn observe_triggers(watches: &Watches, batch: &Batch, trigger: &str, generation:
 /// honoring fail-fast, then presents the results.
 pub struct BlockingStrategy {
     workflow: WorkflowRunner,
+    /// Latest terminal in-process run outcome (KEYBOARD-RETRY-CONTRACT):
+    /// terminal task snapshots, the trigger path that produced them, and the
+    /// frozen config revision they ran under, so Ctrl-R can re-run exactly
+    /// the failed/timed-out finite jobs with the original filepath context
+    /// and never across a config change.
+    latest_run: Mutex<Option<LatestBlockingRun>>,
+}
+
+#[derive(Clone)]
+struct LatestBlockingRun {
+    tasks: Vec<crate::task_result::TaskSnapshot>,
+    filepath: Option<String>,
+    revision: Option<ConfigRevision>,
 }
 
 impl BlockingStrategy {
@@ -498,6 +598,7 @@ impl BlockingStrategy {
                 None,
                 events,
             ),
+            latest_run: Mutex::new(None),
         }
     }
 
@@ -530,32 +631,17 @@ impl RunStrategy for BlockingStrategy {
         "wait"
     }
 
-    fn run_manual(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self
+    fn run_manual(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let outcome = self
             .workflow
-            .run(plan, RunMetadata::new(0, "keyboard"), None)
-        {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+            .run(plan, RunMetadata::new(0, "keyboard"), None);
+        self.finish_run(outcome, revision, None);
         None
     }
 
-    fn run_init(&self, plan: RunPlan, _revision: Option<ConfigRevision>) -> Option<u64> {
-        match self.workflow.run(plan, RunMetadata::new(0, "init"), None) {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+    fn run_init(&self, plan: RunPlan, revision: Option<ConfigRevision>) -> Option<u64> {
+        let outcome = self.workflow.run(plan, RunMetadata::new(0, "init"), None);
+        self.finish_run(outcome, revision, None);
         None
     }
 
@@ -564,20 +650,106 @@ impl RunStrategy for BlockingStrategy {
         plan: RunPlan,
         filepath: &str,
         batch: &Batch,
-        _revision: Option<ConfigRevision>,
+        revision: Option<ConfigRevision>,
     ) -> Option<u64> {
         let metadata =
             RunMetadata::correlated(0, filepath, Some(batch.id.0), None, batch.changed.clone());
-        match self.workflow.run(plan, metadata, Some(filepath)) {
-            Ok(completed) => stdout::present_results(
-                completed.results,
-                completed.elapsed,
-                Some(&completed.outcome),
-                &completed.tasks,
-            ),
-            Err(error) => stdout::error(&error),
-        }
+        let outcome = self.workflow.run(plan, metadata, Some(filepath));
+        self.finish_run(outcome, revision, Some(filepath));
         None
+    }
+
+    fn retry_latest(&self, watches: &Arc<Mutex<Watches>>) -> Option<u64> {
+        let latest = self.latest_run.lock().unwrap().clone();
+        let Some(latest) = latest else {
+            stdout::warn("Shortcut ignored: no previous run to retry.");
+            return None;
+        };
+        let selected = match crate::retry::retryable_task_names(&latest.tasks) {
+            Ok(selected) => selected,
+            Err(crate::retry::RetrySelectionError::NoRetryableJobs) => {
+                stdout::warn(
+                    "Shortcut ignored: latest run has no failed or timed-out jobs to retry.",
+                );
+                return None;
+            }
+        };
+
+        let (plan, hooks, current_revision) = {
+            let watches = watches.lock().unwrap();
+            // One committed snapshot decides the retry: revision identity,
+            // plan selection, and terminal hooks must come from the same
+            // revision, never split across a reload commit (TASK-0091
+            // semantics; same revision guard as the socket retry).
+            let plan = watches.retry_plan(&selected);
+            (plan, watches.hooks(), watches.revision().cloned())
+        };
+        if latest.revision != current_revision {
+            stdout::warn(
+                "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
+            );
+            return None;
+        }
+        if plan.is_empty() || plan.task_names() != selected {
+            stdout::warn(
+                "Shortcut ignored: config changed after the latest run; trigger a fresh run first.",
+            );
+            return None;
+        }
+        self.workflow.update_generation_hooks(hooks);
+        for task in plan.stages.iter().flat_map(|stage| match stage {
+            crate::plan::Stage::Serial(task) => vec![task],
+            crate::plan::Stage::Parallel { tasks, .. } => tasks.iter().collect(),
+        }) {
+            if task.service {
+                stdout::warn(&format!(
+                    "Shortcut ignored: service job '{}' cannot be retried.",
+                    task.name
+                ));
+                return None;
+            }
+        }
+
+        stdout::info("Retrying failed jobs from keyboard shortcut.");
+        let metadata = RunMetadata::new(0, "retry");
+        let outcome = self
+            .workflow
+            .run(plan, metadata, latest.filepath.as_deref());
+        self.finish_run(outcome, current_revision, latest.filepath.as_deref());
+        None
+    }
+}
+
+impl BlockingStrategy {
+    /// Records one finished in-process run as the retry source and presents
+    /// its results. A failed preparation (`Err`) clears the stored outcome:
+    /// the newer attempt never produced work, so an older failure must not
+    /// stay retryable across it.
+    fn finish_run(
+        &self,
+        outcome: Result<crate::executor::CompletedRun, String>,
+        revision: Option<ConfigRevision>,
+        filepath: Option<&str>,
+    ) {
+        match outcome {
+            Ok(completed) => {
+                *self.latest_run.lock().unwrap() = Some(LatestBlockingRun {
+                    tasks: completed.tasks.clone(),
+                    filepath: filepath.map(str::to_owned),
+                    revision,
+                });
+                stdout::present_results(
+                    completed.results,
+                    completed.elapsed,
+                    Some(&completed.outcome),
+                    &completed.tasks,
+                );
+            }
+            Err(error) => {
+                *self.latest_run.lock().unwrap() = None;
+                stdout::error(&error);
+            }
+        }
     }
 }
 
@@ -877,6 +1049,12 @@ impl NonBlockStrategy {
             };
             filepaths.remove(&oldest);
         }
+    }
+
+    /// Test seam mirroring the retained trigger path of a completed run.
+    #[cfg(test)]
+    fn remember_filepath_for_test(&self, generation: u64, filepath: Option<&str>) {
+        self.remember_filepath(generation, filepath.map(str::to_owned));
     }
 
     /// Cancels an exact generation through the worker run contract
@@ -1232,6 +1410,19 @@ impl RunStrategy for NonBlockStrategy {
             }
             Err(error) => {
                 stdout::error(&format!("failed to initiate keyboard run: {:?}", error));
+                None
+            }
+        }
+    }
+
+    fn retry_latest(&self, _watches: &Arc<Mutex<Watches>>) -> Option<u64> {
+        match self.retry_generation(None) {
+            Ok(retry) => {
+                stdout::info("Retrying failed jobs from keyboard shortcut.");
+                Some(retry.run_id)
+            }
+            Err(error) => {
+                present_retry_rejection(&error);
                 None
             }
         }
@@ -2129,6 +2320,363 @@ mod modification_gate_seed_tests {
             routed.len(),
             1,
             "fill-only re-seed keeps the older baseline"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod keyboard_retry_tests {
+    use super::{NonBlockStrategy, RunStrategy};
+    use crate::rules::Rules;
+    use crate::watcher_state::WatcherState;
+    use crate::watches::Watches;
+    use crate::workers;
+    use std::sync::{Arc, Mutex};
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("fzz-kbd-{}-{label}", std::process::id()))
+    }
+
+    fn rule(name: &str) -> Rules {
+        Rules::new(
+            name.to_owned(),
+            vec!["echo hi".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )
+    }
+
+    /// Ctrl-R on a blocking watch re-runs exactly the failed finite jobs of
+    /// the latest terminal run, never the passed ones (KEYBOARD-RETRY).
+    #[test]
+    fn keyboard_retry_reruns_only_failed_blocking_jobs() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-blocking");
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let passes = Rules::new(
+            "passes".to_owned(),
+            vec!["echo pass >> passes.log".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(Watches::new(vec![fails, passes])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches
+            .lock()
+            .unwrap()
+            .retry_plan(&["fails".to_owned(), "passes".to_owned()]);
+        strategy.run_manual(plan, None);
+
+        std::fs::write(dir.join("allow"), "now passes").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\nfail\n",
+            "the failed job must run exactly twice"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("passes.log")).unwrap(),
+            "pass\n",
+            "the passed job must never be retried"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ctrl-R without any previous run is a clear rejection, never a full run.
+    #[test]
+    fn keyboard_retry_without_a_previous_blocking_run_is_rejected() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-no-run");
+        std::fs::create_dir_all(&dir).unwrap();
+        let watches = Arc::new(Mutex::new(Watches::new(vec![rule("my tests")])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert!(!dir.join("fails.log").exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ctrl-R after an all-pass run has nothing eligible: rejected, nothing
+    /// scheduled, no fallback run.
+    #[test]
+    fn keyboard_retry_after_a_passing_blocking_run_is_rejected() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-passed");
+        std::fs::create_dir_all(&dir).unwrap();
+        let passes = Rules::new(
+            "passes".to_owned(),
+            vec!["echo pass >> passes.log".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(Watches::new(vec![passes])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches.lock().unwrap().retry_plan(&["passes".to_owned()]);
+        strategy.run_manual(plan, None);
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("passes.log")).unwrap(),
+            "pass\n",
+            "a passing run must never be retried"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Ctrl-R on a socket-enabled non-block watch schedules the retry of the
+    /// latest terminal generation and stays idempotent for the same source.
+    #[test]
+    fn keyboard_retry_schedules_the_latest_terminal_generation() {
+        use crate::task_result::{TaskSnapshot, TaskState};
+
+        let watches = Watches::new(vec![rule("my tests")]);
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let control_state = Arc::new(Mutex::new(WatcherState::default()));
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Started {
+                run_id: 1,
+                trigger: "src/main.rs".to_owned(),
+                batch: Some(8),
+                predecessor: None,
+                changed: vec!["src/main.rs".to_owned()],
+                commands: vec!["false".to_owned()],
+                target: None,
+                execution_signature: None,
+                effective_concurrency: None,
+                concurrency_source: None,
+                revision: None,
+                revision_hash: None,
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::TaskTerminal {
+                run_id: 1,
+                task: TaskSnapshot {
+                    position: 0,
+                    id: "my tests".to_owned(),
+                    name: "my tests".to_owned(),
+                    state: TaskState::Failed,
+                    duration_ms: Some(1),
+                },
+            });
+        control_state
+            .lock()
+            .unwrap()
+            .apply(crate::executor::Event::Finished {
+                run_id: 1,
+                superseded_by: None,
+                elapsed: std::time::Duration::from_millis(1),
+                failures: vec!["my tests failed".to_owned()],
+            });
+        let shared_watches = Arc::new(Mutex::new(watches));
+        let strategy = NonBlockStrategy::new_arc_with_shared(
+            worker.clone(),
+            shared_watches.clone(),
+            None,
+            control_state,
+            None,
+            None,
+            Arc::new(crate::watcher_state::WatcherInstance::new()),
+            None,
+            None,
+            None,
+        );
+        // The source generation's trigger path is retained by the normal run
+        // path; seed it here since the state events were applied manually.
+        strategy.remember_filepath_for_test(1, Some("src/main.rs"));
+
+        let first = strategy.retry_latest(&shared_watches);
+        assert!(first.is_some(), "a failed latest run must schedule a retry");
+        assert_eq!(
+            strategy.retry_latest(&shared_watches),
+            first,
+            "the same latest source must not reschedule"
+        );
+    }
+
+    /// Ctrl-R on a non-block watch with no runs at all is a rejection.
+    #[test]
+    fn keyboard_retry_without_a_previous_non_block_run_is_rejected() {
+        let watches = Arc::new(Mutex::new(Watches::new(vec![rule("my tests")])));
+        let worker = Arc::new(workers::Worker::new(false, false, |_| {}));
+        let strategy = NonBlockStrategy::new_arc(
+            worker,
+            Watches::new(vec![]),
+            None,
+            Arc::new(Mutex::new(WatcherState::default())),
+            None,
+            None,
+        );
+
+        assert_eq!(strategy.retry_latest(&watches), None);
+    }
+
+    /// A committed config change after the latest run rejects the keyboard
+    /// retry atomically instead of retrying a partial selection.
+    #[test]
+    fn keyboard_retry_after_a_blocking_config_change_is_rejected() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-stale");
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let passes = Rules::new(
+            "passes".to_owned(),
+            vec!["echo pass >> passes.log".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(Watches::new(vec![fails, passes.clone()])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches
+            .lock()
+            .unwrap()
+            .retry_plan(&["fails".to_owned(), "passes".to_owned()]);
+        strategy.run_manual(plan, None);
+
+        // Live reload removes the failed job; the recorded selection can no
+        // longer be reproduced from the committed topology.
+        *watches.lock().unwrap() = Watches::new(vec![passes]);
+
+        std::fs::write(dir.join("allow"), "passes now").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\n",
+            "a stale selection must not schedule partial work"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("passes.log")).unwrap(),
+            "pass\n",
+            "rejection must not schedule any work"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A hot reload that keeps every task name but changes commands bumps the
+    /// config revision: Ctrl-R must reject instead of silently running the
+    /// NEW commands for the OLD failure (same safety as the socket retry).
+    #[test]
+    fn keyboard_retry_rejects_a_same_name_command_change_under_a_new_revision() {
+        use super::BlockingStrategy;
+        use crate::config_revision::ConfigRevision;
+
+        let dir = scratch("kbd-retry-revision");
+        std::fs::create_dir_all(&dir).unwrap();
+        let revision_one = ConfigRevision {
+            number: 1,
+            hash: "revision-one".to_owned(),
+        };
+        let revision_two = ConfigRevision {
+            number: 2,
+            hash: "revision-two".to_owned(),
+        };
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(
+            Watches::new(vec![fails]).with_revision(revision_one.clone()),
+        ));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches.lock().unwrap().retry_plan(&["fails".to_owned()]);
+        strategy.run_manual(plan, Some(revision_one));
+
+        // Hot reload: same task name, different committed revision.
+        *watches.lock().unwrap() = Watches::new(vec![Rules::new(
+            "fails".to_owned(),
+            vec!["echo different >> fails.log".to_owned()],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        )])
+        .with_revision(revision_two);
+
+        std::fs::write(dir.join("allow"), "passes now").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\n",
+            "a revision change must reject the retry even with identical task names"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A newer run whose preparation failed clears the stored outcome: an
+    /// older failure must not stay retryable across the failed attempt.
+    #[test]
+    fn keyboard_retry_after_a_failed_blocking_preparation_reports_no_previous_run() {
+        use super::BlockingStrategy;
+
+        let dir = scratch("kbd-retry-cleared");
+        std::fs::create_dir_all(&dir).unwrap();
+        let fails = Rules::new(
+            "fails".to_owned(),
+            vec![
+                "echo fail >> fails.log; if test -f allow; then exit 0; else exit 1; fi".to_owned(),
+            ],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+        let watches = Arc::new(Mutex::new(Watches::new(vec![fails])));
+        let strategy = BlockingStrategy::new(dir.clone(), false, false, 1);
+
+        let plan = watches.lock().unwrap().retry_plan(&["fails".to_owned()]);
+        strategy.run_manual(plan, None);
+
+        // The next attempt failed before producing any work.
+        strategy.finish_run(Err("cwd no longer exists".to_owned()), None, None);
+
+        std::fs::write(dir.join("allow"), "passes now").unwrap();
+        assert_eq!(RunStrategy::retry_latest(&strategy, &watches), None);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("fails.log")).unwrap(),
+            "fail\n",
+            "a cleared outcome must not replay the older failure"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();
