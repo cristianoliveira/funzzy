@@ -132,7 +132,7 @@ impl Command for WatchNonBlockCommand {
         let events_state = self.events.clone();
         let hooks = self.watches.hooks();
         let worker = Arc::new(
-            workers::Worker::with_root_and_concurrency_and_outputs(
+            workers::Worker::with_root_and_concurrency_and_outputs_and_shutdown(
                 self.verbose,
                 self.fail_fast,
                 self.watches.root().to_path_buf(),
@@ -151,6 +151,9 @@ impl Command for WatchNonBlockCommand {
                     broker_state.publish();
                 },
                 Some(worker_outputs),
+                self.shutdown
+                    .as_ref()
+                    .map(|shutdown| shutdown.requested_flag()),
             )
             .with_hooks(hooks)
             .with_recovery_policy(self.watches.recovery_policy())
@@ -216,7 +219,7 @@ impl Command for WatchNonBlockCommand {
                 .lifecycle()
                 .watch(Arc::new(move |_| broker_pub.publish()));
         }
-        watch_loop(
+        let result = watch_loop(
             &shared,
             self.run_on_init,
             &*strategy,
@@ -225,6 +228,13 @@ impl Command for WatchNonBlockCommand {
             Some(swap_rx),
             self.reload_ready.clone(),
             self.shutdown.clone(),
-        )
+        );
+        // The strategy and reload coordinator retain shared Worker handles.
+        // Stop the worker-owned service pool explicitly before signal exit,
+        // because process::exit does not run Arc-held destructors.
+        let shutdown_result = strategy
+            .shutdown_worker()
+            .map_err(crate::errors::FzzError::GenericError);
+        result.and(shutdown_result)
     }
 }

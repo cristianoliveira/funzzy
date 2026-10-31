@@ -615,6 +615,9 @@ struct ActiveTask {
     current_command: Option<String>,
     failures: Vec<String>,
     context: TaskContext,
+    /// Keeps the generation's private changed-path manifest alive for this
+    /// supervised task, including service handoff, readiness and recovery.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     context_validated: bool,
     group_occurrence: Option<String>,
     /// When the first command of this task spawned, for per-task duration
@@ -667,6 +670,7 @@ impl From<TaskPlan> for ActiveTask {
             current_command: None,
             failures: vec![],
             context: task.context,
+            trigger_paths_manifest: None,
             context_validated: false,
             group_occurrence: task.group_occurrence,
             started: None,
@@ -707,6 +711,10 @@ pub struct Run {
     /// is deterministic when parallel jobs complete out of order.
     task_snapshots: Vec<TaskSnapshot>,
     metadata: RunMetadata,
+    /// Generation owner retained until all finite work settles. Individual
+    /// service tasks clone it before handoff so their manifest outlives the
+    /// terminal generation event without becoming globally persistent.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     superseded_by: Option<u64>,
     cancellation: CancellationToken,
     started: Instant,
@@ -867,6 +875,15 @@ impl Executor {
     }
 
     pub fn start(&self, metadata: RunMetadata, plan: RunPlan) -> Run {
+        self.start_with_trigger_paths(metadata, plan, None)
+    }
+
+    pub(crate) fn start_with_trigger_paths(
+        &self,
+        metadata: RunMetadata,
+        plan: RunPlan,
+        trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
+    ) -> Run {
         self.events.emit(Event::Started {
             run_id: metadata.run_id,
             trigger: metadata.trigger.clone(),
@@ -893,6 +910,7 @@ impl Executor {
             outcomes: vec![],
             task_snapshots: vec![],
             metadata,
+            trigger_paths_manifest,
             superseded_by: None,
             cancellation: CancellationToken::new(),
             started: self.clock.now(),
@@ -1056,7 +1074,15 @@ impl Executor {
             let Some(task) = run.queued.pop_front() else {
                 return;
             };
-            run.active.push(task.into());
+            let needs_manifest = task
+                .context
+                .environment
+                .contains_key(crate::plan::TRIGGER_PATHS_FILE_ENV);
+            let mut active: ActiveTask = task.into();
+            if needs_manifest {
+                active.trigger_paths_manifest = run.trigger_paths_manifest.clone();
+            }
+            run.active.push(active);
         }
     }
 
@@ -2873,11 +2899,20 @@ impl Executor {
         still_running
     }
 
-    pub fn run_to_completion(&self, mut metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+    pub fn run_to_completion(&self, metadata: RunMetadata, plan: RunPlan) -> CompletedRun {
+        self.run_to_completion_with_trigger_paths(metadata, plan, None)
+    }
+
+    pub(crate) fn run_to_completion_with_trigger_paths(
+        &self,
+        mut metadata: RunMetadata,
+        plan: RunPlan,
+        trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
+    ) -> CompletedRun {
         // Finite commands have no future generation to settle against; their
         // failure hook is always immediate.
         metadata.hooks.failure_settle = None;
-        let mut run = self.start(metadata, plan);
+        let mut run = self.start_with_trigger_paths(metadata, plan, trigger_paths_manifest);
         loop {
             match self.advance(&mut run) {
                 Step::Finished => return self.finish(run),
@@ -2990,6 +3025,60 @@ mod tests {
         .expect("concurrency one is supported")
         .run_to_completion(RunMetadata::new(0, "test"), plan)
         .results
+    }
+
+    #[test]
+    fn recovery_commands_read_the_generation_changed_path_manifest() {
+        let suffix = format!("{}-recovery-manifest", std::process::id());
+        let marker = std::env::temp_dir().join(format!("funzzy-{suffix}-marker"));
+        let output = std::env::temp_dir().join(format!("funzzy-{suffix}-output.json"));
+        let _ = std::fs::remove_file(&marker);
+        let _ = std::fs::remove_file(&output);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a file.rs".to_owned(), "src/b.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
+            .unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let executor = Executor::new(
+            Arc::new(SystemProcessRunner),
+            Arc::new(SystemClock),
+            1,
+            Arc::new(|_| {}),
+            false,
+            false,
+        )
+        .unwrap()
+        .with_recovery_approval(Arc::new(TestApproval {
+            decision: ApprovalDecision::Approved,
+            requests,
+        }));
+        let plan = RunPlan::from_rules(vec![recovery_rule(
+            &format!("test -f '{}'", marker.display()),
+            &[&format!(
+                "cp \"$FZZ_TRIGGER_PATHS_FILE\" '{}'; touch '{}'",
+                output.display(),
+                marker.display()
+            )],
+        )])
+        .with_trigger_paths_file(Some(&manifest_path));
+
+        let completed = executor.run_to_completion_with_trigger_paths(
+            RunMetadata::new(41, "test"),
+            plan,
+            Some(manifest),
+        );
+
+        assert!(completed.outcome.is_success());
+        let decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(&output).unwrap()).unwrap();
+        assert_eq!(decoded, vec!["src/a file.rs", "src/b.rs"]);
+        assert!(!manifest_path.exists());
+        let _ = std::fs::remove_file(marker);
+        let _ = std::fs::remove_file(output);
     }
 
     #[test]
@@ -4326,6 +4415,80 @@ mod tests {
         let mut handoff = handoff.take().unwrap();
         executor.shutdown_service_handoff(&mut handoff);
         assert!(runner.shutdown_commands().contains(&"serve".to_owned()));
+    }
+
+    #[test]
+    fn changed_path_manifest_outlives_ready_service_until_handoff_shutdown() {
+        let runner = FakeRunner::default();
+        runner.complete("probe", true);
+        let executor = fake_executor(runner, 1, false);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
+            .unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let plan = RunPlan::from_rules(vec![readiness_service("api")])
+            .with_trigger_paths_file(Some(&manifest_path));
+        let mut run = executor.start_with_trigger_paths(
+            RunMetadata::new(206, "test"),
+            plan,
+            Some(Arc::clone(&manifest)),
+        );
+        drop(manifest);
+
+        for _ in 0..8 {
+            if matches!(executor.advance(&mut run), Step::Finished) {
+                break;
+            }
+        }
+        let mut handoff = None;
+        let _completed =
+            executor.finish_with_service_handoff(run, |_| {}, |services| handoff = Some(services));
+        assert!(
+            manifest_path.exists(),
+            "ready service must retain its manifest after generation settlement"
+        );
+
+        let mut handoff = handoff.unwrap();
+        executor.shutdown_service_handoff(&mut handoff);
+        assert!(
+            !manifest_path.exists(),
+            "manifest must be removed after the supervised service stops"
+        );
+    }
+
+    #[test]
+    fn cancellation_releases_changed_path_manifest_after_children_are_reaped() {
+        let runner = FakeRunner::default();
+        let executor = fake_executor(runner, 1, false);
+        let manifest = Arc::new(
+            crate::trigger_paths::TriggerPathsManifest::create(
+                &["src/a.rs".to_owned()],
+                &std::env::current_dir().unwrap(),
+            )
+            .unwrap(),
+        );
+        let manifest_path = manifest.path().to_owned();
+        let plan = RunPlan::from_rules(vec![task("A", None, &["wait"])])
+            .with_trigger_paths_file(Some(&manifest_path));
+        let mut run = executor.start_with_trigger_paths(
+            RunMetadata::new(207, "test"),
+            plan,
+            Some(Arc::clone(&manifest)),
+        );
+        drop(manifest);
+        assert!(matches!(executor.advance(&mut run), Step::Running));
+        assert!(manifest_path.exists());
+
+        executor.cancel(&mut run, None);
+        drop(run);
+        assert!(
+            !manifest_path.exists(),
+            "cancellation must remove the manifest after child shutdown"
+        );
     }
 
     #[test]

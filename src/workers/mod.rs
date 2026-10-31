@@ -139,6 +139,9 @@ struct RunRequest {
     batch: Option<u64>,
     /// Complete normalized changed-path set of the triggering batch.
     changed: Vec<String>,
+    /// Owns the private JSON manifest until this request is discarded or all
+    /// of its supervised consumers release their executor clones.
+    trigger_paths_manifest: Option<Arc<crate::trigger_paths::TriggerPathsManifest>>,
     /// Generation identity this request replaces; set when it supersedes an
     /// active run (restart policy), so the relation survives to start.
     predecessor: Option<u64>,
@@ -945,7 +948,33 @@ impl Worker {
     where
         F: Fn(Event) + Send + Sync + 'static,
     {
-        Self::with_root_and_concurrency_and_outputs_and_approval(
+        Self::with_root_and_concurrency_and_outputs_and_shutdown(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            outputs,
+            None,
+        )
+    }
+
+    /// Like [`Worker::with_root_and_concurrency_and_outputs`], suppresses
+    /// supervised-service restart polling once watcher shutdown is requested.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn with_root_and_concurrency_and_outputs_and_shutdown<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+        shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
+        Self::with_root_and_concurrency_and_outputs_and_approval_and_shutdown(
             verbose,
             fail_fast,
             root,
@@ -953,6 +982,7 @@ impl Worker {
             on_event,
             outputs,
             Arc::new(crate::approval::TtyRecoveryApproval),
+            shutdown_requested,
         )
     }
 
@@ -966,6 +996,32 @@ impl Worker {
         on_event: F,
         outputs: Option<Arc<OutputRegistry>>,
         approval: Arc<dyn crate::executor::RecoveryApproval>,
+    ) -> Self
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
+        Self::with_root_and_concurrency_and_outputs_and_approval_and_shutdown(
+            verbose,
+            fail_fast,
+            root,
+            concurrency,
+            on_event,
+            outputs,
+            approval,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_root_and_concurrency_and_outputs_and_approval_and_shutdown<F>(
+        verbose: bool,
+        fail_fast: bool,
+        root: PathBuf,
+        concurrency: usize,
+        on_event: F,
+        outputs: Option<Arc<OutputRegistry>>,
+        approval: Arc<dyn crate::executor::RecoveryApproval>,
+        shutdown_requested: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Self
     where
         F: Fn(Event) + Send + Sync + 'static,
@@ -998,8 +1054,13 @@ impl Worker {
             cwd: Some(root.clone()),
             environment: Default::default(),
         };
-        let runtime =
-            WorkerRuntime::new(consumer_scheduler, service_events, executor, hook_context);
+        let runtime = WorkerRuntime::new(
+            consumer_scheduler,
+            service_events,
+            executor,
+            hook_context,
+            shutdown_requested,
+        );
         let consumer = std::thread::spawn(move || runtime.run());
 
         Worker {
@@ -1254,6 +1315,22 @@ impl Worker {
         for variable in unknown_variables {
             stdout::warn(&format!("Unknown template variable '{}'.", variable));
         }
+        // TASK-0196: one constant-size pointer exposes the complete batch
+        // without putting an unbounded JSON value in the child environment.
+        // The request owns setup until the executor transfers ownership to
+        // finite tasks and long-lived services.
+        let trigger_paths_manifest = if changed.is_empty() {
+            None
+        } else {
+            Some(Arc::new(
+                crate::trigger_paths::TriggerPathsManifest::create(&changed, &self.root)?,
+            ))
+        };
+        let plan = plan.with_trigger_paths_file(
+            trigger_paths_manifest
+                .as_ref()
+                .map(|manifest| manifest.path()),
+        );
         // TASK-0193/0194: expose the single trigger path (absolute and
         // per-job-cwd-relative forms) as child data for this generation.
         // Pathless schedules (init, keyboard, control retry of a pathless
@@ -1267,6 +1344,7 @@ impl Worker {
             trigger: trigger.to_string(),
             batch,
             changed,
+            trigger_paths_manifest,
             predecessor: None,
             target: None,
             execution_signature: None,
@@ -1369,6 +1447,21 @@ impl Worker {
             .map_err(|_| "service pool reconciliation timed out".to_owned())
     }
 
+    /// Stops and reaps all worker-owned managed services before watcher
+    /// shutdown completes. The acknowledgement means their retained
+    /// generation resources, including trigger manifests, are released.
+    pub(crate) fn shutdown_service_pool(&self) -> Result<(), String> {
+        let Some(scheduler) = self.scheduler.as_ref() else {
+            return Err("worker scheduler is unavailable".to_owned());
+        };
+        let (reply, receipt) = std::sync::mpsc::channel();
+        scheduler.send(WorkerCommand::ShutdownServicePool { reply });
+        let (_, grace) = crate::process_owner::shutdown_policy();
+        receipt
+            .recv_timeout(grace + Duration::from_secs(5))
+            .map_err(|_| "service pool shutdown timed out".to_owned())
+    }
+
     /// Starts new/changed managed services under the current revision without
     /// replacing the active generation (TASK-0090 AC6). The service-only plan
     /// is appended to the active run, or becomes its own generation when the
@@ -1381,7 +1474,7 @@ impl Worker {
         let revision = self.revision.lock().unwrap().clone();
         scheduler.send(WorkerCommand::StartServices {
             run_id,
-            plan,
+            plan: plan.with_trigger_paths_file(None),
             revision,
         });
         Ok(run_id)
@@ -1817,6 +1910,87 @@ mod tests {
             vec![],
             false,
         )
+    }
+
+    #[test]
+    fn request_manifest_keeps_complete_normalized_large_batch_out_of_environment() {
+        let root = std::env::temp_dir().join(format!(
+            "funzzy-worker-batch-manifest-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let output = root.join("decoded-large-batch.json");
+        let (tx, rx) = channel();
+        let worker = Worker::with_root(false, false, root.clone(), move |event| {
+            tx.send(event).unwrap();
+        });
+        let mut raw = Vec::new();
+        for index in (0..6_000).rev() {
+            let path = format!("src/generated/{index:05}-a file with space.rs");
+            raw.push(path.clone());
+            raw.push(path);
+        }
+        raw.push("docs/disjoint.md".to_owned());
+        let batch = crate::identity::Batch::normalized(crate::identity::BatchId(9), raw);
+        let rule = Rules::new(
+            "selected-by-src".to_owned(),
+            vec![format!(
+                "cp \"$FZZ_TRIGGER_PATHS_FILE\" '{}'",
+                output.display()
+            )],
+            vec!["src/**".to_owned()],
+            vec![],
+            false,
+        );
+
+        let request = worker
+            .prepare_request(
+                RunPlan::from_rules(vec![rule]),
+                &batch.changed[0],
+                Some(&batch.changed[0]),
+                Some(batch.id.0),
+                batch.changed.clone(),
+                None,
+            )
+            .unwrap();
+        let manifest = request.trigger_paths_manifest.as_ref().unwrap();
+        let manifest_path = manifest.path().to_owned();
+        let decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(&manifest_path).unwrap()).unwrap();
+        assert_eq!(
+            decoded, batch.changed,
+            "the full batch must stay unfiltered"
+        );
+        assert!(std::fs::metadata(&manifest_path).unwrap().len() > 128 * 1024);
+
+        let pointer = match &request.plan.stages[0] {
+            crate::plan::Stage::Serial(task) => task
+                .context
+                .environment
+                .get(crate::plan::TRIGGER_PATHS_FILE_ENV)
+                .unwrap(),
+            crate::plan::Stage::Parallel { .. } => panic!("expected serial task"),
+        };
+        assert_eq!(pointer, &manifest_path.display().to_string());
+        assert!(
+            pointer.len() < 1_024,
+            "only the constant-size pointer belongs in the environment"
+        );
+
+        let run_id = request.run_id;
+        worker.dispatch(request).unwrap();
+        expect_event(
+            &rx,
+            "large batch finished",
+            |event| matches!(event, WorkerEvent::Finished { run_id: id, .. } if *id == run_id),
+        );
+        let child_decoded: Vec<String> =
+            serde_json::from_reader(std::fs::File::open(output).unwrap()).unwrap();
+        assert_eq!(child_decoded, batch.changed);
+        assert!(!manifest_path.exists());
+        drop(worker);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

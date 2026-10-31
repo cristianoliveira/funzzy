@@ -42,6 +42,7 @@ pub mod snapshot;
 pub mod stdout;
 pub mod task_result;
 pub mod template;
+pub(crate) mod trigger_paths;
 pub mod watch_loop;
 pub mod watcher;
 pub mod watcher_state;
