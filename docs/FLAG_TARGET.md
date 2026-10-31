@@ -1,7 +1,6 @@
 # Target selection (V2)
 
-Replaces the removed V1 `--target` flag. In V2, target selection is a
-positional argument on the relevant subcommand.
+Use `fzz watch TARGET` to watch selected jobs or `fzz run TARGET` to run them once. V2 removed the V1 `--target` flag.
 
 ## Selecting targets
 
@@ -13,19 +12,13 @@ fzz list                # show every configured target
 fzz explain PATH        # which targets a path matches or is ignored by
 ```
 
-`fzz -- TARGET` is an explicit alias for `fzz watch TARGET`. The delimiter is
-required for the root form: `fzz --` keeps zero-argument watch, root options
-compose before it (`fzz --exclude lint -- @quick`), and everything after it is
-one target value, including a subcommand-shaped or hyphen-prefixed name. More
-than one trailing value is a usage error. Without `--`, existing subcommands
-retain precedence.
+`fzz -- TARGET` is an alias for `fzz watch TARGET`. The root form requires `--`. Without a target, `fzz --` watches all configured jobs. Put root options before the delimiter, for example `fzz --exclude lint -- @quick`.
 
-Watch target selection preserves its existing multi-match behavior: `watch TARGET`
-and `fzz -- TARGET` select every job whose name contains `TARGET`, including
-multiple plain-substring matches. `@tag` likewise selects every tagged job.
-Finite `run TARGET` is stricter: an exact name wins, `@tag` may select many
-jobs, and another substring must identify exactly one job or it reports the
-alternatives.
+Funzzy treats the value after `--` as target data, even if it looks like a subcommand or starts with `-`. More than one target is a usage error. Without the delimiter, subcommands keep their usual meaning.
+
+`watch TARGET` and `fzz -- TARGET` select every job whose name contains the target text. Multiple jobs can match one substring. An `@tag` selects every job with that tag.
+
+`run TARGET` is stricter. An exact job name wins; an `@tag` can still select several jobs. Any other substring must identify exactly one job, or Funzzy reports the alternatives.
 
 ## Migration from V1
 
@@ -50,14 +43,9 @@ fzz watch "@quick" --exclude docs --exclude "slow check"
 fzz watch --no-services
 ```
 
-`TARGET` is selected first using the watch multi-match behavior above. Each
-`--exclude TARGET` then resolves against the full configured job set: an exact
-name wins; `@tag` excludes every tagged job; a non-tag substring must identify
-one job. Missing or ambiguous selectors, and
-an effective plan with no runnable jobs, are usage errors (exit 2). Repeated or
-overlapping exclusions are harmless. `--no-services` excludes all jobs with
-`service: true`, including readiness-enabled services, before watcher roots or
-process lifecycle setup.
+Funzzy selects `TARGET` first, using the watch rules above. It then resolves each `--exclude TARGET` against all configured jobs. An exact name wins. An `@tag` excludes all jobs with that tag. Another substring must identify one job.
+
+A missing or ambiguous selector, or a plan with no runnable jobs, exits 2. Repeated or overlapping exclusions do no harm. `--no-services` excludes every `service: true` job, including services with readiness checks. Funzzy applies these filters before it sets up watcher roots or processes.
 
 Filters are per invocation. They are not persisted, do not affect `fzz run` or
 control requests, and remain active when the watcher reloads its configuration.

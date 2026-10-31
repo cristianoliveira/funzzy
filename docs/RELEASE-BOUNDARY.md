@@ -1,20 +1,14 @@
-# Funzzy v2.0.0 Release Boundary
+# The v2.0.0 release decision (historical)
 
-> Status: **normative** — defined by TASK-0060. Drives TASK-0061 (version identity), TASK-0062 (candidate), TASK-0063 (publication), TASK-0064 (post-publish verification).
-> Source: `.tmp/reports/14-08-26/v2-version-bump-plan.md`, current repository state.
+This page records the decision to release `2.0.0` instead of `1.7.0`. It describes the candidate state at the time of [TASK-0060](../plans/done/0060-define-the-funzzy-v2-0-0-release-boundary.md), not the current repository state. For current installation options, use the [installation guide](INSTALLATION.md).
+
+The decision set the boundary for TASK-0061 (version identity), TASK-0062 (candidate), TASK-0063 (publication), and TASK-0064 (verification). Keep these historical requirements when reviewing that release.
 
 ## 1. Version decision
 
-The next public release is **`2.0.0`**, not `1.7.0`.
+The `develop` line at that time introduced intentional CLI breaks: subcommands, removed or renamed flags (`--non-block`, `--target`, and `-V` behavior), and changed command grammar and exit behavior. It kept both binary names, zero-argument watch, accepted legacy YAML, and additive control-protocol fields. A major version communicated those changes.
 
-Reason: the current `develop` line introduces intentional public CLI breaks —
-real subcommands, removed/renamed flags (`--non-block`, `--target`, `-V`
-semantics), command grammar and exit behavior — while preserving selected
-compatibility surfaces (both binary names, zero-argument configured watch,
-accepted legacy YAML, additive control-protocol fields). SemVer major
-communicates this honestly.
-
-Current repository state (the inconsistency this boundary resolves):
+Repository state when this boundary was recorded:
 
 | Surface | Value |
 |---|---|
@@ -146,8 +140,6 @@ New in 2.0.0:
 (No longer deferred: TASK-0035/0040/0041 are ancestors of the output-evidence
 and reload work on `develop` and ship in 2.0.0 — TASK-0084 compatibility
 decision.)
-
-Release evidence locked by tests (TASK-0020): `funzzy`/`fzz` identical command trees; removed V1 flags rejected with exit 2; every subcommand `--help` exits 0.
 
 Release evidence locked by tests (TASK-0020): `funzzy` and `fzz` expose
 identical command trees; removed V1 flags (`--non-block`, `--target`, `-n`,

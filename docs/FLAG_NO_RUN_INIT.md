@@ -1,49 +1,25 @@
-## FLAG: `--no-run-on-init` 
+# Skip startup jobs with `--no-run-on-init`
 
-**Minimal version**: nightly
+Use `--no-run-on-init` to skip jobs marked `run_on_init: true` when a watcher starts. The jobs remain configured and can still run when files change or when you select them explicitly.
 
-Tasks configured with `run_on_init: true` are executed when the watcher starts. By default, this behavior is enabled.
-By using the `--no-run-on-init` flag, you can disable this behavior and prevent tasks from running on initialization.
-The remaining triggers will still work as expected. It does not filter the tasks.
+```bash
+fzz --no-run-on-init
+```
 
-## USAGE
+Without this flag, Funzzy runs jobs marked `run_on_init: true` at watcher startup. This flag does not filter jobs from the workflow.
 
-Given the following config file:
+## Example
+
 ```yaml
-- name: a task that does not run on init
-  run: "echo 'should not run on init'"
+on:
   change: "examples/workdir/**/*"
-  ignore:
-    - "examples/workdir/ignored/**/*.txt"
-    - "examples/workdir/another_ignored_file.foo"
 
-- name: a task that runs on init
-  run: "echo 'should run on init'"
-  change: "examples/workdir/**/*"
-  ignore:
-    - "examples/workdir/ignored/**/*.txt"
-    - "examples/workdir/another_ignored_file.foo"
-  run_on_init: true
+jobs:
+  - name: check
+    run: echo checked
+    run_on_init: true
 ```
 
-When running `fzz` without the `--no-run-on-init` flag, the output will be:
+Run `fzz` to start the watcher and run `check` at startup. Run `fzz --no-run-on-init` to start the watcher without that startup run. A later change under `examples/workdir/` can still run `check`.
 
-```bash
-$ fzz
-Funzzy: Running on init commands.
-// run tasks...
-
-```
-
-When running `fzz` with the `--no-run-on-init` flag, the output will be:
-
-```bash
-$ fzz --no-run-on-init
-Funzzy: Watching...
-```
-
-The remaingin triggers work as expected, so if you change the file `examples/workdir/trigger-watcher.txt` the task will run.
-
-### Tests
-
-Check the tests in `tests/ignore_run_on_init.rs` for more details.
+For behavior-level tests, see `tests/ignore_run_on_init.rs`. This option was first documented for a nightly build.
