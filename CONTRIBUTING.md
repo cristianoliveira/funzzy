@@ -1,10 +1,10 @@
 # Contributing to Funzzy
 
-Contributions, bug reports, and feature proposals are welcome.
+Build Funzzy, test the behavior you change, then open a focused pull request against `main`. Bug reports and feature proposals are also welcome.
 
 ## Setup
 
-Funzzy requires Rust and Cargo. The `rust-version` value in `Cargo.toml` specifies the minimum Rust version.
+Install Rust and Cargo first. `Cargo.toml` lists the minimum Rust version in `rust-version`.
 
 ```bash
 git clone https://github.com/cristianoliveira/funzzy.git
@@ -12,7 +12,7 @@ cd funzzy
 cargo build
 ```
 
-Nix users can enter the repository development shell instead.
+If you use Nix, enter the repository development shell instead.
 
 ## Checks
 
@@ -27,7 +27,7 @@ make integration       # CLI, watcher, process, config, or socket behavior
 
 Use `make integration-e2e` only when a change requires a real file-system test.
 
-When `.watch.yaml` is active, the configured `@agent-final` target is the final project gate.
+If `.watch.yaml` is active, run the configured `@agent-final` target as the final project gate.
 
 ## Code style
 

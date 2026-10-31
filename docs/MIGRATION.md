@@ -1,10 +1,10 @@
-# V1 → V2 migration table
+# Move from V1 to V2
 
-Every V1 command/flag/config shape, its exact V2 replacement, behavior
-change, and exit-code impact. Historical V1 documentation stays valid via
-tags (`https://github.com/cristianoliveira/funzzy/tree/v1`); this is the live
-migration reference. For the checked-in example catalog, see the
-[shipped examples V2 migration contract](EXAMPLES-V2-MIGRATION-CONTRACT.md).
+Run `fzz migrate` to convert an accepted V1 configuration to the `jobs:` form. Then run `fzz check`.
+
+Review the command changes below. The tables show each V2 replacement, behavior change, and exit-code impact.
+
+The [V1 branch](https://github.com/cristianoliveira/funzzy/tree/v1) keeps the old documentation. See the [shipped examples migration contract](EXAMPLES-V2-MIGRATION-CONTRACT.md) for the example catalog.
 
 ## Command/flag migration
 
@@ -72,13 +72,17 @@ It changes accepted V1 configuration shape only.
 
 ## `fzz migrate` behavior (TASK-0096/0098)
 
-- One responsibility: **transform V1 task vocabulary** in an existing config in place. Never creates from scratch (`fzz init`) or watches. It validates the complete candidate before its atomic replacement; use `fzz check` for explicit validation.
-- Honors global `-c, --config <FILE>` (default `.watch.yaml`).
-- Inputs: legacy root list → wrapped under `jobs:` (order and comments preserved); grouped `tasks:` → root key renamed; already `jobs:` → byte-identical no-op, exit 0. It does **not** format YAML or relocate `on` fields into `execution` or `hooks`.
-- Errors (exit 1, original bytes unchanged): missing file, malformed YAML,
-  multiple documents, unsupported root, empty list.
-- Write is atomic (same-directory temp + rename); a failed migration never
-  leaves a half-written file. Successful output passes `fzz check`.
+`fzz migrate` changes an existing V1 configuration in place. It does not create a file or start a watcher. Use `fzz init` to create a new configuration. Use `fzz check` to validate a file without changing it.
+
+- By default, it reads `.watch.yaml`. Pass `-c FILE` or `--config FILE` to choose another file.
+- For a root task list, it adds `jobs:` around the list and keeps the order and comments.
+- For grouped `tasks:`, it renames the root key to `jobs:`.
+- For an existing `jobs:` file, it makes no byte changes and exits 0.
+- It does not format YAML or move `on` fields into `execution` or `hooks`.
+
+Funzzy validates the complete result before it writes. It writes to a temporary file in the same directory, then renames the file.
+
+If the file is missing or invalid, migration exits 1 and leaves the original bytes unchanged. Invalid input includes malformed YAML, multiple documents, unsupported roots, and empty lists. A successful result passes `fzz check`.
 
 ## Safe migration flow
 
