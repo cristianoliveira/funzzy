@@ -1,0 +1,4 @@
+jobs:
+  - name: print complete changed-path batch
+    run: python3 ./print_changed_paths.py
+    change: input/**
