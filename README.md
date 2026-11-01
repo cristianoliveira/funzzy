@@ -47,7 +47,13 @@ jobs:
     run: cargo test
 
   - name: changed-files
-    run: node ./scripts/print-changed-paths.mjs
+    run: |
+      node -e '
+        const file = process.env.FZZ_TRIGGER_PATHS_FILE;
+        if (!file) process.exit(0);
+        const paths = JSON.parse(require("node:fs").readFileSync(file, "utf8"));
+        for (const path of paths) console.log(JSON.stringify(path));
+      '
 
   - name: dev-server
     service: true
@@ -75,7 +81,7 @@ fzz --no-services -- "@quick"
 
 Declaration order is important. Consecutive jobs with the same `parallel` name can run at the same time. Other jobs run in sequence.
 
-The `changed-files` job reads `FZZ_TRIGGER_PATHS_FILE`: a private JSON array of literal paths in one filesystem-change batch, not shell-escaped command text. To use this job, install Node 18+ and copy the [working Node script](examples/changed-path-batch/node/print-changed-paths.mjs) to `scripts/print-changed-paths.mjs` in your project. [Node and Python walkthroughs](examples/README.md#runnable-batch-scripts) show the full workflow. Init and manual runs receive no batch pointer; read it while Funzzy supervises the job or service. Hooks do not receive it implicitly.
+The `changed-files` job runs Node 18+ inline; no script file is needed. It reads `FZZ_TRIGGER_PATHS_FILE` as a JSON array for the complete filesystem-change batch and prints each literal path as a JSON string, including spaces and newlines. Init and manual runs receive no batch pointer, so the job exits without output. Read the file while Funzzy supervises the job or service; hooks do not receive the pointer implicitly. [Node and Python walkthroughs](examples/README.md#runnable-batch-scripts) show longer scripts for real work.
 
 ### Changed paths in job scripts
 
@@ -88,13 +94,6 @@ For new job scripts, read changed paths from child environment data:
 These values exist only for filesystem-triggered job children. Init and manual
 runs are pathless and receive none of them. Hooks do not receive them. Read the
 batch file while Funzzy supervises the job or service.
-
-Old path templates remain compatible but are deprecated for new job scripts.
-For example, a two-file batch still makes `{{paths}}` expand to one
-shell-escaped, space-joined string; a direct-argv command still receives that
-complete expansion as one argument. Funzzy does not warn or rewrite old
-commands. See [Changed-path inputs](docs/USAGE.md#changed-path-inputs) for all
-legacy names and migration examples.
 
 ## Start in one minute
 
