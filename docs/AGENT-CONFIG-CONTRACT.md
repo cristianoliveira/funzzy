@@ -1,11 +1,10 @@
 # Funzzy Agent-Discoverable Configuration Contract
 
+Agents should ask the installed CLI for configuration shape before they write `.watch.yaml`. `fzz config schema` and `fzz config example` provide bounded, side-effect-free output. `fzz check` validates the result before execution.
+
 ## 1. Purpose
 
-Agents must discover the current `.watch.yaml` shape — fields, constraints,
-defaults, compatibility forms, and safe next commands — from the installed
-CLI, not from repository or web documentation that can drift. Discovery is
-side-effect-free and token-bounded.
+The CLI exposes fields, constraints, defaults, compatibility forms, and safe next commands. Repository or web documentation can drift from the installed version.
 
 ## 2. Agent decision loop
 
@@ -18,9 +17,7 @@ fzz list | fzz explain PATH       # inspect what would run
 fzz run TARGET / fzz watch        # execute
 ```
 
-Every step is non-interactive, side-effect-free (never starts a watcher,
-never opens a socket), and exit-code stable (0 success, 1 invalid/operational,
-2 usage).
+Discovery and validation (`config schema`, `config example`, `check`, `list`, and `explain`) are non-interactive and do not start a watcher or open a control socket. `run` and `watch` execute work; use them only after validation. Exit codes are stable: 0 for success, 1 for invalid input or an operational error, and 2 for usage.
 
 ## 3. Command grammar
 
@@ -57,10 +54,7 @@ fzz config example comprehensive|minimal|parallel|agent
 | `parallel` | two jobs in one group with `execution.concurrency` — demonstrates barriers |
 | `agent` | control socket + a verify-style job — the agent loop starting point |
 
-`fzz config example` stays stdout-only and side-effect-free: it never gains
-file-writing flags, and piping (`> .watch.yaml`) remains the copy mechanism
-for agents. Creating a file in the working directory is `fzz init`'s
-responsibility alone (CLI-V2-CONTRACT §3a).
+`fzz config example` writes only to stdout. It has no file-writing flags. Agents can redirect its output with `> .watch.yaml`; `fzz init` is the CLI command that creates the file in the working directory (CLI-V2-CONTRACT §3a).
 
 ## 5. JSON Schema as canonical output
 
@@ -95,10 +89,7 @@ not the values.
 
 ## 8. Single source of truth
 
-One declarative config-spec source (or enforced parity tests) must prevent
-drift between schema, examples, CLI help, and parser keys. The optional
-generated agent guide/skill is a secondary artifact derived from the same
-spec — never an independently maintained truth.
+Keep schema, examples, CLI help, and parser keys in sync through one declarative config spec or enforced parity tests. An optional generated agent guide or skill must derive from that spec, not become a separate source of truth.
 
 ## 9. Out of scope
 

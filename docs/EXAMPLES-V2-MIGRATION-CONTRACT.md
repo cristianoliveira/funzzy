@@ -1,22 +1,14 @@
 # Shipped examples V2 migration contract
 
-**Status:** TASK-0144 design contract. This document defines the migration
-boundary for the checked-in `examples/` catalog; it does not rewrite examples
-or change the production parser.
+Shipped examples teach the preferred `jobs:` format. The migration preserved each accepted legacy example's observable behavior. The parser still accepts legacy configurations, which have separate compatibility tests.
 
-The catalog is both user-facing documentation and an integration-test fixture.
-A migration is correct only when the preferred V2 configuration preserves the
-observable behavior of the accepted legacy configuration. Legacy parser
-compatibility remains supported and is tested separately.
+**Status:** TASK-0144 defined this historical migration contract. TASK-0145–0147 completed the migration and catalog checks. TASK-0198 added two runnable batch examples afterward. This document records the migration boundary; it does not rewrite files or change the production parser.
 
 ## Scope and inventory
 
-The recursive catalog contains 19 YAML configurations: 16 valid public or
-integration examples and 3 intentionally invalid fixtures. `examples/workdir/`
-files, changed-path example scripts, and `examples/longtask.sh` are runtime
-fixtures, not configurations.
+The current recursive catalog contains 19 YAML configurations: 16 valid public or integration examples and 3 intentionally invalid fixtures. The table records each file's **pre-migration shape** and planned TASK-0146 action. The two TASK-0198 files were added after that migration and already use V2. `examples/workdir/` files, changed-path scripts, and `examples/longtask.sh` are runtime fixtures, not configurations.
 
-| File | Classification | Current shape | TASK-0146 action |
+| File at TASK-0144 (or later addition) | Classification | Shape at TASK-0144 (or addition) | TASK-0146 action |
 | --- | --- | --- | --- |
 | `common-rules.yml` | Direct migration: grouped root | root `on` + root `tasks` | rename `tasks` to `jobs`; retain root policy |
 | `list-of-failing-commands.yml` | Direct migration: root list | ordered root task list | wrap as ordered `jobs`; rename file |
@@ -45,13 +37,9 @@ canonical V2 examples after that migration.
 
 ## Filename migration map
 
-The following is the complete public filename policy. A `same` mapping is
-explicit: it prevents ad-hoc aliases and makes the no-rename decision
-reviewable. TASK-0146 updates active tests, docs, README links, fixture
-constants, and reload append logic atomically. Historical reports and
-completed-plan evidence may retain the old spelling as historical text.
+This table records the migration filename policy. A same-name mapping documents a deliberate no-rename decision. TASK-0146 updated active tests, docs, README links, fixture constants, and reload append logic together. Historical reports and completed plans may retain old names as historical text.
 
-| Current filename | V2 filename | Reason |
+| Filename before migration (or later addition) | V2 filename | Reason |
 | --- | --- | --- |
 | `common-rules.yml` | `common-rules.yml` | domain-neutral name |
 | `list-of-failing-commands.yml` | `jobs-with-failing-commands.yml` | remove root-list/task teaching surface |
@@ -112,10 +100,7 @@ are flattened in one global declaration order:
   root `on` section, because doing so would change the scope of neighboring
   groups. Root-level policy and execution context are retained separately.
 
-The transform is deterministic and idempotent. The second migration of a
-converted file is byte-identical. Candidate validation uses the production
-parser before an atomic replacement; parse, validation, or write failure
-leaves the original bytes unchanged.
+The transform is deterministic and idempotent: migrating a converted file again leaves its bytes unchanged. Validate a candidate with the production parser before atomic replacement. On parse, validation, or write failure, keep the original bytes.
 
 ## Before/after behavior matrix
 
@@ -136,9 +121,7 @@ relevant to each fixture.
 | Absolute paths | Absolute globs match/ignore the same files, including scratch-directory substitution seams. | Absolute pattern strings remain byte/order stable; ignore-wins behavior is unchanged. |
 | Nested groups | Each group scopes only its jobs; group and local patterns are additive and ordered. | Each flattened job receives its group's effective patterns; group order, job order, barriers, and scope remain observable-equivalent. |
 
-Runtime command failures are not config invalidity: intentionally failing
-commands remain valid examples and must continue to demonstrate fail-fast and
-failure reporting rather than being moved into `examples/invalid/`.
+A command that fails at runtime is not an invalid configuration. Keep intentionally failing commands as valid examples of fail-fast and failure reporting; do not move them into `examples/invalid/`.
 
 ## Intentionally invalid fixtures
 
