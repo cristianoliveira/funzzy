@@ -1,9 +1,8 @@
 # Funzzy Service Lifecycle Contract
 
-Status: readiness settlement and worker-owned pooling are implemented by
-TASK-0161. External black-box proof is in
-`tests/control_await.rs` (`30f5ff4`). This document supersedes the older
-TASK-0133 description that treated every live service as generation-owned.
+Readiness changes who owns a running service. A service without `readiness` keeps its generation open. In a watcher, a ready service moves to the worker pool, so its generation can settle while it stays alive. A one-shot run stops the service before returning.
+
+Status: TASK-0161 implemented readiness settlement and worker-owned pooling. External black-box proof is in `tests/control_await.rs` (`30f5ff4`). This contract supersedes the TASK-0133 description that treated every live service as generation-owned.
 
 ## 1. Service modes
 
@@ -54,12 +53,7 @@ is scheduled; a later reload cannot change an in-flight probe decision.
 
 ## 3. Readiness execution
 
-After the service process spawns successfully, Funzzy starts at most one
-readiness attempt at a time. A failed attempt must exit before the next retry;
-the interval begins after that attempt exits. Exit code zero promotes the
-service only when the service is still alive. Non-zero attempts retry until
-success or the absolute timeout. A readiness-command spawn failure fails
-immediately.
+After the service spawns, Funzzy runs at most one readiness attempt at a time. A failed attempt must exit before a retry starts. The interval starts after that exit. Exit code zero promotes the service only if it is still alive. Non-zero attempts retry until success or the absolute timeout. A readiness-command spawn failure fails the service immediately.
 
 A timeout terminates and reaps an active readiness process group before the
 service lifecycle becomes failed. A service that exits before readiness is a
@@ -73,12 +67,7 @@ The service's resolved context and frozen policy are reused after a restart.
 
 ## 4. Generation settlement and ownership
 
-A generation settles exactly once when its finite work is terminal and every
-readiness-enabled service included by that generation is ready. At the
-promotion boundary, the executor detaches the live service through an opaque
-`ServiceHandoff`; the worker adopts it into the managed pool before publishing
-the generation terminal result. `CompletedRun` exposes no live service or
-process handle.
+A generation settles once its finite work is terminal and each included readiness-enabled service is ready. At promotion, the executor detaches the live service through an opaque `ServiceHandoff`. The worker adopts it into the managed pool before it publishes the generation result. `CompletedRun` exposes no live service or process handle.
 
 The generation result is immutable and primary. A settled `passed` generation
 stays passed even if its pooled service later restarts, fails, or stops. A
@@ -116,12 +105,7 @@ A promoted service follows these post-settlement rules:
 - service lifecycle changes do not change generation history or generation
   hooks.
 
-Replacement and reload decisions are worker-owned. A same-name replacement
-reserves the current internal instance, physically stops and reaps the opaque
-old handoff, and only then authorizes the new start. A stale revision,
-instance, name, or signature fact cannot act on a newer pool entry. A
-cancellation after the old reap suppresses the replacement start. Removed
-services remain visible internally until their owned processes are reaped.
+The worker owns replacement and reload decisions. To replace a same-name service, it reserves the current instance, stops and reaps the old handoff, then authorizes the new start. A stale revision, instance, name, or signature cannot act on a newer pool entry. Cancellation after the old reap prevents the replacement start. Removed services remain visible internally until their processes are reaped.
 
 Omitted services remain pooled and untouched. Added or changed reload
 services use the same stop/reap-before-start rule. Legacy `ReconcileServices`
@@ -147,11 +131,7 @@ Later service uptime is pool state, not a completed generation duration. A
 legacy live service has no completed lifetime and therefore no finite duration
 row while it remains alive.
 
-Generation and finite-job durations remain monotonic measurements supplied by
-the executor. Renderers do not invent uptime, sum parallel job durations, or
-replace a supplied `durationMs` value. Readiness output freezes with the
-settled generation; later service output is not appended to that exact
--generation evidence.
+The executor supplies monotonic generation and finite-job durations. Renderers must not invent uptime, sum parallel job durations, or replace a supplied `durationMs`. Readiness output freezes with the settled generation. Later service output does not enter that exact-generation evidence.
 
 See `CURRENT-RUN-JOB-DURATION-REPORT-CONTRACT.md` for duration formatting.
 

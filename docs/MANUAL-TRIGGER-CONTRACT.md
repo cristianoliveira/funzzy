@@ -1,23 +1,14 @@
 # Funzzy Manual-Trigger Contract (TASK-0135)
 
-Status: accepted design. Implementation: TASK-0136. Proof: TASK-0137.
-Amended after Kely's verification (evidence:
-/Users/cristianoliveira/.agents/reports/26-08-26/task-0135-manual-trigger-contract-verification.md):
-control-socket watch exception, `Rules::validate` exception, corrected legacy
-rejection sites, `params.sequential` acknowledgment.
+`trigger: manual` runs a job only when a user explicitly selects it with `fzz run TARGET` or `fzz ctl run TARGET`. It does not match filesystem changes or run at watcher initialization. A control-only watcher may still serve manual jobs through its socket.
+
+Status: accepted design (TASK-0135). Implementation: TASK-0136. Proof: TASK-0137. Verification amended the control-socket watch exception, the `Rules::validate` exception, the two legacy rejection sites, and the `params.sequential` acknowledgment.
 
 ## 1. Purpose
 
-Jobs whose commands are meant to run only when a user explicitly asks
-(`fzz run TARGET` locally, `fzz ctl run TARGET` on a running watcher) currently
-cannot say so. Every job inherits root `on.change` (merged in
-`config.rs::rule_from_with_common` via `merge_patterns`), so a job with no own
-`change` still matches filesystem events; disabling that today requires
-inventing an impossible glob or disabling init globally. This contract defines
-the explicit manual-only trigger mode.
+A job without its own `change` inherits root `on.change` through `merge_patterns` in `config.rs::rule_from_with_common`. Before this contract, users had to invent an impossible glob or disable init globally to prevent automatic runs. The explicit manual-only mode removes that workaround.
 
-Target use case: integration-agnostic command observation (TASK-0137) — a
-blocking script must start only after explicit request.
+The target use case is integration-agnostic command observation (TASK-0137): a blocking script starts only after an explicit request.
 
 ## 2. Shape
 
@@ -69,12 +60,7 @@ A manual job:
 
 ## 4. Validation (reject ambiguity, never invent precedence)
 
-Parse-time, in `rule_from_with_common` (V2 jobs only). The legacy-V2-only
-rejection mirrors `recovery` in **both** legacy parse sites: the root-list
-form (`config.rs::rule_from`, where `recovery` is rejected at entry) and the
-grouped `on`/`tasks:` form (the `has_tasks` per-task guard inside
-`parse_hash_format`'s loop). Rejecting in `rule_from_with_common` alone is
-**insufficient** — that function also parses grouped legacy `tasks:` entries.
+Validate V2 jobs at parse time in `rule_from_with_common`. Reject `trigger` in both legacy parse sites, as for `recovery`: the root-list form in `config.rs::rule_from` and the grouped `on`/`tasks:` form in the `has_tasks` per-task guard of `parse_hash_format`. A check only in `rule_from_with_common` is insufficient because it also parses grouped legacy entries.
 
 | Combination | Result |
 |---|---|
@@ -88,13 +74,7 @@ grouped `on`/`tasks:` form (the `has_tasks` per-task guard inside
 | `trigger` non-string / unknown value | Error per catalog `values` (e.g. "must be one of: manual"). |
 | `trigger` under legacy `tasks:` | Error: supported only in preferred V2 jobs, raised at both legacy parse sites (`rule_from` and the grouped `has_tasks` guard), same shape as `recovery`. |
 
-One **model-level validation exception** is required: `Rules::validate`
-rejects any job whose watch patterns are empty and which has no `run_on_init`
-("job must contain a `change` and/or `run_on_init` property"). A manual job
-has neither — by contract — so `trigger: manual` is an explicit exception
-satisfying that invariant: a manual job with no `change`/`run_on_init` is
-valid iff `trigger == manual`. The invariant itself is unchanged for every
-other job.
+`Rules::validate` rejects a job with no watch patterns and no `run_on_init` ("job must contain a `change` and/or `run_on_init` property"). A manual job has neither. Make `trigger: manual` the only exception: a job without `change` or `run_on_init` is valid if and only if its trigger is `manual`. Keep the rule for every other job.
 
 All errors are `InvalidConfigError` with actionable hints, matching the
 existing strictness style (unknown property, non-boolean `service`).

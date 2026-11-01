@@ -369,6 +369,23 @@ mod paths_tests {
     }
 
     #[test]
+    fn spaced_paths_template_preserves_one_complete_direct_argv_element() {
+        let output = template_line(
+            CommandLine::Argv(vec!["check".to_owned(), "{{ paths }}".to_owned()]),
+            TemplateOptions {
+                filepath: Some("a.txt".to_owned()),
+                paths: vec!["a.txt".to_owned(), "b c.txt".to_owned()],
+                current_dir: "/workspace".to_owned(),
+            },
+        );
+        assert_eq!(
+            output.command,
+            CommandLine::Argv(vec!["check".to_owned(), "'a.txt' 'b c.txt'".to_owned()])
+        );
+        assert!(output.unknown_variables.is_empty());
+    }
+
+    #[test]
     fn filepath_stays_backward_compatible_alongside_paths() {
         let output = template(
             vec!["echo {{filepath}}; echo {{paths}}".to_owned()],

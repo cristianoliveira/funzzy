@@ -1,7 +1,6 @@
 # Busy-run policy (V2): wait and restart
 
-Replaces the removed V1 `--non-block` flag. In V2, busy-run behavior is an
-explicit policy: what happens when a change arrives while a run is active.
+Use `--on-busy wait` to finish active work before a new run. Use `--on-busy restart` to cancel it and run the newest change. V2 replaces the removed V1 `--non-block` flag with this explicit choice.
 
 ## Policy
 
@@ -27,5 +26,4 @@ fzz --restart           # convenience alias for --on-busy restart
 Exit-code impact: none — policy affects which run completes, not the exit
 contract (0 success, 1 failure, 2 usage).
 
-See docs/ADVANCED-GUIDE.md §1 for failure/restart semantics and the
-normative PARALLEL-EXECUTION-CONTRACT for process ownership guarantees.
+See the [advanced guide](ADVANCED-GUIDE.md#1-parallel-execution) for failure and restart behavior. PARALLEL-EXECUTION-CONTRACT defines process ownership.

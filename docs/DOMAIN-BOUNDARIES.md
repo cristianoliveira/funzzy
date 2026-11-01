@@ -1,4 +1,6 @@
-# FZZ domain boundaries
+# Keep domain policy independent of runtime adapters
+
+Domain code depends only on domain values and ports that have a real consumer. CLI, YAML, filesystem watching, process handling, logging, and control transport remain outside the domain. Use this page to place new behavior without reversing that dependency direction.
 
 ## Dependency direction
 
@@ -10,24 +12,13 @@ CLI / configuration / watcher / control / stdout / logging adapters
                       domain ports and values
 ```
 
-Domain planning, matching, generation state, lifecycle arbitration, and
-outcomes may depend only on domain values and ports introduced with their first
-real consumer. Application ports translate runtime facts and capabilities for
-those consumers; runtime adapters implement the ports and own process handles,
-signals, capture, and cleanup. A domain module must not import a CLI command,
-YAML/file adapter, filesystem watcher, process adapter, control-socket
-transport, stdout/logging adapter, or watcher runtime.
+Domain planning, matching, generation state, lifecycle arbitration, and outcomes use domain values and narrow ports. Introduce a port only with its first real consumer. Application ports translate runtime facts for that consumer. Runtime adapters implement the ports and own process handles, signals, capture, and cleanup.
 
-`tests/domain_boundaries.rs` recursively enumerates every Rust source file
-under `src/domain/` and checks it plus the current domain foundations: `rules`,
-`plan`, `template`, and `service_lifecycle`. It uses the maintained `syn`
-Rust parser in a dev-only test, so comments, strings, raw byte strings,
-lifetimes, nested comments, and conditional items are parsed as Rust rather
-than reimplemented lexically. The visitor skips only `#[cfg(test)]` items (not
-later production items), rejects imports and fully-qualified
-`crate::…`/`super::…` references, and resolves aliases of `crate` and `super`.
-Mutation cases prove direct, aliased, grouped/multiline, `super`, compiling
-qualified, root-alias, and raw-byte-string behavior.
+A domain module must not import CLI commands, YAML or file adapters, filesystem watchers, process adapters, control transport, stdout or logging adapters, or watcher runtime code.
+
+`tests/domain_boundaries.rs` checks every Rust source file under `src/domain/`. It also checks the current domain foundations: `rules`, `plan`, `template`, and `service_lifecycle`. The test uses the maintained `syn` parser, not a lexical search. It handles comments, strings, raw byte strings, lifetimes, nested comments, and conditional items as Rust.
+
+The visitor skips only `#[cfg(test)]` items; later production items still count. It rejects imports and qualified `crate::…` or `super::…` references, including aliases. Mutation cases cover direct, aliased, grouped, multiline, `super`, compiling qualified, root-alias, and raw-byte-string forms.
 
 ## Inventory
 
