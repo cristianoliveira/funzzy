@@ -8,13 +8,131 @@ filename map, and before/after behavior contract are in
 
 ## Changed-path inputs
 
-New job scripts should read `FZZ_TRIGGER_PATH` for one trigger file,
-`FZZ_TRIGGER_RELATIVE_PATH` for that file relative to the job's `cwd`, or the
-`FZZ_TRIGGER_PATHS_FILE` JSON array for the complete batch. These values exist
-only in filesystem-triggered job children. Init and manual runs are pathless,
-hooks receive none of them, and the batch pointer is valid only while Funzzy
-supervises the job or service. JSON entries are literal paths, not shell-escaped
-command text. See the [current migration examples](../docs/USAGE.md#changed-path-inputs).
+Choose the smallest input that fits the script:
+
+- Use `FZZ_TRIGGER_PATH` for one trigger path.
+- Use `FZZ_TRIGGER_RELATIVE_PATH` for that path relative to the job's `cwd`.
+- Use `FZZ_TRIGGER_PATHS_FILE` for the complete changed-path batch.
+
+The batch variable points to a private UTF-8 JSON array of literal paths. Read
+it while Funzzy supervises the child; do not save the pointer for use after the
+job exits. Init and manual runs are pathless and receive no pointer. Hooks do
+not receive one implicitly. See
+[Changed-path inputs](../docs/USAGE.md#changed-path-inputs) for the full
+lifecycle contract.
+
+### Runnable batch scripts
+
+The Node and Python examples have the same behavior. Each reads the JSON array
+immediately and prints one JSON-quoted path per line, so spaces, quotes, and
+newlines remain data rather than shell syntax.
+
+| Example | Prerequisite | Workflow | Script |
+| --- | --- | --- | --- |
+| Node | `node --version` (Node 18 or newer) | [`node/workflow.yml`](changed-path-batch/node/workflow.yml) | [`print-changed-paths.mjs`](changed-path-batch/node/print-changed-paths.mjs) |
+| Python | `python3 --version` (Python 3.8 or newer) | [`python/workflow.yml`](changed-path-batch/python/workflow.yml) | [`print_changed_paths.py`](changed-path-batch/python/print_changed_paths.py) |
+
+These are optional examples, not Funzzy dependencies. The language runtime is
+enough for the direct manifest demonstrations below. Install `fzz` only to run
+the live watcher workflows.
+
+#### Node workflow
+
+The workflow assumes its example directory is the working directory. From the
+repository root, start it with:
+
+```bash
+cd examples/changed-path-batch/node
+node --version                 # v18 or newer
+fzz --version
+mkdir -p input
+fzz -c workflow.yml watch
+```
+
+In another terminal, from the same directory, create one rapid multi-file
+batch. This includes spaces, a quote, and a newline in filenames:
+
+```bash
+node - <<'NODE'
+const fs = require("node:fs");
+for (const path of [
+  "input/one.txt",
+  "input/two words.txt",
+  "input/quote\"name.txt",
+  "input/line\nbreak.txt",
+]) fs.writeFileSync(path, "changed\n");
+NODE
+```
+
+The watcher prints all paths as JSON strings. A manual run is pathless and
+prints `No changed-path batch (init or manual run).`:
+
+```bash
+fzz -c workflow.yml run "print complete changed-path batch"
+```
+
+To exercise only the script, without installing Funzzy:
+
+```bash
+manifest=$(mktemp)
+printf '%s\n' '["input/one.txt","input/two words.txt","input/quote\"name.txt","input/line\nbreak.txt"]' > "$manifest"
+FZZ_TRIGGER_PATHS_FILE="$manifest" node ./print-changed-paths.mjs
+rm -f "$manifest"
+```
+
+The observable batch output is:
+
+```text
+"input/one.txt"
+"input/two words.txt"
+"input/quote\"name.txt"
+"input/line\nbreak.txt"
+```
+
+#### Python workflow
+
+Start the Python workflow from its own directory:
+
+```bash
+cd examples/changed-path-batch/python
+python3 --version              # 3.8 or newer
+fzz --version
+mkdir -p input
+fzz -c workflow.yml watch
+```
+
+In another terminal, from the same directory, create the batch:
+
+```bash
+python3 - <<'PY'
+from pathlib import Path
+
+for path in [
+    "input/one.txt",
+    "input/two words.txt",
+    'input/quote"name.txt',
+    "input/line\nbreak.txt",
+]:
+    Path(path).write_text("changed\n", encoding="utf-8")
+PY
+```
+
+Run the same pathless manual check with:
+
+```bash
+fzz -c workflow.yml run "print complete changed-path batch"
+```
+
+Or exercise only the script:
+
+```bash
+manifest=$(mktemp)
+printf '%s\n' '["input/one.txt","input/two words.txt","input/quote\"name.txt","input/line\nbreak.txt"]' > "$manifest"
+FZZ_TRIGGER_PATHS_FILE="$manifest" python3 ./print_changed_paths.py
+rm -f "$manifest"
+```
+
+This prints the same four JSON-quoted paths shown in the Node example.
 
 `jobs-with-filepath-template.yml` and `jobs-with-absolute-paths.yml` remain in
 the catalog as compatibility examples. Path templates—including
