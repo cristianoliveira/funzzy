@@ -32,7 +32,7 @@ Create `.watch.yaml`:
 on:
   change: ["src/**", "tests/**"]
   ignore: ["target/**"]
-  socket: .tmp/funzzy/control.sock
+  socket: .watch.sock
 
 execution:
   concurrency: 2
