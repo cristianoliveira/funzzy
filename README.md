@@ -157,6 +157,21 @@ To give an agent a ready-to-paste edit-feedback workflow for your project's `AGE
 
 Not required, but you can use the https://github.com/carbon-ni/pi-watcher to give agents direct control over the watcher service.
 
+### Ask Pi why a run failed
+
+A failure hook can ask Pi for a short explanation. Add this optional block to the `.watch.yaml` above:
+
+```yaml
+hooks:
+  failure:
+    settle: 10s
+    run: |
+      output=$(fzz ctl output --generation "$FUNZZY_GENERATION_ID" --tail 40) || exit 1
+      printf '%s\n' "$output" | pi -p --no-session --no-tools "Explain this failure. Say if the output is insufficient."
+```
+
+Requires Pi and the control socket above. Job output goes to the model, so check for secrets and cost. `settle` applies only while watching.
+
 ## Learn more
 
 | Need | Guide |
