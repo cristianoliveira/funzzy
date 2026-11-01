@@ -5,9 +5,9 @@
 [![Integration tests](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-integration-test.yml)
 [![Nix build](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml/badge.svg)](https://github.com/cristianoliveira/funzzy/actions/workflows/on-push-nixbuild.yml)
 
-**One reliable edit loop for developers and coding agents.**
+**Run the right checks after each edit, and see the result of that run.**
 
-Funzzy is a fast Rust file watcher and local workflow runner. You define checks in one YAML file. Funzzy runs matching jobs when files change. It reports the state of each run, so you do not have to inspect logs or reuse an old result.
+Funzzy watches files and runs matching jobs from one YAML configuration. Developers and coding agents can read each run's status and output. They do not need to guess which result belongs to their last edit.
 
 ```text
 edit -> match changed files -> run jobs -> inspect result -> repeat
@@ -19,17 +19,9 @@ edit -> match changed files -> run jobs -> inspect result -> repeat
 - **Predictable execution:** Funzzy runs jobs in declared order. Named groups enable parallel work. Cancellation stops the complete process tree.
 - **Long-running services:** a readiness check confirms that a service started correctly. The service can then stay active.
 - **Exact feedback:** local tools can use a control socket. They can read status and output or cancel a specific run.
-- **Agentic friendly:** all features are though in a way that coding agents can auto discover and use.
+- **Agent access:** agents can discover the config schema and inspect exact run results through the CLI.
 
 Funzzy has two equivalent binary names: `funzzy` and the shorter `fzz`. This README uses `fzz`.
-
-## Quick init
-
-With your preferred coding agent:
-```bash
-fzz init && pi -p 'Discover the ci guardrails and add them to .watch.yaml'
-```
-That's it
 
 ## A quick glimpse
 
@@ -124,6 +116,12 @@ fzz                              # start watching
 
 `fzz init` does not overwrite an existing configuration. Use `fzz migrate` to convert an accepted old configuration to the `jobs:` form.
 
+If you use Pi, you can ask it to add your project's checks after initialization:
+
+```bash
+fzz init && pi -p 'Discover the ci guardrails and add them to .watch.yaml'
+```
+
 > [!NOTE]
 > V2 (`2.0.1`) is the current line. Version 1.5.0 remains on the [`v1` branch](https://github.com/cristianoliveira/funzzy/tree/v1). See the [migration guide](docs/MIGRATION.md).
 
@@ -168,10 +166,6 @@ Not required, but you can use the https://github.com/carbon-ni/pi-watcher to giv
 | Example workflows | [Examples](examples/README.md) |
 | Pi integration | [pi-watcher](pi-watcher/README.md) |
 | Development and pull requests | [Contributing](CONTRIBUTING.md) |
-
-## Why it exists
-
-Traditional file watchers show output in a terminal. Coding agents also need an exact run number, current results, short failure output, and safe cancellation. Funzzy provides these functions in the same local workflow.
 
 Inspired by [antr](https://github.com/juanibiapina/antr) and [entr](https://github.com/eradman/entr).
 

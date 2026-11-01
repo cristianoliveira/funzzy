@@ -1,6 +1,6 @@
 # Install Funzzy
 
-Funzzy installs two equivalent binaries: `funzzy` and `fzz`.
+Choose one installation method below, then run `fzz --version` to verify it. The `funzzy` and `fzz` binaries run the same application.
 
 ## macOS
 
@@ -18,7 +18,7 @@ brew install cristianoliveira/tap/funzzy
 
 ## Linux
 
-The installer supports `x86_64` and `aarch64`. It verifies the published SHA-256 checksum. It installs both binaries in `/usr/local/bin`:
+The installer supports `x86_64` and `aarch64`. It checks the published SHA-256 checksum before it installs both binaries in `/usr/local/bin`:
 
 ```bash
 curl -s https://raw.githubusercontent.com/cristianoliveira/funzzy/main/linux-install.sh | sh
@@ -66,7 +66,7 @@ pkgs.mkShell {
 cargo install funzzy
 ```
 
-Ensure Cargo's binary directory is on `PATH`:
+If `fzz` is not on `PATH`, add Cargo's binary directory:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -74,7 +74,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ## From source
 
-Funzzy requires Rust and Cargo. The `rust-version` value in `Cargo.toml` specifies the minimum Rust version.
+Install Rust and Cargo before you build from source. `Cargo.toml` lists the minimum Rust version in `rust-version`.
 
 Install from GitHub:
 
@@ -98,7 +98,7 @@ fzz --help
 ```
 
 A build from a Git checkout includes its commit in `--version` (for example,
-`funzzy 2.0.1 (e6f069be6c42)`). A crates.io build or source archive without
-Git metadata prints the package version alone.
+`funzzy 2.0.1 (e6f069be6c42)`). A build from crates.io or a source archive
+without Git metadata prints only the package version.
 
 Continue with the [one-minute start](../README.md#start-in-one-minute) or the complete [usage guide](USAGE.md).

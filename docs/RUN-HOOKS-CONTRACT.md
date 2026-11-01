@@ -1,9 +1,10 @@
 # Funzzy Run and Watcher Hooks Contract
 
+Generation hooks report a completed generation. `hooks.close` runs at most once when a ready watcher closes. These hooks have different identities and must not be treated as the same event.
+
 ## 1. Scope and ubiquitous language
 
-Funzzy has two different terminal boundaries. Their hooks must not be
-confused:
+Use the boundary, count, and identity below to choose a hook:
 
 | Hook | Boundary | Cardinality | Internal correlation |
 |---|---|---|---|
@@ -68,42 +69,19 @@ jobs:
 
 ## 4. Settled failure hooks
 
-The scalar `hooks.failure: COMMAND` remains immediate and is unchanged. The
-object form is deliberately failure-only; it does not alter success hooks or
-introduce a shared hook policy.
+The scalar `hooks.failure: COMMAND` still runs immediately. The object form affects only failure hooks; it does not change success hooks or define a shared policy.
 
-For `hooks.failure: {run: COMMAND, settle: DURATION}`, a failed generation is
-published as terminal immediately, then a settle timer starts at the instant
-that terminal failure is committed. The timer is owned by that generation and
-its immutable committed configuration revision. Settlement means that this failure remains the latest accepted generation outcome for the entire duration;
-knowledge of editor, agent, or other client activity is not involved. The
-settle boundary is a watcher-generation lifecycle boundary, not an idle or
-quiet-period guess.
+With `hooks.failure: {run: COMMAND, settle: DURATION}`, publish the failure as terminal immediately. Start its settle timer when that terminal failure is committed. The timer belongs to that generation and its committed configuration revision. Run the hook only if the failure remains the latest accepted generation outcome for the whole duration. Editor, agent, and client activity do not affect this boundary. This is a generation lifecycle rule, not an idle or quiet-period guess.
 
-Scheduling a newer generation is the supersession boundary: once accepted by
-the watcher (including a control-triggered run), it invalidates the pending
-settled hook before replacement work starts. A newer failure gets its own
-snapshot and timer. A newer pass, cancellation, or supersession leaves no
-failure hook pending. The wait is asynchronous and never blocks scheduling,
-starting, terminal publication, or control responses for newer work.
+A newer generation supersedes the pending hook as soon as the watcher accepts it, including for a control-triggered run. Invalidate the pending hook before replacement work starts. A newer failure receives its own snapshot and timer. A newer pass, cancellation, or supersession leaves no failure hook pending. Waiting for settlement is asynchronous: it cannot block scheduling, starting, terminal publication, or control responses.
 
-Timer expiry and acceptance of a newer generation are serialized by the
-watcher's generation coordinator. If acceptance wins, the pending hook is
-cancelled and reaped and does not start. If expiry wins, the command is
-atomically claimed and starts once; a generation accepted afterward cancels
-only the already-running command using the normal process-group cancellation
-and grace/reaping policy. A command that has begun cannot have external side
-effects recalled. In either order, no settled hook runs twice and no stale
-pending timer remains.
+The generation coordinator orders timer expiry and acceptance of a newer generation. If acceptance wins, cancel and reap the pending hook without starting it. If expiry wins, claim and start the command once. A generation accepted afterward cancels that running command with the normal process-group, grace, and reaping policy. Cancellation cannot recall effects from a command that already started. Neither order permits a duplicate hook or a stale pending timer.
 
 The settled command uses the same shell, workspace working directory,
 inherited environment, output forwarding, and hook-failure semantics as an
 immediate failure hook. The failed generation's command and configuration
 revision are immutable snapshots, so reloads do not rewrite a pending or
-running hook. Generation correlation is retained by Funzzy's internal events and control
-evidence and is passed to the command through reserved
-`FUNZZY_GENERATION_ID`/`FUNZZY_GENERATION_OUTCOME` environment variables; see
-§10. A valid reload may affect later generations; malformed
+running hook. Internal events and control evidence retain generation correlation. The reserved `FUNZZY_GENERATION_ID` and `FUNZZY_GENERATION_OUTCOME` environment variables pass it to the command; see §10. A valid reload may affect later generations; malformed
 reloads do not. Hook failure (spawn error, nonzero exit, signal, or timeout)
 never changes the generation result or schedules another hook.
 

@@ -177,9 +177,10 @@ fn section_matching() -> Value {
             },
             "filepath_template": {
                 "type": "string",
+                "title": "Legacy path templates",
                 "enum": ["{{filepath}}", "{{absolute_path}}", "{{relative_filepath}}", "{{relative_path}}", "{{paths}}"],
                 "deprecated": true,
-                "description": "Legacy path templates remain supported, including spacing variants, but are deprecated for new job scripts. {{paths}} stays shell-escaped and space-joined; direct-argv commands keep the complete expansion as one element. No removal or runtime warning is implied."
+                "description": "Legacy path templates remain supported, including spacing variants, but are deprecated for new job scripts. {{paths}} compatibility remains shell-escaped and space-joined; direct-argv commands keep the complete expansion as one element. This compatibility does not make templates preferred, and no removal or runtime warning is implied."
             }
         }
     })
