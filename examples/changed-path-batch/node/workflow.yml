@@ -1,0 +1,4 @@
+jobs:
+  - name: print complete changed-path batch
+    run: node ./print-changed-paths.mjs
+    change: input/**

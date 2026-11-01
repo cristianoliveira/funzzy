@@ -11,9 +11,10 @@ compatibility remains supported and is tested separately.
 
 ## Scope and inventory
 
-The recursive catalog contains 17 YAML configurations: 14 valid public or
+The recursive catalog contains 19 YAML configurations: 16 valid public or
 integration examples and 3 intentionally invalid fixtures. `examples/workdir/`
-files and `examples/longtask.sh` are runtime fixtures, not configurations.
+files, changed-path example scripts, and `examples/longtask.sh` are runtime
+fixtures, not configurations.
 
 | File | Classification | Current shape | TASK-0146 action |
 | --- | --- | --- | --- |
@@ -31,13 +32,16 @@ files and `examples/longtask.sh` are runtime fixtures, not configurations.
 | `test-nested-groups.yml` | Semantic migration: nested groups + regular job | mixed root list | flatten groups, preserve regular-job position |
 | `v2-parallel-control.yml` | Already V2 | canonical `on`/`execution`/`jobs` | byte-identical no-op |
 | `workflow-with-dependency-between-tasks.yml` | Direct migration: root list | ordered root task list | wrap as ordered `jobs`; rename file |
+| `changed-path-batch/node/workflow.yml` | Post-migration runnable example | canonical `jobs` | retain canonical V2 |
+| `changed-path-batch/python/workflow.yml` | Post-migration runnable example | canonical `jobs` | retain canonical V2 |
 | `invalid/invalid-value.yml` | Intentionally invalid V2 fixture | malformed glob scalar | reshape root to `jobs`, retain YAML parse failure |
 | `invalid/missing-required-property.yml` | Intentionally invalid V2 fixture | job item without `name` | reshape root to `jobs`, retain missing-name failure |
 | `invalid/non-list.yaml` | Intentionally invalid V2 fixture | `on` has the wrong type | retain V2 `jobs`, retain `on` object-type failure |
 
-Classification totals: 2 already V2, 1 directly migratable grouped root, 9
-directly migratable root lists, 2 nested shapes requiring semantic flattening,
-and 3 intentionally invalid fixtures.
+The migration baseline totals remain 2 already V2, 1 directly migratable
+grouped root, 9 directly migratable root lists, 2 nested shapes requiring
+semantic flattening, and 3 intentionally invalid fixtures. TASK-0198 adds 2
+canonical V2 examples after that migration.
 
 ## Filename migration map
 
@@ -63,6 +67,8 @@ completed-plan evidence may retain the old spelling as historical text.
 | `test-nested-groups.yml` | `test-nested-job-groups.yml` | test fixture names the V2 subject |
 | `v2-parallel-control.yml` | `v2-parallel-control.yml` | already canonical |
 | `workflow-with-dependency-between-tasks.yml` | `workflow-with-job-dependencies.yml` | use V2 job vocabulary |
+| `changed-path-batch/node/workflow.yml` | `changed-path-batch/node/workflow.yml` | post-migration Node batch example |
+| `changed-path-batch/python/workflow.yml` | `changed-path-batch/python/workflow.yml` | post-migration Python batch example |
 
 No compatibility symlink or duplicate legacy filename is allowed. Parser
 compatibility belongs in dedicated parser/migration fixtures, not duplicate

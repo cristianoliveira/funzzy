@@ -328,7 +328,7 @@ fn every_valid_example_recursively_passes_check_and_is_migration_noop() {
                 .any(|component| component.as_os_str() == "invalid")
         })
         .collect::<Vec<_>>();
-    assert_eq!(examples.len(), 14);
+    assert_eq!(examples.len(), 16);
     for example in examples {
         let source = std::fs::read_to_string(&example).unwrap();
         let documents = YamlLoader::load_from_str(&source).unwrap();
