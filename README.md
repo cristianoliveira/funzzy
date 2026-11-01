@@ -19,6 +19,7 @@ edit -> match changed files -> run jobs -> inspect result -> repeat
 - **Predictable execution:** Funzzy runs jobs in declared order. Named groups enable parallel work. Cancellation stops the complete process tree.
 - **Long-running services:** a readiness check confirms that a service started correctly. The service can then stay active.
 - **Exact feedback:** local tools can use a control socket. They can read status and output or cancel a specific run.
+- **Changed paths as data:** scripts can read the complete file-change batch as JSON instead of interpolating filenames into shell commands.
 - **Agentic friendly:** all features are though in a way that coding agents can auto discover and use.
 
 Funzzy has two equivalent binary names: `funzzy` and the shorter `fzz`. This README uses `fzz`.
@@ -53,6 +54,9 @@ jobs:
     parallel: checks
     run: cargo test
 
+  - name: changed-files
+    run: node ./scripts/print-changed-paths.mjs
+
   - name: dev-server
     service: true
     run: cargo run
@@ -78,6 +82,8 @@ fzz --no-services -- "@quick"
 ```
 
 Declaration order is important. Consecutive jobs with the same `parallel` name can run at the same time. Other jobs run in sequence.
+
+The `changed-files` job reads `FZZ_TRIGGER_PATHS_FILE`: a private JSON array of literal paths in one filesystem-change batch, not shell-escaped command text. To use this job, install Node 18+ and copy the [working Node script](examples/changed-path-batch/node/print-changed-paths.mjs) to `scripts/print-changed-paths.mjs` in your project. [Node and Python walkthroughs](examples/README.md#runnable-batch-scripts) show the full workflow. Init and manual runs receive no batch pointer; read it while Funzzy supervises the job or service. Hooks do not receive it implicitly.
 
 ### Changed paths in job scripts
 
