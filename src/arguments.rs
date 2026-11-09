@@ -790,7 +790,10 @@ pub fn command() -> Command {
         .subcommand(
             Command::new("control")
                 .visible_alias("ctl")
-                .about("Interact with a running watcher over its control socket.")
+                .about("Interact with a running watcher over its control socket (local or SSH-forwarded).")
+                .long_about(
+                    "Interact with a running watcher over its control socket. For remote control, forward the remote Unix socket over SSH; Funzzy needs no public TCP listener. Run SSH on the machine where the agent runs fzz ctl, not on the watcher host. Replace the host and remote socket path with your own:\n\n  mkdir -p \"$HOME/.local/state/funzzy\" && chmod 700 \"$HOME/.local/state/funzzy\"\n  ssh -N -o ExitOnForwardFailure=yes -L \"$HOME/.local/state/funzzy/box.sock:/absolute/path/to/remote/.watch.sock\" user@host\n  fzz ctl --socket \"$HOME/.local/state/funzzy/box.sock\" status\n\nLeave SSH running while using fzz ctl. The remote watcher must be running, the SSH account must be able to access its socket, and the SSH server must allow Unix-socket forwarding. The local socket grants full remote control: keep its parent directory private. For more, see docs/FLAG_CONTROL_SOCKET.md#remote-control-over-ssh-for-agents.",
+                )
                 .version(env!("CARGO_PKG_VERSION"))
                 .subcommand_required(true)
                 .arg_required_else_help(true)
@@ -1092,6 +1095,9 @@ const HELP_TEMPLATE: &str = "\
 
 Alias:
   fzz -> funzzy
+
+Remote control:
+  fzz ctl --help shows SSH socket forwarding to a watcher on another host.
 
 Config:
   fzz config describes the config schema and prints runnable examples.

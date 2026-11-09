@@ -84,6 +84,12 @@ fn agents_instruction_prints_standalone_snippet_without_starting_watcher() {
             ))
             .stdout(predicate::str::contains("watcher_observe"))
             .stdout(predicate::str::contains("watcher_verify"))
+            .stdout(predicate::str::contains(
+                "ssh -N -o ExitOnForwardFailure=yes",
+            ))
+            .stdout(predicate::str::contains(
+                "--socket \"$HOME/.local/state/funzzy/box.sock\"",
+            ))
             .stdout(predicate::str::contains("fzz ctl emit").not())
             .stdout(predicate::str::contains("watcher is unavailable"))
             .stdout(predicate::str::contains("fzz --help").not())
@@ -261,6 +267,32 @@ fn top_level_help_advertises_ctl_alias_once() {
         "top-level help must advertise the ctl alias: {}",
         stdout
     );
+}
+
+#[test]
+fn help_explains_remote_control_without_running_a_watcher() {
+    fzz()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fzz ctl --help"))
+        .stdout(predicate::str::contains("SSH"));
+
+    for spelling in ["ctl", "control"] {
+        fzz()
+            .args([spelling, "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "ssh -N -o ExitOnForwardFailure=yes",
+            ))
+            .stdout(predicate::str::contains("user@host"))
+            .stdout(predicate::str::contains(
+                "/absolute/path/to/remote/.watch.sock",
+            ))
+            .stdout(predicate::str::contains("fzz ctl --socket"))
+            .stdout(predicate::str::contains("private"));
+    }
 }
 
 #[test]
