@@ -301,6 +301,8 @@ fn print_agents_instruction() {
 3. On failure, inspect bounded evidence with `fzz ctl output --generation <generation> --tail 80 --format toon`. Fix the cause and await a newer generation. If no matching run appears, use `fzz ctl list --format toon` to find a target, then trigger `fzz ctl run TARGET --wait --timeout 5m --format toon`.
 4. Before reporting success, confirm a relevant, latest passing run and that the worktree has not changed since it ran. If the watcher is unavailable, say verification could not be completed.
 
+Remote watcher over SSH: On the agent's machine, make a private socket directory with `mkdir -p "$HOME/.local/state/funzzy" && chmod 700 "$HOME/.local/state/funzzy"`. In a separate terminal, run `ssh -N -o ExitOnForwardFailure=yes -L "$HOME/.local/state/funzzy/box.sock:/absolute/path/to/remote/.watch.sock" user@host` and leave it running. Replace the SSH target and absolute remote watcher socket path with values from this project's instructions; never store credentials there. Add `--socket "$HOME/.local/state/funzzy/box.sock"` immediately after `fzz ctl` in every command above. The forwarded socket grants full control; keep it private. See `fzz ctl --help` for prerequisites.
+
 If Pi watcher tools are installed, prefer `watcher_observe` to snapshot and await generations, `watcher_status` to wait for active work, and `watcher_output` for failure evidence. Discover final targets with `watcher_targets`; `watcher_verify` triggers the selected final gate and checks freshness and the worktree fingerprint. These tools are optional; the `fzz ctl` workflow above works without the extension."#;
     println!("{INSTRUCTION}");
 }
