@@ -178,7 +178,7 @@ output; **events**: `--events FILE` appends NDJSON run events.
 
 ### Agent instructions
 
-For an already configured project, run `fzz --agents-instruction` and paste its output into that project's `AGENTS.md`. It teaches agents to use `fzz ctl` to observe the running watcher before editing, wait for automatic feedback after editing, inspect failures, and trigger an explicit target when no run matched. The command only prints text; it needs neither `.watch.yaml` nor an active watcher. Pi watcher tools are an optional enhancement, not a requirement. See the [advanced guide](ADVANCED-GUIDE.md#3-agent-edit-feedback-loop) for control-socket details.
+For an already configured project, run `fzz --agents-instruction` and paste its output into that project's `AGENTS.md`. It teaches agents to use `fzz ctl` to observe the running watcher before editing, wait for automatic feedback after editing, inspect failures, and trigger an explicit target when no run matched. The command only prints text; it needs neither `.watch.yaml` nor an active watcher. Pi watcher tools are an optional enhancement, not a requirement. See the [advanced guide](ADVANCED-GUIDE.md#3-agent-edit-feedback-loop) for control-socket details. If the agent runs on a different machine from the watcher, give it the SSH host and the remote socket's absolute path in the project's `AGENTS.md`, then follow [remote control over SSH](FLAG_CONTROL_SOCKET.md#remote-control-over-ssh-for-agents). No Funzzy code change or public TCP listener is needed.
 
 ## 3. Configuration guide
 

@@ -63,3 +63,32 @@ The target selects a named job in the running watcher:
 Use `fzz ctl await --generation 5 --timeout 5m` to wait for that exact run. Do not infer its result by polling latest status: a newer run can supersede it. The [advanced control guide](ADVANCED-GUIDE.md#2-control-socket) explains exact-generation waits and output retrieval.
 
 The socket response stays compact. Funzzy still writes full command output to the console and to `--log-file` when configured.
+
+### Remote control over SSH (for agents)
+
+No Funzzy server change is needed. Run the watcher on the remote host with `on.socket` configured, and use OpenSSH to forward that Unix socket to the machine where the agent runs `fzz ctl`. The SSH command runs **on the agent's machine**, not on the watcher host. Replace `user@host` and `/absolute/path/to/remote/.watch.sock` with the SSH target and the **absolute path of the running watcher's socket** (a relative `on.socket` resolves from the watcher's working directory).
+
+```sh
+# On the agent's machine; keep this directory private.
+mkdir -p "$HOME/.local/state/funzzy"
+chmod 700 "$HOME/.local/state/funzzy"
+
+# In a terminal that stays open while the agent uses fzz ctl:
+ssh -N -o ExitOnForwardFailure=yes \
+  -L "$HOME/.local/state/funzzy/box.sock:/absolute/path/to/remote/.watch.sock" \
+  user@host
+```
+
+In another terminal **on that same agent machine**:
+
+```sh
+fzz ctl --socket "$HOME/.local/state/funzzy/box.sock" capabilities --format toon
+fzz ctl --socket "$HOME/.local/state/funzzy/box.sock" status --format toon
+fzz ctl --socket "$HOME/.local/state/funzzy/box.sock" list --format toon
+```
+
+To trigger a job, choose a target from `list`; for example, `fzz ctl --socket "$HOME/.local/state/funzzy/box.sock" run '@agent-final' --wait --timeout 5m --format toon`. Use the returned generation for subsequent `await` or `output` calls. Do not repeat a `run` after a connection drop without checking status: the remote watcher may already have accepted it.
+
+**Requirements and limits:** SSH must authenticate to the intended host, and the SSH account must be allowed to connect to the remote socket. The SSH server must permit Unix-socket forwarding (`AllowStreamLocalForwarding`); no TCP control port is opened. Anyone who can connect to the forwarded local socket has that account's **full** Funzzy control authority, including `run` and `cancel`, so do not place it in a shared directory or share the SSH credentials. Keep the SSH command running while using the socket; stop it when finished. If `box.sock` already exists, check whether an older forward is still running before removing a stale socket. `ExitOnForwardFailure` catches a failed local bind, but a missing remote socket is reported only when `fzz ctl` connects. This recipe requires OpenSSH with Unix-domain socket forwarding on both ends; it is not a Windows portability promise.
+
+For a project's `AGENTS.md`, record the SSH target, the absolute remote `on.socket` path, and this guide's link. Do **not** record SSH secrets. The project's agents can then create their own private local forward and use `fzz ctl --socket` without changing Funzzy configuration.
