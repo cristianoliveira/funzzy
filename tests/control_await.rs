@@ -307,13 +307,12 @@ fn process_alive(pid: u32) -> bool {
 /// process group vanished (`kill -0 -- -pgid`), not only the leader pid —
 /// a surviving descendant keeping the pgid alive must fail the assertion.
 fn group_alive(pgid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &format!("-{pgid}")])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    // Use the OS API directly: external `kill` utilities differ in how they
+    // parse a negative process-group argument across platforms.
+    unsafe extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    unsafe { kill(-(pgid as i32), 0) == 0 }
 }
 
 /// Returns a non-zombie member of a process group on Linux. PID 1 can retain
